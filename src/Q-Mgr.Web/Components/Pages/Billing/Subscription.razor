@@ -191,33 +191,51 @@ else
 <!-- Upgrade Confirmation Dialog -->
 <QModal Visible="@(showUpgradeDialog && selectedPlan != null)"
         VisibleChanged="@((bool v) => showUpgradeDialog = v)"
-        Title="@(selectedPlan != null ? $"Upgrade to {selectedPlan.PlanName}?" : "Upgrade Plan")"
+        Title="@(selectedPlan != null ? (currentPlan == null ? $"Subscribe to {selectedPlan.PlanName}?" : $"Upgrade to {selectedPlan.PlanName}?") : "Choose Plan")"
         Icon="arrow-up-circle-fill"
         Size="md">
     <ChildContent>
         @if (selectedPlan != null)
         {
-            <p>You're about to upgrade from <strong>@currentPlan?.PlanName</strong> to <strong>@selectedPlan.PlanName</strong>.</p>
-            <div class="upgrade-summary">
-                <div class="summary-row">
-                    <span>New Monthly Price:</span>
-                    <strong>@selectedPlan.Currency @selectedPlan.MonthlyPrice.ToString("N2")/month</strong>
+            @if (!string.IsNullOrEmpty(upgradeError))
+            {
+                <div class="alert alert-danger">@upgradeError</div>
+            }
+            @if (currentPlan == null)
+            {
+                <p>You're about to subscribe to <strong>@selectedPlan.PlanName</strong>.</p>
+                <div class="upgrade-summary">
+                    <div class="summary-row total">
+                        <span>Monthly Price:</span>
+                        <strong>@selectedPlan.Currency @selectedPlan.MonthlyPrice.ToString("N2")/month</strong>
+                    </div>
                 </div>
-                <div class="summary-row">
-                    <span>Prorated Credit:</span>
-                    <strong>-@currentPlan?.Currency @proratedCredit.ToString("N2")</strong>
+                <p class="text-muted small mt-3">Your subscription starts immediately.</p>
+            }
+            else
+            {
+                <p>You're about to upgrade from <strong>@currentPlan.PlanName</strong> to <strong>@selectedPlan.PlanName</strong>.</p>
+                <div class="upgrade-summary">
+                    <div class="summary-row">
+                        <span>New Monthly Price:</span>
+                        <strong>@selectedPlan.Currency @selectedPlan.MonthlyPrice.ToString("N2")/month</strong>
+                    </div>
+                    <div class="summary-row">
+                        <span>Prorated Credit:</span>
+                        <strong>-@currentPlan.Currency @proratedCredit.ToString("N2")</strong>
+                    </div>
+                    <div class="summary-row total">
+                        <span>Due Today:</span>
+                        <strong>@selectedPlan.Currency @dueToday.ToString("N2")</strong>
+                    </div>
                 </div>
-                <div class="summary-row total">
-                    <span>Due Today:</span>
-                    <strong>@selectedPlan.Currency @dueToday.ToString("N2")</strong>
-                </div>
-            </div>
-            <p class="text-muted small mt-3">Your new plan will take effect immediately and you'll be charged the prorated amount for the remainder of this billing period.</p>
+                <p class="text-muted small mt-3">Your new plan will take effect immediately and you'll be charged the prorated amount for the remainder of this billing period.</p>
+            }
         }
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@(() => showUpgradeDialog = false)" />
-        <QButton Text="Confirm Upgrade" Icon="check-lg" Variant="primary" OnClick="@ConfirmUpgrade" Disabled="@isProcessing" />
+        <QButton Text="@(currentPlan == null ? "Confirm Subscription" : "Confirm Upgrade")" Icon="check-lg" Variant="primary" OnClick="@ConfirmUpgrade" Disabled="@isProcessing" />
     </FooterContent>
 </QModal>
 
@@ -546,6 +564,7 @@ else
     private List<BillingEvent> billingHistory = new();
     private string? organizationStatus;
     private DateTime? trialEndsAt;
+    private string? upgradeError;
 
     private bool IsTrialExpired => trialEndsAt.HasValue && trialEndsAt.Value <= DateTime.UtcNow;
     private int TrialDaysRemaining => trialEndsAt.HasValue
@@ -674,21 +693,44 @@ else
         if (selectedPlan == null) return;
 
         isProcessing = true;
+        upgradeError = null;
         try
         {
-            var response = await Http.PostAsJsonAsync($"api/v1/billing/subscription/upgrade", new
-            {
-                NewPlanCode = selectedPlan.PlanCode
-            });
+            // No existing subscription (the trial/no-plan-yet state) needs POST subscribe to
+            // create one; an existing subscription needs POST change-plan instead — these are
+            // two different endpoints with different request shapes. This used to always POST
+            // a third, nonexistent "subscription/upgrade" URL that 404'd unconditionally, so no
+            // organization — trialing or already paying — could ever actually pick a plan
+            // through this dialog. PaymentMethod.Card with no StripePaymentMethodId is
+            // deliberate: it creates a local, non-Stripe subscription record immediately,
+            // since Stripe stays disabled in this environment.
+            var response = currentPlan == null
+                ? await Http.PostAsJsonAsync("api/v1/billing/subscribe", new
+                {
+                    PlanCode = selectedPlan.PlanCode,
+                    BillingCycle = "Monthly",
+                    PaymentMethod = "Card"
+                })
+                : await Http.PostAsJsonAsync("api/v1/billing/change-plan", new
+                {
+                    NewPlanCode = selectedPlan.PlanCode,
+                    ImmediateChange = true
+                });
 
             if (response.IsSuccessStatusCode)
             {
                 showUpgradeDialog = false;
                 await LoadData();
             }
+            else
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                upgradeError = $"Couldn't change your plan ({(int)response.StatusCode}). {body}";
+            }
         }
         catch (Exception ex)
         {
+            upgradeError = "Couldn't change your plan. Please try again.";
             Console.WriteLine($"Error upgrading subscription: {ex.Message}");
         }
         finally
