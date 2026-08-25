@@ -13,27 +13,35 @@ public interface INotificationService
     Task<bool> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// attachment is optional — SMTP is the only channel here with no per-recipient size ceiling
+    /// attachments is optional — SMTP is the only channel here with no per-recipient size ceiling
     /// of its own beyond the mail server's, so it's the one channel that actually attaches the
-    /// file bytes (via IMediaStorageService.DownloadAsync(attachment.FilePath)) rather than a link.
+    /// file bytes (via IMediaStorageService.DownloadAsync per attachment) rather than links, and
+    /// the one channel where "several attachments" costs nothing extra — they all ride in the
+    /// same message.
     /// </summary>
-    Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
+    Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
     Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// chatId is the recipient's numeric Telegram chat ID (Contact.TelegramChatId), not a phone
-    /// number — see NotificationSettings.TelegramBotToken doc comment for why. When attachment is
-    /// set, sends via Bot API sendPhoto (image/* mime types) or sendDocument (everything else)
-    /// with attachment.Url as the source — Telegram's servers fetch that URL themselves, so it
-    /// must be publicly reachable (true in a real deployment; not from a local dev machine).
+    /// number — see NotificationSettings.TelegramBotToken doc comment for why. A single
+    /// attachment rides with the text as its caption via Bot API sendPhoto (image/* mime types)
+    /// or sendDocument (everything else); with more than one, the text goes out first via
+    /// sendMessage and each attachment follows as its own uncaptioned sendPhoto/sendDocument call
+    /// — Telegram has no single-call way to send arbitrary mixed attachments with one caption.
+    /// Every attachment.Url must be publicly reachable — Telegram's servers fetch it themselves,
+    /// which works in a real deployment but not from a local dev machine. Returns true if the
+    /// text/first send succeeds; a later attachment failing is logged but doesn't flip the
+    /// overall result, since the recipient did receive the core message.
     /// </summary>
-    Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
+    Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// attachment.Url is passed as WhatsApp Cloud API's "link" field (type: image or document,
-    /// picked the same way as Telegram above) — same public-reachability requirement.
+    /// Same one-attachment-per-message shape as Telegram above (WhatsApp Cloud API's "link"
+    /// field, type: image or document) — a single attachment carries the text as its caption;
+    /// more than one sends the text as its own message first, then each attachment uncaptioned.
     /// </summary>
-    Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
+    Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
 
     // In-App notifications
     Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default);

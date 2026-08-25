@@ -16,11 +16,13 @@ public interface IMarketingApiService
     Task<BroadcastDto?> CancelBroadcastAsync(Guid broadcastId);
 
     /// <summary>
+    /// Adds one more attachment to the broadcast — call once per file for multiple attachments.
     /// Throws with the API's actual ProblemDetails.Title on failure (size limit, disallowed file
-    /// type, wrong broadcast status) — callers show it directly rather than a generic message.
+    /// type, too many attachments already, wrong broadcast status) — callers show it directly
+    /// rather than a generic message.
     /// </summary>
     Task<BroadcastDto> UploadBroadcastAttachmentAsync(Guid broadcastId, Stream fileStream, string fileName, string contentType);
-    Task<BroadcastDto?> DeleteBroadcastAttachmentAsync(Guid broadcastId);
+    Task<BroadcastDto?> DeleteBroadcastAttachmentAsync(Guid broadcastId, Guid attachmentId);
 }
 
 public class MarketingApiService : IMarketingApiService
@@ -153,17 +155,17 @@ public class MarketingApiService : IMarketingApiService
         throw new InvalidOperationException(await ReadProblemTitleAsync(response));
     }
 
-    public async Task<BroadcastDto?> DeleteBroadcastAttachmentAsync(Guid broadcastId)
+    public async Task<BroadcastDto?> DeleteBroadcastAttachmentAsync(Guid broadcastId, Guid attachmentId)
     {
         try
         {
-            var response = await _httpClient.DeleteAsync($"api/v1/marketing/broadcasts/{broadcastId}/attachment");
+            var response = await _httpClient.DeleteAsync($"api/v1/marketing/broadcasts/{broadcastId}/attachment/{attachmentId}");
             if (!response.IsSuccessStatusCode) return null;
             return await response.Content.ReadFromJsonAsync<BroadcastDto>(_jsonOptions);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to remove attachment from broadcast {BroadcastId}", broadcastId);
+            _logger.LogError(ex, "Failed to remove attachment {AttachmentId} from broadcast {BroadcastId}", attachmentId, broadcastId);
             return null;
         }
     }

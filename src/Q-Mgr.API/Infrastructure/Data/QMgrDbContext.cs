@@ -54,6 +54,7 @@ public class QMgrDbContext : DbContext
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Broadcast> Broadcasts => Set<Broadcast>();
     public DbSet<BroadcastRecipient> BroadcastRecipients => Set<BroadcastRecipient>();
+    public DbSet<BroadcastAttachment> BroadcastAttachments => Set<BroadcastAttachment>();
 
     #endregion
 

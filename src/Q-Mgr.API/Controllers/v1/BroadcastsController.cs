@@ -31,6 +31,11 @@ public class BroadcastsController : ControllerBase
     // up to it.
     private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
 
+    // Keeps a broadcast's total payload sane across every channel — Telegram/WhatsApp send each
+    // attachment as its own extra API call per recipient (see NotificationService), so an
+    // unbounded count multiplies real per-recipient send time and failure surface linearly.
+    private const int MaxAttachmentsPerBroadcast = 5;
+
     public BroadcastsController(
         QMgrDbContext context,
         ITenantContextAccessor tenantAccessor,
@@ -59,10 +64,17 @@ public class BroadcastsController : ControllerBase
         SentCount = b.SentCount,
         FailedCount = b.FailedCount,
         CreatedAt = b.CreatedAt,
-        AttachmentUrl = b.AttachmentUrl,
-        AttachmentFileName = b.AttachmentFileName,
-        AttachmentMimeType = b.AttachmentMimeType,
-        AttachmentFileSizeBytes = b.AttachmentFileSizeBytes
+        Attachments = b.Attachments
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => new BroadcastAttachmentDto
+            {
+                Id = a.Id,
+                Url = a.Url,
+                FileName = a.FileName,
+                MimeType = a.MimeType,
+                FileSizeBytes = a.FileSizeBytes
+            })
+            .ToList()
     };
 
     [HttpGet]
@@ -75,6 +87,7 @@ public class BroadcastsController : ControllerBase
             return Unauthorized();
 
         var broadcasts = await _context.Broadcasts
+            .Include(b => b.Attachments)
             .Where(b => b.OrganizationId == tenantContext.OrganizationId)
             .OrderByDescending(b => b.CreatedAt)
             .ToListAsync();
@@ -93,6 +106,7 @@ public class BroadcastsController : ControllerBase
             return Unauthorized();
 
         var broadcast = await _context.Broadcasts
+            .Include(b => b.Attachments)
             .FirstOrDefaultAsync(b => b.Id == broadcastId && b.OrganizationId == tenantContext.OrganizationId);
         if (broadcast == null) return NotFound();
 
@@ -139,12 +153,13 @@ public class BroadcastsController : ControllerBase
     }
 
     /// <summary>
-    /// Attaches a file to a Draft broadcast (multipart/form-data), replacing any previous
-    /// attachment. Restricted to Draft — once scheduled, BroadcastSendJob may already be reading
-    /// the broadcast, so changing the attachment out from under it isn't safe. SMS has no
-    /// attachment concept: BroadcastSendJob appends AttachmentUrl as plain text to the SMS body
-    /// instead when one is present, so this endpoint doesn't reject SMS-channel broadcasts —
-    /// there's just a different, degraded outcome for them.
+    /// Adds one more file to a Draft broadcast (multipart/form-data) — call it once per file for
+    /// multiple attachments, up to MaxAttachmentsPerBroadcast. Restricted to Draft — once
+    /// scheduled, BroadcastSendJob may already be reading the broadcast, so changing its
+    /// attachments out from under it isn't safe. SMS has no attachment concept:
+    /// BroadcastSendJob appends each attachment's Url as plain text to the SMS body instead, so
+    /// this endpoint doesn't reject SMS-channel broadcasts — there's just a different, degraded
+    /// outcome for them.
     /// </summary>
     [HttpPost("{broadcastId:guid}/attachment")]
     [RequirePermission(Permissions.MarketingManage)]
@@ -159,11 +174,15 @@ public class BroadcastsController : ControllerBase
             return Unauthorized();
 
         var broadcast = await _context.Broadcasts
+            .Include(b => b.Attachments)
             .FirstOrDefaultAsync(b => b.Id == broadcastId && b.OrganizationId == tenantContext.OrganizationId);
         if (broadcast == null) return NotFound();
 
         if (broadcast.Status != BroadcastStatus.Draft)
             return BadRequest(new ProblemDetails { Title = "An attachment can only be added to a Draft broadcast", Status = StatusCodes.Status400BadRequest });
+
+        if (broadcast.Attachments.Count >= MaxAttachmentsPerBroadcast)
+            return BadRequest(new ProblemDetails { Title = $"A broadcast can have at most {MaxAttachmentsPerBroadcast} attachments.", Status = StatusCodes.Status400BadRequest });
 
         if (file == null || file.Length == 0)
             return BadRequest(new ProblemDetails { Title = "No file was provided.", Status = StatusCodes.Status400BadRequest });
@@ -188,18 +207,24 @@ public class BroadcastsController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Failed to store the uploaded file." });
         }
 
-        // Replacing an existing attachment — best-effort cleanup of the old file, doesn't block
-        // the response on it.
-        if (!string.IsNullOrEmpty(broadcast.AttachmentFilePath))
+        var newAttachment = new BroadcastAttachment
         {
-            _ = _mediaStorage.DeleteAsync(broadcast.AttachmentFilePath);
-        }
-
-        broadcast.AttachmentFilePath = uploadResult.FilePath;
-        broadcast.AttachmentUrl = uploadResult.FileUrl;
-        broadcast.AttachmentFileName = file.FileName;
-        broadcast.AttachmentMimeType = mimeType;
-        broadcast.AttachmentFileSizeBytes = file.Length;
+            BroadcastId = broadcast.Id,
+            FilePath = uploadResult.FilePath!,
+            Url = uploadResult.FileUrl!,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            FileSizeBytes = file.Length
+        };
+        // Added directly to the DbSet — not via broadcast.Attachments.Add(...) — matching
+        // BroadcastSendJob.MaterializeRecipientsAsync's established pattern for the sibling
+        // Broadcast->BroadcastRecipient relationship. Adding through the navigation collection
+        // on a Broadcast that was just loaded via Include(b => b.Attachments) made EF's change
+        // tracker misdetect the new row as Modified rather than Added (a known EF Core quirk
+        // with Include-then-Add-to-collection), which then threw DbUpdateConcurrencyException —
+        // "expected to affect 1 row, affected 0" — deterministically on every attachment upload.
+        _context.BroadcastAttachments.Add(newAttachment);
+        broadcast.Attachments.Add(newAttachment);
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("Attached {FileName} ({SizeBytes} bytes) to broadcast {BroadcastId}", file.FileName, file.Length, broadcastId);
@@ -207,34 +232,31 @@ public class BroadcastsController : ControllerBase
         return Ok(MapToDto(broadcast));
     }
 
-    [HttpDelete("{broadcastId:guid}/attachment")]
+    [HttpDelete("{broadcastId:guid}/attachment/{attachmentId:guid}")]
     [RequirePermission(Permissions.MarketingManage)]
     [ProducesResponseType(typeof(BroadcastDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> DeleteAttachment(Guid broadcastId)
+    public async Task<IActionResult> DeleteAttachment(Guid broadcastId, Guid attachmentId)
     {
         var tenantContext = _tenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
             return Unauthorized();
 
         var broadcast = await _context.Broadcasts
+            .Include(b => b.Attachments)
             .FirstOrDefaultAsync(b => b.Id == broadcastId && b.OrganizationId == tenantContext.OrganizationId);
         if (broadcast == null) return NotFound();
+
+        var attachment = broadcast.Attachments.FirstOrDefault(a => a.Id == attachmentId);
+        if (attachment == null) return NotFound();
 
         if (broadcast.Status != BroadcastStatus.Draft)
             return BadRequest(new ProblemDetails { Title = "An attachment can only be removed from a Draft broadcast", Status = StatusCodes.Status400BadRequest });
 
-        if (!string.IsNullOrEmpty(broadcast.AttachmentFilePath))
-        {
-            await _mediaStorage.DeleteAsync(broadcast.AttachmentFilePath);
-        }
-
-        broadcast.AttachmentFilePath = null;
-        broadcast.AttachmentUrl = null;
-        broadcast.AttachmentFileName = null;
-        broadcast.AttachmentMimeType = null;
-        broadcast.AttachmentFileSizeBytes = null;
+        await _mediaStorage.DeleteAsync(attachment.FilePath);
+        broadcast.Attachments.Remove(attachment);
+        _context.BroadcastAttachments.Remove(attachment);
         await _context.SaveChangesAsync();
 
         return Ok(MapToDto(broadcast));
@@ -270,7 +292,7 @@ public class BroadcastsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Only a Draft broadcast can be scheduled", Status = StatusCodes.Status400BadRequest });
         }
 
-        var broadcast = await _context.Broadcasts.FirstAsync(b => b.Id == broadcastId);
+        var broadcast = await _context.Broadcasts.Include(b => b.Attachments).FirstAsync(b => b.Id == broadcastId);
         return Ok(MapToDto(broadcast));
     }
 
@@ -301,7 +323,7 @@ public class BroadcastsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Only a Scheduled broadcast (not yet started sending) can be cancelled", Status = StatusCodes.Status400BadRequest });
         }
 
-        var broadcast = await _context.Broadcasts.FirstAsync(b => b.Id == broadcastId);
+        var broadcast = await _context.Broadcasts.Include(b => b.Attachments).FirstAsync(b => b.Id == broadcastId);
         return Ok(MapToDto(broadcast));
     }
 }

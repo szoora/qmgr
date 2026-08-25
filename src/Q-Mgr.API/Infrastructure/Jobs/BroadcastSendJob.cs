@@ -46,9 +46,12 @@ public class BroadcastSendJob
     }
 
     /// <summary>SMS has no attachment concept — this is its stand-in: the file's public URL as a plain link.</summary>
-    private static string AppendAttachmentLink(string message, NotificationAttachment? attachment)
+    /// <summary>SMS has no attachment concept — this is its stand-in: each file's public URL as a plain link.</summary>
+    private static string AppendAttachmentLinks(string message, IReadOnlyList<NotificationAttachment> attachments)
     {
-        return attachment == null ? message : $"{message}\n\n{attachment.FileName}: {attachment.Url}";
+        if (attachments.Count == 0) return message;
+        var links = string.Join("\n", attachments.Select(a => $"{a.FileName}: {a.Url}"));
+        return $"{message}\n\n{links}";
     }
 
     [AutomaticRetry(Attempts = 1)]
@@ -95,7 +98,9 @@ public class BroadcastSendJob
 
     private async Task ProcessBroadcastAsync(Guid broadcastId)
     {
-        var broadcast = await _context.Broadcasts.FirstOrDefaultAsync(b => b.Id == broadcastId);
+        var broadcast = await _context.Broadcasts
+            .Include(b => b.Attachments)
+            .FirstOrDefaultAsync(b => b.Id == broadcastId);
         if (broadcast == null) return;
 
         await MaterializeRecipientsAsync(broadcast);
@@ -105,10 +110,10 @@ public class BroadcastSendJob
             .Where(r => r.BroadcastId == broadcastId && r.Status == RecipientStatus.Pending)
             .ToListAsync();
 
-        // Same attachment for every recipient — built once rather than per-iteration.
-        var attachment = !string.IsNullOrEmpty(broadcast.AttachmentFilePath) && !string.IsNullOrEmpty(broadcast.AttachmentUrl)
-            ? new NotificationAttachment(broadcast.AttachmentFilePath, broadcast.AttachmentUrl, broadcast.AttachmentFileName ?? "attachment", broadcast.AttachmentMimeType ?? "application/octet-stream")
-            : null;
+        // Same attachments for every recipient — built once rather than per-iteration.
+        var attachments = broadcast.Attachments
+            .Select(a => new NotificationAttachment(a.FilePath, a.Url, a.FileName, a.MimeType))
+            .ToList();
 
         foreach (var recipient in pending)
         {
@@ -135,26 +140,26 @@ public class BroadcastSendJob
                             broadcast.Subject ?? broadcast.Name,
                             AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
                             isHtml: false,
-                            attachment: attachment),
-                    // SMS has no attachment concept — the link is the closest equivalent, appended
+                            attachments: attachments),
+                    // SMS has no attachment concept — links are the closest equivalent, appended
                     // to the message text itself rather than dropped silently.
                     BroadcastChannel.Sms when !string.IsNullOrWhiteSpace(recipient.Contact.Phone) =>
                         await _notificationService.SendSmsAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.Phone!,
-                            AppendAttachmentLink(AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false), attachment)),
+                            AppendAttachmentLinks(AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false), attachments)),
                     BroadcastChannel.Telegram when !string.IsNullOrWhiteSpace(recipient.Contact.TelegramChatId) =>
                         await _notificationService.SendTelegramAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.TelegramChatId!,
                             AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
-                            attachment: attachment),
+                            attachments: attachments),
                     BroadcastChannel.WhatsApp when !string.IsNullOrWhiteSpace(recipient.Contact.Phone) =>
                         await _notificationService.SendWhatsAppAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.Phone!,
                             AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
-                            attachment: attachment),
+                            attachments: attachments),
                     _ => false
                 };
                 if (!sent) error = "No usable contact address for this channel, or the transport is disabled/unconfigured";

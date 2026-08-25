@@ -50,10 +50,6 @@ public class BroadcastConfiguration : IEntityTypeConfiguration<Broadcast>
         builder.Property(b => b.AudienceTagFilter).HasMaxLength(500);
         builder.Property(b => b.Status).HasConversion<string>().HasMaxLength(20);
         builder.Property(b => b.Channel).HasConversion<string>().HasMaxLength(20);
-        builder.Property(b => b.AttachmentFilePath).HasMaxLength(1000);
-        builder.Property(b => b.AttachmentUrl).HasMaxLength(1000);
-        builder.Property(b => b.AttachmentFileName).HasMaxLength(255);
-        builder.Property(b => b.AttachmentMimeType).HasMaxLength(255);
 
         builder.HasIndex(b => new { b.OrganizationId, b.Status })
             .HasDatabaseName("idx_broadcasts_org_status");
@@ -101,6 +97,28 @@ public class BroadcastRecipientConfiguration : IEntityTypeConfiguration<Broadcas
         builder.HasOne(r => r.Contact)
             .WithMany()
             .HasForeignKey(r => r.ContactId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class BroadcastAttachmentConfiguration : IEntityTypeConfiguration<BroadcastAttachment>
+{
+    public void Configure(EntityTypeBuilder<BroadcastAttachment> builder)
+    {
+        builder.ToTable("broadcast_attachments");
+        builder.HasKey(a => a.Id);
+
+        builder.Property(a => a.FilePath).HasMaxLength(1000).IsRequired();
+        builder.Property(a => a.Url).HasMaxLength(1000).IsRequired();
+        builder.Property(a => a.FileName).HasMaxLength(255).IsRequired();
+        builder.Property(a => a.MimeType).HasMaxLength(255).IsRequired();
+
+        builder.HasIndex(a => a.BroadcastId)
+            .HasDatabaseName("idx_broadcast_attachments_broadcast");
+
+        builder.HasOne(a => a.Broadcast)
+            .WithMany(b => b.Attachments)
+            .HasForeignKey(a => a.BroadcastId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
