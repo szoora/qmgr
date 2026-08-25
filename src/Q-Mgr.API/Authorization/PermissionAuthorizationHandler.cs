@@ -29,10 +29,49 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         _logger = logger;
     }
 
+    /// <summary>
+    /// Maps ApiClient "scope" strings (ApiClientsSetup.razor's colon-separated vocabulary,
+    /// e.g. "queue:write") to the permission codes this handler actually checks against
+    /// (dot-separated, e.g. "queue.manage"). Without this mapping every API-key-authenticated
+    /// request was silently denied by every [RequirePermission]-protected endpoint regardless of
+    /// the client's configured scopes — ApiKeyAuthenticationMiddleware sets "scope" claims but
+    /// this handler only ever looked for a user ID, which API-key auth never has. That made the
+    /// entire external-integration story (hospital/banking/pharmacy system types already
+    /// anticipated in ApiClientsSetup.razor's own icon mapping) non-functional end to end: a
+    /// valid, active API key could authenticate but could never actually call anything.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> ScopeToPermissions = new()
+    {
+        ["queue:read"] = new[] { Permissions.QueueView },
+        ["queue:write"] = new[] { Permissions.QueueManage },
+        ["token:create"] = new[] { Permissions.TokensCreate },
+        ["token:manage"] = new[] { Permissions.QueueManage, Permissions.TokensCancel },
+        ["counter:read"] = new[] { Permissions.CountersView },
+        ["service:read"] = new[] { Permissions.ServiceTypesView },
+        ["stats:read"] = new[] { Permissions.ReportsView },
+    };
+
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context,
         PermissionRequirement requirement)
     {
+        if (context.User.FindFirst("auth_method")?.Value == "api_key")
+        {
+            var grantedByScopes = context.User.FindAll("scope")
+                .SelectMany(c => ScopeToPermissions.TryGetValue(c.Value, out var perms) ? perms : Array.Empty<string>());
+
+            if (grantedByScopes.Contains(requirement.Permission))
+            {
+                _logger.LogDebug("API key granted permission {Permission} via scope claim", requirement.Permission);
+                context.Succeed(requirement);
+            }
+            else
+            {
+                _logger.LogDebug("API key denied permission {Permission} — no matching scope", requirement.Permission);
+            }
+            return;
+        }
+
         // Get user ID from claims
         var userIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)
             ?? context.User.FindFirst("sub");
