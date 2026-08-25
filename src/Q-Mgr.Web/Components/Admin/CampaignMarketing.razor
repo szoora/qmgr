@@ -55,7 +55,7 @@
                     <div class="broadcast-card status-@b.Status.ToString().ToLower()">
                         <div class="broadcast-main">
                             <div class="broadcast-identity">
-                                <QIcon Name="@(b.Channel == BroadcastChannel.Email ? "envelope-fill" : "chat-dots-fill")" />
+                                <QIcon Name="@GetChannelIcon(b.Channel)" />
                                 <span class="broadcast-name">@b.Name</span>
                                 <span class="status-badge">@b.Status</span>
                             </div>
@@ -124,6 +124,7 @@
                         <span class="contact-name">@c.FullName</span>
                         <span class="contact-detail">@c.Email</span>
                         <span class="contact-detail">@c.Phone</span>
+                        <span class="contact-detail">@(!string.IsNullOrEmpty(c.TelegramChatId) ? $"Telegram: {c.TelegramChatId}" : "")</span>
                         <span class="contact-detail">@c.Tags</span>
                         @if (c.OptedOut)
                         {
@@ -147,6 +148,8 @@
                 <select @bind="broadcastModel.Channel">
                     <option value="@BroadcastChannel.Email">Email</option>
                     <option value="@BroadcastChannel.Sms">SMS</option>
+                    <option value="@BroadcastChannel.Telegram">Telegram</option>
+                    <option value="@BroadcastChannel.WhatsApp">WhatsApp</option>
                 </select>
             </label>
             @if (broadcastModel.Channel == BroadcastChannel.Email)
@@ -169,8 +172,9 @@
         <div class="form-grid">
             <label class="full-width">Full Name *<input @bind="contactModel.FullName" placeholder="Jane Doe" /></label>
             <label>Email<input @bind="contactModel.Email" placeholder="jane@example.com" /></label>
-            <label>Phone<input @bind="contactModel.Phone" placeholder="+1 555 0100" /></label>
-            <label class="full-width">Tags<input @bind="contactModel.Tags" placeholder="vip, newsletter" /></label>
+            <label>Phone<input @bind="contactModel.Phone" placeholder="+1 555 0100 (also used for WhatsApp)" /></label>
+            <label>Telegram Chat ID<input @bind="contactModel.TelegramChatId" placeholder="From the bot's /start message" /></label>
+            <label>Tags<input @bind="contactModel.Tags" placeholder="vip, newsletter" /></label>
         </div>
     </ChildContent>
     <FooterContent>
@@ -341,6 +345,15 @@
             NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete contact");
         }
     }
+
+    private static string GetChannelIcon(BroadcastChannel channel) => channel switch
+    {
+        BroadcastChannel.Email => "envelope-fill",
+        BroadcastChannel.Sms => "chat-dots-fill",
+        BroadcastChannel.Telegram => "telegram",
+        BroadcastChannel.WhatsApp => "whatsapp",
+        _ => "send-fill"
+    };
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "...";

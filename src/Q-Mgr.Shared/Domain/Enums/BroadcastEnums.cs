@@ -1,13 +1,15 @@
 namespace QMgr.Domain.Enums;
 
-// Telegram/WhatsApp are deliberately not in this enum — this codebase has no real Bot API /
-// Business API integration for either (see IntegrationsSetup.razor's own IsBuilt=false flags).
-// Only channels with a real, working transport (SMTP email, the SMS gateway) are offered here;
-// adding fake channel options that silently no-op would be worse than not offering them.
 public enum BroadcastChannel
 {
     Email = 0,
-    Sms = 1
+    Sms = 1,
+    // Telegram requires the recipient to have started a chat with the bot first (a Bot API
+    // protocol requirement) so their numeric chat ID can be captured — see Contact.TelegramChatId.
+    Telegram = 2,
+    // WhatsApp requires real WhatsApp Business Platform credentials (phone number ID + access
+    // token) configured in NotificationSettings before this channel will actually send anything.
+    WhatsApp = 3
 }
 
 public enum BroadcastStatus

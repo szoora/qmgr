@@ -18,6 +18,11 @@ public class Contact : BaseEntity
     public string FullName { get; set; } = string.Empty;
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    // Telegram's Bot API can only message a chat the recipient has already started with the bot —
+    // there is no way to message an arbitrary phone number or username directly, so this has to be
+    // captured separately (e.g. the contact DMs the bot /start, which the bot's webhook records
+    // here) rather than derived from Phone/Email like the other channels.
+    public string? TelegramChatId { get; set; }
     public string? Tags { get; set; } // comma-separated, simple segmentation
 
     public ContactSource Source { get; set; } = ContactSource.Manual;

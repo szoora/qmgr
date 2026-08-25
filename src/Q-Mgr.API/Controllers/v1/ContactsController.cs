@@ -30,6 +30,7 @@ public class ContactsController : ControllerBase
         FullName = c.FullName,
         Phone = c.Phone,
         Email = c.Email,
+        TelegramChatId = c.TelegramChatId,
         Tags = c.Tags,
         Source = c.Source,
         OptedOut = c.OptedOut,
@@ -72,8 +73,8 @@ public class ContactsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FullName))
             return BadRequest(new ProblemDetails { Title = "Full name is required", Status = StatusCodes.Status400BadRequest });
 
-        if (string.IsNullOrWhiteSpace(request.Phone) && string.IsNullOrWhiteSpace(request.Email))
-            return BadRequest(new ProblemDetails { Title = "Phone or email is required", Status = StatusCodes.Status400BadRequest });
+        if (string.IsNullOrWhiteSpace(request.Phone) && string.IsNullOrWhiteSpace(request.Email) && string.IsNullOrWhiteSpace(request.TelegramChatId))
+            return BadRequest(new ProblemDetails { Title = "Phone, email, or Telegram chat ID is required", Status = StatusCodes.Status400BadRequest });
 
         var contact = new Contact
         {
@@ -81,6 +82,7 @@ public class ContactsController : ControllerBase
             FullName = request.FullName,
             Phone = request.Phone,
             Email = request.Email,
+            TelegramChatId = request.TelegramChatId,
             Tags = request.Tags
         };
         _context.Contacts.Add(contact);

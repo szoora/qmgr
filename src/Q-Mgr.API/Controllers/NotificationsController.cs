@@ -307,6 +307,11 @@ public class NotificationsController : ControllerBase
             SmtpPassword = dto.SmtpPassword,
             EmailFromAddress = dto.EmailFromAddress,
             EmailFromName = dto.EmailFromName,
+            TelegramEnabled = dto.TelegramEnabled,
+            TelegramBotToken = dto.TelegramBotToken,
+            WhatsAppEnabled = dto.WhatsAppEnabled,
+            WhatsAppPhoneNumberId = dto.WhatsAppPhoneNumberId,
+            WhatsAppAccessToken = dto.WhatsAppAccessToken,
             InAppEnabled = dto.InAppEnabled,
             InAppPlaySound = dto.InAppPlaySound,
             InAppRetentionDays = dto.InAppRetentionDays,
@@ -419,6 +424,11 @@ public class NotificationsController : ControllerBase
         SmtpPassword = settings.SmtpPassword,
         EmailFromAddress = settings.EmailFromAddress,
         EmailFromName = settings.EmailFromName,
+        TelegramEnabled = settings.TelegramEnabled,
+        TelegramBotToken = settings.TelegramBotToken,
+        WhatsAppEnabled = settings.WhatsAppEnabled,
+        WhatsAppPhoneNumberId = settings.WhatsAppPhoneNumberId,
+        WhatsAppAccessToken = settings.WhatsAppAccessToken,
         InAppEnabled = settings.InAppEnabled,
         InAppPlaySound = settings.InAppPlaySound,
         InAppRetentionDays = settings.InAppRetentionDays,
@@ -478,6 +488,15 @@ public class NotificationSettingsDto
     public string? SmtpPassword { get; set; }
     public string? EmailFromAddress { get; set; }
     public string? EmailFromName { get; set; }
+
+    // Telegram
+    public bool TelegramEnabled { get; set; }
+    public string? TelegramBotToken { get; set; }
+
+    // WhatsApp
+    public bool WhatsAppEnabled { get; set; }
+    public string? WhatsAppPhoneNumberId { get; set; }
+    public string? WhatsAppAccessToken { get; set; }
 
     // In-App
     public bool InAppEnabled { get; set; } = true;

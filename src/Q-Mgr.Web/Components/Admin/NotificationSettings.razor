@@ -47,6 +47,14 @@
                         {
                             <QBadge Text="ON" Variant="success" Size="sm" />
                         }
+                        else if (section.Key == "telegram" && settings.TelegramEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
+                        else if (section.Key == "whatsapp" && settings.WhatsAppEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
                         else if (section.Key == "inapp" && settings.InAppEnabled)
                         {
                             <QBadge Text="ON" Variant="success" Size="sm" />
@@ -221,6 +229,60 @@
                         </div>
                     </div>
                 }
+                else if (activeSection == "telegram")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-telegram"></i> Telegram Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.TelegramEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.TelegramEnabled ? "disabled" : "")">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <p>Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener">@@BotFather</a> on Telegram and paste its token below. Contacts can only be messaged once they've started a chat with your bot (a Telegram platform requirement).</p>
+                            </div>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.TelegramBotToken" Label="Bot Token *" Type="password" Placeholder="123456789:AAExampleTokenFromBotFather"
+                                            Disabled="@(!settings.TelegramEnabled)" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "whatsapp")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-whatsapp"></i> WhatsApp Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.WhatsAppEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.WhatsAppEnabled ? "disabled" : "")">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <p>Requires a WhatsApp Business Platform app in <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">Meta for Developers</a> — a verified phone number ID and a permanent access token.</p>
+                            </div>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.WhatsAppPhoneNumberId" Label="Phone Number ID *" Placeholder="123456789012345"
+                                            Disabled="@(!settings.WhatsAppEnabled)" />
+                                </div>
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.WhatsAppAccessToken" Label="Access Token *" Type="password" Placeholder="EAAExampleAccessToken"
+                                            Disabled="@(!settings.WhatsAppEnabled)" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
                 else if (activeSection == "inapp")
                 {
                     <div class="qm-admin-settings-section">
@@ -328,6 +390,8 @@
     {
         new() { Key = "sms", Name = "SMS", Icon = "bi-chat-dots" },
         new() { Key = "email", Name = "Email", Icon = "bi-envelope" },
+        new() { Key = "telegram", Name = "Telegram", Icon = "bi-telegram" },
+        new() { Key = "whatsapp", Name = "WhatsApp", Icon = "bi-whatsapp" },
         new() { Key = "inapp", Name = "In-App", Icon = "bi-bell" },
         new() { Key = "templates", Name = "Templates", Icon = "bi-file-text" }
     };
@@ -514,6 +578,15 @@
         public string? SmtpPassword { get; set; }
         public string? EmailFromAddress { get; set; }
         public string? EmailFromName { get; set; } = "Q-Mgr";
+
+        // Telegram
+        public bool TelegramEnabled { get; set; }
+        public string? TelegramBotToken { get; set; }
+
+        // WhatsApp
+        public bool WhatsAppEnabled { get; set; }
+        public string? WhatsAppPhoneNumberId { get; set; }
+        public string? WhatsAppAccessToken { get; set; }
 
         // In-App
         public bool InAppEnabled { get; set; } = true;

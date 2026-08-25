@@ -8,6 +8,7 @@ public record ContactDto
     public string FullName { get; init; } = string.Empty;
     public string? Phone { get; init; }
     public string? Email { get; init; }
+    public string? TelegramChatId { get; init; }
     public string? Tags { get; init; }
     public ContactSource Source { get; init; }
     public bool OptedOut { get; init; }
@@ -20,6 +21,7 @@ public record CreateContactRequest
     public string FullName { get; set; } = string.Empty;
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    public string? TelegramChatId { get; set; }
     public string? Tags { get; set; }
 }
 

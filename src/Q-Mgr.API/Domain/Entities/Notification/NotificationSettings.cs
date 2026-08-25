@@ -30,6 +30,20 @@ public class NotificationSettings : BaseAuditableEntity
     public string? EmailFromAddress { get; set; }
     public string? EmailFromName { get; set; }
 
+    // Telegram Configuration — real Bot API integration (api.telegram.org), not a stub. Sending
+    // requires the recipient to have started a conversation with this bot first (a Telegram Bot
+    // API protocol requirement, not a code limitation) so their numeric chat ID can be captured —
+    // see Contact.TelegramChatId.
+    public bool TelegramEnabled { get; set; } = false;
+    public string? TelegramBotToken { get; set; }
+
+    // WhatsApp Configuration — real WhatsApp Cloud API integration (graph.facebook.com), not a
+    // stub. Meta requires a verified phone number ID and permanent access token from a WhatsApp
+    // Business Platform app.
+    public bool WhatsAppEnabled { get; set; } = false;
+    public string? WhatsAppPhoneNumberId { get; set; }
+    public string? WhatsAppAccessToken { get; set; }
+
     // In-App Notification Configuration
     public bool InAppEnabled { get; set; } = true;
     public bool InAppPlaySound { get; set; } = true;

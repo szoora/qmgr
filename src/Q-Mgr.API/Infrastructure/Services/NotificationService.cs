@@ -171,6 +171,103 @@ public class NotificationService : INotificationService
 
     #endregion
 
+    #region Telegram
+
+    public async Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(organizationId, cancellationToken);
+        if (settings == null || !settings.TelegramEnabled)
+        {
+            _logger.LogInformation("Telegram notifications disabled or not configured");
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(settings.TelegramBotToken))
+        {
+            _logger.LogWarning("Telegram bot token not configured");
+            return false;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("TelegramApi");
+            var request = new { chat_id = chatId, text = message };
+
+            var response = await client.PostAsJsonAsync($"bot{settings.TelegramBotToken}/sendMessage", request, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("Telegram message sent successfully to chat {ChatId}", chatId);
+                return true;
+            }
+
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Telegram send failed: {StatusCode} - {Error}", response.StatusCode, error);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send Telegram message to chat {ChatId}", chatId);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region WhatsApp
+
+    public async Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(organizationId, cancellationToken);
+        if (settings == null || !settings.WhatsAppEnabled)
+        {
+            _logger.LogInformation("WhatsApp notifications disabled or not configured");
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(settings.WhatsAppPhoneNumberId) || string.IsNullOrEmpty(settings.WhatsAppAccessToken))
+        {
+            _logger.LogWarning("WhatsApp Cloud API credentials not configured");
+            return false;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("WhatsAppApi");
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.WhatsAppAccessToken);
+
+            // WhatsApp Cloud API requires E.164 digits with no leading '+' in the "to" field.
+            var normalizedNumber = new string(NormalizePhoneNumber(phoneNumber).Where(char.IsDigit).ToArray());
+
+            var request = new
+            {
+                messaging_product = "whatsapp",
+                to = normalizedNumber,
+                type = "text",
+                text = new { body = message }
+            };
+
+            var response = await client.PostAsJsonAsync($"{settings.WhatsAppPhoneNumberId}/messages", request, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("WhatsApp message sent successfully to {PhoneNumber}", phoneNumber);
+                return true;
+            }
+
+            var error = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("WhatsApp send failed: {StatusCode} - {Error}", response.StatusCode, error);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send WhatsApp message to {PhoneNumber}", phoneNumber);
+            return false;
+        }
+    }
+
+    #endregion
+
     #region Push Notifications
 
     public Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default)

@@ -14,6 +14,7 @@ public class ContactConfiguration : IEntityTypeConfiguration<Contact>
         builder.Property(c => c.FullName).HasMaxLength(255).IsRequired();
         builder.Property(c => c.Phone).HasMaxLength(50);
         builder.Property(c => c.Email).HasMaxLength(255);
+        builder.Property(c => c.TelegramChatId).HasMaxLength(50);
         builder.Property(c => c.Tags).HasMaxLength(500);
 
         builder.HasIndex(c => new { c.OrganizationId, c.OptedOut })

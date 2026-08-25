@@ -112,6 +112,19 @@ public static class DependencyInjection
         });
         services.AddScoped<ISpotifyService, SpotifyService>();
 
+        // HTTP Clients for Telegram Bot API and WhatsApp Cloud API — real, fixed endpoints
+        // (unlike SmsGateway below, these aren't pluggable per-org, Telegram/Meta host them).
+        services.AddHttpClient("TelegramApi", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.BaseAddress = new Uri("https://api.telegram.org/");
+        });
+        services.AddHttpClient("WhatsAppApi", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.BaseAddress = new Uri("https://graph.facebook.com/v18.0/");
+        });
+
         // HTTP Client for SMS Gateway
         services.AddHttpClient("SmsGateway", client =>
         {

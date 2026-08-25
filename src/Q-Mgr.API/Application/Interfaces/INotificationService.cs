@@ -14,6 +14,10 @@ public interface INotificationService
     Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, CancellationToken cancellationToken = default);
     Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default);
 
+    /// <summary>chatId is the recipient's numeric Telegram chat ID (Contact.TelegramChatId), not a phone number — see NotificationSettings.TelegramBotToken doc comment for why.</summary>
+    Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, CancellationToken cancellationToken = default);
+    Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
+
     // In-App notifications
     Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default);
 

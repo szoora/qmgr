@@ -129,6 +129,16 @@ public class BroadcastSendJob
                             broadcast.OrganizationId,
                             recipient.Contact.Phone!,
                             AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
+                    BroadcastChannel.Telegram when !string.IsNullOrWhiteSpace(recipient.Contact.TelegramChatId) =>
+                        await _notificationService.SendTelegramAsync(
+                            broadcast.OrganizationId,
+                            recipient.Contact.TelegramChatId!,
+                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
+                    BroadcastChannel.WhatsApp when !string.IsNullOrWhiteSpace(recipient.Contact.Phone) =>
+                        await _notificationService.SendWhatsAppAsync(
+                            broadcast.OrganizationId,
+                            recipient.Contact.Phone!,
+                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
                     _ => false
                 };
                 if (!sent) error = "No usable contact address for this channel, or the transport is disabled/unconfigured";

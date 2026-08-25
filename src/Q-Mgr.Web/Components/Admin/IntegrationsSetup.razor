@@ -258,16 +258,17 @@
             return;
         }
 
-        // SMS Gateway / Email Service reflect the organization's real NotificationSettings
-        // (see /admin/notification-settings) rather than a hardcoded "Connected" badge.
-        var (smsEnabled, emailEnabled) = await LoadNotificationChannelState();
+        // SMS Gateway / Email / Telegram / WhatsApp reflect the organization's real
+        // NotificationSettings (see /admin/notification-settings) rather than a hardcoded badge.
+        var (smsEnabled, emailEnabled, telegramEnabled, whatsAppEnabled) = await LoadNotificationChannelState();
 
         integrations = new List<IntegrationInfo>
         {
             new() { Name = "SMS Gateway", Description = "Send SMS notifications to customers when their token is called", Icon = "chat-dots", Color = "#10b981", IsConnected = smsEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Token Notifications", "Appointment Reminders", "Custom Templates" } },
             new() { Name = "Email Service", Description = "Send email notifications and reports to customers and staff", Icon = "envelope", Color = "#8c2f52", IsConnected = emailEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Token Updates", "Daily Reports", "Custom Branding" } },
             new() { Name = "Display Signage", Description = "Q-Mgr's built-in digital signage module for queue displays", Icon = "tv", Color = "#f59e0b", IsConnected = true, IsBuilt = true, ConfigureUrl = "/content/playlists", Features = new() { "Real-time Updates", "Multi-screen Support", "Custom Layouts" } },
-            new() { Name = "WhatsApp Business", Description = "Send WhatsApp messages for token updates and notifications", Icon = "whatsapp", Color = "#25D366", IsConnected = false, IsBuilt = false, Features = new() { "Rich Media Messages", "Interactive Buttons", "Quick Replies" } },
+            new() { Name = "Telegram Bot", Description = "Send Telegram messages via a bot you create — contacts must message the bot first", Icon = "telegram", Color = "#26A5E4", IsConnected = telegramEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Broadcast Campaigns", "Token Notifications", "Free to Use" } },
+            new() { Name = "WhatsApp Business", Description = "Send WhatsApp messages via the real WhatsApp Cloud API (Meta for Developers)", Icon = "whatsapp", Color = "#25D366", IsConnected = whatsAppEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Broadcast Campaigns", "Token Notifications", "Rich Text Messages" } },
             new() { Name = "Hospital Information System", Description = "Integrate with HIS for patient queue management", Icon = "hospital", Color = "#ef4444", IsConnected = false, IsBuilt = false, Features = new() { "Patient Lookup", "Appointment Sync", "Department Routing" } },
             new() { Name = "Banking Core System", Description = "Connect to core banking for customer identification", Icon = "bank", Color = "#47393f", IsConnected = false, IsBuilt = false, Features = new() { "Customer Lookup", "Account Verification", "Service Routing" } }
         };
@@ -276,7 +277,7 @@
         webhooks = new List<WebhookInfo>();
     }
 
-    private async Task<(bool SmsEnabled, bool EmailEnabled)> LoadNotificationChannelState()
+    private async Task<(bool SmsEnabled, bool EmailEnabled, bool TelegramEnabled, bool WhatsAppEnabled)> LoadNotificationChannelState()
     {
         try
         {
@@ -284,21 +285,23 @@
             if (user?.OrganizationId is not Guid organizationId || organizationId == Guid.Empty)
             {
                 // No fallback to a specific tenant's ID — an unresolved org means "don't know",
-                // not "assume the demo tenant". Report both channels as disabled rather than
+                // not "assume the demo tenant". Report every channel as disabled rather than
                 // silently reading/showing another tenant's notification-channel state.
-                return (false, false);
+                return (false, false, false, false);
             }
 
             var response = await Http.GetAsync($"api/v1/notifications/settings/{organizationId}");
-            if (!response.IsSuccessStatusCode) return (false, false);
+            if (!response.IsSuccessStatusCode) return (false, false, false, false);
 
             var settings = await response.Content.ReadFromJsonAsync<NotificationChannelState>(JsonOptions);
-            return settings == null ? (false, false) : (settings.SmsEnabled, settings.EmailEnabled);
+            return settings == null
+                ? (false, false, false, false)
+                : (settings.SmsEnabled, settings.EmailEnabled, settings.TelegramEnabled, settings.WhatsAppEnabled);
         }
         catch
         {
-            // Settings not configured yet or unreachable — honestly report both channels as not connected.
-            return (false, false);
+            // Settings not configured yet or unreachable — honestly report every channel as not connected.
+            return (false, false, false, false);
         }
     }
 
@@ -335,6 +338,8 @@
     {
         public bool SmsEnabled { get; set; }
         public bool EmailEnabled { get; set; }
+        public bool TelegramEnabled { get; set; }
+        public bool WhatsAppEnabled { get; set; }
     }
 
     private class IntegrationInfo

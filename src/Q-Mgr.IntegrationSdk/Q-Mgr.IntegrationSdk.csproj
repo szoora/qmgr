@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone client SDK for third-party systems (hospital/HIS, banking core, pharmacy, or any
+    other external queue-adjacent system) that want to push data into Q-Mgr over its public REST
+    API. This project has NO reference to Q-Mgr.API — it's meant to be built and distributed on
+    its own (e.g. as a NuGet package) and embedded directly in the *external* system's own
+    codebase, which is why it previously lived inside the API project: nothing there ever actually
+    consumed it, since its whole point is to run somewhere else. Authenticates via an ApiClient
+    API key issued from Q-Mgr's own /admin/api-clients admin screen.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>QMgr.Integration</RootNamespace>
+    <PackageId>QMgr.IntegrationSdk</PackageId>
+    <Description>Client SDK for third-party systems (hospital/HIS, banking, pharmacy, etc.) integrating with Q-Mgr's queue API.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>
