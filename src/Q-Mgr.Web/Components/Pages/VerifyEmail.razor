@@ -1,0 +1,303 @@
+@page "/verify"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ILogger<VerifyEmail> Logger
+
+<PageTitle>Verify Email - Q-Mgr</PageTitle>
+
+<div class="verify-container">
+    <div class="verify-card">
+        <div class="verify-header">
+            <div class="logo-circle">
+                <QIcon Name="@(state == VerifyState.Success ? "check-circle-fill" : state == VerifyState.Failed ? "exclamation-circle-fill" : "envelope-fill")" Size="32" />
+            </div>
+        </div>
+
+        @if (state == VerifyState.Verifying)
+        {
+            <h1>Verifying your email...</h1>
+            <p class="verify-subtext">This will just take a moment.</p>
+        }
+        else if (state == VerifyState.Success)
+        {
+            <h1>Email verified!</h1>
+            <p class="verify-subtext">@message</p>
+            <button class="btn-primary" @onclick="GoToLogin">Continue to Login</button>
+        }
+        else if (state == VerifyState.MissingLink)
+        {
+            <h1>Invalid verification link</h1>
+            <p class="verify-subtext">
+                This link is missing the information needed to verify your account. If you copied
+                it from an email, make sure the whole link came through.
+            </p>
+            <button class="btn-primary" @onclick="GoToLogin">Go to Login</button>
+        }
+        else
+        {
+            <h1>Verification failed</h1>
+            <p class="verify-subtext">@message</p>
+
+            @if (!resendComplete)
+            {
+                <div class="resend-section">
+                    <label for="resend-email">Get a new verification link</label>
+                    <div class="resend-row">
+                        <input id="resend-email"
+                               type="email"
+                               class="form-control"
+                               placeholder="you@company.com"
+                               @bind="resendEmail"
+                               disabled="@isResending" />
+                        <button class="btn-secondary" @onclick="ResendVerification" disabled="@(isResending || string.IsNullOrWhiteSpace(resendEmail))">
+                            @(isResending ? "Sending..." : "Resend")
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="verify-subtext resend-confirm">
+                    If an account exists with that email, a new verification link is on its way.
+                </p>
+            }
+
+            <button class="btn-link" @onclick="GoToLogin">Back to Login</button>
+        }
+    </div>
+</div>
+
+<style>
+    .verify-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+    }
+
+    .verify-card {
+        width: 100%;
+        max-width: 420px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        box-shadow: var(--qm-shadow-lg, 0 10px 40px rgba(0, 0, 0, 0.15));
+        padding: 40px;
+        text-align: center;
+    }
+
+    .verify-header {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 20px;
+    }
+
+    .logo-circle {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: var(--qm-primary);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .verify-card h1 {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        margin: 0 0 8px 0;
+    }
+
+    .verify-subtext {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+        line-height: 1.5;
+        margin: 0 0 24px 0;
+    }
+
+    .btn-primary {
+        width: 100%;
+        padding: 12px 20px;
+        background: var(--qm-primary);
+        color: white;
+        border: none;
+        border-radius: var(--qm-radius-md);
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .btn-primary:hover {
+        background: var(--qm-primary-dark);
+    }
+
+    .btn-secondary {
+        padding: 12px 16px;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .btn-secondary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-link {
+        margin-top: 16px;
+        background: none;
+        border: none;
+        color: var(--qm-primary);
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .resend-section {
+        text-align: left;
+        margin-bottom: 8px;
+    }
+
+    .resend-section label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        margin-bottom: 8px;
+    }
+
+    .resend-row {
+        display: flex;
+        gap: 8px;
+    }
+
+    .form-control {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        font-size: 14px;
+        color: var(--qm-text-primary);
+        background: var(--qm-bg-card);
+    }
+
+    .resend-confirm {
+        margin-top: 0;
+    }
+</style>
+
+@code {
+    private enum VerifyState { Verifying, Success, Failed, MissingLink }
+
+    private VerifyState state = VerifyState.Verifying;
+    private string? message;
+    private string? resendEmail;
+    private bool isResending;
+    private bool resendComplete;
+
+    [SupplyParameterFromQuery(Name = "org")]
+    private Guid? OrganizationId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "token")]
+    private string? Token { get; set; }
+
+    private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
+    private bool verifyStarted;
+
+    // Deliberately NOT in OnInitializedAsync: this app's Routes render with
+    // RenderMode.InteractiveServer (App.razor), which prerenders every page as static HTML
+    // before the interactive circuit connects — OnInitializedAsync runs once for each, i.e.
+    // twice per page load. A verification token is single-use, so the first (prerender) call
+    // silently verified the account while the second (interactive) call then hit an
+    // already-verified org and reported failure — the user saw "Verification failed" for a
+    // verification that had, in fact, already succeeded. Found live: the DB showed
+    // VerifiedAt set immediately after loading a real link that displayed as failed.
+    // OnAfterRenderAsync(firstRender) only fires once per real circuit — never during
+    // prerendering — which is the standard fix for this exact class of bug.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || verifyStarted) return;
+        verifyStarted = true;
+
+        if (OrganizationId is null || OrganizationId == Guid.Empty || string.IsNullOrWhiteSpace(Token))
+        {
+            state = VerifyState.MissingLink;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/v1/register/verify", new
+            {
+                organizationId = OrganizationId.Value,
+                token = Token
+            });
+
+            var result = await response.Content.ReadFromJsonAsync<VerifyResponse>();
+
+            if (response.IsSuccessStatusCode && result?.Success == true)
+            {
+                state = VerifyState.Success;
+                message = result.Message ?? "Your email has been verified successfully!";
+            }
+            else
+            {
+                state = VerifyState.Failed;
+                message = result?.Message ?? "The verification link is invalid or has expired.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Email verification error");
+            state = VerifyState.Failed;
+            message = "Unable to connect to the server. Please try again in a moment.";
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ResendVerification()
+    {
+        if (string.IsNullOrWhiteSpace(resendEmail)) return;
+
+        isResending = true;
+        try
+        {
+            await Http.PostAsJsonAsync("api/v1/register/resend-verification", new { email = resendEmail });
+            resendComplete = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Resend verification error");
+        }
+        finally
+        {
+            isResending = false;
+        }
+    }
+
+    private void GoToLogin()
+    {
+        var url = state == VerifyState.Success ? "/login?verified=true" : "/login";
+        Navigation.NavigateTo(url, forceLoad: true);
+    }
+
+    private record VerifyResponse
+    {
+        public bool Success { get; init; }
+        public string? Slug { get; init; }
+        public string? Message { get; init; }
+        public string? RedirectUrl { get; init; }
+    }
+}

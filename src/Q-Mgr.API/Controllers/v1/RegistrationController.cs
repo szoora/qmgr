@@ -109,7 +109,8 @@ public class RegistrationController : ControllerBase
             UserId = result.UserId!.Value,
             Slug = result.Slug!,
             Message = result.Message!,
-            RequiresEmailVerification = result.RequiresEmailVerification
+            RequiresEmailVerification = result.RequiresEmailVerification,
+            EmailSent = result.EmailSent
         });
     }
 
@@ -293,6 +294,7 @@ public record RegisterResponse
     public string Slug { get; init; } = string.Empty;
     public string Message { get; init; } = string.Empty;
     public bool RequiresEmailVerification { get; init; }
+    public bool EmailSent { get; init; }
 }
 
 /// <summary>
