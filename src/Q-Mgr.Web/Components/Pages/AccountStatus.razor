@@ -1,0 +1,188 @@
+@page "/account-status"
+@layout MinimalLayout
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous]
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+
+<PageTitle>Account Status - Q-Mgr</PageTitle>
+
+<div class="status-container">
+    <div class="status-card">
+        <div class="status-header">
+            <div class="icon-circle @IconClass">
+                <QIcon Name="@IconName" Size="32" />
+            </div>
+        </div>
+
+        <h1>@Title</h1>
+        <p class="status-subtext">@(string.IsNullOrWhiteSpace(Message) ? DefaultMessage : Message)</p>
+
+        <div class="status-actions">
+            @if (!string.IsNullOrEmpty(PrimaryActionText))
+            {
+                <button class="btn-primary" @onclick="GoToPrimaryAction">@PrimaryActionText</button>
+            }
+            <button class="btn-secondary" @onclick="HandleLogout">Log Out</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .status-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+    }
+
+    .status-card {
+        width: 100%;
+        max-width: 440px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        box-shadow: var(--qm-shadow-lg, 0 10px 40px rgba(0, 0, 0, 0.15));
+        padding: 40px;
+        text-align: center;
+    }
+
+    .status-header {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 20px;
+    }
+
+    .icon-circle {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .icon-circle.warning { background: var(--qm-warning); }
+    .icon-circle.danger { background: var(--qm-danger); }
+    .icon-circle.muted { background: var(--qm-text-muted); }
+
+    .status-card h1 {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        margin: 0 0 8px 0;
+    }
+
+    .status-subtext {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+        line-height: 1.5;
+        margin: 0 0 28px 0;
+    }
+
+    .status-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .btn-primary {
+        padding: 12px 20px;
+        background: var(--qm-primary);
+        color: white;
+        border: none;
+        border-radius: var(--qm-radius-md);
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .btn-primary:hover {
+        background: var(--qm-primary-dark);
+    }
+
+    .btn-secondary {
+        padding: 12px 20px;
+        background: none;
+        color: var(--qm-text-muted);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+    }
+
+    .btn-secondary:hover {
+        color: var(--qm-text-primary);
+        border-color: var(--qm-text-muted);
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "code")]
+    private string? Code { get; set; }
+
+    [SupplyParameterFromQuery(Name = "message")]
+    private string? Message { get; set; }
+
+    [SupplyParameterFromQuery(Name = "actionUrl")]
+    private string? ActionUrl { get; set; }
+
+    private string Title => Code switch
+    {
+        "ACCOUNT_SUSPENDED" => "Account Suspended",
+        "ACCOUNT_CANCELLED" => "Account Cancelled",
+        "ACCOUNT_PENDING" => "Verify Your Email",
+        "ACCOUNT_DELETED" => "Account Not Found",
+        _ => "Access Restricted"
+    };
+
+    private string DefaultMessage => Code switch
+    {
+        "ACCOUNT_SUSPENDED" => "Your account has been suspended due to payment issues. Please update your payment method to restore access.",
+        "ACCOUNT_CANCELLED" => "Your account has been cancelled. Choose a plan to reactivate.",
+        "ACCOUNT_PENDING" => "Your account is pending email verification. Please check your inbox for a verification link.",
+        "ACCOUNT_DELETED" => "This account no longer exists.",
+        _ => "Your account currently doesn't have access to this page."
+    };
+
+    private string IconName => Code switch
+    {
+        "ACCOUNT_SUSPENDED" => "exclamation-triangle-fill",
+        "ACCOUNT_CANCELLED" => "x-circle-fill",
+        "ACCOUNT_PENDING" => "envelope-fill",
+        "ACCOUNT_DELETED" => "slash-circle-fill",
+        _ => "shield-lock-fill"
+    };
+
+    private string IconClass => Code switch
+    {
+        "ACCOUNT_SUSPENDED" => "warning",
+        "ACCOUNT_CANCELLED" => "danger",
+        "ACCOUNT_DELETED" => "danger",
+        _ => "muted"
+    };
+
+    // The API's actionUrl values ("/billing/update-payment", "/billing/reactivate") don't
+    // correspond to real routes in this app — billing changes all happen through the one real
+    // Subscription page regardless of the reason access was cut off, so both suspended and
+    // cancelled route there instead of trusting actionUrl literally.
+    private string? PrimaryActionText => Code switch
+    {
+        "ACCOUNT_SUSPENDED" => "Update Payment",
+        "ACCOUNT_CANCELLED" => "View Plans",
+        _ => null
+    };
+
+    private void GoToPrimaryAction()
+    {
+        Navigation.NavigateTo("/billing/subscription", forceLoad: true);
+    }
+
+    private async Task HandleLogout()
+    {
+        await AuthService.LogoutAsync();
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+}

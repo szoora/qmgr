@@ -22,6 +22,7 @@ public class TenantStatusMiddleware
     // retried forever — the whole app got stuck on an infinite "Reconnecting... Attempt 3 of 3"
     // overlay instead of ever surfacing the real ACCOUNT_SUSPENDED reason. Found live by
     // suspending a test tenant and watching the UI hang.
+    //
     private static readonly HashSet<string> AlwaysAllowedEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/v1/auth/login",
@@ -32,6 +33,28 @@ public class TenantStatusMiddleware
         "/health",
         "/swagger",
         "/scalar"
+    };
+
+    // Exact matches only (not prefixes) — MainLayout (the admin shell every non-Kiosk page
+    // renders inside: sidebar branch selector, notification bell) calls these on every page
+    // load regardless of what page a suspended tenant is actually trying to reach. Without this,
+    // TenantStatusMessageHandler on the Web side — which redirects to /account-status on ANY
+    // ACCOUNT_SUSPENDED 403 — would catch these ambient chrome calls too: a suspended admin
+    // clicking "Update Payment" would navigate to the real, working /billing/subscription page,
+    // only to have MainLayout's own branches/notifications calls 403 a moment later and bounce
+    // them straight back to /account-status, an infinite ping-pong that made the one page a
+    // suspended tenant most needs unreachable. This is the tenant's own account chrome (branch
+    // names, notification list) — not gated business functionality — so exposing exactly these
+    // is intentional; deliberately NOT a "/api/v1/branches" *prefix* match, which would also
+    // allow-list branch/counter/service-type create-edit-delete (BranchesController) and
+    // notification-settings writes (NotificationsController) for a suspended, non-paying tenant.
+    private static readonly HashSet<string> AlwaysAllowedExact = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/v1/branches",
+        "/api/v1/notifications",
+        "/api/v1/notifications/count",
+        "/hubs/notifications",
+        "/hubs/notifications/negotiate"
     };
 
     public TenantStatusMiddleware(RequestDelegate next, ILogger<TenantStatusMiddleware> logger)
@@ -129,8 +152,9 @@ public class TenantStatusMiddleware
 
     private static bool IsAlwaysAllowed(string path)
     {
-        return AlwaysAllowedEndpoints.Any(endpoint =>
-            path.StartsWith(endpoint, StringComparison.OrdinalIgnoreCase));
+        return AlwaysAllowedExact.Contains(path) ||
+               AlwaysAllowedEndpoints.Any(endpoint =>
+                   path.StartsWith(endpoint, StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task WriteForbiddenResponse(
