@@ -42,7 +42,7 @@
                     </div>
                 </div>
 
-                <p class="trial-note">Start your @trialDays-day free trial. No credit card required.</p>
+                <p class="trial-note">Start your @trialDays-day free trial.</p>
             </div>
         </div>
 
@@ -131,7 +131,10 @@
                                 else if (slugAvailable.HasValue)
                                 {
                                     <span class="slug-status @(slugAvailable.Value ? "available" : "unavailable")">
-                                        @(slugAvailable.Value ? "&#10003; Available" : "&#10007; Not available")
+                                        @* Razor HTML-escapes C# expression output by default — an HTML entity string
+                                           like "&#10003;" rendered this way shows as literal text, not a checkmark.
+                                           Using the actual Unicode characters sidesteps that entirely. *@
+                                        @(slugAvailable.Value ? "✓ Available" : "✗ Not available")
                                     </span>
                                 }
                                 <small class="form-hint">This will be your unique URL to access Q-Mgr</small>
@@ -139,16 +142,28 @@
 
                             <div class="form-group">
                                 <label for="industry">Industry Type</label>
+                                @* BUG FIX: these option values used to be free-text words ("healthcare",
+                                   "banking", etc.) that didn't match any QMgr.Domain.Enums.IndustryType
+                                   member name. RegisterOrganizationCommandHandler does
+                                   Enum.TryParse<IndustryType>(request.IndustryType, ...) — a failed parse
+                                   silently falls back to IndustryType.General, so almost every industry
+                                   selection here (all except the two that happened to coincidentally
+                                   match, "government" and "telecom") was seeding the wrong default
+                                   service types for a brand-new org. Caught live while walking through
+                                   registration and checking what actually got seeded in the database.
+                                   Values now match the real enum member names; Pharmacy — a supported
+                                   backend industry type with its own default service types — previously
+                                   had no UI option at all and is added below. *@
                                 <select id="industry" @bind="formData.IndustryType" class="form-control">
                                     <option value="">Select your industry</option>
-                                    <option value="healthcare">Healthcare</option>
-                                    <option value="banking">Banking & Finance</option>
-                                    <option value="government">Government</option>
-                                    <option value="retail">Retail</option>
-                                    <option value="telecom">Telecommunications</option>
-                                    <option value="education">Education</option>
-                                    <option value="hospitality">Hospitality</option>
-                                    <option value="other">Other</option>
+                                    <option value="Hospital">Healthcare</option>
+                                    <option value="Bank">Banking & Finance</option>
+                                    <option value="Pharmacy">Pharmacy</option>
+                                    <option value="Government">Government</option>
+                                    <option value="ElectronicsShop">Retail</option>
+                                    <option value="Telecom">Telecommunications</option>
+                                    <option value="Restaurant">Hospitality &amp; Food Service</option>
+                                    <option value="General">Other</option>
                                 </select>
                             </div>
 
@@ -919,12 +934,20 @@
 
     private record TrialInfoResponse(int TrialDays);
 
+    // BUG FIX: the previous "should I keep auto-generating?" check compared the OLD slug
+    // (from the prior keystroke) against a slug freshly generated from the NEW full name —
+    // those only ever match on the very first character typed, since the old slug was always
+    // generated from a shorter name prefix. In practice the subdomain field froze after one
+    // keystroke (e.g. typing "Acme Test Clinic" left the subdomain at just "a") — caught live
+    // while walking through registration in the browser. Track manual edits explicitly instead
+    // of trying to infer them from a comparison that could never stay true.
+    private bool slugManuallyEdited = false;
+
     private void OnOrganizationNameChanged(ChangeEventArgs e)
     {
         formData.OrganizationName = e.Value?.ToString() ?? "";
 
-        // Auto-generate slug from organization name
-        if (string.IsNullOrEmpty(formData.Slug) || formData.Slug == GenerateSlug(formData.OrganizationName))
+        if (!slugManuallyEdited)
         {
             formData.Slug = GenerateSlug(formData.OrganizationName);
             ResetSlugCheck();
@@ -934,6 +957,7 @@
     private void OnSlugChanged(ChangeEventArgs e)
     {
         formData.Slug = e.Value?.ToString() ?? "";
+        slugManuallyEdited = true;
         ResetSlugCheck();
     }
 

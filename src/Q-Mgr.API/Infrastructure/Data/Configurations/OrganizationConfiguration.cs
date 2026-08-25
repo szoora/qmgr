@@ -66,9 +66,17 @@ public class BranchConfiguration : IEntityTypeConfiguration<Branch>
         builder.Property(b => b.Settings)
             .HasColumnType("jsonb");
 
-        builder.HasIndex(b => b.Code)
+        // BUG FIX: this was a *globally* unique index on Code alone — since
+        // TenantProvisioningService.SeedDefaultDataAsync hardcodes Code="MAIN" for every new
+        // org's first branch, and the seeded Demo Organization already occupies "MAIN" globally,
+        // this meant literally every self-service registration after the very first one ever
+        // would crash with a duplicate-key violation partway through email verification (after
+        // the org was already flipped to Trialing/Verified, leaving it stuck with zero branches
+        // and no way to recover through the UI). Caught live while walking through registration
+        // in the browser. Branch codes only need to be unique *within* an organization.
+        builder.HasIndex(b => new { b.OrganizationId, b.Code })
             .IsUnique()
-            .HasDatabaseName("idx_branches_code");
+            .HasDatabaseName("idx_branches_org_code");
 
         builder.HasOne(b => b.Organization)
             .WithMany(o => o.Branches)
