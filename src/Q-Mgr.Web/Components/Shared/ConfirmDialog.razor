@@ -1,0 +1,64 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+<QModal @bind-Visible="IsVisible" Title="@Title" Size="sm" ShowDefaultFooter="false">
+    <ChildContent>
+        <p class="confirm-message">@Message</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="@CancelText" Icon="x-lg" Variant="ghost" OnClick="@Cancel" />
+        <QButton Text="@ConfirmText" Icon="@GetConfirmIcon()" Variant="@GetConfirmVariant()" OnClick="@Confirm" />
+    </FooterContent>
+</QModal>
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public EventCallback<bool> IsVisibleChanged { get; set; }
+    [Parameter] public string Title { get; set; } = "Confirm";
+    [Parameter] public string Message { get; set; } = "Are you sure?";
+    [Parameter] public string ConfirmText { get; set; } = "Confirm";
+    [Parameter] public string CancelText { get; set; } = "Cancel";
+    [Parameter] public string ConfirmButtonClass { get; set; } = "btn-primary";
+    [Parameter] public string CancelButtonClass { get; set; } = "btn-outline-secondary";
+    [Parameter] public EventCallback<bool> OnClose { get; set; }
+
+    private string GetConfirmVariant()
+    {
+        return ConfirmButtonClass switch
+        {
+            "btn-danger" => "danger",
+            "btn-warning" => "warning",
+            "btn-success" => "success",
+            _ => "primary"
+        };
+    }
+
+    // Mirrors GetConfirmVariant's classification so the icon always agrees with
+    // the button's color/intent (e.g. a danger-styled "Delete" confirmation gets
+    // a trash icon, not a generic checkmark) without needing a separate
+    // caller-supplied icon parameter for every ConfirmDialog usage.
+    private string GetConfirmIcon()
+    {
+        return ConfirmButtonClass switch
+        {
+            "btn-danger" => "trash-fill",
+            "btn-warning" => "exclamation-triangle-fill",
+            "btn-success" => "check-lg",
+            _ => "check-lg"
+        };
+    }
+
+    private async Task Confirm()
+    {
+        IsVisible = false;
+        await IsVisibleChanged.InvokeAsync(false);
+        await OnClose.InvokeAsync(true);
+    }
+
+    private async Task Cancel()
+    {
+        IsVisible = false;
+        await IsVisibleChanged.InvokeAsync(false);
+        await OnClose.InvokeAsync(false);
+    }
+}

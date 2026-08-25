@@ -1,0 +1,475 @@
+@page "/admin/settings"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+
+<PageTitle>System Settings - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>System Settings</h1>
+            <p class="subtitle">Configure global system preferences and defaults</p>
+        </div>
+        <QButton Text="Save All Changes" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isLoading || isSaving)" />
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-overlay">
+            <div class="webster-spinner"></div>
+            <span class="loading-text">Loading settings...</span>
+        </div>
+    }
+    else
+    {
+        <div class="settings-container">
+            <div class="settings-nav">
+                @foreach (var navSection in sections)
+                {
+                    <div class="settings-nav-item @(activeSection == navSection.Key ? "active" : "")" @onclick="@(() => activeSection = navSection.Key)">
+                        <QIcon Name="@navSection.Icon" />
+                        <span>@navSection.Name</span>
+                    </div>
+                }
+            </div>
+
+            <div class="settings-content">
+                @if (activeSection == "general")
+                {
+                    <div class="settings-section">
+                        <h3>General Settings</h3>
+                        <div class="settings-group">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Organization Name</label>
+                                    <p>Display name for your organization</p>
+                                </div>
+                                <QInput TValue="string" @bind-Value="@settings.OrganizationName" Class="setting-input-wide" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Default Language</label>
+                                    <p>Primary language for the interface</p>
+                                </div>
+                                <QSelect TValue="string" TItem="string" @bind-Value="@settings.Language" Items="@languages" Class="setting-select" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Time Zone</label>
+                                    <p>Default time zone for all branches</p>
+                                </div>
+                                <QSelect TValue="string" TItem="string" @bind-Value="@settings.TimeZone" Items="@timeZones" Class="setting-select-wide" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Date Format</label>
+                                    <p>How dates are displayed</p>
+                                </div>
+                                <QSelect TValue="string" TItem="string" @bind-Value="@settings.DateFormat" Items="@dateFormats" Class="setting-select" />
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "queue")
+                {
+                    <div class="settings-section">
+                        <h3>Queue Settings</h3>
+                        <div class="settings-group">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Token Number Format</label>
+                                    <p>Format for generated token numbers</p>
+                                </div>
+                                <QSelect TValue="string" TItem="string" @bind-Value="@settings.TokenFormat" Items="@tokenFormats" Class="setting-select" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Daily Reset Time</label>
+                                    <p>Time to reset daily token counters</p>
+                                </div>
+                                <QDatePicker @bind-Value="@settings.ResetTime" ShowTime="true" Style="width: 150px;" />
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Max Queue Size</label>
+                                    <p>Maximum tokens allowed in queue (0 = unlimited)</p>
+                                </div>
+                                <QInput TValue="int" @bind-Value="@settings.MaxQueueSize" Type="number" Min="0" Max="1000" Class="setting-input-narrow" />
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Auto-call Next Token</label>
+                                    <p>Automatically call next token when counter becomes free</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AutoCallNext" />
+                                </div>
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Allow Token Transfer</label>
+                                    <p>Allow operators to transfer tokens between counters</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AllowTransfer" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "display")
+                {
+                    <div class="settings-section">
+                        <h3>Display Settings</h3>
+                        <p class="section-note">
+                            Dark/Light theme is managed under <a href="/admin/branding-settings">Branding Settings</a>, not here.
+                        </p>
+                        <div class="settings-group">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Voice Announcement</label>
+                                    <p>Text-to-speech language for announcements</p>
+                                </div>
+                                <QSelect TValue="string" TItem="string" @bind-Value="@voiceLanguage" Items="@voiceLanguages" Class="setting-select" />
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Play Sound on Call</label>
+                                    <p>Play notification sound when token is called</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.PlaySound" />
+                                </div>
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Show Wait Time</label>
+                                    <p>Display estimated wait time on screens</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.ShowWaitTime" />
+                                </div>
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Tokens to Display</label>
+                                    <p>Number of recent tokens to show</p>
+                                </div>
+                                <QInput TValue="int" @bind-Value="@settings.TokensToDisplay" Type="number" Min="1" Max="20" Class="setting-input-narrow" />
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "notifications")
+                {
+                    <div class="settings-section">
+                        <h3>Notification Settings</h3>
+                        <p class="section-note">
+                            SMS, Email, and Push notification channels are configured under
+                            <a href="/admin/notification-settings">Notification Settings</a>, not here — that page
+                            already manages the real gateway credentials and enable/disable toggles for this
+                            organization.
+                        </p>
+                        <QButton Text="Go to Notification Settings" Icon="bell" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/notification-settings"))" />
+                    </div>
+                }
+                else if (activeSection == "security")
+                {
+                    <div class="settings-section">
+                        <h3>Security Settings</h3>
+                        <p class="section-note">
+                            These are saved for real, but not yet enforced anywhere — 2FA, password expiry, and
+                            audit logging aren't built into the login/auth flow yet. Saving no longer lies about
+                            taking effect; it just doesn't do anything downstream yet either.
+                        </p>
+                        <div class="settings-group">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Session Timeout</label>
+                                    <p>Auto-logout after inactivity (minutes)</p>
+                                </div>
+                                <QInput TValue="int" @bind-Value="@settings.SessionTimeout" Type="number" Min="5" Max="480" Class="setting-input-narrow" />
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Two-Factor Authentication</label>
+                                    <p>Require 2FA for admin accounts</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.TwoFactorEnabled" />
+                                </div>
+                            </div>
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label>Password Expiry</label>
+                                    <p>Days until password must be changed (0 = never)</p>
+                                </div>
+                                <QInput TValue="int" @bind-Value="@settings.PasswordExpiry" Type="number" Min="0" Max="365" Class="setting-input-narrow" />
+                            </div>
+                            <div class="setting-item toggle">
+                                <div class="setting-info">
+                                    <label>Audit Logging</label>
+                                    <p>Log all user actions for compliance</p>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AuditLogging" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .loading-overlay {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 80px;
+    }
+
+    .settings-container {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 24px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+    }
+
+    .settings-nav {
+        background: var(--qm-bg-elevated);
+        border-right: 1px solid var(--qm-border);
+        padding: 16px 0;
+    }
+
+    .settings-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        cursor: pointer;
+        color: var(--qm-text-muted);
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
+    }
+
+    .settings-nav-item:hover { color: var(--qm-text-primary); background: rgba(255,255,255,0.03); }
+
+    .settings-nav-item.active {
+        color: var(--qm-primary);
+        background: var(--qm-primary-light);
+        border-left-color: var(--qm-primary);
+    }
+
+    .settings-nav-item .rzi { font-size: 20px; }
+
+    .settings-content { padding: 24px; }
+
+    .settings-section h3 {
+        margin: 0 0 24px;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .section-note {
+        margin: -12px 0 20px;
+        padding: 10px 14px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .section-note a { color: var(--qm-primary); font-weight: 500; }
+
+    .settings-group { display: flex; flex-direction: column; gap: 20px; }
+
+    .setting-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        border: 1px solid var(--qm-border);
+    }
+
+    .setting-item.toggle { padding: 12px 16px; }
+
+    .setting-info label {
+        display: block;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+        margin-bottom: 4px;
+    }
+
+    .setting-info p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Q-Component width classes */
+    .setting-input-wide { width: 300px; }
+    .setting-input-narrow { width: 150px; }
+    .setting-select { min-width: 200px; }
+    .setting-select-wide { min-width: 300px; }
+
+    @@media (max-width: 768px) {
+        .settings-container { grid-template-columns: 1fr; }
+        .settings-nav {
+            display: flex;
+            overflow-x: auto;
+            border-right: none;
+            border-bottom: 1px solid var(--qm-border);
+            padding: 0;
+        }
+        .settings-nav-item {
+            flex-direction: column;
+            padding: 12px 16px;
+            border-left: none;
+            border-bottom: 3px solid transparent;
+            white-space: nowrap;
+        }
+        .settings-nav-item.active { border-bottom-color: var(--qm-primary); border-left: none; }
+
+        /* Responsive adjustments for Q-Components */
+        .setting-input-wide,
+        .setting-input-narrow,
+        .setting-select,
+        .setting-select-wide {
+            width: 100%;
+            min-width: unset;
+        }
+    }
+</style>
+
+@code {
+    private string activeSection = "general";
+    private SystemSettingsDto settings = new();
+    private string voiceLanguage = "en-US";
+    private bool isLoading = true;
+    private bool isSaving = false;
+
+    // Matches the same hardcoded default branch used elsewhere on the admin path
+    // (BrandingSettings.razor, KioskSettings.razor) until per-tenant branch resolution is
+    // wired through the whole app — see docs/TASK_TRACKER.md.
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private List<SectionInfo> sections = new()
+    {
+        new() { Key = "general", Name = "General", Icon = "gear" },
+        new() { Key = "queue", Name = "Queue", Icon = "list-ul" },
+        new() { Key = "display", Name = "Display", Icon = "tv" },
+        new() { Key = "notifications", Name = "Notifications", Icon = "bell" },
+        new() { Key = "security", Name = "Security", Icon = "shield-lock" }
+    };
+
+    private List<string> languages = new() { "English", "Spanish", "French", "Arabic", "Chinese" };
+    private List<string> timeZones = new() { "UTC", "America/New_York", "Europe/London", "Asia/Dubai", "Asia/Singapore" };
+    private List<string> dateFormats = new() { "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD" };
+    private List<string> tokenFormats = new() { "A001", "001", "A-001", "2024-001" };
+    private List<string> voiceLanguages = new() { "en-US", "en-GB", "es-ES", "ar-SA" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        await LoadSettings();
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<SystemSettingsResponseDto>($"api/v1/branches/{branchId}/system-settings", JsonOptions);
+            if (result != null)
+            {
+                settings = result.Settings;
+                voiceLanguage = result.VoiceLanguage;
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        isSaving = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/system-settings", new UpdateSystemSettingsRequest
+            {
+                Settings = settings,
+                VoiceLanguage = voiceLanguage
+            }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "Settings updated successfully");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private class SectionInfo
+    {
+        public string Key { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Icon { get; set; } = "";
+    }
+}

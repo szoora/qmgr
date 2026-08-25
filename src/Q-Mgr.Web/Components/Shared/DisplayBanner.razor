@@ -1,0 +1,123 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IOrganizationApiService OrganizationApi
+@inject ISignalRService SignalR
+@implements IDisposable
+
+@*
+    Single source of truth for the branch's opt-in scrolling ticker/marquee —
+    fetches its own config from BranchId, renders nothing when disabled, and
+    is fully self-contained so any display page adds it with just
+    <DisplayBanner BranchId="@branchId" />. Currently used by CustomerDisplay
+    and SignageDisplay; drop it into any future public display page the same way.
+*@
+
+@*
+    Positioning: the root element sets flexbox `order` on itself (top = -1,
+    before everything else; bottom = 999, after everything else) rather than
+    using position:fixed — this way the banner reflows naturally with the
+    page instead of overlaying content, as long as the host page's outer
+    container is display:flex;flex-direction:column (CustomerDisplay and
+    SignageDisplay both already are). The host page just needs to place
+    <DisplayBanner /> anywhere inside that container; order handles the rest.
+*@
+@if (settings?.Enabled == true && settings.Messages.Count > 0)
+{
+    <div class="qm-display-banner"
+         style="background:@settings.BackgroundColor; order:@(settings.Position == DisplayBannerPosition.Top ? -1 : 999);">
+        <div class="qm-display-banner__wrapper">
+            <div class="qm-display-banner__content qm-display-banner--@DirectionClass"
+                 style="animation-duration:@(settings.SpeedSeconds)s; color:@settings.TextColor;">
+                @for (var loop = 0; loop < 2; loop++)
+                {
+                    @foreach (var message in settings.Messages)
+                    {
+                        <span class="qm-display-banner__item">@message</span>
+                        <span class="qm-display-banner__separator" style="color:@settings.TextColor;">|</span>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .qm-display-banner {
+        padding: 16px 0;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+
+    .qm-display-banner__wrapper {
+        position: relative;
+        white-space: nowrap;
+    }
+
+    .qm-display-banner__content {
+        display: inline-block;
+        animation-name: qm-banner-scroll-rtl;
+        animation-timing-function: linear;
+        animation-iteration-count: infinite;
+    }
+
+    .qm-display-banner--ltr {
+        animation-name: qm-banner-scroll-ltr;
+    }
+
+    @@keyframes qm-banner-scroll-rtl {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-50%); }
+    }
+
+    @@keyframes qm-banner-scroll-ltr {
+        0% { transform: translateX(-50%); }
+        100% { transform: translateX(0); }
+    }
+
+    .qm-display-banner__item {
+        font-size: 18px;
+        font-weight: 500;
+        padding: 0 20px;
+    }
+
+    .qm-display-banner__separator {
+        opacity: 0.3;
+        padding: 0 20px;
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    private DisplayBannerSettingsDto? settings;
+
+    private string DirectionClass => settings?.Direction == DisplayBannerDirection.LeftToRight ? "ltr" : "rtl";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSettings();
+        await SignalR.ConnectAsync(BranchId); // idempotent — safe even if the host page already connected
+        SignalR.OnDisplayBannerUpdated += HandleSettingsUpdated;
+    }
+
+    private async Task LoadSettings()
+    {
+        settings = await OrganizationApi.GetDisplayBannerAsync(BranchId);
+    }
+
+    private void HandleSettingsUpdated(Guid branchId)
+    {
+        if (branchId != BranchId) return;
+
+        InvokeAsync(async () =>
+        {
+            await LoadSettings();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        SignalR.OnDisplayBannerUpdated -= HandleSettingsUpdated;
+    }
+}

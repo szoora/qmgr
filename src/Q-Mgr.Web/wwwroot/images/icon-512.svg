@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Q-Mgr mark: a queue loop that resolves into a forward-moving arrow —
+       the ring is people cycling through service, the arrow is "next". -->
+  <rect width="512" height="512" rx="96" fill="#8c2f52"/>
+  <circle cx="256" cy="256" r="120" fill="none" stroke="#ffffff" stroke-width="40"/>
+  <g transform="rotate(45 256 256)">
+    <rect x="376" y="236" width="50" height="40" rx="5" fill="#ffffff"/>
+    <polygon points="426,220 426,292 470,256" fill="#ffffff"/>
+  </g>
+</svg>

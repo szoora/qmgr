@@ -1,0 +1,938 @@
+@page "/billing/invoices"
+@using System.Text.Json
+@inject HttpClient Http
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject JsonSerializerOptions JsonOptions
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Invoices - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="receipt" Size="32" />
+            Invoices
+        </h1>
+        <div class="breadcrumb">
+            <a href="/billing/overview">Billing</a>
+            <span>/</span>
+            <span>Invoices</span>
+        </div>
+    </div>
+    <div class="header-right">
+        <QButton Icon="arrow-repeat"
+                 Text="Refresh"
+                 Variant="secondary"
+                 OnClick="@LoadInvoices"
+                 Disabled="@isLoading" />
+    </div>
+</div>
+
+@if (isLoading && !invoices.Any())
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading invoices...</span>
+    </div>
+}
+else if (hasError)
+{
+    <div class="error-card">
+        <QIcon Name="exclamation-triangle-fill" Size="48" />
+        <h3>Failed to Load Invoices</h3>
+        <p>@errorMessage</p>
+        <QButton Text="Try Again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadInvoices" />
+    </div>
+}
+else
+{
+    <!-- Filters -->
+    <div class="filters-card">
+        <div class="filters-row">
+            <div class="filter-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="filterStatus" @bind-Value:after="ApplyFilters"
+                         Items="@statusOptions" Label="Status" Placeholder="All Statuses" AllowClear="true" />
+            </div>
+
+            <div class="filter-group">
+                <label>From Date</label>
+                <QDatePicker @bind-Value="filterFromDate" @bind-Value:after="ApplyFilters" />
+            </div>
+
+            <div class="filter-group">
+                <label>To Date</label>
+                <QDatePicker @bind-Value="filterToDate" @bind-Value:after="ApplyFilters" />
+            </div>
+
+            <div class="filter-group">
+                <label>&nbsp;</label>
+                <QButton Text="Clear Filters"
+                         Icon="x-circle-fill"
+                         Variant="outline-secondary"
+                         OnClick="@ClearFilters" />
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoices Table -->
+    @if (filteredInvoices.Any())
+    {
+        <div class="invoices-table-card">
+            <div class="table-responsive">
+                <table class="table invoices-table">
+                    <thead>
+                        <tr>
+                            <th>Invoice #</th>
+                            <th>Date</th>
+                            <th>Due Date</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var invoice in GetPaginatedInvoices())
+                        {
+                            <tr class="invoice-row @(selectedInvoice?.Id == invoice.Id ? "selected" : "")"
+                                @onclick="@(() => SelectInvoice(invoice))">
+                                <td>
+                                    <strong>@invoice.InvoiceNumber</strong>
+                                </td>
+                                <td>@invoice.InvoiceDate.ToString("MMM dd, yyyy")</td>
+                                <td>
+                                    @if (invoice.Status == "Overdue" && invoice.DueDate < DateTime.UtcNow)
+                                    {
+                                        <span class="text-danger">
+                                            @invoice.DueDate.ToString("MMM dd, yyyy")
+                                            <QIcon Name="exclamation-circle-fill" />
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        @invoice.DueDate.ToString("MMM dd, yyyy")
+                                    }
+                                </td>
+                                <td>
+                                    <strong>@invoice.Currency @invoice.Total.ToString("N2")</strong>
+                                    @if (invoice.Subtotal != invoice.Total)
+                                    {
+                                        <span class="text-muted small d-block">
+                                            Subtotal: @invoice.Currency @invoice.Subtotal.ToString("N2")
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    <QBadge Variant="@GetStatusBadgeVariant(invoice.Status)" Text="@invoice.Status" />
+                                    @if (invoice.PaidAt.HasValue)
+                                    {
+                                        <span class="text-muted small d-block mt-1">
+                                            Paid @invoice.PaidAt.Value.ToString("MMM dd")
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <button class="btn btn-sm btn-outline-primary"
+                                                @onclick="@(() => ViewInvoice(invoice))"
+                                                @onclick:stopPropagation="true"
+                                                title="View Details">
+                                            <QIcon Name="eye-fill" />
+                                        </button>
+                                        @if (!string.IsNullOrEmpty(invoice.PdfUrl))
+                                        {
+                                            <button class="btn btn-sm btn-outline-secondary"
+                                                    @onclick="@(() => DownloadInvoice(invoice))"
+                                                    @onclick:stopPropagation="true"
+                                                    title="Download PDF">
+                                                <QIcon Name="download" />
+                                            </button>
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            @if (TotalPages > 1)
+            {
+                <div class="pagination-container">
+                    <div class="pagination-info">
+                        Showing @((currentPage - 1) * pageSize + 1) to @Math.Min(currentPage * pageSize, filteredInvoices.Count) of @filteredInvoices.Count invoices
+                    </div>
+                    <div class="pagination-controls">
+                        <QButton Variant="outline-primary" Size="sm" Icon="chevron-left" Text="Previous"
+                                 OnClick="@PreviousPage"
+                                 Disabled="@(currentPage <= 1)" />
+                        <span class="pagination-page">Page @currentPage of @TotalPages</span>
+                        <QButton Variant="outline-primary" Size="sm"
+                                 OnClick="@NextPage"
+                                 Disabled="@(currentPage >= TotalPages)">
+                            Next
+                            <QIcon Name="chevron-right" />
+                        </QButton>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="empty-state">
+            <QIcon Name="receipt" Size="64" />
+            <h3>No Invoices Found</h3>
+            <p>@(string.IsNullOrEmpty(filterStatus) ? "You don't have any invoices yet." : "No invoices match your filters.")</p>
+            @if (!string.IsNullOrEmpty(filterStatus) || filterFromDate != null || filterToDate != null)
+            {
+                <QButton Text="Clear Filters" Icon="x-circle-fill" Variant="primary" OnClick="@ClearFilters" />
+            }
+        </div>
+    }
+}
+
+<!-- Invoice Details Modal -->
+<QModal @bind-Visible="showInvoiceDetails"
+        Title="@(selectedInvoice != null ? $"Invoice Details — {selectedInvoice.InvoiceNumber}" : "Invoice Details")"
+        Icon="receipt"
+        Size="lg">
+    <ChildContent>
+        @if (selectedInvoice != null)
+        {
+                    @if (isLoadingDetails)
+                    {
+                        <div class="text-center py-4">
+                            <div class="webster-spinner"></div>
+                            <p class="text-muted mt-2">Loading invoice details...</p>
+                        </div>
+                    }
+                    else if (invoiceDetails != null)
+                    {
+                        <div class="invoice-details">
+                            <div class="invoice-document-header">
+                                <div class="invoice-from">
+                                    <div class="invoice-from-logo">
+                                        <QIcon Name="collection-fill" />
+                                        <span>Q-Mgr</span>
+                                    </div>
+                                    <p class="invoice-from-tagline">Queue Management System</p>
+                                </div>
+
+                                <div class="invoice-to">
+                                    <h6 class="invoice-to-heading">Invoice Information</h6>
+                                    <div class="invoice-to-number">
+                                        Invoice No: <strong>@invoiceDetails.InvoiceNumber</strong>
+                                        <QBadge Variant="@GetStatusBadgeVariant(invoiceDetails.Status)" Text="@invoiceDetails.Status" />
+                                    </div>
+
+                                    @if (!string.IsNullOrEmpty(invoiceDetails.BillingName))
+                                    {
+                                        <p class="invoice-to-billto"><small>Bill to:</small> @invoiceDetails.BillingName</p>
+                                        <ul class="invoice-to-address">
+                                            @if (!string.IsNullOrEmpty(invoiceDetails.OrganizationAddress))
+                                            {
+                                                <li>@invoiceDetails.OrganizationAddress</li>
+                                            }
+                                            @if (!string.IsNullOrEmpty(invoiceDetails.BillingEmail))
+                                            {
+                                                <li><strong>Email:</strong> @invoiceDetails.BillingEmail</li>
+                                            }
+                                            @if (!string.IsNullOrEmpty(invoiceDetails.OrganizationPhone))
+                                            {
+                                                <li><strong>Phone:</strong> @invoiceDetails.OrganizationPhone</li>
+                                            }
+                                        </ul>
+                                    }
+
+                                    <div class="invoice-to-dates">
+                                        <span>Invoice Date: @invoiceDetails.InvoiceDate.ToString("MMMM dd, yyyy")</span>
+                                        <span>Due Date: @invoiceDetails.DueDate.ToString("MMMM dd, yyyy")</span>
+                                        @if (invoiceDetails.PaidAt.HasValue)
+                                        {
+                                            <span>Paid Date: @invoiceDetails.PaidAt.Value.ToString("MMMM dd, yyyy")</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            @if (parsedLineItems.Any())
+                            {
+                                <div class="invoice-line-items">
+                                    <h6>Line Items</h6>
+                                    <table class="line-items-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="text-start">Description</th>
+                                                <th class="text-end">Qty</th>
+                                                <th class="text-end">Unit Rate</th>
+                                                <th class="text-end">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var item in parsedLineItems)
+                                            {
+                                                <tr>
+                                                    <td class="text-start">@item.Description</td>
+                                                    <td class="text-end">@item.Quantity</td>
+                                                    <td class="text-end">@invoiceDetails.Currency @item.UnitPrice.ToString("N2")</td>
+                                                    <td class="text-end">@invoiceDetails.Currency @item.Total.ToString("N2")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            else if (!string.IsNullOrEmpty(invoiceDetails.LineItems))
+                            {
+                                <div class="invoice-line-items">
+                                    <h6>Line Items</h6>
+                                    <div class="line-items-list">
+                                        <pre class="line-items-content">@invoiceDetails.LineItems</pre>
+                                    </div>
+                                </div>
+                            }
+
+                            <div class="invoice-amounts">
+                                <div class="amount-row">
+                                    <span>Subtotal</span>
+                                    <strong>@invoiceDetails.Currency @invoiceDetails.Subtotal.ToString("N2")</strong>
+                                </div>
+                                @if (invoiceDetails.TaxAmount > 0)
+                                {
+                                    <div class="amount-row">
+                                        <span>Tax</span>
+                                        <strong>@invoiceDetails.Currency @invoiceDetails.TaxAmount.ToString("N2")</strong>
+                                    </div>
+                                }
+                                <div class="amount-row total">
+                                    <span>Total</span>
+                                    <strong>@invoiceDetails.Currency @invoiceDetails.Total.ToString("N2")</strong>
+                                </div>
+                                @if (invoiceDetails.AmountPaid > 0)
+                                {
+                                    <div class="amount-row paid">
+                                        <span>Amount Paid</span>
+                                        <strong>@invoiceDetails.Currency @invoiceDetails.AmountPaid.ToString("N2")</strong>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@CloseInvoiceDetails" />
+        @if (selectedInvoice != null && !string.IsNullOrEmpty(selectedInvoice.PdfUrl))
+        {
+            <QButton Text="Download PDF"
+                     Icon="download"
+                     Variant="primary"
+                     OnClick="@(() => DownloadInvoice(selectedInvoice))" />
+        }
+    </FooterContent>
+</QModal>
+
+<style>
+    .filters-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        margin-bottom: 24px;
+    }
+
+    .filters-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .filter-group label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        margin: 0;
+    }
+
+    .invoices-table-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+    }
+
+    .invoices-table {
+        margin: 0;
+        /* Bootstrap's own .table sets --bs-table-bg/--bs-body-color, which render as
+           a plain white table on dark/black text regardless of our dark theme unless
+           explicitly overridden here — this table was rendering white-on-dark-card. */
+        --bs-table-bg: transparent;
+        --bs-table-color: var(--qm-text-primary);
+        color: var(--qm-text-primary);
+        background: transparent;
+    }
+
+    .invoices-table thead {
+        background: var(--qm-bg-elevated);
+    }
+
+    .invoices-table tbody tr {
+        background: transparent;
+        color: var(--qm-text-primary);
+    }
+
+    .invoices-table th {
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        font-size: 13px;
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--qm-border);
+        padding: 16px;
+        background: transparent;
+    }
+
+    .invoices-table td {
+        padding: 16px;
+        vertical-align: middle;
+        background: transparent;
+        color: var(--qm-text-primary);
+        border-color: var(--qm-border);
+    }
+
+    .invoice-row {
+        cursor: pointer;
+        transition: background 0.2s ease;
+    }
+
+    .invoice-row:hover {
+        background: var(--qm-bg-card-hover);
+    }
+
+    .invoice-row.selected {
+        background: var(--qm-primary-light);
+        border-left: 3px solid var(--qm-primary);
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 8px;
+    }
+
+    .badge {
+        padding: 6px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .badge-paid {
+        background: var(--qm-success);
+        color: white;
+    }
+
+    .badge-pending {
+        background: var(--qm-warning);
+        color: white;
+    }
+
+    .badge-overdue {
+        background: var(--qm-danger);
+        color: white;
+    }
+
+    .badge-failed {
+        background: var(--qm-text-muted);
+        color: white;
+    }
+
+    .pagination-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .pagination-info {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .pagination-controls {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .pagination-page {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 64px 24px;
+        text-align: center;
+    }
+
+    .empty-state i {
+        color: var(--qm-text-muted);
+        margin-bottom: 16px;
+    }
+
+    .empty-state h3 {
+        margin: 16px 0 8px 0;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        color: var(--qm-text-secondary);
+        margin-bottom: 24px;
+    }
+
+    .error-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        text-align: center;
+    }
+
+    .error-card i {
+        color: var(--qm-danger);
+        margin-bottom: 16px;
+    }
+
+    .error-card h3 {
+        margin: 16px 0 8px 0;
+        color: var(--qm-text-primary);
+    }
+
+    .error-card p {
+        color: var(--qm-text-secondary);
+        margin-bottom: 24px;
+    }
+
+    .invoice-details {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .invoice-document-header {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .invoice-from-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-display);
+    }
+
+    .invoice-from-logo .q-icon {
+        color: var(--qm-primary);
+        font-size: 24px;
+    }
+
+    .invoice-from-tagline {
+        margin: 8px 0 0;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .invoice-to {
+        text-align: right;
+    }
+
+    .invoice-to-heading {
+        margin: 0 0 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+    }
+
+    .invoice-to-number {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        font-size: 14px;
+        color: var(--qm-text-primary);
+        margin-bottom: 12px;
+    }
+
+    .invoice-to-billto {
+        margin: 0 0 4px;
+        font-size: 14px;
+        color: var(--qm-text-primary);
+    }
+
+    .invoice-to-billto small {
+        color: var(--qm-text-muted);
+        text-transform: uppercase;
+        font-size: 11px;
+        font-weight: 600;
+        margin-right: 4px;
+    }
+
+    .invoice-to-address {
+        list-style: none;
+        margin: 0 0 12px;
+        padding: 0;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        line-height: 1.6;
+    }
+
+    .invoice-to-dates {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .invoice-line-items {
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .invoice-line-items h6 {
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+    }
+
+    .line-items-content {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-primary);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    .line-items-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .line-items-table th {
+        text-transform: uppercase;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--qm-text-muted);
+        padding: 0 0 8px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .line-items-table td {
+        padding: 10px 0;
+        border-bottom: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+    }
+
+    .line-items-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    .invoice-amounts {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .amount-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 14px;
+    }
+
+    .amount-row.total {
+        font-size: 18px;
+        padding-top: 12px;
+        border-top: 2px solid var(--qm-border);
+        margin-top: 8px;
+    }
+
+    .amount-row.paid {
+        color: var(--qm-success);
+        font-weight: 600;
+    }
+
+    @@media (max-width: 768px) {
+        .filters-row {
+            grid-template-columns: 1fr;
+        }
+
+        .pagination-container {
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .invoice-document-header {
+            grid-template-columns: 1fr;
+        }
+
+        .invoice-to {
+            text-align: left;
+        }
+
+        .invoice-to-number {
+            justify-content: flex-start;
+        }
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool isLoadingDetails = false;
+    private bool hasError = false;
+    private string errorMessage = "";
+    private bool showInvoiceDetails = false;
+
+    private List<InvoiceDto> invoices = new();
+    private List<InvoiceDto> filteredInvoices = new();
+    private InvoiceDto? selectedInvoice;
+    private InvoiceDto? invoiceDetails;
+    private List<LineItem> parsedLineItems = new();
+
+    // Filters
+    private string? filterStatus;
+    private DateTime? filterFromDate;
+    private DateTime? filterToDate;
+    private List<string> statusOptions = new() { "Paid", "Pending", "Overdue", "Failed" };
+
+    // Pagination
+    private int currentPage = 1;
+    private int pageSize = 20;
+    private int TotalPages => (int)Math.Ceiling(filteredInvoices.Count / (double)pageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        await LoadInvoices();
+    }
+
+    private async Task LoadInvoices()
+    {
+        isLoading = true;
+        hasError = false;
+        errorMessage = "";
+
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/billing/invoices?page=1&pageSize=1000");
+            if (response.IsSuccessStatusCode)
+            {
+                invoices = await response.Content.ReadFromJsonAsync<List<InvoiceDto>>(JsonOptions) ?? new();
+                ApplyFilters();
+            }
+            else
+            {
+                hasError = true;
+                errorMessage = $"Failed to load invoices: {response.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+            Console.WriteLine($"Error loading invoices: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        currentPage = 1;
+        filteredInvoices = invoices.Where(i =>
+        {
+            if (!string.IsNullOrEmpty(filterStatus) && i.Status != filterStatus)
+                return false;
+
+            if (filterFromDate.HasValue && i.InvoiceDate < filterFromDate.Value)
+                return false;
+
+            if (filterToDate.HasValue && i.InvoiceDate > filterToDate.Value)
+                return false;
+
+            return true;
+        }).OrderByDescending(i => i.InvoiceDate).ToList();
+    }
+
+    private void ClearFilters()
+    {
+        filterStatus = null;
+        filterFromDate = null;
+        filterToDate = null;
+        ApplyFilters();
+    }
+
+    private List<InvoiceDto> GetPaginatedInvoices()
+    {
+        return filteredInvoices
+            .Skip((currentPage - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+    }
+
+    private void NextPage()
+    {
+        if (currentPage < TotalPages)
+        {
+            currentPage++;
+        }
+    }
+
+    private void PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+        }
+    }
+
+    private void SelectInvoice(InvoiceDto invoice)
+    {
+        selectedInvoice = invoice;
+    }
+
+    private async Task ViewInvoice(InvoiceDto invoice)
+    {
+        selectedInvoice = invoice;
+        showInvoiceDetails = true;
+        isLoadingDetails = true;
+
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/billing/invoices/{invoice.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                invoiceDetails = await response.Content.ReadFromJsonAsync<InvoiceDto>(JsonOptions);
+                parsedLineItems = TryParseLineItems(invoiceDetails?.LineItems);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading invoice details: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingDetails = false;
+        }
+    }
+
+    private List<LineItem> TryParseLineItems(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<LineItem>>(json, JsonOptions) ?? new();
+        }
+        catch (JsonException)
+        {
+            // Malformed/unexpected shape — the raw-text fallback in the markup handles this.
+            return new();
+        }
+    }
+
+    private void CloseInvoiceDetails()
+    {
+        showInvoiceDetails = false;
+        invoiceDetails = null;
+        parsedLineItems = new();
+    }
+
+    private async Task DownloadInvoice(InvoiceDto invoice)
+    {
+        if (string.IsNullOrEmpty(invoice.PdfUrl))
+            return;
+
+        try
+        {
+            // Open PDF in new tab
+            await JSRuntime.InvokeVoidAsync("open", invoice.PdfUrl, "_blank");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading invoice: {ex.Message}");
+        }
+    }
+
+    private string GetStatusBadgeVariant(string status) => status.ToLower() switch
+    {
+        "paid" => "success",
+        "pending" => "warning",
+        "overdue" => "danger",
+        "failed" => "secondary",
+        _ => "secondary"
+    };
+
+    // DTO
+    private record InvoiceDto
+    {
+        public Guid Id { get; init; }
+        public string InvoiceNumber { get; init; } = "";
+        public string Status { get; init; } = "";
+        public string Currency { get; init; } = "";
+        public decimal Subtotal { get; init; }
+        public decimal TaxAmount { get; init; }
+        public decimal Total { get; init; }
+        public decimal AmountPaid { get; init; }
+        public DateTime InvoiceDate { get; init; }
+        public DateTime DueDate { get; init; }
+        public DateTime? PaidAt { get; init; }
+        public string? PdfUrl { get; init; }
+        public string? LineItems { get; init; }
+        public string? BillingName { get; init; }
+        public string? BillingEmail { get; init; }
+        public string? OrganizationAddress { get; init; }
+        public string? OrganizationPhone { get; init; }
+    }
+
+    private record LineItem
+    {
+        public string Description { get; init; } = "";
+        public int Quantity { get; init; }
+        public decimal UnitPrice { get; init; }
+        public decimal Total { get; init; }
+    }
+}

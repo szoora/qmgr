@@ -1,0 +1,1165 @@
+@page "/register"
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous]
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject ILogger<Register> Logger
+
+<PageTitle>Register Your Organization - Q-Mgr</PageTitle>
+
+<div class="register-page">
+    <div class="register-container">
+        <!-- Left Panel - Branding -->
+        <div class="register-branding">
+            <div class="branding-content">
+                <img src="/images/icon-512.svg" alt="Q-Mgr" class="brand-logo" />
+                <h1>Q-Mgr</h1>
+                <p class="tagline">Smart Queue Management Platform</p>
+
+                <div class="features-list">
+                    <div class="feature-item">
+                        <span class="feature-icon">&#10003;</span>
+                        <span>Reduce customer wait times by up to 50%</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">&#10003;</span>
+                        <span>Real-time queue monitoring & analytics</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">&#10003;</span>
+                        <span>Multi-branch support</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">&#10003;</span>
+                        <span>Customer notifications via SMS & email</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">&#10003;</span>
+                        <span>Digital signage integration</span>
+                    </div>
+                </div>
+
+                <p class="trial-note">Start your 14-day free trial. No credit card required.</p>
+            </div>
+        </div>
+
+        <!-- Right Panel - Registration Form -->
+        <div class="register-form-panel">
+            <div class="form-header">
+                <h2>Create Your Account</h2>
+                <p>Get started with Q-Mgr in minutes</p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger">
+                    <span class="alert-icon">&#9888;</span>
+                    @errorMessage
+                </div>
+            }
+
+            @if (registrationSuccess)
+            {
+                <div class="success-panel">
+                    <div class="success-icon">&#10003;</div>
+                    <h3>Registration Successful!</h3>
+                    <p>Your organization <strong>@formData.OrganizationName</strong> has been created.</p>
+                    @if (requiresVerification)
+                    {
+                        <p class="verification-note">
+                            A verification email has been sent to <strong>@formData.Email</strong>.
+                            Please check your inbox and verify your email to activate your account.
+                        </p>
+                    }
+                    <div class="success-actions">
+                        <button class="btn btn-primary" @onclick="GoToLogin">
+                            Go to Login
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <EditForm Model="formData" OnValidSubmit="HandleSubmit" class="register-form">
+                    <DataAnnotationsValidator />
+
+                    <!-- Step Indicator -->
+                    <div class="step-indicator">
+                        <div class="step @(currentStep >= 1 ? "active" : "") @(currentStep > 1 ? "completed" : "")">
+                            <span class="step-number">1</span>
+                            <span class="step-label">Organization</span>
+                        </div>
+                        <div class="step-line @(currentStep > 1 ? "completed" : "")"></div>
+                        <div class="step @(currentStep >= 2 ? "active" : "") @(currentStep > 2 ? "completed" : "")">
+                            <span class="step-number">2</span>
+                            <span class="step-label">Admin Account</span>
+                        </div>
+                        <div class="step-line @(currentStep > 2 ? "completed" : "")"></div>
+                        <div class="step @(currentStep >= 3 ? "active" : "")">
+                            <span class="step-number">3</span>
+                            <span class="step-label">Confirm</span>
+                        </div>
+                    </div>
+
+                    <!-- Step 1: Organization Details -->
+                    @if (currentStep == 1)
+                    {
+                        <div class="form-step">
+                            <div class="form-group">
+                                <label for="orgName">Organization Name *</label>
+                                <input type="text" id="orgName" @bind="formData.OrganizationName"
+                                       @oninput="OnOrganizationNameChanged"
+                                       placeholder="e.g., Acme Healthcare" class="form-control" />
+                                <ValidationMessage For="@(() => formData.OrganizationName)" />
+                            </div>
+
+                            <div class="form-group">
+                                <label for="slug">Your URL (Subdomain) *</label>
+                                <div class="slug-input-group">
+                                    <input type="text" id="slug" @bind="formData.Slug"
+                                           @oninput="OnSlugChanged"
+                                           placeholder="acme" class="form-control slug-input" />
+                                    <span class="slug-suffix">.qmgr.app</span>
+                                </div>
+                                @if (isCheckingSlug)
+                                {
+                                    <span class="slug-status checking">Checking availability...</span>
+                                }
+                                else if (slugAvailable.HasValue)
+                                {
+                                    <span class="slug-status @(slugAvailable.Value ? "available" : "unavailable")">
+                                        @(slugAvailable.Value ? "&#10003; Available" : "&#10007; Not available")
+                                    </span>
+                                }
+                                <small class="form-hint">This will be your unique URL to access Q-Mgr</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="industry">Industry Type</label>
+                                <select id="industry" @bind="formData.IndustryType" class="form-control">
+                                    <option value="">Select your industry</option>
+                                    <option value="healthcare">Healthcare</option>
+                                    <option value="banking">Banking & Finance</option>
+                                    <option value="government">Government</option>
+                                    <option value="retail">Retail</option>
+                                    <option value="telecom">Telecommunications</option>
+                                    <option value="education">Education</option>
+                                    <option value="hospitality">Hospitality</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="contactPhone">Organization Phone</label>
+                                <input type="tel" id="contactPhone" @bind="formData.ContactPhone"
+                                       placeholder="+1 234 567 8900" class="form-control" />
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-primary btn-next" @onclick="NextStep"
+                                        disabled="@(!CanProceedStep1())">
+                                    Next Step
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Step 2: Admin Account -->
+                    @if (currentStep == 2)
+                    {
+                        <div class="form-step">
+                            <div class="form-row">
+                                <div class="form-group half">
+                                    <label for="firstName">First Name *</label>
+                                    <input type="text" id="firstName" @bind="formData.FirstName"
+                                           placeholder="John" class="form-control" />
+                                    <ValidationMessage For="@(() => formData.FirstName)" />
+                                </div>
+                                <div class="form-group half">
+                                    <label for="lastName">Last Name *</label>
+                                    <input type="text" id="lastName" @bind="formData.LastName"
+                                           placeholder="Doe" class="form-control" />
+                                    <ValidationMessage For="@(() => formData.LastName)" />
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="email">Email Address *</label>
+                                <input type="email" id="email" @bind="formData.Email"
+                                       placeholder="john@acme.com" class="form-control" />
+                                <ValidationMessage For="@(() => formData.Email)" />
+                                <small class="form-hint">This will be your admin login email</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="phone">Phone Number</label>
+                                <input type="tel" id="phone" @bind="formData.Phone"
+                                       placeholder="+1 234 567 8900" class="form-control" />
+                            </div>
+
+                            <div class="form-group">
+                                <label for="password">Password *</label>
+                                <div class="password-input-group">
+                                    <input type="@(showPassword ? "text" : "password")" id="password"
+                                           @bind="formData.Password" @oninput="OnPasswordChanged"
+                                           placeholder="Create a strong password" class="form-control" />
+                                    <button type="button" class="password-toggle" @onclick="TogglePasswordVisibility">
+                                        @(showPassword ? "Hide" : "Show")
+                                    </button>
+                                </div>
+                                <div class="password-strength">
+                                    <div class="strength-bar">
+                                        <div class="strength-fill @passwordStrengthClass" style="width: @(passwordStrength)%"></div>
+                                    </div>
+                                    <span class="strength-text">@passwordStrengthText</span>
+                                </div>
+                                <ValidationMessage For="@(() => formData.Password)" />
+                            </div>
+
+                            <div class="form-group">
+                                <label for="confirmPassword">Confirm Password *</label>
+                                <input type="password" id="confirmPassword" @bind="formData.ConfirmPassword"
+                                       placeholder="Confirm your password" class="form-control" />
+                                <ValidationMessage For="@(() => formData.ConfirmPassword)" />
+                                @if (!string.IsNullOrEmpty(formData.Password) && !string.IsNullOrEmpty(formData.ConfirmPassword)
+                                     && formData.Password != formData.ConfirmPassword)
+                                {
+                                    <span class="validation-error">Passwords do not match</span>
+                                }
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" @onclick="PreviousStep">
+                                    Back
+                                </button>
+                                <button type="button" class="btn btn-primary btn-next" @onclick="NextStep"
+                                        disabled="@(!CanProceedStep2())">
+                                    Next Step
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Step 3: Confirm & Submit -->
+                    @if (currentStep == 3)
+                    {
+                        <div class="form-step">
+                            <div class="summary-section">
+                                <h4>Organization Details</h4>
+                                <div class="summary-row">
+                                    <span class="summary-label">Organization:</span>
+                                    <span class="summary-value">@formData.OrganizationName</span>
+                                </div>
+                                <div class="summary-row">
+                                    <span class="summary-label">URL:</span>
+                                    <span class="summary-value">@(formData.Slug).qmgr.app</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(formData.IndustryType))
+                                {
+                                    <div class="summary-row">
+                                        <span class="summary-label">Industry:</span>
+                                        <span class="summary-value">@formData.IndustryType</span>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="summary-section">
+                                <h4>Admin Account</h4>
+                                <div class="summary-row">
+                                    <span class="summary-label">Name:</span>
+                                    <span class="summary-value">@formData.FirstName @formData.LastName</span>
+                                </div>
+                                <div class="summary-row">
+                                    <span class="summary-label">Email:</span>
+                                    <span class="summary-value">@formData.Email</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group terms-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" @bind="formData.AcceptTerms" />
+                                    <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a>
+                                          and <a href="/privacy" target="_blank">Privacy Policy</a></span>
+                                </label>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn-secondary" @onclick="PreviousStep">
+                                    Back
+                                </button>
+                                <button type="submit" class="btn btn-primary btn-submit"
+                                        disabled="@(isSubmitting || !formData.AcceptTerms)">
+                                    @if (isSubmitting)
+                                    {
+                                        <span class="spinner"></span>
+                                        <span>Creating Account...</span>
+                                    }
+                                    else
+                                    {
+                                        <span>Create Account</span>
+                                    }
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </EditForm>
+
+                <div class="login-link">
+                    Already have an account? <a href="/login">Sign in</a>
+                </div>
+                <div class="powered-by">Powered by SACC Software</div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .register-page {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+    }
+
+    .register-container {
+        display: flex;
+        max-width: 1000px;
+        width: 100%;
+        background: #1e1e2d;
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Left Panel - Branding */
+    .register-branding {
+        flex: 1;
+        background: linear-gradient(135deg, var(--qm-primary) 0%, var(--qm-primary-dark) 100%);
+        padding: 3rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        color: white;
+    }
+
+    .branding-content {
+        max-width: 320px;
+    }
+
+    .brand-logo {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 1rem;
+    }
+
+    .register-branding h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin: 0 0 0.5rem 0;
+    }
+
+    .tagline {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        margin-bottom: 2rem;
+    }
+
+    .features-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .feature-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 0.95rem;
+    }
+
+    .feature-icon {
+        width: 24px;
+        height: 24px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+    }
+
+    .trial-note {
+        font-size: 0.9rem;
+        opacity: 0.8;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Right Panel - Form */
+    .register-form-panel {
+        flex: 1.2;
+        padding: 3rem;
+        background: #1e1e2d;
+    }
+
+    .form-header {
+        margin-bottom: 2rem;
+    }
+
+    .form-header h2 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: #fff;
+        margin: 0 0 0.5rem 0;
+    }
+
+    .form-header p {
+        color: #a0a0a0;
+        margin: 0;
+    }
+
+    /* Step Indicator */
+    .step-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 2rem;
+    }
+
+    .step {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .step-number {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: #2a2a3d;
+        color: #666;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    .step.active .step-number {
+        background: var(--qm-primary);
+        color: white;
+    }
+
+    .step.completed .step-number {
+        background: var(--qm-success);
+        color: white;
+    }
+
+    .step-label {
+        font-size: 0.75rem;
+        color: #666;
+        transition: color 0.3s ease;
+    }
+
+    .step.active .step-label,
+    .step.completed .step-label {
+        color: #fff;
+    }
+
+    .step-line {
+        width: 60px;
+        height: 2px;
+        background: #2a2a3d;
+        margin: 0 0.5rem;
+        margin-bottom: 1.5rem;
+        transition: background 0.3s ease;
+    }
+
+    .step-line.completed {
+        background: var(--qm-success);
+    }
+
+    /* Form Styles */
+    .form-step {
+        animation: fadeIn 0.3s ease;
+    }
+
+    @@keyframes fadeIn {
+        from { opacity: 0; transform: translateX(10px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+
+    .form-group {
+        margin-bottom: 1.25rem;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .form-group.half {
+        flex: 1;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #c0c0c0;
+        margin-bottom: 0.5rem;
+    }
+
+    /* Scoped under .register-form-panel so this beats the dashboard's
+       generic .form-group .form-control rule in app.css (same issue
+       fixed in Login.razor — both reuse Bootstrap's class names). */
+    .register-form-panel .form-control {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        background: #2a2a3d;
+        border: 1px solid #3a3a4d;
+        border-radius: var(--qm-radius-lg);
+        color: #fff;
+        font-size: 1rem;
+        transition: all 0.2s ease;
+    }
+
+    .register-form-panel .form-control:focus {
+        outline: none;
+        border-color: var(--qm-primary);
+        box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
+    }
+
+    .register-form-panel .form-control::placeholder {
+        color: #666;
+    }
+
+    .form-hint {
+        display: block;
+        font-size: 0.75rem;
+        color: #666;
+        margin-top: 0.25rem;
+    }
+
+    /* Slug Input */
+    .slug-input-group {
+        display: flex;
+        align-items: center;
+    }
+
+    .slug-input {
+        border-radius: var(--qm-radius-lg) 0 0 var(--qm-radius-lg);
+        border-right: none;
+    }
+
+    .slug-suffix {
+        padding: 0.75rem 1rem;
+        background: #3a3a4d;
+        border: 1px solid #3a3a4d;
+        border-radius: 0 var(--qm-radius-lg) var(--qm-radius-lg) 0;
+        color: #888;
+        font-size: 0.9rem;
+    }
+
+    .slug-status {
+        display: block;
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    .slug-status.checking { color: #f59e0b; }
+    .slug-status.available { color: var(--qm-success); }
+    .slug-status.unavailable { color: #ef4444; }
+
+    /* Password Input */
+    .password-input-group {
+        position: relative;
+    }
+
+    .password-toggle {
+        position: absolute;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        color: #666;
+        cursor: pointer;
+        font-size: 0.8rem;
+    }
+
+    .password-strength {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-top: 0.5rem;
+    }
+
+    .strength-bar {
+        flex: 1;
+        height: 4px;
+        background: #2a2a3d;
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .strength-fill {
+        height: 100%;
+        transition: all 0.3s ease;
+    }
+
+    .strength-fill.weak { background: #ef4444; }
+    .strength-fill.fair { background: #f59e0b; }
+    .strength-fill.good { background: var(--qm-primary); }
+    .strength-fill.strong { background: var(--qm-success); }
+
+    .strength-text {
+        font-size: 0.75rem;
+        color: #888;
+        min-width: 50px;
+    }
+
+    /* Terms */
+    .terms-group {
+        margin-top: 1.5rem;
+    }
+
+    .checkbox-label {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        cursor: pointer;
+        font-size: 0.875rem;
+        color: #a0a0a0;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        margin-top: 2px;
+    }
+
+    .checkbox-label a {
+        color: var(--qm-primary);
+        text-decoration: none;
+    }
+
+    .checkbox-label a:hover {
+        text-decoration: underline;
+    }
+
+    /* Summary */
+    .summary-section {
+        background: #2a2a3d;
+        border-radius: var(--qm-radius-lg);
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+    }
+
+    .summary-section h4 {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--qm-primary);
+        margin: 0 0 1rem 0;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #3a3a4d;
+    }
+
+    .summary-row:last-child {
+        border-bottom: none;
+    }
+
+    .summary-label {
+        color: #888;
+    }
+
+    .summary-value {
+        color: #fff;
+        font-weight: 500;
+    }
+
+    /* Buttons */
+    .form-actions {
+        display: flex;
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .btn {
+        padding: 0.875rem 1.5rem;
+        border-radius: var(--qm-radius-lg);
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: none;
+    }
+
+    .btn-primary {
+        background: var(--qm-primary);
+        color: white;
+        flex: 1;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background: var(--qm-primary-dark);
+    }
+
+    .btn-primary:disabled {
+        background: #3a3a4d;
+        color: #666;
+        cursor: not-allowed;
+    }
+
+    .btn-secondary {
+        background: #2a2a3d;
+        color: #c0c0c0;
+        border: 1px solid #3a3a4d;
+    }
+
+    .btn-secondary:hover {
+        background: #3a3a4d;
+    }
+
+    .btn-submit {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+    }
+
+    .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Alerts */
+    .alert {
+        padding: 1rem;
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .alert-danger {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+    }
+
+    .alert-icon {
+        font-size: 1.25rem;
+    }
+
+    .validation-error {
+        display: block;
+        color: #ef4444;
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    /* Success Panel */
+    .success-panel {
+        text-align: center;
+        padding: 2rem;
+    }
+
+    .success-icon {
+        width: 80px;
+        height: 80px;
+        background: var(--qm-success);
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2.5rem;
+        margin: 0 auto 1.5rem;
+    }
+
+    .success-panel h3 {
+        font-size: 1.5rem;
+        color: #fff;
+        margin: 0 0 1rem 0;
+    }
+
+    .success-panel p {
+        color: #a0a0a0;
+        margin-bottom: 1rem;
+    }
+
+    .verification-note {
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: var(--qm-radius-lg);
+        padding: 1rem;
+        color: #f59e0b;
+        font-size: 0.9rem;
+    }
+
+    .success-actions {
+        margin-top: 2rem;
+    }
+
+    /* Login Link */
+    .login-link {
+        text-align: center;
+        margin-top: 2rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid #2a2a3d;
+        color: #888;
+    }
+
+    .login-link a {
+        color: var(--qm-primary);
+        text-decoration: none;
+        font-weight: 500;
+    }
+
+    .login-link a:hover {
+        text-decoration: underline;
+    }
+
+    .powered-by {
+        text-align: center;
+        margin-top: 0.75rem;
+        font-size: 11px;
+        color: #555;
+        letter-spacing: 0.02em;
+    }
+
+    /* Responsive */
+    @@media (max-width: 768px) {
+        .register-container {
+            flex-direction: column;
+        }
+
+        .register-branding {
+            padding: 2rem;
+        }
+
+        .register-form-panel {
+            padding: 2rem;
+        }
+
+        .form-row {
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .step-label {
+            display: none;
+        }
+
+        .step-line {
+            width: 40px;
+            margin-bottom: 0;
+        }
+    }
+</style>
+
+@code {
+    private RegisterFormData formData = new();
+    private int currentStep = 1;
+    private bool isSubmitting = false;
+    private bool isCheckingSlug = false;
+    private bool? slugAvailable;
+    private string? errorMessage;
+    private bool showPassword = false;
+    private int passwordStrength = 0;
+    private string passwordStrengthClass = "";
+    private string passwordStrengthText = "";
+    private bool registrationSuccess = false;
+    private bool requiresVerification = false;
+    private System.Timers.Timer? slugCheckTimer;
+
+    private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
+
+    protected override void OnInitialized()
+    {
+        slugCheckTimer = new System.Timers.Timer(500);
+        slugCheckTimer.Elapsed += async (sender, e) => await CheckSlugAvailability();
+        slugCheckTimer.AutoReset = false;
+    }
+
+    private void OnOrganizationNameChanged(ChangeEventArgs e)
+    {
+        formData.OrganizationName = e.Value?.ToString() ?? "";
+
+        // Auto-generate slug from organization name
+        if (string.IsNullOrEmpty(formData.Slug) || formData.Slug == GenerateSlug(formData.OrganizationName))
+        {
+            formData.Slug = GenerateSlug(formData.OrganizationName);
+            ResetSlugCheck();
+        }
+    }
+
+    private void OnSlugChanged(ChangeEventArgs e)
+    {
+        formData.Slug = e.Value?.ToString() ?? "";
+        ResetSlugCheck();
+    }
+
+    private void ResetSlugCheck()
+    {
+        slugAvailable = null;
+        slugCheckTimer?.Stop();
+
+        if (!string.IsNullOrEmpty(formData.Slug) && formData.Slug.Length >= 3)
+        {
+            isCheckingSlug = true;
+            slugCheckTimer?.Start();
+        }
+    }
+
+    private async Task CheckSlugAvailability()
+    {
+        if (string.IsNullOrEmpty(formData.Slug) || formData.Slug.Length < 3)
+        {
+            isCheckingSlug = false;
+            return;
+        }
+
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/register/check-slug/{formData.Slug}");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<SlugCheckResponse>();
+                slugAvailable = result?.IsAvailable ?? false;
+            }
+            else
+            {
+                slugAvailable = false;
+            }
+        }
+        catch
+        {
+            slugAvailable = null;
+        }
+        finally
+        {
+            isCheckingSlug = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string GenerateSlug(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+
+        var slug = name.ToLowerInvariant();
+        slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
+        slug = Regex.Replace(slug, @"\s+", "-");
+        slug = Regex.Replace(slug, @"-+", "-");
+        slug = slug.Trim('-');
+
+        return slug.Length > 30 ? slug.Substring(0, 30) : slug;
+    }
+
+    private void OnPasswordChanged(ChangeEventArgs e)
+    {
+        formData.Password = e.Value?.ToString() ?? "";
+        CalculatePasswordStrength();
+    }
+
+    private void CalculatePasswordStrength()
+    {
+        var password = formData.Password ?? "";
+        var score = 0;
+
+        if (password.Length >= 8) score += 25;
+        if (password.Length >= 12) score += 15;
+        if (Regex.IsMatch(password, @"[a-z]")) score += 15;
+        if (Regex.IsMatch(password, @"[A-Z]")) score += 15;
+        if (Regex.IsMatch(password, @"[0-9]")) score += 15;
+        if (Regex.IsMatch(password, @"[^a-zA-Z0-9]")) score += 15;
+
+        passwordStrength = Math.Min(score, 100);
+
+        if (passwordStrength < 30)
+        {
+            passwordStrengthClass = "weak";
+            passwordStrengthText = "Weak";
+        }
+        else if (passwordStrength < 50)
+        {
+            passwordStrengthClass = "fair";
+            passwordStrengthText = "Fair";
+        }
+        else if (passwordStrength < 75)
+        {
+            passwordStrengthClass = "good";
+            passwordStrengthText = "Good";
+        }
+        else
+        {
+            passwordStrengthClass = "strong";
+            passwordStrengthText = "Strong";
+        }
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        showPassword = !showPassword;
+    }
+
+    private bool CanProceedStep1()
+    {
+        return !string.IsNullOrWhiteSpace(formData.OrganizationName) &&
+               !string.IsNullOrWhiteSpace(formData.Slug) &&
+               formData.Slug.Length >= 3 &&
+               (slugAvailable == true || slugAvailable == null);
+    }
+
+    private bool CanProceedStep2()
+    {
+        return !string.IsNullOrWhiteSpace(formData.FirstName) &&
+               !string.IsNullOrWhiteSpace(formData.LastName) &&
+               !string.IsNullOrWhiteSpace(formData.Email) &&
+               !string.IsNullOrWhiteSpace(formData.Password) &&
+               formData.Password.Length >= 8 &&
+               formData.Password == formData.ConfirmPassword;
+    }
+
+    private void NextStep()
+    {
+        if (currentStep < 3)
+        {
+            currentStep++;
+        }
+    }
+
+    private void PreviousStep()
+    {
+        if (currentStep > 1)
+        {
+            currentStep--;
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (!formData.AcceptTerms)
+        {
+            errorMessage = "Please accept the terms and conditions.";
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            var request = new
+            {
+                organizationName = formData.OrganizationName,
+                slug = formData.Slug,
+                email = formData.Email,
+                password = formData.Password,
+                confirmPassword = formData.ConfirmPassword,
+                firstName = formData.FirstName,
+                lastName = formData.LastName,
+                phone = formData.Phone,
+                contactPhone = formData.ContactPhone,
+                industryType = formData.IndustryType,
+                acceptTerms = formData.AcceptTerms
+            };
+
+            var response = await Http.PostAsJsonAsync("api/v1/register", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<RegisterResponse>();
+                registrationSuccess = true;
+                requiresVerification = result?.RequiresEmailVerification ?? false;
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                errorMessage = error?.Message ?? "Registration failed. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Registration error");
+            errorMessage = "Unable to connect to the server. Please try again later.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void GoToLogin()
+    {
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        slugCheckTimer?.Dispose();
+    }
+
+    // Form model
+    private class RegisterFormData
+    {
+        public string OrganizationName { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string ConfirmPassword { get; set; } = "";
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string? Phone { get; set; }
+        public string? ContactPhone { get; set; }
+        public string? IndustryType { get; set; }
+        public bool AcceptTerms { get; set; }
+    }
+
+    // API response models
+    private record SlugCheckResponse
+    {
+        public bool IsAvailable { get; init; }
+        public string? Message { get; init; }
+    }
+
+    private record RegisterResponse
+    {
+        public bool Success { get; init; }
+        public Guid OrganizationId { get; init; }
+        public Guid UserId { get; init; }
+        public string? Slug { get; init; }
+        public string? Message { get; init; }
+        public bool RequiresEmailVerification { get; init; }
+    }
+
+    private record ErrorResponse
+    {
+        public string? Error { get; init; }
+        public string? Message { get; init; }
+    }
+}

@@ -1,0 +1,142 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<button type="@Type"
+        class="q-btn @GetVariantClass() @GetSizeClass() @(Block ? "q-btn--block" : "") @(Disabled || Loading ? "q-btn--disabled" : "") @Class"
+        disabled="@(Disabled || Loading)"
+        @onclick="HandleClick"
+        @onclick:stopPropagation="StopPropagation"
+        @attributes="AdditionalAttributes">
+    @if (Loading)
+    {
+        <span class="q-btn__spinner"></span>
+    }
+    else if (!string.IsNullOrEmpty(Icon))
+    {
+        <i class="q-btn__icon @GetIconClass()"></i>
+    }
+    @if (!string.IsNullOrEmpty(Text))
+    {
+        <span class="q-btn__text">@Text</span>
+    }
+    @ChildContent
+</button>
+
+@code {
+    /// <summary>
+    /// Button text content
+    /// </summary>
+    [Parameter] public string? Text { get; set; }
+
+    /// <summary>
+    /// Bootstrap icon name (without 'bi-' prefix) or full class
+    /// </summary>
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>
+    /// Button variant: primary, secondary, success, danger, warning, info, light, dark, outline-primary, etc.
+    /// </summary>
+    [Parameter] public string Variant { get; set; } = "primary";
+
+    /// <summary>
+    /// Button size: sm, md, lg
+    /// </summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>
+    /// HTML button type: button, submit, reset
+    /// </summary>
+    [Parameter] public string Type { get; set; } = "button";
+
+    /// <summary>
+    /// Whether the button is disabled
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Whether the button shows a loading spinner
+    /// </summary>
+    [Parameter] public bool Loading { get; set; }
+
+    /// <summary>
+    /// Whether the button takes full width
+    /// </summary>
+    [Parameter] public bool Block { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Click event callback
+    /// </summary>
+    [Parameter] public EventCallback<MouseEventArgs> OnClick { get; set; }
+
+    /// <summary>
+    /// Stops the click event from bubbling to a parent element's own click handler
+    /// (e.g. this button sitting inside a clickable card). "OnClick:StopPropagation"
+    /// is NOT valid Razor syntax on a component parameter — Blazor's :stopPropagation
+    /// modifier only applies to native DOM element event attributes — so this is a
+    /// real parameter the button applies to its own internal &lt;button&gt; element.
+    /// </summary>
+    [Parameter] public bool StopPropagation { get; set; }
+
+    /// <summary>
+    /// Child content (alternative to Text)
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string GetVariantClass()
+    {
+        return Variant.ToLowerInvariant() switch
+        {
+            "primary" => "q-btn--primary",
+            "secondary" => "q-btn--secondary",
+            "success" => "q-btn--success",
+            "danger" => "q-btn--danger",
+            "warning" => "q-btn--warning",
+            "info" => "q-btn--info",
+            "light" => "q-btn--light",
+            "dark" => "q-btn--dark",
+            "outline-primary" => "q-btn--outline-primary",
+            "outline-secondary" => "q-btn--outline-secondary",
+            "outline-danger" => "q-btn--outline-danger",
+            "ghost" => "q-btn--ghost",
+            "link" => "q-btn--link",
+            _ => "q-btn--primary"
+        };
+    }
+
+    private string GetSizeClass()
+    {
+        return Size.ToLowerInvariant() switch
+        {
+            "sm" or "small" => "q-btn--sm",
+            "lg" or "large" => "q-btn--lg",
+            _ => "q-btn--md"
+        };
+    }
+
+    private string GetIconClass()
+    {
+        if (string.IsNullOrEmpty(Icon)) return "";
+        // If it already has 'bi' or other prefix, use as-is
+        if (Icon.Contains(' ') || Icon.StartsWith("bi-"))
+            return $"bi {Icon}";
+        return $"bi bi-{Icon}";
+    }
+
+    private async Task HandleClick(MouseEventArgs args)
+    {
+        if (!Disabled && !Loading && OnClick.HasDelegate)
+        {
+            await OnClick.InvokeAsync(args);
+        }
+    }
+}

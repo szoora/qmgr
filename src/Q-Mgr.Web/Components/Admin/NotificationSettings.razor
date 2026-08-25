@@ -1,0 +1,541 @@
+@page "/admin/notification-settings"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject NotificationService ToastService
+@inject IAuthService AuthService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Notification Settings - Q-Mgr</PageTitle>
+
+<div class="qm-admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Notification Settings</h1>
+            <p class="subtitle">Configure SMS, Email, and In-App notification channels</p>
+        </div>
+        @if (canManage)
+        {
+            <QButton Text="Save Settings" Icon="check-lg" Variant="primary"
+                          OnClick="@SaveSettings" Disabled="@isSaving" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <p>Loading settings...</p>
+        </div>
+    }
+    else
+    {
+        <div class="qm-admin-settings-container">
+            <div class="qm-admin-settings-nav">
+                @foreach (var section in sections)
+                {
+                    <div class="qm-admin-settings-nav-item @(activeSection == section.Key ? "active" : "")"
+                         @onclick="@(() => activeSection = section.Key)">
+                        <i class="bi @(section.Icon)"></i>
+                        <span>@(section.Name)</span>
+                        @if (section.Key == "sms" && settings.SmsEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
+                        else if (section.Key == "email" && settings.EmailEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
+                        else if (section.Key == "inapp" && settings.InAppEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="qm-admin-settings-content">
+                @if (activeSection == "sms")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-chat-dots"></i> SMS Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.SmsEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.SmsEnabled ? "disabled" : "")">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <p>SMS notifications are sent via the CRM API gateway. Configure the gateway URL and authentication below.</p>
+                            </div>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group full-width">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsGatewayUrl" Label="SMS Gateway URL *" Placeholder="https://api.example.com"
+                                            HelperText="Base URL for the CRM SMS API (e.g., https://api.crm.example.com)"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsCustomerId" Label="Customer ID" Placeholder="customer-123"
+                                            HelperText="Your CRM customer identifier"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsSenderId" Label="Sender ID" Placeholder="Q-Mgr"
+                                            HelperText="Name shown as SMS sender"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsApiKey" Label="API Key" Type="password" Placeholder="••••••••"
+                                            HelperText="API authentication key (if using API key auth)"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="int" @bind-Value="@settings.SmsLeadTokens" Label="SMS Lead Tokens" Type="number" Min="1" Max="10"
+                                            HelperText="Notify when X positions ahead"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>Credentials (Optional)</h4>
+                            <p class="qm-admin-form-hint">Use if the gateway requires username/password authentication</p>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsUsername" Label="Username" Placeholder="api_user"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmsPassword" Label="Password" Type="password" Placeholder="••••••••"
+                                            Disabled="@(!settings.SmsEnabled)" />
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>Test SMS Connection</h4>
+
+                            <div class="qm-admin-form-inline">
+                                <QInput TValue="string" @bind-Value="@testPhoneNumber" Placeholder="+256700123456"
+                                        Disabled="@(!settings.SmsEnabled)" Style="width: 200px;" />
+                                @if (canManage)
+                                {
+                                    <QButton Text="Send Test SMS" Icon="send-fill" Variant="secondary"
+                                                  OnClick="@TestSms" Disabled="@(!settings.SmsEnabled || isTestingSms)" />
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(smsTestResult))
+                            {
+                                <div class="qm-admin-alert @(smsTestSuccess ? "success" : "error")">
+                                    <i class="bi @(smsTestSuccess ? "bi-check-circle" : "bi-x-circle")"></i>
+                                    <p>@smsTestResult</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "email")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-envelope"></i> Email Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.EmailEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.EmailEnabled ? "disabled" : "")">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <p>Configure your SMTP server settings to send email notifications.</p>
+                            </div>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmtpHost" Label="SMTP Host *" Placeholder="smtp.gmail.com"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="int" @bind-Value="@settings.SmtpPort" Label="SMTP Port *" Type="number" Min="1" Max="65535"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmtpUsername" Label="Username" Placeholder="user@gmail.com"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.SmtpPassword" Label="Password" Type="password" Placeholder="••••••••"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.EmailFromAddress" Label="From Email *" Placeholder="noreply@example.com"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="string" @bind-Value="@settings.EmailFromName" Label="From Name" Placeholder="Q-Mgr Queue System"
+                                            Disabled="@(!settings.EmailEnabled)" />
+                                </div>
+
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Use SSL/TLS</label>
+                                        <p class="qm-admin-form-hint">Enable secure connection</p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.SmtpUseSsl" disabled="@(!settings.EmailEnabled)" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>Test Email Connection</h4>
+
+                            <div class="qm-admin-form-inline">
+                                <QInput TValue="string" @bind-Value="@testEmailAddress" Placeholder="test@example.com"
+                                        Disabled="@(!settings.EmailEnabled)" Style="width: 250px;" />
+                                @if (canManage)
+                                {
+                                    <QButton Text="Send Test Email" Icon="send-fill" Variant="secondary"
+                                                  OnClick="@TestEmail" Disabled="@(!settings.EmailEnabled || isTestingEmail)" />
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(emailTestResult))
+                            {
+                                <div class="qm-admin-alert @(emailTestSuccess ? "success" : "error")">
+                                    <i class="bi @(emailTestSuccess ? "bi-check-circle" : "bi-x-circle")"></i>
+                                    <p>@emailTestResult</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "inapp")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-bell"></i> In-App Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.InAppEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.InAppEnabled ? "disabled" : "")">
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Play Sound</label>
+                                        <p class="qm-admin-form-hint">Play notification sound when new alerts arrive</p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.InAppPlaySound" disabled="@(!settings.InAppEnabled)" />
+                                    </div>
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="int" @bind-Value="@settings.InAppRetentionDays" Label="Retention Days" Type="number" Min="1" Max="90"
+                                            HelperText="Days to keep notifications (1-90)"
+                                            Disabled="@(!settings.InAppEnabled)" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (activeSection == "templates")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-file-text"></i> Message Templates</h3>
+                        </div>
+
+                        <div class="qm-admin-settings-group">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <div>
+                                    <p>Available placeholders:</p>
+                                    <code>{TokenNumber}</code> <code>{ServiceType}</code> <code>{CounterName}</code>
+                                    <code>{WaitTime}</code> <code>{PositionInQueue}</code> <code>{TrackingUrl}</code>
+                                </div>
+                            </div>
+
+                            <h4>SMS Templates</h4>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsTokenCreatedTemplate" Label="Token Created" Type="textarea" Rows="2" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsTokenCalledTemplate" Label="Token Called" Type="textarea" Rows="2" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsReminderTemplate" Label="Reminder" Type="textarea" Rows="2" />
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>Email Templates</h4>
+
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCreatedSubject" Label="Token Created - Subject" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCreatedTemplate" Label="Token Created - Body (HTML)" Type="textarea" Rows="6" />
+                            </div>
+
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCalledSubject" Label="Token Called - Subject" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCalledTemplate" Label="Token Called - Body (HTML)" Type="textarea" Rows="6" />
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool canManage = false;
+    private string activeSection = "sms";
+    private NotificationSettingsModel settings = new();
+    private Guid organizationId = Guid.Empty;
+
+    // Test SMS
+    private string testPhoneNumber = "";
+    private bool isTestingSms = false;
+    private string? smsTestResult;
+    private bool smsTestSuccess = false;
+
+    // Test Email
+    private string testEmailAddress = "";
+    private bool isTestingEmail = false;
+    private string? emailTestResult;
+    private bool emailTestSuccess = false;
+
+    private List<SectionInfo> sections = new()
+    {
+        new() { Key = "sms", Name = "SMS", Icon = "bi-chat-dots" },
+        new() { Key = "email", Name = "Email", Icon = "bi-envelope" },
+        new() { Key = "inapp", Name = "In-App", Icon = "bi-bell" },
+        new() { Key = "templates", Name = "Templates", Icon = "bi-file-text" }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.NotificationsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canManage = await PermissionService.HasPermissionAsync(Permissions.NotificationsManage);
+
+        await LoadSettings();
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        try
+        {
+            // Get current organization from auth context
+            var user = await AuthService.GetCurrentUserAsync();
+            if (user?.OrganizationId != null && user.OrganizationId != Guid.Empty)
+            {
+                organizationId = user.OrganizationId;
+            }
+            else
+            {
+                // No fallback to a specific tenant's ID here — that would silently show one
+                // tenant's notification settings to a user whose auth context failed to resolve.
+                ToastService.Notify(NotificationSeverity.Error, "Error", "Unable to determine your organization. Please sign in again.");
+                isLoading = false;
+                return;
+            }
+
+            var response = await Http.GetAsync($"api/v1/notifications/settings/{organizationId}");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<NotificationSettingsModel>(JsonOptions);
+                if (result != null)
+                {
+                    settings = result;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify(NotificationSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        isSaving = true;
+        try
+        {
+            settings.OrganizationId = organizationId;
+            var response = await Http.PutAsJsonAsync("api/v1/notifications/settings", settings, JsonOptions);
+            if (response.IsSuccessStatusCode)
+            {
+                ToastService.Notify(NotificationSeverity.Success, "Saved", "Notification settings updated successfully");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                ToastService.Notify(NotificationSeverity.Error, "Error", $"Failed to save settings: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify(NotificationSeverity.Error, "Error", $"Failed to save settings: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task TestSms()
+    {
+        if (string.IsNullOrWhiteSpace(testPhoneNumber))
+        {
+            smsTestResult = "Please enter a phone number";
+            smsTestSuccess = false;
+            return;
+        }
+
+        isTestingSms = true;
+        smsTestResult = null;
+        try
+        {
+            // First save current settings
+            await SaveSettings();
+
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/notifications/settings/{organizationId}/test-sms",
+                new { PhoneNumber = testPhoneNumber }, JsonOptions);
+
+            var result = await response.Content.ReadFromJsonAsync<TestResult>(JsonOptions);
+            smsTestSuccess = result?.Success ?? false;
+            smsTestResult = result?.Message ?? "Unknown error";
+        }
+        catch (Exception ex)
+        {
+            smsTestSuccess = false;
+            smsTestResult = $"Test failed: {ex.Message}";
+        }
+        finally
+        {
+            isTestingSms = false;
+        }
+    }
+
+    private async Task TestEmail()
+    {
+        if (string.IsNullOrWhiteSpace(testEmailAddress))
+        {
+            emailTestResult = "Please enter an email address";
+            emailTestSuccess = false;
+            return;
+        }
+
+        isTestingEmail = true;
+        emailTestResult = null;
+        try
+        {
+            // First save current settings
+            await SaveSettings();
+
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/notifications/settings/{organizationId}/test-email",
+                new { EmailAddress = testEmailAddress }, JsonOptions);
+
+            var result = await response.Content.ReadFromJsonAsync<TestResult>(JsonOptions);
+            emailTestSuccess = result?.Success ?? false;
+            emailTestResult = result?.Message ?? "Unknown error";
+        }
+        catch (Exception ex)
+        {
+            emailTestSuccess = false;
+            emailTestResult = $"Test failed: {ex.Message}";
+        }
+        finally
+        {
+            isTestingEmail = false;
+        }
+    }
+
+    private class SectionInfo
+    {
+        public string Key { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Icon { get; set; } = "";
+    }
+
+    private class NotificationSettingsModel
+    {
+        public Guid Id { get; set; }
+        public Guid OrganizationId { get; set; }
+
+        // SMS
+        public bool SmsEnabled { get; set; }
+        public string? SmsGatewayUrl { get; set; }
+        public string? SmsApiKey { get; set; }
+        public string? SmsUsername { get; set; }
+        public string? SmsPassword { get; set; }
+        public string? SmsSenderId { get; set; } = "Q-Mgr";
+        public string? SmsCustomerId { get; set; }
+        public int SmsLeadTokens { get; set; } = 3;
+
+        // Email
+        public bool EmailEnabled { get; set; }
+        public string? SmtpHost { get; set; }
+        public int SmtpPort { get; set; } = 587;
+        public bool SmtpUseSsl { get; set; } = true;
+        public string? SmtpUsername { get; set; }
+        public string? SmtpPassword { get; set; }
+        public string? EmailFromAddress { get; set; }
+        public string? EmailFromName { get; set; } = "Q-Mgr";
+
+        // In-App
+        public bool InAppEnabled { get; set; } = true;
+        public bool InAppPlaySound { get; set; } = true;
+        public int InAppRetentionDays { get; set; } = 30;
+
+        // Push
+        public bool PushEnabled { get; set; }
+
+        // Templates
+        public string? SmsTokenCreatedTemplate { get; set; } = "Your queue number is {TokenNumber}. Estimated wait: {WaitTime} mins.";
+        public string? SmsTokenCalledTemplate { get; set; } = "Your number {TokenNumber} is now being called at {CounterName}.";
+        public string? SmsReminderTemplate { get; set; } = "Reminder: You are {PositionInQueue} position(s) away.";
+        public string? EmailTokenCreatedSubject { get; set; } = "Your Queue Ticket - {TokenNumber}";
+        public string? EmailTokenCreatedTemplate { get; set; }
+        public string? EmailTokenCalledSubject { get; set; } = "Your Number is Being Called - {TokenNumber}";
+        public string? EmailTokenCalledTemplate { get; set; }
+    }
+
+    private class TestResult
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+    }
+}

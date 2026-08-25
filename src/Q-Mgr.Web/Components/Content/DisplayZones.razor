@@ -1,0 +1,835 @@
+@page "/content/zones"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@inject IContentApiService ContentApi
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+
+<PageTitle>Display Zones - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Display Zones</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Display Zones") })" />
+    </div>
+</div>
+
+<div class="display-zones-page">
+    <!-- Toolbar -->
+    <QCard Class="toolbar-card">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search displays..." IconLeft="search" />
+            </div>
+            <div class="toolbar-right">
+                @if (canCreate)
+                {
+                    <QButton Text="Add Display" Icon="tv-fill" Variant="primary" OnClick="@ShowCreateDisplayDialog" />
+                }
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading displays...</span>
+        </div>
+    }
+    else if (!displays.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="tv-fill" />
+            <h3>No Displays Configured</h3>
+            <p>Add displays to configure their content zones and layouts.</p>
+            @if (canCreate)
+            {
+                <QButton Text="Add First Display" Icon="tv-fill" Variant="primary" OnClick="@ShowCreateDisplayDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="displays-list">
+            @foreach (var display in FilteredDisplays)
+            {
+                <QCard Class="display-card">
+                    <div class="display-header">
+                        <div class="display-info">
+                            <div class="display-icon @display.Status">
+                                <QIcon Name="@GetDisplayTypeIconBootstrap(display.DisplayType)" />
+                            </div>
+                            <div>
+                                <h3>@display.Name</h3>
+                                <p>@display.DisplayType - @(display.Resolution ?? "Unknown resolution")</p>
+                            </div>
+                        </div>
+                        <div class="display-status">
+                            <QBadge Variant="@GetStatusBadgeStyle(display.Status)" Text="@display.Status" />
+                            @if (display.LastHeartbeat.HasValue)
+                            {
+                                <span class="last-seen">Last seen: @display.LastHeartbeat.Value.ToString("g")</span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="zones-section">
+                        <div class="zones-header">
+                            <h4>Content Zones (@display.ZoneCount)</h4>
+                            @if (canCreate)
+                            {
+                                <QButton Text="Add Zone" Icon="plus-lg" Size="sm" Variant="secondary" OnClick="@(() => ShowAddZoneDialog(display))" />
+                            }
+                        </div>
+
+                        @if (display.ZoneCount == 0)
+                        {
+                            <div class="no-zones">
+                                <span>No zones configured. Add zones to define content areas.</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <QButton Text="View Zones" Icon="grid-3x3" Size="sm" Variant="secondary" OnClick="@(() => ViewDisplayZones(display))" />
+                        }
+                    </div>
+
+                    <div class="display-actions">
+                        @if (canEdit)
+                        {
+                            <QButton Icon="gear-fill" Size="sm" Variant="secondary" OnClick="@(() => EditDisplay(display))" />
+                        }
+                        <QButton Icon="box-arrow-up-right" Size="sm" Variant="secondary" OnClick="@(() => PreviewDisplay(display))" />
+                        @if (canDelete)
+                        {
+                            <QButton Icon="trash-fill" Size="sm" Variant="danger" OnClick="@(() => DeleteDisplay(display))" />
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<!-- Create/Edit Display Dialog -->
+<QModal @bind-Visible="showDisplayDialog" Title="@(isEditingDisplay ? "Edit Display" : "Add Display")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@displayModel.Name" Label="Display Name *" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="DisplayType" TItem="DisplayType" @bind-Value="@displayModel.DisplayType" Items="@displayTypeValues" Label="Display Type" />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="@displayModel.Orientation" Items="@orientations" Label="Orientation" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="string" TItem="string" @bind-Value="@displayModel.Resolution" Items="@resolutions" AllowClear="true" Label="Resolution" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@displayModel.DeviceId" Label="Device ID (optional)" Placeholder="Unique device identifier" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseDisplayDialog" />
+        <QButton Text="@(isEditingDisplay ? "Save" : "Create")" Icon="@(isEditingDisplay ? "check-lg" : "plus-lg")" Variant="primary" OnClick="@SaveDisplay" />
+    </FooterContent>
+</QModal>
+
+<!-- Add Zone Dialog -->
+<QModal @bind-Visible="showZoneDialog" Title="@($"Add Zone to {selectedDisplay?.Name}")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@zoneModel.Name" Label="Zone Name *" />
+        </div>
+        <div class="form-group">
+            <QSelect TValue="ZoneType" TItem="ZoneType" @bind-Value="@zoneModel.ZoneType" Items="@zoneTypeValues" Label="Zone Type" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@zoneModel.PositionX" Type="number" Label="Position X (%)" Min="0" Max="100" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@zoneModel.PositionY" Type="number" Label="Position Y (%)" Min="0" Max="100" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@zoneModel.Width" Type="number" Label="Width (%)" Min="1" Max="100" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@zoneModel.Height" Type="number" Label="Height (%)" Min="1" Max="100" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="Guid?" TItem="PlaylistDto" @bind-Value="@zoneModel.PlaylistId" Items="@playlists"
+                ValueSelector="@(p => (Guid?)p.Id)" TextSelector="@(p => p.Name)"
+                AllowClear="true" Label="Assign Playlist (optional)" Placeholder="Select playlist..." />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseZoneDialog" />
+        <QButton Text="Add Zone" Icon="plus-lg" Variant="primary" OnClick="@SaveZone" />
+    </FooterContent>
+</QModal>
+
+<!-- View Zones Dialog -->
+<QModal @bind-Visible="showZonesListDialog" Title="@($"Zones for {zonesListDisplay?.Name}")" Size="md">
+    <ChildContent>
+        @if (isLoadingZonesList)
+        {
+            <div class="loading-container">
+                <QSpinner Size="lg" />
+            </div>
+        }
+        else if (zonesListDisplay == null || zonesListDisplay.Zones.Count == 0)
+        {
+            <p>No zones configured for this display.</p>
+        }
+        else
+        {
+            <div class="zones-list-view">
+                @foreach (var zone in zonesListDisplay.Zones)
+                {
+                    <div class="zone-list-item">
+                        <div class="zone-list-item-header">
+                            <strong>@zone.Name</strong>
+                            <QBadge Variant="secondary" Text="@zone.ZoneType.ToString()" />
+                        </div>
+                        <div class="zone-list-item-detail">
+                            <span>Position: @zone.PositionX%, @zone.PositionY% &middot; Size: @zone.Width% &times; @zone.Height%</span>
+                            <span>Playlist: @(zone.PlaylistName ?? "None assigned")</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@(() => showZonesListDialog = false)" />
+    </FooterContent>
+</QModal>
+
+<!-- Preview Dialog -->
+<QModal @bind-Visible="showPreviewDialog" Title="@($"Preview: {previewDisplayName}")" Size="lg">
+    <ChildContent>
+        @if (isLoadingPreview)
+        {
+            <div class="loading-container">
+                <QSpinner Size="lg" />
+            </div>
+        }
+        else if (previewPlaylistItems.Count == 0)
+        {
+            <p>@previewEmptyMessage</p>
+        }
+        else
+        {
+            <div class="preview-player-container">
+                <PlaylistPlayer Playlist="previewPlaylistItems" AutoAdvance="true" ShowProgress="true" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@(() => showPreviewDialog = false)" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Display"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .display-zones-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .toolbar-card {
+        padding: 16px 24px;
+    }
+
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        gap: 12px;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        text-align: center;
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 80px 20px;
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+        color: var(--qm-text-secondary);
+    }
+
+    .displays-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .display-card {
+        padding: 20px;
+    }
+
+    .display-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+    }
+
+    .display-info {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+    }
+
+    .display-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--qm-bg-card-hover);
+    }
+
+    .display-icon.online {
+        background: var(--qm-success);
+    }
+
+    .display-icon.online .rzi {
+        color: white;
+    }
+
+    .display-icon .rzi {
+        font-size: 24px;
+    }
+
+    .display-info h3 {
+        margin: 0 0 4px;
+        font-size: 18px;
+    }
+
+    .display-info p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .display-status {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+    }
+
+    .last-seen {
+        font-size: 11px;
+        color: var(--qm-text-secondary);
+    }
+
+    .zones-section {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .zones-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .zones-header h4 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .no-zones {
+        padding: 12px;
+        text-align: center;
+        color: var(--qm-text-secondary);
+        font-size: 13px;
+    }
+
+    .zones-list-view {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .zone-list-item {
+        padding: 12px 16px;
+        background: var(--qm-bg-card-hover);
+        border-radius: var(--qm-radius-md);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .zone-list-item-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .zone-list-item-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .preview-player-container {
+        width: 100%;
+        height: 400px;
+        border-radius: var(--qm-radius-md);
+        overflow: hidden;
+    }
+
+    .display-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        /* Matches .zones-section's own 16px padding above, so this row's right edge
+           lines up with the "Add Zone" button's right edge instead of sitting further
+           right (this row has no nested-panel padding of its own to account for). */
+        padding-right: 16px;
+    }
+
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        width: 90%;
+        max-width: 500px;
+    }
+
+    .dialog-content h3 {
+        margin: 0 0 20px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group .rz-label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 24px;
+    }
+</style>
+
+@code {
+    private List<DisplayDto> displays = new();
+    private List<PlaylistDto> playlists = new();
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+
+    private bool showDisplayDialog = false;
+    private bool isEditingDisplay = false;
+    private DisplayEditModel displayModel = new();
+    private Guid? editingDisplayId;
+
+    private bool showZoneDialog = false;
+    private DisplayDto? selectedDisplay;
+    private ZoneEditModel zoneModel = new();
+
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private List<DisplayType> displayTypeValues = Enum.GetValues<DisplayType>().ToList();
+    private List<ZoneType> zoneTypeValues = Enum.GetValues<ZoneType>().ToList();
+    private List<string> orientations = new() { "landscape", "portrait" };
+    private List<string> resolutions = new() { "1920x1080", "3840x2160", "1280x720", "1080x1920", "2160x3840" };
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private DisplayDto? displayToDelete;
+
+    // View Zones dialog state
+    private bool showZonesListDialog = false;
+    private bool isLoadingZonesList = false;
+    private DisplayDetailDto? zonesListDisplay;
+
+    // Preview dialog state
+    private bool showPreviewDialog = false;
+    private bool isLoadingPreview = false;
+    private string previewDisplayName = "";
+    private string previewEmptyMessage = "No zone on this display has a playlist assigned.";
+    private List<PlaylistPlayer.PlaylistItemModel> previewPlaylistItems = new();
+
+    private IEnumerable<DisplayDto> FilteredDisplays => displays
+        .Where(d => string.IsNullOrEmpty(searchTerm) || d.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        displays = await ContentApi.GetDisplaysAsync(branchId);
+        playlists = await ContentApi.GetPlaylistsAsync(branchId);
+        isLoading = false;
+    }
+
+    private void ShowCreateDisplayDialog()
+    {
+        displayModel = new DisplayEditModel
+        {
+            DisplayType = DisplayType.CustomerDisplay,
+            Orientation = "landscape"
+        };
+        isEditingDisplay = false;
+        editingDisplayId = null;
+        showDisplayDialog = true;
+    }
+
+    private void EditDisplay(DisplayDto display)
+    {
+        displayModel = new DisplayEditModel
+        {
+            Name = display.Name,
+            DisplayType = display.DisplayType,
+            Orientation = display.Orientation,
+            Resolution = display.Resolution,
+            DeviceId = display.DeviceId
+        };
+        isEditingDisplay = true;
+        editingDisplayId = display.Id;
+        showDisplayDialog = true;
+    }
+
+    private void CloseDisplayDialog() => showDisplayDialog = false;
+
+    private async Task SaveDisplay()
+    {
+        if (string.IsNullOrEmpty(displayModel.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name is required.");
+            return;
+        }
+
+        if (isEditingDisplay && editingDisplayId.HasValue)
+        {
+            var request = new UpdateDisplayRequest
+            {
+                Name = displayModel.Name,
+                DisplayType = displayModel.DisplayType,
+                Orientation = displayModel.Orientation,
+                Resolution = displayModel.Resolution,
+                DeviceId = displayModel.DeviceId
+            };
+
+            var result = await ContentApi.UpdateDisplayAsync(editingDisplayId.Value, request);
+            if (result != null)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Display updated.");
+                showDisplayDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update display.");
+            }
+        }
+        else
+        {
+            var request = new CreateDisplayRequest
+            {
+                Name = displayModel.Name,
+                DisplayType = displayModel.DisplayType,
+                Orientation = displayModel.Orientation,
+                Resolution = displayModel.Resolution,
+                DeviceId = displayModel.DeviceId
+            };
+
+            var result = await ContentApi.CreateDisplayAsync(branchId, request);
+            if (result != null)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Display created.");
+                showDisplayDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create display.");
+            }
+        }
+    }
+
+    private void DeleteDisplay(DisplayDto display)
+    {
+        displayToDelete = display;
+        deleteConfirmMessage = $"Delete '{display.Name}'?";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && displayToDelete != null)
+        {
+            var success = await ContentApi.DeleteDisplayAsync(displayToDelete.Id);
+            if (success)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Deleted", "Display deleted.");
+                await LoadData();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete display.");
+            }
+        }
+
+        displayToDelete = null;
+    }
+
+    private void ShowAddZoneDialog(DisplayDto display)
+    {
+        selectedDisplay = display;
+        zoneModel = new ZoneEditModel
+        {
+            ZoneType = ZoneType.MainQueue,
+            PositionX = 0,
+            PositionY = 0,
+            Width = 100,
+            Height = 100
+        };
+        showZoneDialog = true;
+    }
+
+    private void CloseZoneDialog() => showZoneDialog = false;
+
+    private async Task SaveZone()
+    {
+        if (selectedDisplay == null || string.IsNullOrEmpty(zoneModel.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name is required.");
+            return;
+        }
+
+        var request = new CreateDisplayZoneRequest
+        {
+            Name = zoneModel.Name,
+            ZoneType = zoneModel.ZoneType,
+            PositionX = zoneModel.PositionX,
+            PositionY = zoneModel.PositionY,
+            Width = zoneModel.Width,
+            Height = zoneModel.Height,
+            ZIndex = 0,
+            PlaylistId = zoneModel.PlaylistId
+        };
+
+        var result = await ContentApi.CreateDisplayZoneAsync(selectedDisplay.Id, request);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Zone added.");
+            showZoneDialog = false;
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to add zone.");
+        }
+    }
+
+    private async Task ViewDisplayZones(DisplayDto display)
+    {
+        showZonesListDialog = true;
+        isLoadingZonesList = true;
+        zonesListDisplay = await ContentApi.GetDisplayAsync(display.Id);
+        isLoadingZonesList = false;
+
+        if (zonesListDisplay == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to load zones for this display.");
+        }
+    }
+
+    private async Task PreviewDisplay(DisplayDto display)
+    {
+        previewDisplayName = display.Name;
+        previewPlaylistItems = new();
+        showPreviewDialog = true;
+        isLoadingPreview = true;
+
+        var detail = await ContentApi.GetDisplayAsync(display.Id);
+        var zoneWithPlaylist = detail?.Zones.FirstOrDefault(z => z.PlaylistId.HasValue);
+
+        if (zoneWithPlaylist?.PlaylistId != null)
+        {
+            var playlist = await ContentApi.GetPlaylistAsync(zoneWithPlaylist.PlaylistId.Value);
+            if (playlist != null && playlist.Items.Count > 0)
+            {
+                previewPlaylistItems = playlist.Items
+                    .Where(i => !string.IsNullOrEmpty(i.FileUrl))
+                    .OrderBy(i => i.Position)
+                    .Select(i => new PlaylistPlayer.PlaylistItemModel
+                    {
+                        Id = i.Id,
+                        MediaContentId = i.MediaContentId,
+                        Name = i.MediaName,
+                        FileUrl = i.FileUrl!,
+                        ContentType = i.MediaType,
+                        DurationSeconds = i.DurationSeconds > 0 ? i.DurationSeconds : playlist.DefaultDurationSeconds,
+                        Order = i.Position
+                    })
+                    .ToList();
+            }
+            else
+            {
+                previewEmptyMessage = "The assigned playlist has no playable items.";
+            }
+        }
+        else
+        {
+            previewEmptyMessage = "No zone on this display has a playlist assigned.";
+        }
+
+        isLoadingPreview = false;
+    }
+
+    private string GetDisplayTypeIcon(DisplayType type) => type switch
+    {
+        DisplayType.CustomerDisplay => "tv",
+        DisplayType.Kiosk => "point_of_sale",
+        DisplayType.Counter => "meeting_room",
+        DisplayType.Signage => "perm_media",
+        _ => "monitor"
+    };
+
+    private string GetDisplayTypeIconBootstrap(DisplayType type) => type switch
+    {
+        DisplayType.CustomerDisplay => "tv-fill",
+        DisplayType.Kiosk => "tablet",
+        DisplayType.Counter => "door-open-fill",
+        DisplayType.Signage => "images",
+        _ => "display"
+    };
+
+    private string GetStatusBadgeStyle(string status) => status.ToLower() switch
+    {
+        "online" => "success",
+        "offline" => "light",
+        "maintenance" => "warning",
+        _ => "light"
+    };
+
+    private class DisplayEditModel
+    {
+        public string Name { get; set; } = "";
+        public DisplayType DisplayType { get; set; }
+        public string Orientation { get; set; } = "landscape";
+        public string? Resolution { get; set; }
+        public string? DeviceId { get; set; }
+    }
+
+    private class ZoneEditModel
+    {
+        public string Name { get; set; } = "";
+        public ZoneType ZoneType { get; set; }
+        public int PositionX { get; set; }
+        public int PositionY { get; set; }
+        public int Width { get; set; } = 100;
+        public int Height { get; set; } = 100;
+        public Guid? PlaylistId { get; set; }
+    }
+}

@@ -1,0 +1,735 @@
+@page "/platform/dashboard"
+@using System.Text.Json
+@using QMgr.Web.Services
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Platform Dashboard - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="speedometer2" Size="32" /> Platform Dashboard</h1>
+        <p class="page-subtitle">Platform-wide metrics, activity, and tenant overview</p>
+    </div>
+</div>
+
+<div class="admin-content">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <QSpinner Size="lg" />
+            <span>Loading dashboard...</span>
+        </div>
+    }
+    else if (hasError)
+    {
+        <QCard>
+            <div class="error-state">
+                <QIcon Name="exclamation-triangle-fill" Size="48" />
+                <h4>Failed to Load Dashboard</h4>
+                <p>@errorMessage</p>
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
+            </div>
+        </QCard>
+    }
+    else
+    {
+        <!-- Key Metrics Cards -->
+        <div class="metrics-grid">
+            <QCard Class="metric-card">
+                <div class="metric-icon primary">
+                    <QIcon Name="building-fill" Size="32" />
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">@stats.TotalOrganizations</div>
+                    <div class="metric-label">Total Organizations</div>
+                    <div class="metric-change">
+                        @if (stats.NewOrganizationsThisMonth > 0)
+                        {
+                            <span class="change-positive">
+                                <QIcon Name="arrow-up" /> +@stats.NewOrganizationsThisMonth this month
+                            </span>
+                        }
+                    </div>
+                </div>
+            </QCard>
+
+            <QCard Class="metric-card">
+                <div class="metric-icon success">
+                    <QIcon Name="check-circle-fill" Size="32" />
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">@stats.ActiveOrganizations</div>
+                    <div class="metric-label">Active Organizations</div>
+                    <div class="metric-sublabel">
+                        @stats.TrialingOrganizations trialing, @stats.SuspendedOrganizations suspended
+                    </div>
+                </div>
+            </QCard>
+
+            <QCard Class="metric-card">
+                <div class="metric-icon money">
+                    <QIcon Name="currency-dollar" Size="32" />
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">$@stats.MonthlyRecurringRevenue.ToString("N0")</div>
+                    <div class="metric-label">Monthly Recurring Revenue</div>
+                    <div class="metric-sublabel">
+                        ARR: $@((stats.MonthlyRecurringRevenue * 12).ToString("N0"))
+                    </div>
+                </div>
+            </QCard>
+
+            <QCard Class="metric-card">
+                <div class="metric-icon info">
+                    <QIcon Name="people-fill" Size="32" />
+                </div>
+                <div class="metric-content">
+                    <div class="metric-value">@stats.TotalUsers</div>
+                    <div class="metric-label">Total Users</div>
+                    <div class="metric-sublabel">
+                        @stats.TotalBranches total branches
+                    </div>
+                </div>
+            </QCard>
+        </div>
+
+        <!-- Usage Metrics -->
+        <div class="dashboard-row">
+            <QCard Class="usage-card" Title="This Month's Usage" Icon="activity">
+                <div class="usage-stats">
+                    <div class="usage-stat">
+                        <div class="usage-icon">
+                            <QIcon Name="ticket-perforated-fill" Size="24" />
+                        </div>
+                        <div class="usage-info">
+                            <div class="usage-value">@stats.TotalTokensThisMonth.ToString("N0")</div>
+                            <div class="usage-label">Tokens Created</div>
+                        </div>
+                    </div>
+                    <div class="usage-stat">
+                        <div class="usage-icon">
+                            <QIcon Name="arrow-left-right" Size="24" />
+                        </div>
+                        <div class="usage-info">
+                            <div class="usage-value">@stats.TotalApiCallsThisMonth.ToString("N0")</div>
+                            <div class="usage-label">API Calls</div>
+                        </div>
+                    </div>
+                </div>
+            </QCard>
+
+            <!-- Tier Distribution -->
+            <QCard Class="tier-card" Title="Tier Distribution" Icon="diagram-3-fill">
+                <div class="tier-list">
+                    @foreach (var tierCount in stats.OrganizationsByTier.OrderByDescending(t => t.Count))
+                    {
+                        var percentage = stats.TotalOrganizations > 0
+                            ? (double)tierCount.Count / stats.TotalOrganizations * 100
+                            : 0;
+                        <div class="tier-item">
+                            <div class="tier-info">
+                                <span class="tier-name">@tierCount.Tier</span>
+                                <span class="tier-count">@tierCount.Count orgs</span>
+                            </div>
+                            <div class="tier-bar">
+                                <div class="tier-fill" style="width: @percentage%"></div>
+                            </div>
+                            <div class="tier-percentage">@percentage.ToString("N1")%</div>
+                        </div>
+                    }
+                </div>
+            </QCard>
+        </div>
+
+        <!-- Subscription Plans Overview -->
+        <QCard Title="Subscription Plans" Icon="credit-card-fill">
+            <div class="plans-grid">
+                @foreach (var plan in plans)
+                {
+                    <div class="plan-card">
+                        <div class="plan-header">
+                            <h4>@plan.Name</h4>
+                            <QBadge Text="@plan.Code" Variant="primary" />
+                        </div>
+                        <div class="plan-pricing">
+                            <div class="price">
+                                <span class="price-value">$@plan.MonthlyPriceUsd</span>
+                                <span class="price-period">/month</span>
+                            </div>
+                            @if (plan.AnnualPriceUsd > 0)
+                            {
+                                <div class="price-annual">
+                                    $@plan.AnnualPriceUsd/year
+                                </div>
+                            }
+                        </div>
+                        <div class="plan-stats">
+                            <div class="plan-stat">
+                                <QIcon Name="people-fill" />
+                                <span>@plan.ActiveSubscriptions active</span>
+                            </div>
+                        </div>
+                        <div class="plan-limits">
+                            <div class="limit-item">
+                                <QIcon Name="building-fill" Size="14" />
+                                <span>@plan.MaxBranches branches</span>
+                            </div>
+                            <div class="limit-item">
+                                <QIcon Name="person-fill" Size="14" />
+                                <span>@plan.MaxUsersPerBranch users/branch</span>
+                            </div>
+                            <div class="limit-item">
+                                <QIcon Name="ticket-fill" Size="14" />
+                                <span>@plan.MaxTokensPerMonth.ToString("N0") tokens/mo</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </QCard>
+
+        <!-- Recent Activity -->
+        <QCard Title="Recent Activity" Icon="clock-history">
+            <HeaderActions>
+                <span class="activity-count">@activity.Count recent events</span>
+            </HeaderActions>
+            <ChildContent>
+                @if (activity.Any())
+                {
+                    <div class="activity-list">
+                        @foreach (var item in activity.Take(20))
+                        {
+                            <div class="activity-item">
+                                <div class="activity-icon">
+                                    <QIcon Name="@GetActivityIcon(item.Type)" />
+                                </div>
+                                <div class="activity-content">
+                                    <div class="activity-description">@item.Description</div>
+                                    <div class="activity-time">@FormatTime(item.Timestamp)</div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="empty-activity">
+                        <QIcon Name="inbox-fill" Size="48" />
+                        <p>No recent activity</p>
+                    </div>
+                }
+            </ChildContent>
+        </QCard>
+    }
+</div>
+
+<style>
+    .page-header {
+        margin-bottom: 32px;
+    }
+
+    .page-header h1 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 8px;
+        font-size: 32px;
+        color: var(--qm-text-primary);
+    }
+
+    .page-subtitle {
+        color: var(--qm-text-muted);
+        margin: 0;
+        font-size: 16px;
+    }
+
+    .loading-state, .error-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .error-state .rzi {
+        color: var(--qm-danger);
+        margin-bottom: 16px;
+    }
+
+    .error-state h4 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .error-state p {
+        margin: 0 0 24px;
+    }
+
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    .metric-card {
+        padding: 24px;
+    }
+
+    .metric-card .q-card__body {
+        display: flex;
+        gap: 16px;
+        padding: 0;
+    }
+
+    .metric-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .metric-icon.primary {
+        background: var(--qm-gradient-primary);
+        color: white;
+    }
+
+    .metric-icon.success {
+        background: linear-gradient(135deg, #16a34a, #00cc6a);
+        color: white;
+    }
+
+    .metric-icon.money {
+        background: linear-gradient(135deg, #ffd700, #ffb700);
+        color: white;
+    }
+
+    .metric-icon.info {
+        background: var(--qm-gradient-primary);
+        color: white;
+    }
+
+    .metric-content {
+        flex: 1;
+    }
+
+    .metric-value {
+        font-size: 36px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .metric-label {
+        font-size: 14px;
+        color: var(--qm-text-muted);
+        margin-bottom: 4px;
+    }
+
+    .metric-sublabel {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .metric-change {
+        margin-top: 8px;
+        font-size: 13px;
+    }
+
+    .change-positive {
+        color: var(--qm-success);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .dashboard-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    @@media (max-width: 968px) {
+        .dashboard-row {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-header h3 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .usage-stats {
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+    }
+
+    .usage-stat {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+    }
+
+    .usage-icon {
+        width: 56px;
+        height: 56px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .usage-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .usage-label {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .tier-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .tier-item {
+        display: grid;
+        grid-template-columns: 120px 1fr 60px;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .tier-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tier-name {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .tier-count {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .tier-bar {
+        height: 24px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-full);
+        overflow: hidden;
+    }
+
+    .tier-fill {
+        height: 100%;
+        background: var(--qm-gradient-primary);
+        transition: width 0.3s ease;
+    }
+
+    .tier-percentage {
+        text-align: right;
+        font-weight: 600;
+        color: var(--qm-primary);
+    }
+
+    .plans-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+    }
+
+    .plan-card {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+    }
+
+    .plan-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .plan-header h4 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .plan-pricing {
+        margin-bottom: 16px;
+    }
+
+    .price {
+        display: flex;
+        align-items: baseline;
+        gap: 4px;
+    }
+
+    .price-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .price-period {
+        font-size: 14px;
+        color: var(--qm-text-muted);
+    }
+
+    .price-annual {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin-top: 4px;
+    }
+
+    .plan-stats {
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .plan-stat {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .plan-limits {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .limit-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .activity-list {
+        max-height: 600px;
+        overflow-y: auto;
+    }
+
+    .activity-item {
+        display: flex;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid var(--qm-border);
+        transition: background 0.2s;
+    }
+
+    .activity-item:hover {
+        background: var(--qm-bg-elevated);
+    }
+
+    .activity-item:last-child {
+        border-bottom: none;
+    }
+
+    .activity-icon {
+        width: 40px;
+        height: 40px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .activity-content {
+        flex: 1;
+    }
+
+    .activity-description {
+        color: var(--qm-text-primary);
+        margin-bottom: 4px;
+    }
+
+    .activity-time {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .activity-count {
+        font-size: 14px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-activity {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 40px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-activity .rzi {
+        opacity: 0.3;
+        margin-bottom: 12px;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool hasError = false;
+    private string errorMessage = "";
+
+    private PlatformStats stats = new();
+    private List<ActivityItem> activity = new();
+    private List<PlanDetails> plans = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        hasError = false;
+
+        try
+        {
+            var statsTask = Http.GetFromJsonAsync<PlatformStats>("api/v1/admin/stats", JsonOptions);
+            var activityTask = Http.GetFromJsonAsync<List<ActivityItem>>("api/v1/admin/activity", JsonOptions);
+            var plansTask = Http.GetFromJsonAsync<List<PlanDetails>>("api/v1/admin/plans", JsonOptions);
+
+            await Task.WhenAll(statsTask, activityTask, plansTask);
+
+            stats = await statsTask ?? new();
+            activity = await activityTask ?? new();
+            plans = await plansTask ?? new();
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetActivityIcon(string type) => type switch
+    {
+        "organization_created" => "building-add",
+        "subscription_created" => "credit-card",
+        _ => "circle-fill"
+    };
+
+    private string FormatTime(DateTime timestamp)
+    {
+        var timeSpan = DateTime.UtcNow - timestamp;
+
+        if (timeSpan.TotalMinutes < 1)
+            return "Just now";
+        if (timeSpan.TotalMinutes < 60)
+            return $"{(int)timeSpan.TotalMinutes}m ago";
+        if (timeSpan.TotalHours < 24)
+            return $"{(int)timeSpan.TotalHours}h ago";
+        if (timeSpan.TotalDays < 30)
+            return $"{(int)timeSpan.TotalDays}d ago";
+
+        return timestamp.ToString("MMM d, yyyy");
+    }
+
+    private record PlatformStats
+    {
+        public int TotalOrganizations { get; init; }
+        public int ActiveOrganizations { get; init; }
+        public int TrialingOrganizations { get; init; }
+        public int SuspendedOrganizations { get; init; }
+        public int TotalUsers { get; init; }
+        public int TotalBranches { get; init; }
+        public List<TierCount> OrganizationsByTier { get; init; } = new();
+        public int NewOrganizationsThisMonth { get; init; }
+        public int NewOrganizationsLastMonth { get; init; }
+        public int TotalTokensThisMonth { get; init; }
+        public int TotalApiCallsThisMonth { get; init; }
+        public decimal MonthlyRecurringRevenue { get; init; }
+    }
+
+    private record TierCount
+    {
+        public string Tier { get; init; } = "";
+        public int Count { get; init; }
+    }
+
+    private record ActivityItem
+    {
+        public string Type { get; init; } = "";
+        public string Description { get; init; } = "";
+        public Guid EntityId { get; init; }
+        public string EntityName { get; init; } = "";
+        public DateTime Timestamp { get; init; }
+    }
+
+    private record PlanDetails
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string Code { get; init; } = "";
+        public string? Description { get; init; }
+        public decimal MonthlyPriceUsd { get; init; }
+        public decimal AnnualPriceUsd { get; init; }
+        public decimal MonthlyPriceUgx { get; init; }
+        public decimal AnnualPriceUgx { get; init; }
+        public int MaxBranches { get; init; }
+        public int MaxUsersPerBranch { get; init; }
+        public int MaxTokensPerMonth { get; init; }
+        public int MaxApiCallsPerMonth { get; init; }
+        public bool ShowAds { get; init; }
+        public bool IsPublic { get; init; }
+        public int ActiveSubscriptions { get; init; }
+    }
+}

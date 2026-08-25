@@ -1,0 +1,727 @@
+/*
+ * Q-Mgr Queue Components Styles
+ * Queue board, counter terminal, kiosk, display
+ * Naming Convention: .qm-queue-[component]-[element]
+ */
+
+/* ================================
+   Queue Board
+   ================================ */
+.qm-queue-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.qm-queue-lane {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.qm-queue-lane-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--qm-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-queue-lane-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.qm-queue-lane-count {
+    background: var(--qm-primary-light);
+    color: var(--qm-primary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.qm-queue-lane-items {
+    padding: 16px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.qm-queue-ticket {
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all 0.3s ease;
+}
+
+.qm-queue-ticket:last-child {
+    margin-bottom: 0;
+}
+
+.qm-queue-ticket:hover {
+    border-color: var(--qm-primary);
+    transform: translateX(4px);
+}
+
+.qm-queue-ticket-number {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-primary);
+    margin-bottom: 8px;
+}
+
+.qm-queue-ticket-service {
+    font-size: 14px;
+    color: var(--qm-text-primary);
+    margin-bottom: 4px;
+}
+
+.qm-queue-ticket-time {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-queue-ticket-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-top: 8px;
+}
+
+.qm-queue-ticket-status.waiting {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--qm-warning);
+}
+
+.qm-queue-ticket-status.called {
+    background: var(--qm-primary-light);
+    color: var(--qm-primary);
+}
+
+.qm-queue-ticket-status.serving {
+    background: rgba(22, 163, 74, 0.15);
+    color: var(--qm-accent-green);
+}
+
+.qm-queue-ticket-status.completed {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+}
+
+.qm-queue-ticket-status.cancelled {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+/* ================================
+   Counter Terminal
+   ================================ */
+.qm-queue-terminal {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--qm-bg-dark);
+}
+
+.qm-queue-terminal-header {
+    padding: 16px 24px;
+    background: var(--qm-bg-card);
+    border-bottom: 1px solid var(--qm-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-queue-terminal-counter {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.qm-queue-terminal-counter-number {
+    font-size: 32px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-primary);
+}
+
+.qm-queue-terminal-counter-name {
+    font-size: 14px;
+    color: var(--qm-text-muted);
+}
+
+.qm-queue-terminal-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    gap: 24px;
+    padding: 24px;
+    overflow: hidden;
+}
+
+.qm-queue-terminal-main {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.qm-queue-terminal-current {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.qm-queue-terminal-current-label {
+    font-size: 14px;
+    color: var(--qm-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+}
+
+.qm-queue-terminal-current-number {
+    font-size: 120px;
+    font-weight: 800;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-primary);
+    line-height: 1;
+    margin-bottom: 16px;
+}
+
+.qm-queue-terminal-current-service {
+    font-size: 20px;
+    color: var(--qm-text-primary);
+    margin-bottom: 8px;
+}
+
+.qm-queue-terminal-current-time {
+    font-size: 14px;
+    color: var(--qm-text-muted);
+}
+
+.qm-queue-terminal-actions {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.qm-queue-terminal-btn {
+    padding: 20px;
+    border-radius: 16px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.qm-queue-terminal-btn i {
+    font-size: 28px;
+}
+
+.qm-queue-terminal-btn.call {
+    background: var(--qm-gradient-primary);
+    color: white;
+}
+
+.qm-queue-terminal-btn.call:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px var(--qm-primary-glow);
+}
+
+.qm-queue-terminal-btn.complete {
+    background: rgba(22, 163, 74, 0.2);
+    color: var(--qm-accent-green);
+}
+
+.qm-queue-terminal-btn.complete:hover {
+    background: var(--qm-accent-green);
+    color: white;
+}
+
+.qm-queue-terminal-btn.recall {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--qm-warning);
+}
+
+.qm-queue-terminal-btn.recall:hover {
+    background: var(--qm-warning);
+    color: #333;
+}
+
+.qm-queue-terminal-btn.transfer {
+    background: rgba(38, 55, 74, 0.2);
+    color: #a78bfa;
+}
+
+.qm-queue-terminal-btn.transfer:hover {
+    background: #2e242a;
+    color: #fff;
+}
+
+.qm-queue-terminal-btn.noshow {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.qm-queue-terminal-btn.noshow:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
+.qm-queue-terminal-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.qm-queue-terminal-sidebar {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.qm-queue-terminal-sidebar-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--qm-border);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-queue-terminal-sidebar-items {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+/* ================================
+   Kiosk Mode
+   ================================ */
+.qm-queue-kiosk {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--qm-bg-dark);
+    padding: 40px;
+}
+
+.qm-queue-kiosk-header {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.qm-queue-kiosk-logo {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 16px;
+    background: var(--qm-gradient-primary);
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    color: white;
+}
+
+.qm-queue-kiosk-title {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+    margin: 0 0 8px;
+}
+
+.qm-queue-kiosk-subtitle {
+    font-size: 16px;
+    color: var(--qm-text-muted);
+    margin: 0;
+}
+
+.qm-queue-kiosk-services {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    align-content: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.qm-queue-kiosk-service {
+    background: var(--qm-bg-card);
+    border: 2px solid var(--qm-border);
+    border-radius: 24px;
+    padding: 40px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.qm-queue-kiosk-service:hover {
+    border-color: var(--qm-primary);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(140, 47, 82, 0.2);
+}
+
+.qm-queue-kiosk-service:active {
+    transform: scale(0.98);
+}
+
+.qm-queue-kiosk-service-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 20px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+}
+
+.qm-queue-kiosk-service-name {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+    margin: 0 0 8px;
+}
+
+.qm-queue-kiosk-service-desc {
+    font-size: 14px;
+    color: var(--qm-text-muted);
+    margin: 0 0 16px;
+}
+
+.qm-queue-kiosk-service-wait {
+    font-size: 13px;
+    color: var(--qm-text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.qm-queue-kiosk-service-wait i {
+    color: var(--qm-primary);
+}
+
+.qm-queue-kiosk-ticket-result {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.qm-queue-kiosk-ticket-number {
+    font-size: 160px;
+    font-weight: 800;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-primary);
+    line-height: 1;
+}
+
+.qm-queue-kiosk-ticket-message {
+    font-size: 24px;
+    color: var(--qm-text-primary);
+    margin: 24px 0;
+}
+
+.qm-queue-kiosk-ticket-position {
+    font-size: 18px;
+    color: var(--qm-text-muted);
+    margin-bottom: 40px;
+}
+
+/* ================================
+   Customer Display
+   ================================ */
+.qm-queue-display {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--qm-bg-dark);
+    overflow: hidden;
+}
+
+.qm-queue-display-header {
+    padding: 20px 40px;
+    background: var(--qm-bg-card);
+    border-bottom: 1px solid var(--qm-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-queue-display-logo {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.qm-queue-display-logo-icon {
+    width: 48px;
+    height: 48px;
+    background: var(--qm-gradient-primary);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: white;
+}
+
+.qm-queue-display-logo-text {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+}
+
+.qm-queue-display-time {
+    font-size: 32px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--qm-text-primary);
+}
+
+.qm-queue-display-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    gap: 0;
+    overflow: hidden;
+}
+
+.qm-queue-display-main {
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+}
+
+.qm-queue-display-current {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.qm-queue-display-current-label {
+    font-size: 18px;
+    color: var(--qm-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+}
+
+.qm-queue-display-current-number {
+    font-size: 200px;
+    font-weight: 800;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-primary);
+    line-height: 1;
+}
+
+.qm-queue-display-current-counter {
+    font-size: 24px;
+    color: var(--qm-text-primary);
+    margin-top: 20px;
+}
+
+.qm-queue-display-called-list {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    align-content: start;
+}
+
+.qm-queue-display-called-item {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+}
+
+.qm-queue-display-called-number {
+    font-size: 48px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-text-primary);
+}
+
+.qm-queue-display-called-counter {
+    font-size: 14px;
+    color: var(--qm-primary);
+    margin-top: 8px;
+}
+
+.qm-queue-display-sidebar {
+    background: var(--qm-bg-card);
+    border-left: 1px solid var(--qm-border);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.qm-queue-display-sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--qm-border);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.qm-queue-display-waiting-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.qm-queue-display-waiting-item {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--qm-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-queue-display-waiting-number {
+    font-size: 24px;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    color: var(--qm-text-primary);
+}
+
+.qm-queue-display-waiting-service {
+    font-size: 13px;
+    color: var(--qm-text-muted);
+}
+
+/* ================================
+   Responsive - Queue Components
+   ================================ */
+@media (max-width: 1200px) {
+    .qm-queue-terminal-body {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-queue-terminal-sidebar {
+        display: none;
+    }
+
+    .qm-queue-display-body {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-queue-display-sidebar {
+        display: none;
+    }
+
+    .qm-queue-display-current-number {
+        font-size: 150px;
+    }
+}
+
+@media (max-width: 768px) {
+    .qm-queue-board {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-queue-terminal-header {
+        flex-direction: column;
+        gap: 12px;
+        text-align: center;
+    }
+
+    .qm-queue-terminal-actions {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .qm-queue-terminal-current-number {
+        font-size: 80px;
+    }
+
+    .qm-queue-kiosk {
+        padding: 20px;
+    }
+
+    .qm-queue-kiosk-services {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-queue-kiosk-ticket-number {
+        font-size: 100px;
+    }
+
+    .qm-queue-display-header {
+        padding: 16px 20px;
+    }
+
+    .qm-queue-display-main {
+        padding: 20px;
+    }
+
+    .qm-queue-display-current-number {
+        font-size: 100px;
+    }
+
+    .qm-queue-display-current-label {
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .qm-queue-terminal-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-queue-terminal-btn {
+        flex-direction: row;
+        justify-content: center;
+    }
+
+    .qm-queue-kiosk-service {
+        padding: 24px 20px;
+    }
+
+    .qm-queue-kiosk-service-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 28px;
+    }
+
+    .qm-queue-kiosk-service-name {
+        font-size: 18px;
+    }
+}

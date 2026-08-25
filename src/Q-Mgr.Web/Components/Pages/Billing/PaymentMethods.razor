@@ -1,0 +1,797 @@
+@page "/billing/payment-methods"
+@using System.Text.Json
+@inject HttpClient Http
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject JsonSerializerOptions JsonOptions
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Payment Methods - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="wallet2" Size="32" />
+            Payment Methods
+        </h1>
+        <div class="breadcrumb">
+            <a href="/billing/overview">Billing</a>
+            <span>/</span>
+            <span>Payment Methods</span>
+        </div>
+    </div>
+    <div class="header-right">
+        <QButton Icon="arrow-repeat"
+                 Text="Refresh"
+                 Variant="secondary"
+                 OnClick="@LoadPaymentMethods"
+                 Disabled="@isLoading" />
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading payment methods...</span>
+    </div>
+}
+else if (hasError)
+{
+    <div class="error-card">
+        <QIcon Name="exclamation-triangle-fill" Size="48" />
+        <h3>Failed to Load Payment Methods</h3>
+        <p>@errorMessage</p>
+        <QButton Text="Try Again" Icon="arrow-repeat" Variant="primary" OnClick="@LoadPaymentMethods" />
+    </div>
+}
+else
+{
+    <!-- Add Payment Method Card — hidden entirely when Stripe is disabled platform-wide
+         (Platform Settings > Stripe Billing > Enabled), rather than showing a button that
+         would just fail once clicked. -->
+    @if (stripeEnabled)
+    {
+        <div class="add-payment-card">
+            <div class="add-payment-content">
+                <QIcon Name="plus-circle-fill" Size="48" />
+                <h3>Add New Payment Method</h3>
+                <p>Securely add a credit card or bank account via Stripe</p>
+                @if (canManageBilling)
+                {
+                    <QButton Text="Add Payment Method"
+                             Icon="plus"
+                             Variant="primary"
+                             OnClick="@OpenStripeCheckout"
+                             Disabled="@isProcessing" />
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="add-payment-card disabled">
+            <div class="add-payment-content">
+                <QIcon Name="credit-card-fill" Size="48" />
+                <h3>Card Payments Currently Unavailable</h3>
+                <p>Card payment collection is turned off platform-wide right now. Contact support if you need to add or update a payment method.</p>
+            </div>
+        </div>
+    }
+
+    <!-- Payment Methods List -->
+    @if (paymentMethods.Any())
+    {
+        <div class="payment-methods-section">
+            <h2>
+                <QIcon Name="credit-card-fill" Size="24" />
+                Your Payment Methods
+            </h2>
+
+            <div class="payment-methods-grid">
+                @foreach (var method in paymentMethods)
+                {
+                    <div class="payment-method-card @(method.IsDefault ? "default" : "")">
+                        @if (method.IsDefault)
+                        {
+                            <div class="default-badge">
+                                <QIcon Name="star-fill" />
+                                Default
+                            </div>
+                        }
+
+                        <div class="card-visual">
+                            <div class="card-brand-icon">
+                                <QIcon Name="@GetCardIcon(method.Brand)" Size="32" />
+                            </div>
+                            <div class="card-details">
+                                <span class="card-brand">@method.Brand</span>
+                                <span class="card-number">•••• •••• •••• @method.Last4</span>
+                                <span class="card-expiry">
+                                    Expires @method.ExpMonth.ToString("D2")/@method.ExpYear
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="card-info">
+                            @if (!string.IsNullOrEmpty(method.CardholderName))
+                            {
+                                <div class="info-row">
+                                    <QIcon Name="person-fill" />
+                                    <span>@method.CardholderName</span>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(method.Country))
+                            {
+                                <div class="info-row">
+                                    <QIcon Name="geo-alt-fill" />
+                                    <span>@method.Country</span>
+                                </div>
+                            }
+                            <div class="info-row">
+                                <QIcon Name="calendar-plus-fill" />
+                                <span>Added @method.CreatedAt.ToString("MMM dd, yyyy")</span>
+                            </div>
+                        </div>
+
+                        <div class="card-actions">
+                            @if (canManageBilling)
+                            {
+                                @if (!method.IsDefault)
+                                {
+                                    <QButton Text="Set as Default"
+                                             Icon="star-fill"
+                                             Variant="outline-primary"
+                                             Size="sm"
+                                             OnClick="@(() => SetAsDefault(method))"
+                                             Disabled="@isProcessing" />
+                                }
+                                <QButton Text="Remove"
+                                         Icon="trash-fill"
+                                         Variant="outline-danger"
+                                         Size="sm"
+                                         OnClick="@(() => ShowDeleteConfirmation(method))"
+                                         Disabled="@isProcessing" />
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="empty-state">
+            <QIcon Name="wallet2" Size="64" />
+            <h3>No Payment Methods</h3>
+            <p>You haven't added any payment methods yet. Add one to manage your subscription.</p>
+        </div>
+    }
+
+    <!-- Payment Security Info -->
+    <div class="security-info">
+        <div class="security-icon">
+            <QIcon Name="shield-fill-check" Size="32" />
+        </div>
+        <div class="security-content">
+            <h4>Your payment information is secure</h4>
+            <p>
+                All payment data is encrypted and securely processed by <strong>Stripe</strong>.
+                We never store your full credit card details on our servers.
+            </p>
+            <div class="security-badges">
+                <QBadge Variant="light" Pill="false" Icon="lock-fill" Text="256-bit SSL Encryption" Class="security-badge" />
+                <QBadge Variant="light" Pill="false" Icon="shield-fill-check" Text="PCI DSS Compliant" Class="security-badge" />
+                <QBadge Variant="light" Pill="false" Icon="check-circle-fill" Text="Stripe Verified" Class="security-badge" />
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Delete Confirmation Modal -->
+<QModal @bind-Visible="showDeleteConfirmation" Title="Remove Payment Method" Icon="exclamation-triangle-fill" Size="sm" OnClose="@CancelDelete">
+    <ChildContent>
+        @if (methodToDelete != null)
+        {
+            <p>Are you sure you want to remove this payment method?</p>
+            <div class="method-preview">
+                <QIcon Name="@GetCardIcon(methodToDelete.Brand)" Size="24" />
+                <div>
+                    <strong>@methodToDelete.Brand</strong>
+                    <span class="text-muted">•••• @methodToDelete.Last4</span>
+                </div>
+            </div>
+            @if (methodToDelete.IsDefault)
+            {
+                <div class="alert alert-warning mt-3">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    This is your default payment method. You'll need to set another as default if you have active subscriptions.
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CancelDelete" />
+        <QButton Text="Remove Payment Method"
+                 Icon="trash-fill"
+                 Variant="danger"
+                 OnClick="@ConfirmDelete"
+                 Disabled="@isProcessing"
+                 Loading="@isProcessing" />
+    </FooterContent>
+</QModal>
+
+<!-- Stripe Checkout Modal -->
+<QModal @bind-Visible="showStripeCheckout" Title="Add Payment Method" Icon="credit-card-fill" Size="md">
+    <ChildContent>
+        @if (isProcessing)
+        {
+            <div class="text-center py-4">
+                <div class="webster-spinner"></div>
+                <p class="text-muted mt-2">Opening Stripe checkout...</p>
+            </div>
+        }
+        else
+        {
+            <p>You will be redirected to Stripe's secure payment form to add your payment method.</p>
+            <p class="text-muted small">
+                Stripe is a certified PCI Service Provider Level 1, which is the most stringent level of certification in the payments industry.
+            </p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseStripeCheckout" Disabled="@isProcessing" />
+        <QButton Text="Continue to Stripe"
+                 Icon="arrow-right"
+                 Variant="primary"
+                 OnClick="@ProceedToStripe"
+                 Disabled="@isProcessing"
+                 Loading="@isProcessing" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .add-payment-card {
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        margin-bottom: 32px;
+        text-align: center;
+        color: white;
+    }
+
+    .add-payment-card.disabled {
+        background: var(--qm-bg-elevated);
+        border: 1px dashed var(--qm-border);
+        color: var(--qm-text-secondary);
+    }
+
+    .add-payment-card.disabled .q-icon {
+        color: var(--qm-text-muted);
+    }
+
+    .add-payment-content {
+        max-width: 500px;
+        margin: 0 auto;
+    }
+
+    .add-payment-content i {
+        margin-bottom: 16px;
+        opacity: 0.9;
+    }
+
+    .add-payment-content h3 {
+        margin: 16px 0 8px 0;
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .add-payment-content p {
+        margin-bottom: 24px;
+        opacity: 0.9;
+    }
+
+    .payment-methods-section {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .payment-methods-section h2 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 24px 0;
+        font-size: 20px;
+        font-weight: 600;
+    }
+
+    .payment-methods-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+
+    .payment-method-card {
+        background: var(--qm-bg-elevated);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        position: relative;
+        transition: all 0.3s ease;
+    }
+
+    .payment-method-card:hover {
+        border-color: var(--qm-primary);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .payment-method-card.default {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .default-badge {
+        position: absolute;
+        top: -12px;
+        right: 24px;
+        background: var(--qm-primary);
+        color: white;
+        padding: 6px 16px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .card-visual {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 20px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-brand-icon {
+        width: 64px;
+        height: 64px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--qm-primary);
+        flex-shrink: 0;
+    }
+
+    .card-details {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .card-brand {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+    }
+
+    .card-number {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        letter-spacing: 1px;
+    }
+
+    .card-expiry {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .card-info {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 20px;
+    }
+
+    .info-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .card-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .security-info {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        display: flex;
+        gap: 24px;
+    }
+
+    .security-icon {
+        width: 64px;
+        height: 64px;
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .security-content h4 {
+        margin: 0 0 8px 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .security-content p {
+        margin: 0 0 16px 0;
+        color: var(--qm-text-secondary);
+        line-height: 1.6;
+    }
+
+    .security-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .security-badge {
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        border: 1px solid var(--qm-border);
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+    }
+
+    .security-badge i {
+        color: var(--qm-success);
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 64px 24px;
+        margin-bottom: 24px;
+        text-align: center;
+    }
+
+    .empty-state i {
+        color: var(--qm-text-muted);
+        margin-bottom: 16px;
+    }
+
+    .empty-state h3 {
+        margin: 16px 0 8px 0;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        color: var(--qm-text-secondary);
+        margin-bottom: 0;
+    }
+
+    .error-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        text-align: center;
+    }
+
+    .error-card i {
+        color: var(--qm-danger);
+        margin-bottom: 16px;
+    }
+
+    .error-card h3 {
+        margin: 16px 0 8px 0;
+        color: var(--qm-text-primary);
+    }
+
+    .error-card p {
+        color: var(--qm-text-secondary);
+        margin-bottom: 24px;
+    }
+
+    .method-preview {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .method-preview i {
+        color: var(--qm-primary);
+    }
+
+    .method-preview div {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .alert {
+        padding: 12px 16px;
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .alert-warning {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        border: 1px solid var(--qm-warning);
+        color: var(--qm-warning);
+    }
+
+    .alert-warning i {
+        color: var(--qm-warning);
+    }
+
+    @@media (max-width: 768px) {
+        .payment-methods-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .security-info {
+            flex-direction: column;
+        }
+
+        .add-payment-card {
+            padding: 32px 20px;
+        }
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool isProcessing = false;
+    private bool hasError = false;
+    private string errorMessage = "";
+    private bool showDeleteConfirmation = false;
+    private bool showStripeCheckout = false;
+    private bool canManageBilling = false;
+    private bool stripeEnabled = true;
+
+    private List<PaymentMethodDto> paymentMethods = new();
+    private PaymentMethodDto? methodToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        canManageBilling = await PermissionService.HasPermissionAsync(Permissions.BillingManage);
+
+        await LoadPaymentProviders();
+        await LoadPaymentMethods();
+    }
+
+    private async Task LoadPaymentProviders()
+    {
+        try
+        {
+            var result = await Http.GetFromJsonAsync<PaymentProvidersResponse>("api/v1/billing/payment-providers", JsonOptions);
+            stripeEnabled = result?.StripeEnabled ?? true;
+        }
+        catch
+        {
+            // Fail open — if this check itself fails, fall back to showing the button rather
+            // than silently hiding a working feature; OpenStripeCheckout still handles a real
+            // failure from Stripe itself if it comes to that.
+            stripeEnabled = true;
+        }
+    }
+
+    private async Task LoadPaymentMethods()
+    {
+        isLoading = true;
+        hasError = false;
+        errorMessage = "";
+
+        try
+        {
+            var response = await Http.GetAsync("api/v1/billing/payment-methods");
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<PaymentMethodsResponse>(JsonOptions);
+                paymentMethods = result?.PaymentMethods ?? new();
+            }
+            else
+            {
+                hasError = true;
+                errorMessage = $"Failed to load payment methods: {response.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+            Console.WriteLine($"Error loading payment methods: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void OpenStripeCheckout()
+    {
+        showStripeCheckout = true;
+    }
+
+    private void CloseStripeCheckout()
+    {
+        showStripeCheckout = false;
+    }
+
+    private async Task ProceedToStripe()
+    {
+        isProcessing = true;
+
+        try
+        {
+            // Create a Stripe checkout session for adding payment method
+            var response = await Http.PostAsJsonAsync("api/v1/billing/portal-session", new
+            {
+                ReturnUrl = $"{Navigation.BaseUri}billing/payment-methods"
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<PortalSessionResponse>(JsonOptions);
+                if (!string.IsNullOrEmpty(result?.Url))
+                {
+                    // Redirect to Stripe billing portal
+                    await JSRuntime.InvokeVoidAsync("open", result.Url, "_self");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Failed to create Stripe portal session");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating Stripe session: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+            showStripeCheckout = false;
+        }
+    }
+
+    private async Task SetAsDefault(PaymentMethodDto method)
+    {
+        isProcessing = true;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/billing/payment-methods/{method.Id}/set-default", new { });
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadPaymentMethods();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error setting default payment method: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private void ShowDeleteConfirmation(PaymentMethodDto method)
+    {
+        methodToDelete = method;
+        showDeleteConfirmation = true;
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteConfirmation = false;
+        methodToDelete = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (methodToDelete == null) return;
+
+        isProcessing = true;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"api/v1/billing/payment-methods/{methodToDelete.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                showDeleteConfirmation = false;
+                methodToDelete = null;
+                await LoadPaymentMethods();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting payment method: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private string GetCardIcon(string brand) => brand?.ToLower() switch
+    {
+        "visa" => "credit-card",
+        "mastercard" => "credit-card-2-front",
+        "amex" or "american express" => "credit-card",
+        "discover" => "credit-card",
+        "diners" or "diners club" => "credit-card",
+        "jcb" => "credit-card",
+        "unionpay" => "credit-card",
+        _ => "wallet2"
+    };
+
+    // DTOs
+    private record PaymentMethodsResponse
+    {
+        public List<PaymentMethodDto> PaymentMethods { get; init; } = new();
+    }
+
+    private record PaymentProvidersResponse
+    {
+        public bool StripeEnabled { get; init; }
+        public bool MobileMoneyEnabled { get; init; }
+    }
+
+    private record PaymentMethodDto
+    {
+        public string Id { get; init; } = "";
+        public string Brand { get; init; } = "";
+        public string Last4 { get; init; } = "";
+        public int ExpMonth { get; init; }
+        public int ExpYear { get; init; }
+        public string? CardholderName { get; init; }
+        public string? Country { get; init; }
+        public bool IsDefault { get; init; }
+        public DateTime CreatedAt { get; init; }
+    }
+
+    private record PortalSessionResponse
+    {
+        public string Url { get; init; } = "";
+    }
+}

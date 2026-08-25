@@ -1,0 +1,251 @@
+@page "/admin/platform-spotify"
+@page "/admin/platform-spotify/callback"
+@using QMgr.Application.DTOs
+@inject ISpotifyApiService SpotifyApi
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Spotify Integration - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="spotify" Size="32" />
+            Spotify Integration
+        </h1>
+        <div class="breadcrumb">
+            <span>Platform-wide connection • Super Admin Only</span>
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-banner">
+        <QIcon Name="exclamation-triangle-fill" />
+        <span>@errorMessage</span>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="success-banner">
+        <QIcon Name="check-circle-fill" />
+        <span>@successMessage</span>
+    </div>
+}
+
+@if (isProcessingCallback)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Completing Spotify connection...</span>
+    </div>
+}
+else if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading connection status...</span>
+    </div>
+}
+else
+{
+    <QCard Class="spotify-connection-card" Title="Platform Connection" Icon="spotify">
+        <ChildContent>
+            @if (status?.IsConnected == true)
+            {
+                <div class="spotify-connected">
+                    <div class="spotify-connected-icon">
+                        <QIcon Name="check-circle-fill" />
+                    </div>
+                    <div class="spotify-connected-info">
+                        <strong>Connected as @status.DisplayName</strong>
+                        <span>@($"Connected {status.ConnectedAt:MMM dd, yyyy}")</span>
+                    </div>
+                </div>
+                <p class="card-description">
+                    Tenants can now pick from this account's playlists as background music for
+                    their own image-gallery signage content (Content → Playlists).
+                </p>
+            }
+            else
+            {
+                <p class="card-description">
+                    Connect one Spotify account for the whole platform. Tenant organizations will be
+                    able to choose from this account's playlists for their signage background music —
+                    they never connect their own account.
+                </p>
+            }
+
+            <div class="spotify-tos-note">
+                <QIcon Name="info-circle-fill" />
+                <span>
+                    Connecting a personal Spotify account. Per Spotify's terms, personal accounts are
+                    licensed for private/non-commercial listening only — playing this as background
+                    music in a public or commercial space (waiting room, lobby, storefront) requires a
+                    commercial licensing service such as Spotify for Business or SoundtrackYourBrand.
+                </span>
+            </div>
+        </ChildContent>
+        <FooterContent>
+            @if (status?.IsConnected == true)
+            {
+                <QButton Text="Disconnect" Icon="x-circle-fill" Variant="danger" OnClick="@Disconnect" Disabled="@isBusy" />
+            }
+            else
+            {
+                <QButton Text="Connect Spotify Account" Icon="spotify" Variant="primary" OnClick="@Connect" Disabled="@isBusy" />
+            }
+        </FooterContent>
+    </QCard>
+}
+
+<style>
+    .spotify-connection-card {
+        max-width: 640px;
+    }
+
+    .spotify-connected {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: rgba(22, 163, 74, 0.1);
+        border: 1px solid rgba(22, 163, 74, 0.3);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 16px;
+    }
+
+    .spotify-connected-icon {
+        color: var(--qm-success);
+        font-size: 24px;
+        flex-shrink: 0;
+    }
+
+    .spotify-connected-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .spotify-connected-info span {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .spotify-tos-note {
+        display: flex;
+        gap: 10px;
+        padding: 12px 16px;
+        background: var(--qm-primary-light);
+        border-radius: var(--qm-radius-lg);
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        line-height: 1.5;
+        margin-top: 16px;
+    }
+
+    .spotify-tos-note .q-icon {
+        color: var(--qm-primary);
+        flex-shrink: 0;
+        margin-top: 1px;
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "code")]
+    private string? Code { get; set; }
+
+    [SupplyParameterFromQuery(Name = "state")]
+    private string? State { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? SpotifyError { get; set; }
+
+    private SpotifyConnectionStatusDto? status;
+    private bool isLoading = true;
+    private bool isProcessingCallback = false;
+    private bool isBusy = false;
+    private string? errorMessage;
+    private string? successMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hasPermission = await PermissionService.HasPermissionAsync(Permissions.PlatformSettingsView);
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(SpotifyError))
+        {
+            errorMessage = "Spotify authorization was cancelled or denied.";
+            isLoading = false;
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(Code) && !string.IsNullOrEmpty(State))
+        {
+            isProcessingCallback = true;
+            StateHasChanged();
+
+            var success = await SpotifyApi.CompleteConnectionAsync(Code, State);
+            isProcessingCallback = false;
+
+            if (success)
+            {
+                successMessage = "Spotify account connected successfully.";
+            }
+            else
+            {
+                errorMessage = "Couldn't complete the Spotify connection. The authorization may have expired — please try again.";
+            }
+
+            // Drop the code/state from the URL so a refresh doesn't try to reuse a spent code.
+            Navigation.NavigateTo("/admin/platform-spotify", replace: true);
+        }
+
+        await LoadStatus();
+    }
+
+    private async Task LoadStatus()
+    {
+        isLoading = true;
+        status = await SpotifyApi.GetStatusAsync();
+        isLoading = false;
+    }
+
+    private async Task Connect()
+    {
+        isBusy = true;
+        var url = await SpotifyApi.GetAuthorizeUrlAsync();
+        isBusy = false;
+
+        if (url != null)
+        {
+            Navigation.NavigateTo(url, forceLoad: true);
+        }
+        else
+        {
+            errorMessage = "Couldn't start the Spotify connection. Check that Spotify:ClientId is configured.";
+        }
+    }
+
+    private async Task Disconnect()
+    {
+        isBusy = true;
+        var success = await SpotifyApi.DisconnectAsync();
+        isBusy = false;
+
+        if (success)
+        {
+            successMessage = "Spotify account disconnected.";
+            await LoadStatus();
+        }
+        else
+        {
+            errorMessage = "Failed to disconnect. Please try again.";
+        }
+    }
+}

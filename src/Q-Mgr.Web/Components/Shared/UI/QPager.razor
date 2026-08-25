@@ -1,0 +1,55 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@if (TotalPages > 1)
+{
+    <nav class="q-pager" aria-label="Pagination">
+        <button type="button" class="q-pager__btn" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
+            <QIcon Name="chevron-left" />
+        </button>
+
+        @foreach (var page in GetVisiblePages())
+        {
+            <button type="button"
+                    class="q-pager__btn @(page == PageIndex ? "q-pager__btn--active" : "")"
+                    @onclick="() => GoTo(page)">
+                @(page + 1)
+            </button>
+        }
+
+        <button type="button" class="q-pager__btn" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
+            <QIcon Name="chevron-right" />
+        </button>
+    </nav>
+}
+
+@code {
+    /// <summary>Total number of items being paged over.</summary>
+    [Parameter] public int Count { get; set; }
+
+    [Parameter] public int PageSize { get; set; } = 10;
+
+    /// <summary>How many page-number buttons to show around the current page.</summary>
+    [Parameter] public int PageNumbersCount { get; set; } = 5;
+
+    [Parameter] public int PageIndex { get; set; }
+    [Parameter] public EventCallback<int> PageIndexChanged { get; set; }
+
+    private int TotalPages => PageSize <= 0 ? 0 : (int)Math.Ceiling(Count / (double)PageSize);
+
+    private IEnumerable<int> GetVisiblePages()
+    {
+        var half = PageNumbersCount / 2;
+        var start = Math.Max(0, PageIndex - half);
+        var end = Math.Min(TotalPages - 1, start + PageNumbersCount - 1);
+        start = Math.Max(0, end - PageNumbersCount + 1);
+
+        for (var i = start; i <= end; i++) yield return i;
+    }
+
+    private async Task GoTo(int page)
+    {
+        if (page < 0 || page >= TotalPages || page == PageIndex) return;
+        PageIndex = page;
+        await PageIndexChanged.InvokeAsync(page);
+    }
+}

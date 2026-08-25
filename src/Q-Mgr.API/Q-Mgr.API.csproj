@@ -1,0 +1,81 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>QMgr</RootNamespace>
+    <UserSecretsId>f51daa79-da10-4d90-812e-cf769641b597</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- API / Web -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.102.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- Pins the transitive Scriban brought in by EF Core Tools/Design (T4 scaffolding
+         templates, design-time only, never called by our code) to a patched version —
+         6.2.0 has a critical + multiple high/moderate severity advisories. Already latest (7.2.6). -->
+    <PackageReference Include="Scriban" Version="7.2.6">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- Deliberately staying on the 2.x line (already its latest patch) rather than
+         jumping to Microsoft.OpenApi 3.x: confirmed via research that Swashbuckle.AspNetCore
+         (even at its own latest release) is hard-incompatible with OpenApi 3.x and fails
+         at runtime — a live ecosystem gap, not a stale assumption. Revisit once Swashbuckle
+         adds 3.x support. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.12.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.16.20" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="AspNetCoreRateLimit" Version="5.0.0" />
+
+    <!-- Application (Mediator, FluentValidation) -->
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <PackageReference Include="Mediator.Abstractions" Version="3.0.2" />
+    <PackageReference Include="Mediator.SourceGenerator" Version="3.0.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+
+    <!-- Infrastructure (EF Core, PostgreSQL, Identity, Redis) -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.11" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.1" />
+
+    <!-- Integration (Polly for resilience) -->
+    <PackageReference Include="Polly" Version="8.7.0" />
+    <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
+
+    <!-- SaaS / Billing -->
+    <PackageReference Include="Stripe.net" Version="52.3.0" />
+
+    <!-- Background Jobs -->
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.24" />
+    <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Q-Mgr.Web already references Shared for these same enums/DTOs —
+         API previously kept byte-identical duplicate copies of its own
+         instead of referencing Shared too, a real SSoT risk (only luck
+         kept them in sync; ContentDto.cs had already drifted before this
+         reference was added — see docs/TASK_TRACKER.md). -->
+    <ProjectReference Include="..\Q-Mgr.Shared\Q-Mgr.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

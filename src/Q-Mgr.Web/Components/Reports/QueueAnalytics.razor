@@ -1,0 +1,455 @@
+@page "/reports/queue"
+@using QMgr.Application.DTOs
+@inject IQueueApiService QueueApi
+@inject IPermissionService PermissionService
+@inject IBranchStateService BranchState
+@inject NavigationManager Navigation
+
+<PageTitle>Queue Analytics - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Queue Analytics</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Reports", "/reports"), new("Queue Analytics") })" />
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-banner">
+        <QIcon Name="exclamation-triangle-fill" />
+        <span>@errorMessage</span>
+        <QButton Text="Retry" Icon="arrow-clockwise" Variant="danger" Size="sm" OnClick="@LoadData" />
+    </div>
+}
+
+<div class="analytics-page">
+    <!-- Filters -->
+    <QCard Class="filter-card">
+        <div class="filter-row">
+            <div class="filter-item">
+                <QSelect TValue="string" TItem="string" @bind-Value="@selectedPeriod" Items="@periods" Label="Date Range" Disabled="@isLoading" />
+            </div>
+            <div class="filter-item">
+                <QSelect TValue="Guid?" TItem="ServiceTypeDto" @bind-Value="@selectedServiceType" Items="@serviceTypes"
+                    TextSelector="@(s => s.Name)" ValueSelector="@(s => (Guid?)s.Id)"
+                    Label="Service Type" Placeholder="All Services" AllowClear="true" Disabled="@isLoading" />
+            </div>
+            <div class="filter-item">
+                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading analytics data...</span>
+        </div>
+    }
+    else
+    {
+
+    <!-- Summary Stats -->
+    <div class="stats-row">
+        <div class="stats-card">
+            <div class="stats-icon primary"><QIcon Name="people-fill" /></div>
+            <div class="stats-info">
+                <span class="stats-number">@totalTokens</span>
+                <span class="stats-label">Total Tokens</span>
+            </div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-icon success"><QIcon Name="check-circle-fill" /></div>
+            <div class="stats-info">
+                <span class="stats-number">@completedTokens</span>
+                <span class="stats-label">Completed</span>
+            </div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-icon warning"><QIcon Name="clock-fill" /></div>
+            <div class="stats-info">
+                <span class="stats-number">@avgWaitTime min</span>
+                <span class="stats-label">Avg Wait</span>
+            </div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-icon info"><QIcon Name="graph-up-arrow" /></div>
+            <div class="stats-info">
+                <span class="stats-number">@peakHour</span>
+                <span class="stats-label">Peak Hour</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="charts-row">
+        <QCard Class="chart-card">
+            <h4>Tokens by Hour</h4>
+            <RadzenChart Style="height: 300px;">
+                <RadzenColumnSeries Data="@hourlyData" CategoryProperty="Hour" ValueProperty="Count" Title="Tokens" />
+                <RadzenCategoryAxis Padding="20" />
+                <RadzenValueAxis>
+                    <RadzenGridLines Visible="true" />
+                </RadzenValueAxis>
+            </RadzenChart>
+        </QCard>
+
+        <QCard Class="chart-card">
+            <h4>By Service Type</h4>
+            <RadzenChart Style="height: 300px;">
+                <RadzenPieSeries Data="@serviceTypeData" Title="Service" CategoryProperty="Name" ValueProperty="Count" />
+            </RadzenChart>
+        </QCard>
+    </div>
+
+    <!-- Detailed Table -->
+    <QCard Class="table-card">
+        <h4>Service Type Breakdown</h4>
+        <RadzenDataGrid Data="@serviceTypeStats" TItem="ServiceTypeStat" AllowSorting="true" AllowPaging="true" PageSize="10">
+            <Columns>
+                <RadzenDataGridColumn TItem="ServiceTypeStat" Property="Name" Title="Service Type" />
+                <RadzenDataGridColumn TItem="ServiceTypeStat" Property="TotalTokens" Title="Total Tokens" TextAlign="TextAlign.Center" />
+                <RadzenDataGridColumn TItem="ServiceTypeStat" Property="Completed" Title="Completed" TextAlign="TextAlign.Center" />
+                <RadzenDataGridColumn TItem="ServiceTypeStat" Property="AvgWaitMinutes" Title="Avg Wait (min)" TextAlign="TextAlign.Center">
+                    <Template Context="item">
+                        <span class="@GetWaitClass(item.AvgWaitMinutes)">@item.AvgWaitMinutes</span>
+                    </Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="ServiceTypeStat" Property="AvgServiceMinutes" Title="Avg Service (min)" TextAlign="TextAlign.Center" />
+            </Columns>
+        </RadzenDataGrid>
+    </QCard>
+
+    }
+</div>
+
+<style>
+    .error-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        background: color-mix(in srgb, var(--qm-danger) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-danger) 35%, transparent);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 20px;
+        color: var(--qm-danger);
+    }
+
+    .error-banner .rzi {
+        font-size: 24px;
+    }
+
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+    }
+    .analytics-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .filter-card {
+        padding: 16px 24px;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 20px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+
+    .stats-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        box-shadow: var(--qm-shadow-sm);
+    }
+
+    .stats-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: white;
+    }
+
+    .stats-icon.primary { background: var(--qm-primary); }
+    .stats-icon.success { background: var(--qm-success); }
+    .stats-icon.warning { background: var(--qm-warning); }
+    .stats-icon.info { background: var(--qm-info); }
+
+    .stats-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stats-number {
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .stats-label {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .charts-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 20px;
+    }
+
+    .chart-card, .table-card {
+        padding: 20px;
+    }
+
+    .chart-card h4, .table-card h4 {
+        margin: 0 0 16px 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .wait-good { color: var(--qm-success); font-weight: 600; }
+    .wait-medium { color: var(--qm-warning); font-weight: 600; }
+    .wait-bad { color: var(--qm-danger); font-weight: 600; }
+</style>
+
+@code {
+    private string selectedPeriod = "today";
+    private Guid? selectedServiceType;
+    private List<ServiceTypeDto> serviceTypes = new();
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    private int totalTokens = 0;
+    private int completedTokens = 0;
+    private int waitingTokens = 0;
+    private int servingTokens = 0;
+    private int avgWaitTime = 0;
+    private string peakHour = "--";
+
+    private List<HourlyData> hourlyData = new();
+    private List<ServiceTypeData> serviceTypeData = new();
+    private List<ServiceTypeStat> serviceTypeStats = new();
+    private List<TokenDto> allTokens = new();
+
+    private List<string> periods = new() { "today", "yesterday", "week", "month" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Check if branch is selected
+            if (BranchId == Guid.Empty)
+            {
+                // No branch selected - show empty state (not an error)
+                ResetData();
+                isLoading = false;
+                return;
+            }
+
+            // Load queue status
+            var status = await QueueApi.GetQueueStatusAsync(BranchId);
+
+            // Load waiting tokens for detailed analysis
+            var waitingTokensList = await QueueApi.GetWaitingTokensAsync(BranchId, selectedServiceType);
+            allTokens = waitingTokensList ?? new();
+
+            // Load service types for filter dropdown
+            var types = await QueueApi.GetServiceTypesAsync(BranchId);
+            serviceTypes = types ?? new();
+
+            if (status != null)
+            {
+                // Summary stats from API
+                waitingTokens = status.Summary.TotalWaiting;
+                servingTokens = status.Summary.TotalServing;
+                completedTokens = status.Summary.TotalCompletedToday;
+                totalTokens = waitingTokens + servingTokens + completedTokens;
+                avgWaitTime = (int)status.Summary.AverageWaitMinutes;
+
+                // Build service type pie chart data from queue status
+                serviceTypeData = status.ServiceTypes?
+                    .Where(st => st.WaitingCount > 0)
+                    .Select(st => new ServiceTypeData
+                    {
+                        Name = st.Name,
+                        Count = st.WaitingCount
+                    }).ToList() ?? new();
+
+                // Build service type stats table
+                serviceTypeStats = status.ServiceTypes?.Select(st =>
+                {
+                    var serviceTokens = allTokens.Where(t => t.ServiceTypeId == st.Id).ToList();
+                    var avgWait = serviceTokens.Any()
+                        ? (int)serviceTokens.Average(t => t.EstimatedWaitMinutes ?? 0)
+                        : st.EstimatedWaitMinutes / Math.Max(st.WaitingCount, 1);
+
+                    return new ServiceTypeStat
+                    {
+                        Id = st.Id,
+                        Code = st.Code,
+                        Name = st.Name,
+                        TotalTokens = st.WaitingCount,
+                        Completed = completedTokens > 0 ? completedTokens / Math.Max(status.ServiceTypes?.Count ?? 1, 1) : 0,
+                        AvgWaitMinutes = avgWait,
+                        AvgServiceMinutes = serviceTypes.FirstOrDefault(s => s.Id == st.Id)?.AverageServiceTimeMinutes ?? 5,
+                        CountersActive = st.CountersActive
+                    };
+                }).ToList() ?? new();
+            }
+
+            // Build hourly distribution from actual token data
+            BuildHourlyDistribution();
+
+            // Find peak hour
+            var peak = hourlyData.OrderByDescending(h => h.Count).FirstOrDefault();
+            peakHour = peak?.Count > 0 ? peak.Hour : "--";
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Unable to connect to the server. Please check if the API is running.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load analytics data: {ex.Message}";
+            Console.WriteLine($"Error loading analytics: {ex}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ResetData()
+    {
+        totalTokens = 0;
+        completedTokens = 0;
+        waitingTokens = 0;
+        servingTokens = 0;
+        avgWaitTime = 0;
+        peakHour = "--";
+        hourlyData = new();
+        serviceTypeData = new();
+        serviceTypeStats = new();
+        allTokens = new();
+    }
+
+    private void BuildHourlyDistribution()
+    {
+        // Initialize hourly slots (8 AM to 6 PM)
+        var hourlyDict = new Dictionary<int, int>();
+        for (int h = 8; h <= 18; h++)
+        {
+            hourlyDict[h] = 0;
+        }
+
+        // Count tokens by creation hour
+        foreach (var token in allTokens)
+        {
+            var hour = token.CreatedAt.ToLocalTime().Hour;
+            if (hourlyDict.ContainsKey(hour))
+            {
+                hourlyDict[hour]++;
+            }
+        }
+
+        // Convert to chart data
+        hourlyData = hourlyDict.Select(kvp => new HourlyData
+        {
+            Hour = $"{kvp.Key}:00",
+            Count = kvp.Value
+        }).ToList();
+    }
+
+    private void OnPeriodChanged()
+    {
+        _ = LoadData();
+    }
+
+    private async Task OnServiceTypeChanged()
+    {
+        await LoadData();
+    }
+
+    private string GetWaitClass(int minutes)
+    {
+        return minutes switch
+        {
+            <= 5 => "wait-good",
+            <= 15 => "wait-medium",
+            _ => "wait-bad"
+        };
+    }
+
+    private class HourlyData
+    {
+        public string Hour { get; set; } = "";
+        public int Count { get; set; }
+    }
+
+    private class ServiceTypeData
+    {
+        public string Name { get; set; } = "";
+        public int Count { get; set; }
+    }
+
+    private class ServiceTypeStat
+    {
+        public Guid Id { get; set; }
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int TotalTokens { get; set; }
+        public int Completed { get; set; }
+        public int AvgWaitMinutes { get; set; }
+        public int AvgServiceMinutes { get; set; }
+        public int CountersActive { get; set; }
+    }
+}

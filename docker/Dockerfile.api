@@ -1,0 +1,42 @@
+# Q-Mgr API Dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 80
+EXPOSE 443
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy project files (Domain/Application/Infrastructure live as folders
+# inside Q-Mgr.API, not separate projects — this used to reference a
+# project split that no longer exists, which meant this Dockerfile could
+# never actually build).
+COPY ["src/Q-Mgr.API/Q-Mgr.API.csproj", "Q-Mgr.API/"]
+
+# Restore dependencies
+RUN dotnet restore "Q-Mgr.API/Q-Mgr.API.csproj"
+
+# Copy source code
+COPY src/ .
+
+# Build
+WORKDIR "/src/Q-Mgr.API"
+RUN dotnet build "Q-Mgr.API.csproj" -c Release -o /app/build
+
+# Publish
+FROM build AS publish
+RUN dotnet publish "Q-Mgr.API.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Final image
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+# Create logs directory
+RUN mkdir -p /app/logs
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+ENTRYPOINT ["dotnet", "Q-Mgr.API.dll"]

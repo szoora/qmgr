@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Q-Mgr.API/Q-Mgr.API.csproj" />
+    <Project Path="src/Q-Mgr.Web/Q-Mgr.Web.csproj" />
+    <Project Path="src/Q-Mgr.Shared/Q-Mgr.Shared.csproj" />
+  </Folder>
+</Solution>

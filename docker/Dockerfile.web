@@ -1,0 +1,36 @@
+# Q-Mgr Web Dockerfile
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 80
+EXPOSE 443
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy project files (previously referenced a Q-Mgr.Domain/Application/
+# Infrastructure project split that no longer exists, and was missing
+# Q-Mgr.Shared — which Q-Mgr.Web actually has a ProjectReference to — so
+# `dotnet restore` below could never have succeeded as this file stood).
+COPY ["src/Q-Mgr.Web/Q-Mgr.Web.csproj", "Q-Mgr.Web/"]
+COPY ["src/Q-Mgr.Shared/Q-Mgr.Shared.csproj", "Q-Mgr.Shared/"]
+
+# Restore dependencies
+RUN dotnet restore "Q-Mgr.Web/Q-Mgr.Web.csproj"
+
+# Copy source code
+COPY src/ .
+
+# Build
+WORKDIR "/src/Q-Mgr.Web"
+RUN dotnet build "Q-Mgr.Web.csproj" -c Release -o /app/build
+
+# Publish
+FROM build AS publish
+RUN dotnet publish "Q-Mgr.Web.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Final image
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+ENTRYPOINT ["dotnet", "Q-Mgr.Web.dll"]

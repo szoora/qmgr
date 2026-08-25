@@ -1,0 +1,157 @@
+@using QMgr.Web.Services
+@inject IConnectionMonitorService ConnectionMonitor
+@implements IDisposable
+
+<div class="connection-status @GetStatusClass()" title="@ConnectionMonitor.StatusMessage">
+    <div class="status-indicator">
+        @if (ConnectionMonitor.Status == ConnectionStatus.Connecting || ConnectionMonitor.Status == ConnectionStatus.Reconnecting)
+        {
+            <div class="status-spinner"></div>
+        }
+        else
+        {
+            <div class="status-dot"></div>
+        }
+    </div>
+    <span class="status-text">@GetStatusText()</span>
+</div>
+
+<style>
+    .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: default;
+        transition: all 0.3s ease;
+    }
+
+    .connection-status.connected {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .connection-status.connecting,
+    .connection-status.reconnecting {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .connection-status.disconnected {
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 10px;
+        height: 10px;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+
+    .connection-status.connected .status-dot {
+        animation: pulse-green 2s infinite;
+    }
+
+    .connection-status.disconnected .status-dot {
+        animation: pulse-red 1s infinite;
+    }
+
+    .status-spinner {
+        width: 10px;
+        height: 10px;
+        border: 2px solid transparent;
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    .status-text {
+        white-space: nowrap;
+    }
+
+    @@keyframes pulse-green {
+        0%, 100% {
+            opacity: 1;
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--qm-success) 40%, transparent);
+        }
+        50% {
+            opacity: 0.8;
+            box-shadow: 0 0 0 4px transparent;
+        }
+    }
+
+    @@keyframes pulse-red {
+        0%, 100% {
+            opacity: 1;
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--qm-danger) 40%, transparent);
+        }
+        50% {
+            opacity: 0.6;
+            box-shadow: 0 0 0 4px transparent;
+        }
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Responsive - hide text on small screens */
+    @@media (max-width: 768px) {
+        .status-text {
+            display: none;
+        }
+
+        .connection-status {
+            padding: 6px;
+            border-radius: 50%;
+        }
+    }
+</style>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        ConnectionMonitor.OnStatusChanged += HandleStatusChanged;
+        await ConnectionMonitor.StartMonitoringAsync();
+    }
+
+    private void HandleStatusChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetStatusClass() => ConnectionMonitor.Status switch
+    {
+        ConnectionStatus.Connected => "connected",
+        ConnectionStatus.Connecting => "connecting",
+        ConnectionStatus.Reconnecting => "reconnecting",
+        ConnectionStatus.Disconnected => "disconnected",
+        _ => "disconnected"
+    };
+
+    private string GetStatusText() => ConnectionMonitor.Status switch
+    {
+        ConnectionStatus.Connected => "Connected",
+        ConnectionStatus.Connecting => "Connecting...",
+        ConnectionStatus.Reconnecting => "Reconnecting...",
+        ConnectionStatus.Disconnected => "Offline",
+        _ => "Unknown"
+    };
+
+    public void Dispose()
+    {
+        ConnectionMonitor.OnStatusChanged -= HandleStatusChanged;
+    }
+}

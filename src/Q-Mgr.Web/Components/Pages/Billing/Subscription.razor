@@ -1,0 +1,737 @@
+@page "/billing/subscription"
+@using System.Text.Json
+@inject HttpClient Http
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>Subscription Management - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="star-fill" Size="32" />
+            Subscription Management
+        </h1>
+        <div class="breadcrumb">
+            <a href="/billing/overview">Billing</a>
+            <span>/</span>
+            <span>Subscription</span>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading subscription details...</span>
+    </div>
+}
+else if (currentPlan != null)
+{
+    <!-- Current Plan Card -->
+    <div class="current-plan-card">
+        <div class="plan-header">
+            <div>
+                <span class="plan-badge @GetPlanClass(currentPlan.PlanCode)">@currentPlan.PlanName</span>
+                <h2>Your Current Plan</h2>
+            </div>
+            <div class="plan-price">
+                <span class="currency">@currentPlan.Currency</span>
+                <span class="amount">@currentPlan.MonthlyPrice.ToString("N2")</span>
+                <span class="period">/month</span>
+            </div>
+        </div>
+        <div class="plan-features">
+            @foreach (var feature in currentPlan.Features)
+            {
+                <div class="feature-item">
+                    <QIcon Name="check-circle-fill" />
+                    <span>@feature</span>
+                </div>
+            }
+        </div>
+        <div class="plan-actions">
+            @if (currentPlan.PlanCode != "enterprise")
+            {
+                <QButton Text="Upgrade Plan"
+                         Icon="arrow-up-circle-fill"
+                         Variant="primary"
+                         OnClick="@(() => showUpgradeDialog = true)" />
+            }
+            @if (currentPlan.PlanCode != "free")
+            {
+                <QButton Text="Cancel Subscription"
+                         Icon="x-circle-fill"
+                         Variant="outline-danger"
+                         OnClick="@(() => showCancelDialog = true)" />
+            }
+        </div>
+    </div>
+
+    <!-- Available Plans -->
+    <div class="plans-section">
+        <h2>Available Plans</h2>
+        <div class="plans-grid">
+            @foreach (var plan in availablePlans)
+            {
+                <div class="plan-card @(plan.PlanCode == currentPlan.PlanCode ? "current" : "") @(plan.IsPopular ? "popular" : "")">
+                    @if (plan.IsPopular)
+                    {
+                        <div class="popular-badge">Most Popular</div>
+                    }
+                    <div class="plan-card-header">
+                        <h3>@plan.PlanName</h3>
+                        <div class="price">
+                            <span class="currency">@plan.Currency</span>
+                            <span class="amount">@plan.MonthlyPrice.ToString("N0")</span>
+                            <span class="period">/mo</span>
+                        </div>
+                        <p class="plan-description">@plan.Description</p>
+                    </div>
+                    <div class="plan-card-features">
+                        @foreach (var feature in plan.Features)
+                        {
+                            <div class="feature">
+                                <QIcon Name="check" />
+                                <span>@feature</span>
+                            </div>
+                        }
+                    </div>
+                    <div class="plan-card-footer">
+                        @if (plan.PlanCode == currentPlan.PlanCode)
+                        {
+                            <QButton Text="Current Plan" Icon="check-circle-fill" Variant="secondary" Disabled="true" />
+                        }
+                        else if (IsUpgrade(plan.PlanCode))
+                        {
+                            <QButton Text="Upgrade" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => SelectPlan(plan))" />
+                        }
+                        else
+                        {
+                            <QButton Text="Downgrade" Icon="arrow-down-circle-fill" Variant="outline-primary" OnClick="@(() => SelectPlan(plan))" />
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Billing History -->
+    <div class="billing-history">
+        <h2>Billing History</h2>
+        @if (billingHistory.Count == 0)
+        {
+            <p class="history-empty">
+                No billing events yet. Invoices are on the <a href="/billing/invoices">Invoices</a> page.
+            </p>
+        }
+        else
+        {
+            <div class="history-timeline">
+                @foreach (var evt in billingHistory)
+                {
+                    <div class="timeline-item">
+                        <div class="timeline-marker @evt.Type"></div>
+                        <div class="timeline-content">
+                            <div class="timeline-header">
+                                <span class="timeline-title">@evt.Title</span>
+                                <span class="timeline-date">@evt.Date.ToString("MMM dd, yyyy")</span>
+                            </div>
+                            <p class="timeline-description">@evt.Description</p>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+<!-- Upgrade Confirmation Dialog -->
+<QModal Visible="@(showUpgradeDialog && selectedPlan != null)"
+        VisibleChanged="@((bool v) => showUpgradeDialog = v)"
+        Title="@(selectedPlan != null ? $"Upgrade to {selectedPlan.PlanName}?" : "Upgrade Plan")"
+        Icon="arrow-up-circle-fill"
+        Size="md">
+    <ChildContent>
+        @if (selectedPlan != null)
+        {
+            <p>You're about to upgrade from <strong>@currentPlan?.PlanName</strong> to <strong>@selectedPlan.PlanName</strong>.</p>
+            <div class="upgrade-summary">
+                <div class="summary-row">
+                    <span>New Monthly Price:</span>
+                    <strong>@selectedPlan.Currency @selectedPlan.MonthlyPrice.ToString("N2")/month</strong>
+                </div>
+                <div class="summary-row">
+                    <span>Prorated Credit:</span>
+                    <strong>-@currentPlan?.Currency @proratedCredit.ToString("N2")</strong>
+                </div>
+                <div class="summary-row total">
+                    <span>Due Today:</span>
+                    <strong>@selectedPlan.Currency @dueToday.ToString("N2")</strong>
+                </div>
+            </div>
+            <p class="text-muted small mt-3">Your new plan will take effect immediately and you'll be charged the prorated amount for the remainder of this billing period.</p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@(() => showUpgradeDialog = false)" />
+        <QButton Text="Confirm Upgrade" Icon="check-lg" Variant="primary" OnClick="@ConfirmUpgrade" Disabled="@isProcessing" />
+    </FooterContent>
+</QModal>
+
+<!-- Cancel Subscription Dialog -->
+<QModal @bind-Visible="showCancelDialog" Title="Cancel Subscription" Icon="exclamation-triangle-fill" Size="md">
+    <ChildContent>
+        <p>Are you sure you want to cancel your subscription?</p>
+        <ul class="text-muted">
+            <li>Your account will remain active until @currentPlan?.NextBillingDate?.ToString("MMMM dd, yyyy")</li>
+            <li>After that, you'll be downgraded to the Free plan</li>
+            <li>You can reactivate anytime before the end of your billing period</li>
+        </ul>
+        <div class="form-group mt-3">
+            <label>Please tell us why you're cancelling (optional):</label>
+            <textarea class="form-control" @bind="cancellationReason" rows="3" placeholder="Your feedback helps us improve..."></textarea>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep Subscription" Icon="check-lg" Variant="secondary" OnClick="@(() => showCancelDialog = false)" />
+        <QButton Text="Confirm Cancellation" Icon="x-circle-fill" Variant="danger" OnClick="@ConfirmCancellation" Disabled="@isProcessing" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .current-plan-card {
+        background: var(--qm-bg-card);
+        color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 32px;
+        margin-bottom: 32px;
+        box-shadow: var(--qm-shadow-sm);
+    }
+
+    .plan-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .plan-header h2 {
+        margin: 4px 0 0 0;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+    }
+
+    .plan-badge {
+        display: inline-block;
+        padding: 6px 16px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+    }
+
+    .plan-price {
+        text-align: right;
+    }
+
+    .plan-price .currency {
+        font-size: 14px;
+        vertical-align: super;
+        color: var(--qm-text-muted);
+    }
+
+    .plan-price .amount {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .plan-price .period {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .plan-features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .feature-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-text-secondary);
+    }
+
+    .feature-item .rzi {
+        color: var(--qm-primary);
+    }
+
+    .plan-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .plans-section {
+        margin-bottom: 32px;
+    }
+
+    .plans-section h2 {
+        margin: 0 0 20px;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .plans-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+    }
+
+    .plan-card {
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        position: relative;
+        transition: all 0.3s ease;
+    }
+
+    .plan-card:hover {
+        border-color: var(--qm-primary);
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+    }
+
+    .plan-card.current {
+        border-color: var(--qm-success);
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+    }
+
+    .plan-card.popular {
+        border-color: var(--qm-primary);
+        border-width: 3px;
+    }
+
+    .popular-badge {
+        position: absolute;
+        top: -12px;
+        right: 24px;
+        background: var(--qm-primary);
+        color: white;
+        padding: 6px 16px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .plan-card-header h3 {
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+
+    .plan-card-header .price {
+        margin: 16px 0;
+    }
+
+    .plan-card-header .price .amount {
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .plan-description {
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        margin-bottom: 24px;
+    }
+
+    .plan-card-features {
+        margin-bottom: 24px;
+        min-height: 200px;
+    }
+
+    .plan-card-features .feature {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--qm-text-primary);
+    }
+
+    .billing-history {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .billing-history h2 {
+        margin: 0 0 20px;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .history-empty {
+        color: var(--qm-text-muted);
+        margin: 0;
+    }
+
+    .history-empty a {
+        color: var(--qm-primary);
+        font-weight: 600;
+    }
+
+    .history-timeline {
+        position: relative;
+        padding-left: 32px;
+    }
+
+    .history-timeline::before {
+        content: '';
+        position: absolute;
+        left: 6px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--qm-border);
+    }
+
+    .timeline-item {
+        position: relative;
+        padding-bottom: 24px;
+    }
+
+    .timeline-marker {
+        position: absolute;
+        left: -29px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--qm-primary);
+        border: 2px solid var(--qm-bg-card);
+        box-shadow: 0 0 0 2px var(--qm-primary);
+    }
+
+    .timeline-marker.payment {
+        background: var(--qm-success);
+        box-shadow: 0 0 0 2px var(--qm-success);
+    }
+
+    .timeline-marker.upgrade {
+        background: var(--qm-info);
+        box-shadow: 0 0 0 2px var(--qm-info);
+    }
+
+    .timeline-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+
+    .timeline-title {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .timeline-date {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .timeline-description {
+        color: var(--qm-text-secondary);
+        margin: 0;
+    }
+
+    .upgrade-summary {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        margin: 16px 0;
+    }
+
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+    }
+
+    .summary-row.total {
+        border-top: 2px solid var(--qm-border);
+        margin-top: 8px;
+        padding-top: 16px;
+        font-size: 18px;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool isProcessing = false;
+    private bool showUpgradeDialog = false;
+    private bool showCancelDialog = false;
+    private string cancellationReason = "";
+    private decimal proratedCredit = 0;
+    private decimal dueToday = 0;
+
+    private SubscriptionPlan? currentPlan;
+    private SubscriptionPlan? selectedPlan;
+    private List<SubscriptionPlan> availablePlans = new();
+    private List<BillingEvent> billingHistory = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hasPermission = await PermissionService.HasPermissionAsync("billing.manage");
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+
+        try
+        {
+            // Load current subscription. SubscriptionDto (api/v1/billing/subscription) only has
+            // PlanCode/PlanName — no pricing/description/features — so also fetch that plan's
+            // full PlanDto by code to get the rest.
+            var response = await Http.GetAsync("api/v1/billing/subscription");
+            if (response.IsSuccessStatusCode)
+            {
+                var subscriptionDto = await response.Content.ReadFromJsonAsync<SubscriptionApiDto>(JsonOptions);
+                if (subscriptionDto != null)
+                {
+                    PlanApiDto? currentPlanDetails = null;
+                    var planResponse = await Http.GetAsync($"api/v1/billing/plans/{subscriptionDto.PlanCode}");
+                    if (planResponse.IsSuccessStatusCode)
+                    {
+                        currentPlanDetails = await planResponse.Content.ReadFromJsonAsync<PlanApiDto>(JsonOptions);
+                    }
+
+                    currentPlan = new SubscriptionPlan
+                    {
+                        PlanCode = subscriptionDto.PlanCode,
+                        PlanName = subscriptionDto.PlanName,
+                        Description = currentPlanDetails?.Description ?? "",
+                        MonthlyPrice = currentPlanDetails?.MonthlyPriceUsd ?? 0,
+                        Currency = "USD",
+                        Features = ParseFeatureNames(currentPlanDetails?.Features),
+                        NextBillingDate = subscriptionDto.CurrentPeriodEnd
+                    };
+                }
+            }
+
+            // Load available plans (PlanDto shape — Code/Name/MonthlyPriceUsd/Features-as-JSON,
+            // not the PlanCode/PlanName/MonthlyPrice/Features-as-list shape this page displays).
+            var plansResponse = await Http.GetAsync("api/v1/billing/plans");
+            if (plansResponse.IsSuccessStatusCode)
+            {
+                var planDtos = await plansResponse.Content.ReadFromJsonAsync<List<PlanApiDto>>(JsonOptions) ?? new();
+                availablePlans = planDtos.Select(p => new SubscriptionPlan
+                {
+                    PlanCode = p.Code,
+                    PlanName = p.Name,
+                    Description = p.Description ?? "",
+                    MonthlyPrice = p.MonthlyPriceUsd,
+                    Currency = "USD",
+                    Features = ParseFeatureNames(p.Features),
+                    IsPopular = !string.IsNullOrEmpty(p.Badge)
+                }).ToList();
+            }
+
+            // Load billing history (Type/Title/Description/Date — same field names as
+            // BillingController's BillingEventDto, so this deserializes directly).
+            var historyResponse = await Http.GetAsync("api/v1/billing/history");
+            if (historyResponse.IsSuccessStatusCode)
+            {
+                billingHistory = await historyResponse.Content.ReadFromJsonAsync<List<BillingEvent>>(JsonOptions) ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading subscription data: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SelectPlan(SubscriptionPlan plan)
+    {
+        selectedPlan = plan;
+        CalculateProration();
+        showUpgradeDialog = true;
+    }
+
+    private void CalculateProration()
+    {
+        if (currentPlan == null || selectedPlan == null) return;
+
+        // Simple calculation - in reality this would be more complex
+        var daysRemaining = (currentPlan.NextBillingDate - DateTime.UtcNow)?.Days ?? 0;
+        var daysInMonth = 30;
+        proratedCredit = (currentPlan.MonthlyPrice / daysInMonth) * daysRemaining;
+        dueToday = (selectedPlan.MonthlyPrice / daysInMonth) * daysRemaining - proratedCredit;
+    }
+
+    private async Task ConfirmUpgrade()
+    {
+        if (selectedPlan == null) return;
+
+        isProcessing = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/billing/subscription/upgrade", new
+            {
+                NewPlanCode = selectedPlan.PlanCode
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                showUpgradeDialog = false;
+                await LoadData();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error upgrading subscription: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task ConfirmCancellation()
+    {
+        isProcessing = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/v1/billing/subscription/cancel", new
+            {
+                Reason = cancellationReason
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                showCancelDialog = false;
+                await LoadData();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error cancelling subscription: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private bool IsUpgrade(string planCode)
+    {
+        var planOrder = new[] { "free", "starter", "professional", "enterprise" };
+        var currentIndex = Array.IndexOf(planOrder, currentPlan?.PlanCode?.ToLower() ?? "free");
+        var newIndex = Array.IndexOf(planOrder, planCode.ToLower());
+        return newIndex > currentIndex;
+    }
+
+    private string GetPlanClass(string planCode) => planCode.ToLower() switch
+    {
+        "free" => "plan-free",
+        "starter" => "plan-starter",
+        "professional" => "plan-professional",
+        "enterprise" => "plan-enterprise",
+        _ => ""
+    };
+
+    private record SubscriptionPlan
+    {
+        public string PlanCode { get; init; } = "";
+        public string PlanName { get; init; } = "";
+        public string Description { get; init; } = "";
+        public decimal MonthlyPrice { get; init; }
+        public string Currency { get; init; } = "USD";
+        public List<string> Features { get; init; } = new();
+        public bool IsPopular { get; init; }
+        public DateTime? NextBillingDate { get; init; }
+    }
+
+    private record BillingEvent
+    {
+        public string Type { get; init; } = "";
+        public string Title { get; init; } = "";
+        public string Description { get; init; } = "";
+        public DateTime Date { get; init; }
+    }
+
+    /// <summary>
+    /// Mirrors BillingController's PlanDto exactly (Code/Name/MonthlyPriceUsd/Features-as-JSON) —
+    /// used purely for deserializing api/v1/billing/plans[/{code}], then mapped into the
+    /// display-shaped SubscriptionPlan above. Deserializing straight into SubscriptionPlan used
+    /// to fail silently (wrong field names) or throw (Features: JSON object string into
+    /// List&lt;string&gt;), leaving "Available Plans" empty and pricing stuck at $0.
+    /// </summary>
+    private record PlanApiDto
+    {
+        public string Name { get; init; } = "";
+        public string Code { get; init; } = "";
+        public string? Description { get; init; }
+        public decimal MonthlyPriceUsd { get; init; }
+        public string? Badge { get; init; }
+        public string? Features { get; init; }
+    }
+
+    /// <summary>Mirrors BillingController's SubscriptionDto exactly.</summary>
+    private record SubscriptionApiDto
+    {
+        public string PlanCode { get; init; } = "";
+        public string PlanName { get; init; } = "";
+        public DateTime CurrentPeriodEnd { get; init; }
+    }
+
+    /// <summary>
+    /// PlanDto.Features is a JSON object string like {"api_access": true, "white_label": false}
+    /// (feature-code -> enabled). Turns the enabled ones into readable display names.
+    /// </summary>
+    private static List<string> ParseFeatureNames(string? featuresJson)
+    {
+        if (string.IsNullOrWhiteSpace(featuresJson))
+            return new();
+
+        try
+        {
+            var flags = JsonSerializer.Deserialize<Dictionary<string, bool>>(featuresJson);
+            if (flags == null)
+                return new();
+
+            return flags
+                .Where(kv => kv.Value)
+                .Select(kv => System.Globalization.CultureInfo.InvariantCulture.TextInfo
+                    .ToTitleCase(kv.Key.Replace('_', ' ')))
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
+    }
+}

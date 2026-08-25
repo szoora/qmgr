@@ -1,0 +1,725 @@
+/*
+ * Q-Mgr Shared Components Styles
+ * Reusable component styles
+ * Naming Convention: .qm-shared-[component]-[element]
+ */
+
+/* ================================
+   Share Dialog
+   ================================ */
+.qm-shared-share-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 16px;
+    animation: qm-fadeIn 0.2s ease;
+}
+
+@keyframes qm-fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.qm-shared-share-dialog {
+    background: var(--qm-bg-card, #1e1e2d);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 20px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: qm-slideUp 0.3s ease;
+}
+
+@keyframes qm-slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.qm-shared-share-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+}
+
+.qm-shared-share-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--qm-text-primary, #fff);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.qm-shared-share-header h3 i {
+    color: var(--qm-primary, #8c2f52);
+}
+
+.qm-shared-share-close {
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+    border-radius: 10px;
+    color: var(--qm-text-muted, #a0a0a0);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-shared-share-close:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.qm-shared-share-content {
+    padding: 24px;
+}
+
+/* QR Code Section */
+.qm-shared-qr-section {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.qm-shared-qr-code {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto 12px;
+    background: #fff;
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-shared-qr-code img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.qm-shared-qr-placeholder {
+    color: var(--qm-text-muted);
+    font-size: 64px;
+}
+
+.qm-shared-qr-hint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+/* Link Section */
+.qm-shared-link-section {
+    margin-bottom: 24px;
+}
+
+.qm-shared-section-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--qm-text-muted, #a0a0a0);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.qm-shared-link-input-group {
+    display: flex;
+    gap: 8px;
+}
+
+.qm-shared-link-input {
+    flex: 1;
+    padding: 12px 16px;
+    background: var(--qm-bg-elevated, #252536);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 10px;
+    color: var(--qm-text-primary, #fff);
+    font-size: 13px;
+    font-family: monospace;
+    min-width: 0;
+}
+
+.qm-shared-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    background: var(--qm-primary, #8c2f52);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.qm-shared-copy-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(140, 47, 82, 0.3);
+}
+
+.qm-shared-copy-btn.copied {
+    background: var(--qm-success, #16a34a);
+}
+
+/* Share Buttons */
+.qm-shared-share-options {
+    margin-bottom: 24px;
+}
+
+.qm-shared-share-buttons {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.qm-shared-share-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 14px 8px;
+    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 12px;
+    color: var(--qm-text-primary, #fff);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qm-shared-share-btn i {
+    font-size: 22px;
+}
+
+.qm-shared-share-btn span {
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.qm-shared-share-btn:hover {
+    transform: translateY(-2px);
+    border-color: transparent;
+}
+
+.qm-shared-share-btn.native:hover { background: var(--qm-primary); color: white; }
+.qm-shared-share-btn.whatsapp:hover { background: #25D366; color: #fff; }
+.qm-shared-share-btn.telegram:hover { background: #0088cc; color: #fff; }
+.qm-shared-share-btn.twitter:hover { background: #000; color: #fff; }
+.qm-shared-share-btn.facebook:hover { background: #1877F2; color: #fff; }
+.qm-shared-share-btn.email:hover { background: #EA4335; color: #fff; }
+.qm-shared-share-btn.sms:hover { background: #2e242a; color: #fff; }
+
+/* Download Button */
+.qm-shared-download-section {
+    text-align: center;
+}
+
+.qm-shared-download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 10px;
+    color: var(--qm-text-primary, #fff);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qm-shared-download-btn:hover {
+    background: var(--qm-primary);
+    color: white;
+    border-color: transparent;
+}
+
+/* ================================
+   Connection Status Indicator
+   ================================ */
+.qm-shared-connection-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.qm-shared-connection-indicator.connected {
+    background: rgba(22, 163, 74, 0.15);
+    color: var(--qm-accent-green);
+}
+
+.qm-shared-connection-indicator.disconnected {
+    background: rgba(220, 38, 38, 0.15);
+    color: var(--qm-danger);
+}
+
+.qm-shared-connection-indicator.reconnecting {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--qm-warning);
+}
+
+.qm-shared-connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: qm-pulse 2s infinite;
+}
+
+.qm-shared-connection-indicator.connected .qm-shared-connection-dot {
+    background: var(--qm-accent-green);
+}
+
+.qm-shared-connection-indicator.disconnected .qm-shared-connection-dot {
+    background: var(--qm-danger);
+    animation: none;
+}
+
+.qm-shared-connection-indicator.reconnecting .qm-shared-connection-dot {
+    background: var(--qm-warning);
+}
+
+@keyframes qm-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ================================
+   Connection Overlay
+   ================================ */
+.qm-shared-connection-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    color: var(--qm-text-primary);
+}
+
+.qm-shared-connection-overlay-icon {
+    font-size: 64px;
+    margin-bottom: 24px;
+    color: var(--qm-danger);
+}
+
+.qm-shared-connection-overlay h2 {
+    margin: 0 0 8px;
+    font-size: 24px;
+}
+
+.qm-shared-connection-overlay p {
+    margin: 0 0 24px;
+    color: var(--qm-text-muted);
+}
+
+/* ================================
+   Confirm Dialog
+   ================================ */
+.qm-shared-confirm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 16px;
+}
+
+.qm-shared-confirm-dialog {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 400px;
+    width: 100%;
+    text-align: center;
+}
+
+.qm-shared-confirm-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    font-size: 28px;
+}
+
+.qm-shared-confirm-icon.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--qm-warning);
+}
+
+.qm-shared-confirm-icon.danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.qm-shared-confirm-icon.info {
+    background: var(--qm-primary-light);
+    color: var(--qm-primary);
+}
+
+.qm-shared-confirm-title {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-shared-confirm-message {
+    margin: 0 0 24px;
+    color: var(--qm-text-muted);
+    font-size: 14px;
+}
+
+.qm-shared-confirm-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.qm-shared-confirm-actions button {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qm-shared-confirm-cancel {
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-primary);
+}
+
+.qm-shared-confirm-cancel:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.qm-shared-confirm-ok {
+    background: var(--qm-gradient-primary);
+    border: none;
+    color: white;
+}
+
+.qm-shared-confirm-ok.danger {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* ================================
+   Media Player
+   ================================ */
+.qm-shared-media-player {
+    position: relative;
+    width: 100%;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.qm-shared-media-player video,
+.qm-shared-media-player iframe {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.qm-shared-media-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 16px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.qm-shared-media-player:hover .qm-shared-media-controls {
+    opacity: 1;
+}
+
+.qm-shared-media-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qm-shared-media-btn:hover {
+    background: var(--qm-primary);
+    color: white;
+}
+
+.qm-shared-media-progress {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.qm-shared-media-progress-fill {
+    height: 100%;
+    background: var(--qm-primary);
+    border-radius: 2px;
+    transition: width 0.1s;
+}
+
+/* ================================
+   Playlist Player
+   ================================ */
+.qm-shared-playlist-player {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.qm-shared-playlist-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--qm-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-shared-playlist-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-shared-playlist-items {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.qm-shared-playlist-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--qm-border);
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.qm-shared-playlist-item:hover {
+    background: var(--qm-bg-elevated);
+}
+
+.qm-shared-playlist-item.active {
+    background: rgba(140, 47, 82, 0.1);
+}
+
+.qm-shared-playlist-item.playing {
+    background: var(--qm-primary-light);
+}
+
+.qm-shared-playlist-thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    background: var(--qm-bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.qm-shared-playlist-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.qm-shared-playlist-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.qm-shared-playlist-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--qm-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qm-shared-playlist-item-duration {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+/* ================================
+   Empty State
+   ================================ */
+.qm-shared-empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+}
+
+.qm-shared-empty-state i:not(.q-btn__icon) {
+    font-size: 64px;
+    color: var(--qm-text-muted);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.qm-shared-empty-state h3 {
+    margin: 0 0 8px;
+    font-size: 20px;
+    color: var(--qm-text-primary);
+}
+
+.qm-shared-empty-state p {
+    margin: 0;
+    color: var(--qm-text-muted);
+}
+
+/* ================================
+   Loading States
+   ================================ */
+.qm-shared-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px;
+    color: var(--qm-text-muted);
+}
+
+.qm-shared-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--qm-border);
+    border-top-color: var(--qm-primary);
+    border-radius: 50%;
+    animation: qm-spin 0.8s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes qm-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ================================
+   Responsive - Share Dialog
+   ================================ */
+@media (max-width: 480px) {
+    .qm-shared-share-dialog {
+        max-height: 95vh;
+        border-radius: 20px 20px 0 0;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-width: none;
+        animation: qm-slideUpMobile 0.3s ease;
+    }
+
+    @keyframes qm-slideUpMobile {
+        from { transform: translateY(100%); }
+        to { transform: translateY(0); }
+    }
+
+    .qm-shared-share-buttons {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+    }
+
+    .qm-shared-share-btn {
+        padding: 12px 6px;
+    }
+
+    .qm-shared-share-btn i {
+        font-size: 20px;
+    }
+
+    .qm-shared-share-btn span {
+        font-size: 10px;
+    }
+
+    .qm-shared-qr-code {
+        width: 160px;
+        height: 160px;
+    }
+
+    .qm-shared-link-input-group {
+        flex-direction: column;
+    }
+
+    .qm-shared-copy-btn {
+        justify-content: center;
+    }
+}
+
+/* Light Mode */
+[data-theme="light"] .qm-shared-share-dialog,
+[data-theme="light"] .qm-shared-confirm-dialog {
+    background: var(--qm-bg-card);
+    border-color: #e5e7eb;
+}
+
+[data-theme="light"] .qm-shared-link-input,
+[data-theme="light"] .qm-shared-share-btn,
+[data-theme="light"] .qm-shared-download-btn {
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+}
+
+[data-theme="light"] .qm-shared-link-input {
+    color: #1f2937;
+}

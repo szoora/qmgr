@@ -1,0 +1,920 @@
+@page "/admin/feedback"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+
+<PageTitle>Feedback Management - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Customer Feedback</h1>
+            <p class="subtitle">View and respond to customer feedback</p>
+        </div>
+        <div class="header-actions">
+            <PermissionGuard Permission="feedback.analytics">
+                <QButton Text="Export" Icon="download" Variant="secondary" OnClick="@ExportFeedback" />
+            </PermissionGuard>
+            <QButton Text="Refresh" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    @if (summary != null)
+    {
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="card-icon total">
+                    <QIcon Name="chat-quote-fill" />
+                </div>
+                <div class="card-content">
+                    <span class="card-value">@summary.TotalFeedbacks</span>
+                    <span class="card-label">Total Feedbacks</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon rating">
+                    <QIcon Name="star-fill" />
+                </div>
+                <div class="card-content">
+                    <span class="card-value">@summary.AverageRating.ToString("F1")</span>
+                    <span class="card-label">Average Rating</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon positive">
+                    <QIcon Name="emoji-smile-fill" />
+                </div>
+                <div class="card-content">
+                    <span class="card-value">@(summary.FiveStarCount + summary.FourStarCount)</span>
+                    <span class="card-label">Positive (4-5 stars)</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon pending">
+                    <QIcon Name="hourglass-split" />
+                </div>
+                <div class="card-content">
+                    <span class="card-value">@summary.PendingResponseCount</span>
+                    <span class="card-label">Awaiting Response</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rating Distribution -->
+        <div class="rating-distribution">
+            <h3>Rating Distribution</h3>
+            <div class="distribution-bars">
+                @for (int star = 5; star >= 1; star--)
+                {
+                    var count = star switch
+                    {
+                        5 => summary.FiveStarCount,
+                        4 => summary.FourStarCount,
+                        3 => summary.ThreeStarCount,
+                        2 => summary.TwoStarCount,
+                        1 => summary.OneStarCount,
+                        _ => 0
+                    };
+                    var percentage = summary.TotalFeedbacks > 0 ? (double)count / summary.TotalFeedbacks * 100 : 0;
+                    <div class="distribution-row">
+                        <span class="star-label">@star <QIcon Name="star-fill" /></span>
+                        <div class="bar-container">
+                            <div class="bar-fill" style="width: @percentage%"></div>
+                        </div>
+                        <span class="bar-count">@count</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Filters -->
+    <div class="filters-section">
+        <div class="filter-group">
+            <QSelect TValue="int?" TItem="(string Label, int? Value)" Value="@filterRating" ValueChanged="@OnRatingChanged" Items="@ratingOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="Rating" Placeholder="All Ratings" AllowClear="true" Class="filter-select" />
+        </div>
+        <div class="filter-group">
+            <QSelect TValue="FeedbackCategory?" TItem="(string Label, FeedbackCategory? Value)" Value="@filterCategory" ValueChanged="@OnCategoryChanged" Items="@categoryOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="Category" Placeholder="All Categories" AllowClear="true" Class="filter-select" />
+        </div>
+        <div class="filter-group">
+            <QSelect TValue="FeedbackSource?" TItem="(string Label, FeedbackSource? Value)" Value="@filterSource" ValueChanged="@OnSourceChanged" Items="@sourceOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="Source" Placeholder="All Sources" AllowClear="true" Class="filter-select" />
+        </div>
+        <div class="filter-group">
+            <QSelect TValue="bool?" TItem="(string Label, bool? Value)" Value="@filterHasResponse" ValueChanged="@OnResponseFilterChanged" Items="@responseOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="Response Status" Placeholder="All" AllowClear="true" Class="filter-select" />
+        </div>
+    </div>
+
+    <!-- Feedback List -->
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading feedback...</span>
+        </div>
+    }
+    else if (!feedbacks.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="chat-quote-fill" />
+            <h3>No Feedback Yet</h3>
+            <p>Customer feedback will appear here once submitted</p>
+        </div>
+    }
+    else
+    {
+        <div class="feedback-list">
+            @foreach (var feedback in feedbacks)
+            {
+                <div class="feedback-card @(string.IsNullOrEmpty(feedback.Response) ? "needs-response" : "")">
+                    <div class="feedback-header">
+                        <div class="rating-display">
+                            @for (int i = 1; i <= 5; i++)
+                            {
+                                <QIcon Name="@(feedback.Rating >= i ? "star-fill" : "star")" Class="@(feedback.Rating >= i ? "filled" : "")" />
+                            }
+                        </div>
+                        <div class="feedback-meta">
+                            <span class="source-badge @feedback.Source.ToString().ToLower()">
+                                @GetSourceIcon(feedback.Source)
+                                @feedback.Source
+                            </span>
+                            <span class="timestamp">@feedback.CreatedAt.ToString("MMM dd, yyyy HH:mm")</span>
+                        </div>
+                    </div>
+
+                    <div class="feedback-body">
+                        @if (!string.IsNullOrEmpty(feedback.Comment))
+                        {
+                            <p class="comment">"@feedback.Comment"</p>
+                        }
+                        else
+                        {
+                            <p class="no-comment">No comment provided</p>
+                        }
+
+                        <div class="feedback-details">
+                            @if (!string.IsNullOrEmpty(feedback.TokenDisplayNumber))
+                            {
+                                <span class="detail-item">
+                                    <QIcon Name="ticket-detailed-fill" />
+                                    @feedback.TokenDisplayNumber
+                                </span>
+                            }
+                            @if (!string.IsNullOrEmpty(feedback.ServiceTypeName))
+                            {
+                                <span class="detail-item">
+                                    <QIcon Name="grid-fill" />
+                                    @feedback.ServiceTypeName
+                                </span>
+                            }
+                            <span class="detail-item category">
+                                <QIcon Name="@GetCategoryIcon(feedback.Category)" />
+                                @feedback.Category
+                            </span>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(feedback.CustomerName) || !string.IsNullOrEmpty(feedback.CustomerEmail) || !string.IsNullOrEmpty(feedback.CustomerPhone))
+                        {
+                            <div class="customer-info">
+                                @if (!string.IsNullOrEmpty(feedback.CustomerName))
+                                {
+                                    <span><QIcon Name="person-fill" /> @feedback.CustomerName</span>
+                                }
+                                @if (!string.IsNullOrEmpty(feedback.CustomerEmail))
+                                {
+                                    <span><QIcon Name="envelope-fill" /> @feedback.CustomerEmail</span>
+                                }
+                                @if (!string.IsNullOrEmpty(feedback.CustomerPhone))
+                                {
+                                    <span><QIcon Name="telephone-fill" /> @feedback.CustomerPhone</span>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="feedback-footer">
+                        @if (!string.IsNullOrEmpty(feedback.Response))
+                        {
+                            <div class="response-section">
+                                <div class="response-header">
+                                    <QIcon Name="reply-fill" />
+                                    <span>Response</span>
+                                    @if (feedback.RespondedAt.HasValue)
+                                    {
+                                        <span class="response-time">@feedback.RespondedAt.Value.ToString("MMM dd, yyyy")</span>
+                                    }
+                                </div>
+                                <p class="response-text">@feedback.Response</p>
+                            </div>
+                        }
+                        else if (canRespond)
+                        {
+                            <div class="respond-section">
+                                <textarea @bind="responseTexts[feedback.Id]" placeholder="Write a response..." rows="2"></textarea>
+                                <QButton Text="Send Response" Icon="send-fill" Size="sm"
+                                              Variant="primary" OnClick="@(() => RespondToFeedback(feedback))"
+                                              Disabled="@(string.IsNullOrWhiteSpace(responseTexts.GetValueOrDefault(feedback.Id)))" />
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (feedbacks.Count >= pageSize)
+        {
+            <div class="load-more">
+                <QButton Text="Load More" Icon="arrow-down-circle" Variant="secondary" OnClick="@LoadMore" />
+            </div>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showDetailDialog" Title="Feedback Details" Size="md">
+    <ChildContent>
+        <!-- Detail dialog content -->
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showDetailDialog = false)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page {
+        padding: 0;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 {
+        margin: 0 0 4px;
+        font-size: 28px;
+        color: var(--qm-text-primary);
+    }
+
+    .subtitle {
+        margin: 0;
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    /* Summary Cards */
+    .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    .summary-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .card-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .card-icon .rzi {
+        font-size: 28px;
+    }
+
+    .card-icon.total {
+        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
+        color: var(--qm-info);
+    }
+
+    .card-icon.rating {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .card-icon.positive {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .card-icon.pending {
+        background: rgba(71, 57, 63, 0.15);
+        color: #47393f;
+    }
+
+    .card-content {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .card-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        line-height: 1.2;
+    }
+
+    .card-label {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Rating Distribution */
+    .rating-distribution {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .rating-distribution h3 {
+        margin: 0 0 20px;
+        font-size: 16px;
+        color: var(--qm-text-primary);
+    }
+
+    .distribution-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .distribution-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .star-label {
+        width: 48px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .star-label .rzi {
+        font-size: 16px;
+        color: var(--qm-warning);
+    }
+
+    .bar-container {
+        flex: 1;
+        height: 8px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--qm-warning) 0%, var(--qm-warning) 100%);
+        border-radius: var(--qm-radius-sm);
+        transition: width 0.5s ease;
+    }
+
+    .bar-count {
+        width: 40px;
+        text-align: right;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Filters */
+    .filters-section {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 24px;
+        padding: 20px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .filter-group .filter-select {
+        min-width: 150px;
+    }
+
+    .filter-group .filter-select .q-select__label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--qm-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Loading & Empty States */
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: var(--qm-text-muted);
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        margin-bottom: 16px;
+        color: var(--qm-primary);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0;
+    }
+
+    /* Feedback List */
+    .feedback-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .feedback-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .feedback-card:hover {
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .feedback-card.needs-response {
+        border-left: 4px solid #47393f;
+    }
+
+    .feedback-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: var(--qm-bg-elevated);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .rating-display {
+        display: flex;
+        gap: 4px;
+    }
+
+    .rating-display .rzi {
+        font-size: 20px;
+        color: color-mix(in srgb, var(--qm-text-primary) 20%, transparent);
+    }
+
+    .rating-display .rzi.filled {
+        color: var(--qm-warning);
+    }
+
+    .feedback-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .source-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: var(--qm-radius-md);
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .source-badge.kiosk {
+        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
+        color: var(--qm-info);
+    }
+
+    .source-badge.link {
+        background: rgba(71, 57, 63, 0.15);
+        color: #47393f;
+    }
+
+    .source-badge.mobile {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .source-badge.web {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .timestamp {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .feedback-body {
+        padding: 20px;
+    }
+
+    .comment {
+        font-size: 15px;
+        color: var(--qm-text-primary);
+        line-height: 1.6;
+        margin: 0 0 16px;
+        font-style: italic;
+    }
+
+    .no-comment {
+        font-size: 14px;
+        color: var(--qm-text-muted);
+        font-style: italic;
+        margin: 0 0 16px;
+    }
+
+    .feedback-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .detail-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .detail-item .rzi {
+        font-size: 16px;
+        color: var(--qm-primary);
+    }
+
+    .customer-info {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .customer-info span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .customer-info .rzi {
+        font-size: 14px;
+    }
+
+    .feedback-footer {
+        padding: 16px 20px;
+        background: var(--qm-bg-elevated);
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .response-section {
+        padding: 12px 16px;
+        background: color-mix(in srgb, var(--qm-success) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-success) 20%, transparent);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .response-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-success);
+    }
+
+    .response-header .rzi {
+        font-size: 16px;
+    }
+
+    .response-time {
+        margin-left: auto;
+        font-weight: normal;
+        color: var(--qm-text-muted);
+    }
+
+    .response-text {
+        margin: 0;
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+        line-height: 1.5;
+    }
+
+    .respond-section {
+        display: flex;
+        gap: 12px;
+        align-items: flex-end;
+    }
+
+    .respond-section textarea {
+        flex: 1;
+        padding: 12px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        font-size: 14px;
+        color: var(--qm-text-primary);
+        resize: none;
+    }
+
+    .respond-section textarea:focus {
+        outline: none;
+        border-color: var(--qm-primary);
+    }
+
+    .respond-section textarea::placeholder {
+        color: var(--qm-text-muted);
+    }
+
+    .load-more {
+        text-align: center;
+        margin-top: 24px;
+    }
+</style>
+
+@code {
+    private List<FeedbackDto> feedbacks = new();
+    private FeedbackSummaryDto? summary;
+    private bool isLoading = true;
+    private bool showDetailDialog = false;
+    private int page = 1;
+    private int pageSize = 20;
+    private bool canRespond = false;
+
+    private Dictionary<Guid, string> responseTexts = new();
+
+    // Filters
+    private int? filterRating;
+    private FeedbackCategory? filterCategory;
+    private FeedbackSource? filterSource;
+    private bool? filterHasResponse;
+
+    private readonly List<(string Label, int? Value)> ratingOptions = new()
+    {
+        ("5 Stars", 5),
+        ("4 Stars", 4),
+        ("3 Stars", 3),
+        ("2 Stars", 2),
+        ("1 Star", 1)
+    };
+
+    private readonly List<(string Label, FeedbackCategory? Value)> categoryOptions = new()
+    {
+        ("General", FeedbackCategory.General),
+        ("Service Quality", FeedbackCategory.ServiceQuality),
+        ("Wait Time", FeedbackCategory.WaitTime),
+        ("Staff Behavior", FeedbackCategory.StaffBehavior),
+        ("Facility", FeedbackCategory.Facility),
+        ("Other", FeedbackCategory.Other)
+    };
+
+    private readonly List<(string Label, FeedbackSource? Value)> sourceOptions = new()
+    {
+        ("Kiosk", FeedbackSource.Kiosk),
+        ("Link", FeedbackSource.Link),
+        ("Mobile", FeedbackSource.Mobile),
+        ("Web", FeedbackSource.Web)
+    };
+
+    private readonly List<(string Label, bool? Value)> responseOptions = new()
+    {
+        ("Has Response", true),
+        ("Needs Response", false)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.FeedbackView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canRespond = await PermissionService.HasPermissionAsync(Permissions.FeedbackRespond);
+
+        await LoadData();
+    }
+
+    private async Task OnRatingChanged(int? value)
+    {
+        filterRating = value;
+        await LoadData();
+    }
+
+    private async Task OnCategoryChanged(FeedbackCategory? value)
+    {
+        filterCategory = value;
+        await LoadData();
+    }
+
+    private async Task OnSourceChanged(FeedbackSource? value)
+    {
+        filterSource = value;
+        await LoadData();
+    }
+
+    private async Task OnResponseFilterChanged(bool? value)
+    {
+        filterHasResponse = value;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        page = 1;
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId;
+
+            if (branchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+                isLoading = false;
+                return;
+            }
+
+            // Load summary
+            var summaryResponse = await Http.GetAsync($"api/v1/branches/{branchId}/feedbacks/summary");
+            if (summaryResponse.IsSuccessStatusCode)
+            {
+                summary = await summaryResponse.Content.ReadFromJsonAsync<FeedbackSummaryDto>(JsonOptions);
+            }
+
+            // Build query string
+            var query = $"api/v1/branches/{branchId}/feedbacks?page={page}&pageSize={pageSize}";
+            if (filterRating.HasValue) query += $"&rating={filterRating}";
+            if (filterCategory.HasValue) query += $"&category={filterCategory}";
+            if (filterSource.HasValue) query += $"&source={filterSource}";
+            if (filterHasResponse.HasValue) query += $"&hasResponse={filterHasResponse}";
+
+            var feedbacksResponse = await Http.GetAsync(query);
+            if (feedbacksResponse.IsSuccessStatusCode)
+            {
+                feedbacks = await feedbacksResponse.Content.ReadFromJsonAsync<List<FeedbackDto>>(JsonOptions) ?? new();
+                responseTexts = feedbacks.ToDictionary(f => f.Id, f => string.Empty);
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(feedbacksResponse);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load feedback: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        page++;
+        var branchId = BranchState.CurrentBranchId;
+
+        var query = $"api/v1/branches/{branchId}/feedbacks?page={page}&pageSize={pageSize}";
+        if (filterRating.HasValue) query += $"&rating={filterRating}";
+        if (filterCategory.HasValue) query += $"&category={filterCategory}";
+        if (filterSource.HasValue) query += $"&source={filterSource}";
+        if (filterHasResponse.HasValue) query += $"&hasResponse={filterHasResponse}";
+
+        try
+        {
+            var response = await Http.GetAsync(query);
+            if (response.IsSuccessStatusCode)
+            {
+                var moreFeedbacks = await response.Content.ReadFromJsonAsync<List<FeedbackDto>>(JsonOptions) ?? new();
+                feedbacks.AddRange(moreFeedbacks);
+                foreach (var f in moreFeedbacks)
+                {
+                    responseTexts[f.Id] = string.Empty;
+                }
+            }
+        }
+        catch { }
+    }
+
+    private async Task RespondToFeedback(FeedbackDto feedback)
+    {
+        var responseText = responseTexts.GetValueOrDefault(feedback.Id);
+        if (string.IsNullOrWhiteSpace(responseText)) return;
+
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var request = new { Response = responseText };
+            var response = await Http.PostAsJsonAsync($"api/v1/branches/{branchId}/feedbacks/{feedback.Id}/respond", request, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Response sent successfully");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to send response: {ex.Message}");
+        }
+    }
+
+    private void ExportFeedback()
+    {
+        NotificationService.Notify(ToastSeverity.Info, "Export", "Export feature coming soon");
+    }
+
+    private string GetSourceIcon(FeedbackSource source)
+    {
+        return source switch
+        {
+            FeedbackSource.Kiosk => "computer",
+            FeedbackSource.Link => "link",
+            FeedbackSource.Mobile => "smartphone",
+            FeedbackSource.Web => "language",
+            _ => "help"
+        };
+    }
+
+    private string GetCategoryIcon(FeedbackCategory category)
+    {
+        return category switch
+        {
+            FeedbackCategory.General => "chat",
+            FeedbackCategory.ServiceQuality => "star",
+            FeedbackCategory.WaitTime => "clock",
+            FeedbackCategory.StaffBehavior => "person",
+            FeedbackCategory.Facility => "building",
+            FeedbackCategory.Other => "three-dots",
+            _ => "question-circle"
+        };
+    }
+}

@@ -1,0 +1,433 @@
+@page "/admin/kiosk-settings"
+@inject HttpClient Http
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject JsonSerializerOptions JsonOptions
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using System.Text.Json
+@using QMgr.Web.Services
+
+<PageTitle>Kiosk Settings - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Kiosk Settings</h1>
+            <p class="subtitle">Configure kiosk behavior and auto-redirect timer</p>
+        </div>
+        <div class="header-actions">
+            @if (canEdit)
+            {
+                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@isSaving" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+        </div>
+    }
+    else
+    {
+        <div class="settings-container">
+            <!-- Ticket Display Timeout -->
+            <QCard Icon="clock-fill" Title="Ticket Display Timeout" Subtitle="Auto-redirect to home screen after generating a ticket">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Timeout Duration (seconds)</label>
+                        <input type="range" class="form-range" @bind="settings.TicketDisplayTimeoutSeconds"
+                                     min="5" max="60" step="5" style="width: 100%;" />
+                        <div class="slider-value">
+                            <span>@settings.TicketDisplayTimeoutSeconds seconds</span>
+                        </div>
+                        <small>Time before the kiosk automatically returns to the home screen after a ticket is generated</small>
+                    </div>
+                </div>
+
+                <div class="toggle-group">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.ShowCountdown" />
+                    </div>
+                    <div class="toggle-info">
+                        <span class="toggle-label">Show Countdown Timer</span>
+                        <small>Display a countdown on the ticket screen so customers know when it will close</small>
+                    </div>
+                </div>
+
+                <div class="toggle-group">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.AutoPrintBeforeRedirect" />
+                    </div>
+                    <div class="toggle-info">
+                        <span class="toggle-label">Auto-Print Before Redirect</span>
+                        <small>Automatically print the ticket before returning to home (if not already printed)</small>
+                    </div>
+                </div>
+            </QCard>
+
+            <!-- Idle Timeout (Future) -->
+            <QCard Icon="hourglass-split" Title="Idle Timeout" Subtitle="Reset kiosk after period of inactivity">
+                <HeaderActions>
+                    <span class="coming-soon-badge">Coming Soon</span>
+                </HeaderActions>
+                <ChildContent>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Idle Duration (seconds)</label>
+                        <input type="range" class="form-range" @bind="settings.IdleTimeoutSeconds"
+                                     min="30" max="300" step="30" style="width: 100%;" disabled="true" />
+                        <div class="slider-value">
+                            <span>@settings.IdleTimeoutSeconds seconds</span>
+                        </div>
+                        <small>Time of inactivity before the kiosk resets to the home screen</small>
+                    </div>
+                </div>
+                </ChildContent>
+            </QCard>
+
+            <!-- Preview -->
+            <QCard Class="preview-card" Icon="eye-fill" Title="Preview" Subtitle="How the countdown will appear on the ticket screen">
+                <div class="preview-container">
+                    @if (settings.ShowCountdown)
+                    {
+                        <div class="countdown-preview">
+                            <QIcon Name="clock-fill" />
+                            <span>Returning to home in @settings.TicketDisplayTimeoutSeconds seconds...</span>
+                            <small>Tap anywhere to stay on this screen</small>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="no-countdown-preview">
+                            <QIcon Name="eye-slash-fill" />
+                            <span>Countdown timer is hidden</span>
+                            <small>The screen will auto-close without visual indication</small>
+                        </div>
+                    }
+                </div>
+            </QCard>
+        </div>
+    }
+</div>
+
+<style>
+    .admin-page {
+        padding: 24px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 32px;
+    }
+
+    .header-content h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .header-content .subtitle {
+        margin: 0;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .header-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .loading-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 80px;
+    }
+
+    .settings-container {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .settings-card {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .card-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+
+    .card-header > .rz-icon {
+        font-size: 28px;
+        color: var(--qm-primary);
+        padding: 12px;
+        background: var(--qm-primary-light);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .card-header h3 {
+        margin: 0 0 4px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .card-header p {
+        margin: 0;
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .coming-soon-badge {
+        margin-left: auto;
+        padding: 4px 12px;
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .form-group label {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .form-group small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .slider-value {
+        display: flex;
+        justify-content: center;
+        margin-top: 8px;
+    }
+
+    .slider-value span {
+        padding: 6px 16px;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+        border-radius: var(--qm-radius-full);
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .toggle-group {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 16px 0;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .toggle-group:first-of-type {
+        margin-top: 16px;
+    }
+
+    .toggle-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .toggle-label {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .toggle-info small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .preview-card .preview-container {
+        padding: 24px;
+        background: var(--qm-gradient-dark);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        justify-content: center;
+    }
+
+    .countdown-preview,
+    .no-countdown-preview {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 16px 24px;
+        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-info) 30%, transparent);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .countdown-preview .rz-icon {
+        color: var(--qm-info);
+        font-size: 24px;
+    }
+
+    .countdown-preview span {
+        font-size: 15px;
+        color: var(--qm-info);
+        font-weight: 500;
+    }
+
+    .countdown-preview small {
+        font-size: 12px;
+        color: color-mix(in srgb, var(--qm-info) 70%, transparent);
+    }
+
+    .no-countdown-preview {
+        background: color-mix(in srgb, var(--qm-text-muted) 15%, transparent);
+        border-color: color-mix(in srgb, var(--qm-text-muted) 30%, transparent);
+    }
+
+    .no-countdown-preview .rz-icon {
+        color: var(--qm-text-muted);
+        font-size: 24px;
+    }
+
+    .no-countdown-preview span {
+        font-size: 15px;
+        color: var(--qm-text-muted);
+        font-weight: 500;
+    }
+
+    .no-countdown-preview small {
+        font-size: 12px;
+        color: color-mix(in srgb, var(--qm-text-muted) 70%, transparent);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool canEdit = false;
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    private KioskSettingsModel settings = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.SettingsEdit);
+
+        await BranchState.InitializeAsync();
+        await LoadSettings();
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/kiosk-settings");
+            if (response.IsSuccessStatusCode)
+            {
+                var dto = await response.Content.ReadFromJsonAsync<KioskSettingsDto>(JsonOptions);
+                if (dto != null)
+                {
+                    settings = new KioskSettingsModel
+                    {
+                        TicketDisplayTimeoutSeconds = dto.TicketDisplayTimeoutSeconds,
+                        IdleTimeoutSeconds = dto.IdleTimeoutSeconds,
+                        ShowCountdown = dto.ShowCountdown,
+                        AutoPrintBeforeRedirect = dto.AutoPrintBeforeRedirect
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        isSaving = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"api/v1/branches/{BranchId}/kiosk-settings", new
+            {
+                TicketDisplayTimeoutSeconds = settings.TicketDisplayTimeoutSeconds,
+                IdleTimeoutSeconds = settings.IdleTimeoutSeconds,
+                ShowCountdown = settings.ShowCountdown,
+                AutoPrintBeforeRedirect = settings.AutoPrintBeforeRedirect
+            }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "Kiosk settings updated successfully");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private class KioskSettingsModel
+    {
+        public int TicketDisplayTimeoutSeconds { get; set; } = 15;
+        public int IdleTimeoutSeconds { get; set; } = 60;
+        public bool ShowCountdown { get; set; } = true;
+        public bool AutoPrintBeforeRedirect { get; set; } = false;
+    }
+
+    private record KioskSettingsDto
+    {
+        public int TicketDisplayTimeoutSeconds { get; init; } = 15;
+        public int IdleTimeoutSeconds { get; init; } = 60;
+        public bool ShowCountdown { get; init; } = true;
+        public bool AutoPrintBeforeRedirect { get; init; } = false;
+    }
+}

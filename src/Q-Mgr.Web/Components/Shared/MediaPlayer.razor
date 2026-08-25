@@ -1,0 +1,728 @@
+@using QMgr.Domain.Enums
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="media-player @CssClass" @ref="containerRef">
+    @switch (DetectedMediaType)
+    {
+        case StreamMediaType.YouTube:
+            <div class="video-container">
+                <iframe id="@youtubeIframeId"
+                        src="@GetYouTubeEmbedUrl()"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowfullscreen>
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.Vimeo:
+            <div class="video-container">
+                <iframe src="@GetVimeoEmbedUrl()"
+                        frameborder="0"
+                        allow="autoplay; fullscreen; picture-in-picture"
+                        allowfullscreen>
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.TikTok:
+            <div class="video-container tiktok-container">
+                <iframe src="@GetTikTokEmbedUrl()"
+                        frameborder="0"
+                        allow="autoplay; encrypted-media; fullscreen"
+                        allowfullscreen>
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.GoogleDriveVideo:
+        case StreamMediaType.GoogleDrivePresentation:
+            <div class="video-container">
+                <iframe src="@GetGoogleDriveEmbedUrl()"
+                        frameborder="0"
+                        allowfullscreen>
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.GoogleDriveAudio:
+            <div class="audio-container">
+                <iframe src="@GetGoogleDriveEmbedUrl()"
+                        frameborder="0"
+                        class="audio-frame">
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.DirectVideo:
+            <div class="video-container native">
+                <video id="@videoElementId" controls autoplay="@AutoPlay" loop="@Loop" muted="@Muted">
+                    <source src="@Url" type="@GetVideoMimeType()">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            break;
+
+        case StreamMediaType.DirectAudio:
+            <div class="audio-container native">
+                <div class="audio-player">
+                    <div class="audio-icon">
+                        <QIcon Name="music-note-beamed" />
+                    </div>
+                    <div class="audio-info">
+                        <span class="audio-title">@(Title ?? "Audio Track")</span>
+                        <audio id="@audioElementId" controls autoplay="@AutoPlay" loop="@Loop">
+                            <source src="@Url" type="@GetAudioMimeType()">
+                            Your browser does not support the audio element.
+                        </audio>
+                    </div>
+                </div>
+            </div>
+            break;
+
+        case StreamMediaType.SoundCloud:
+            <div class="audio-container">
+                <iframe width="100%"
+                        height="166"
+                        scrolling="no"
+                        frameborder="no"
+                        allow="autoplay"
+                        src="@GetSoundCloudEmbedUrl()">
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.Spotify:
+            <div class="audio-container">
+                <iframe src="@GetSpotifyEmbedUrl()"
+                        width="100%"
+                        height="352"
+                        frameBorder="0"
+                        allowfullscreen=""
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                        loading="lazy">
+                </iframe>
+            </div>
+            break;
+
+        case StreamMediaType.Image:
+            <div class="image-container">
+                <img src="@Url" alt="@Title" loading="lazy" />
+            </div>
+            break;
+
+        case StreamMediaType.Pdf:
+            <div class="pdf-container">
+                @* Page auto-advance deliberately off here: PlaylistPlayer already
+                   times this whole item's on-screen duration on its own fixed
+                   timer (ContentType.Pdf => DefaultDurationSeconds * 2), so an
+                   independent per-page flip timer would race against it. Shows
+                   page 1 with working next/prev controls for anyone who can
+                   interact (kiosk touch, admin preview). *@
+                <PdfFlipbook Url="@Url"
+                             ShowControls="true"
+                             OnMediaError="@HandleMediaError" />
+            </div>
+            break;
+
+        case StreamMediaType.PowerPointOnline:
+            <div class="presentation-container">
+                <iframe src="@GetOfficeOnlineUrl()" frameborder="0"></iframe>
+            </div>
+            break;
+
+        default:
+            <div class="unsupported-media">
+                <QIcon Name="exclamation-triangle-fill" />
+                <p>Unable to preview this media type</p>
+                <a href="@Url" target="_blank" class="open-link">
+                    <QIcon Name="box-arrow-up-right" /> Open in new tab
+                </a>
+            </div>
+            break;
+    }
+</div>
+
+<style>
+    .media-player {
+        width: 100%;
+        height: 100%;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+    }
+
+    .video-container {
+        position: relative;
+        width: 100%;
+        padding-bottom: 56.25%; /* 16:9 aspect ratio */
+        background: #000;
+    }
+
+    .video-container iframe,
+    .video-container video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+    }
+
+    .video-container.native video {
+        object-fit: contain;
+    }
+
+    /* TikTok's embed is portrait (9:16), unlike every other supported platform here (16:9) */
+    .video-container.tiktok-container {
+        padding-bottom: 177.78%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+
+    .audio-container {
+        padding: 20px;
+    }
+
+    .audio-container.native {
+        padding: 0;
+    }
+
+    .audio-frame {
+        width: 100%;
+        height: 80px;
+    }
+
+    .audio-player {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 24px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .audio-icon {
+        width: 64px;
+        height: 64px;
+        background: var(--qm-gradient-primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .audio-icon .q-icon {
+        font-size: 32px;
+        color: white;
+    }
+
+    .audio-info {
+        flex: 1;
+    }
+
+    .audio-title {
+        display: block;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        margin-bottom: 12px;
+    }
+
+    .audio-info audio {
+        width: 100%;
+        height: 40px;
+    }
+
+    .image-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        width: 100%;
+        height: 100%;
+    }
+
+    .image-container img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .pdf-container,
+    .presentation-container {
+        width: 100%;
+        height: 600px;
+    }
+
+    .pdf-container iframe,
+    .presentation-container iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+    }
+
+    .unsupported-media {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .unsupported-media .q-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    .unsupported-media p {
+        margin: 0 0 16px;
+    }
+
+    .open-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        background: var(--qm-primary);
+        color: white;
+        border-radius: var(--qm-radius-lg);
+        font-weight: 600;
+        text-decoration: none;
+        transition: all 0.3s ease;
+    }
+
+    .open-link:hover {
+        box-shadow: var(--qm-shadow-neon);
+    }
+
+    /* Compact mode for thumbnails */
+    .media-player.compact .video-container {
+        padding-bottom: 75%;
+    }
+
+    .media-player.compact .audio-player {
+        padding: 16px;
+    }
+
+    .media-player.compact .audio-icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .media-player.compact .audio-icon .q-icon {
+        font-size: 24px;
+    }
+</style>
+
+@code {
+    [Parameter] public string Url { get; set; } = "";
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public ContentType ContentType { get; set; } = ContentType.Video;
+    [Parameter] public bool AutoPlay { get; set; } = false;
+    [Parameter] public bool Loop { get; set; } = false;
+    [Parameter] public bool Muted { get; set; } = false;
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public string? ElementId { get; set; }
+    [Parameter] public EventCallback OnMediaEnded { get; set; }
+    [Parameter] public EventCallback OnMediaError { get; set; }
+
+    private ElementReference containerRef;
+    private DotNetObjectReference<MediaPlayer>? dotNetRef;
+    private string instanceId = Guid.NewGuid().ToString("N")[..8];
+    private string videoElementId => $"video-{ElementId ?? instanceId}";
+    private string audioElementId => $"audio-{ElementId ?? instanceId}";
+    private string youtubeIframeId => $"yt-{ElementId ?? instanceId}";
+    private bool jsInitialized = false;
+
+    private StreamMediaType DetectedMediaType => DetectMediaType();
+
+    private StreamMediaType DetectMediaType()
+    {
+        if (string.IsNullOrEmpty(Url)) return StreamMediaType.Unknown;
+
+        var url = Url.ToLower();
+
+        // YouTube
+        if (url.Contains("youtube.com") || url.Contains("youtu.be"))
+            return StreamMediaType.YouTube;
+
+        // Vimeo
+        if (url.Contains("vimeo.com"))
+            return StreamMediaType.Vimeo;
+
+        // TikTok
+        if (url.Contains("tiktok.com"))
+            return StreamMediaType.TikTok;
+
+        // Google Drive
+        if (url.Contains("drive.google.com"))
+        {
+            if (url.Contains("/presentation/") || url.Contains("presentation"))
+                return StreamMediaType.GoogleDrivePresentation;
+            if (ContentType == ContentType.Audio)
+                return StreamMediaType.GoogleDriveAudio;
+            return StreamMediaType.GoogleDriveVideo;
+        }
+
+        // Google Slides/Docs
+        if (url.Contains("docs.google.com/presentation"))
+            return StreamMediaType.GoogleDrivePresentation;
+
+        // SoundCloud
+        if (url.Contains("soundcloud.com"))
+            return StreamMediaType.SoundCloud;
+
+        // Spotify
+        if (url.Contains("spotify.com"))
+            return StreamMediaType.Spotify;
+
+        // Office Online (OneDrive/SharePoint)
+        if (url.Contains("1drv.ms") || url.Contains("onedrive.live.com") || url.Contains("sharepoint.com"))
+            return StreamMediaType.PowerPointOnline;
+
+        // Direct file URLs by extension
+        var extension = GetUrlExtension(url);
+
+        // Video extensions
+        if (new[] { ".mp4", ".webm", ".ogg", ".mov", ".avi", ".mkv" }.Contains(extension))
+            return StreamMediaType.DirectVideo;
+
+        // Audio extensions
+        if (new[] { ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a" }.Contains(extension))
+            return StreamMediaType.DirectAudio;
+
+        // Image extensions
+        if (new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp" }.Contains(extension))
+            return StreamMediaType.Image;
+
+        // PDF
+        if (extension == ".pdf")
+            return StreamMediaType.Pdf;
+
+        // PowerPoint
+        if (new[] { ".ppt", ".pptx", ".odp" }.Contains(extension))
+            return StreamMediaType.PowerPointOnline;
+
+        // Fallback based on ContentType parameter
+        return ContentType switch
+        {
+            ContentType.Video => StreamMediaType.DirectVideo,
+            ContentType.Audio => StreamMediaType.DirectAudio,
+            ContentType.Image => StreamMediaType.Image,
+            ContentType.Pdf => StreamMediaType.Pdf,
+            ContentType.PowerPoint => StreamMediaType.PowerPointOnline,
+            _ => StreamMediaType.Unknown
+        };
+    }
+
+    private string GetUrlExtension(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            var path = uri.AbsolutePath;
+            var lastDot = path.LastIndexOf('.');
+            if (lastDot > 0)
+                return path.Substring(lastDot).ToLower();
+        }
+        catch { }
+        return "";
+    }
+
+    private string GetYouTubeEmbedUrl()
+    {
+        var autoplay = AutoPlay ? "1" : "0";
+        var loop = Loop ? "1" : "0";
+        var mute = Muted ? "1" : "0";
+
+        // enablejsapi=1 is required for the postMessage onStateChange events that
+        // mediaPlayer.js's registerYouTubePlayer listens for (end-of-video detection
+        // driving playlist auto-advance) — without it YouTube never posts state
+        // messages to the embedding page at all.
+        var channelId = ExtractYouTubeLiveChannelId(Url);
+        if (!string.IsNullOrEmpty(channelId))
+        {
+            // A channel's "currently live" link (youtube.com/channel/UC.../live) has
+            // no fixed video ID — YouTube's dedicated live_stream embed target shows
+            // whatever that channel is broadcasting right now, ending automatically
+            // when the broadcast does. Only channel-ID URLs are resolvable this way;
+            // a @handle/live URL doesn't carry a channel ID and turning a handle into
+            // one requires a YouTube Data API call, which this project doesn't make
+            // (no third-party/server-side dependencies) — those links fall through
+            // to ExtractYouTubeVideoId below and won't embed.
+            return $"https://www.youtube.com/embed/live_stream?channel={channelId}&autoplay={autoplay}&mute={mute}&enablejsapi=1";
+        }
+
+        var videoId = ExtractYouTubeVideoId(Url);
+        return $"https://www.youtube.com/embed/{videoId}?autoplay={autoplay}&loop={loop}&mute={mute}&rel=0&enablejsapi=1";
+    }
+
+    private string ExtractYouTubeLiveChannelId(string url)
+    {
+        // youtube.com/channel/UCxxxxxxxx/live
+        const string marker = "/channel/";
+        var idx = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0 || !url.TrimEnd('/').EndsWith("/live", StringComparison.OrdinalIgnoreCase))
+            return "";
+
+        var start = idx + marker.Length;
+        var end = url.IndexOfAny(new[] { '?', '/' }, start);
+        return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+    }
+
+    private string ExtractYouTubeVideoId(string url)
+    {
+        // Handle youtu.be/VIDEO_ID format
+        if (url.Contains("youtu.be/"))
+        {
+            var start = url.IndexOf("youtu.be/") + 9;
+            var end = url.IndexOf('?', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/live/VIDEO_ID format (YouTube's live-event permalink)
+        if (url.Contains("/live/"))
+        {
+            var start = url.IndexOf("/live/") + 6;
+            var end = url.IndexOfAny(new[] { '?', '/' }, start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/watch?v=VIDEO_ID format
+        if (url.Contains("v="))
+        {
+            var start = url.IndexOf("v=") + 2;
+            var end = url.IndexOf('&', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/embed/VIDEO_ID format
+        if (url.Contains("/embed/"))
+        {
+            var start = url.IndexOf("/embed/") + 7;
+            var end = url.IndexOf('?', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        return "";
+    }
+
+    private string GetVimeoEmbedUrl()
+    {
+        var videoId = ExtractVimeoVideoId(Url);
+        var autoplay = AutoPlay ? "1" : "0";
+        var loop = Loop ? "1" : "0";
+        var muted = Muted ? "1" : "0";
+        return $"https://player.vimeo.com/video/{videoId}?autoplay={autoplay}&loop={loop}&muted={muted}";
+    }
+
+    private string ExtractVimeoVideoId(string url)
+    {
+        // Handle vimeo.com/VIDEO_ID format
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"vimeo\.com/(\d+)");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private string GetTikTokEmbedUrl()
+    {
+        var videoId = ExtractTikTokVideoId(Url);
+        // TikTok's public embed target (no API key/oEmbed round-trip needed) — same
+        // zero-server-dependency embed pattern as YouTube/Vimeo above.
+        return $"https://www.tiktok.com/embed/v2/{videoId}";
+    }
+
+    private string ExtractTikTokVideoId(string url)
+    {
+        // Handle tiktok.com/@username/video/VIDEO_ID format (the canonical share/copy-link
+        // URL). Short vm.tiktok.com/xxxxx redirect links aren't resolvable here — following
+        // a redirect to find the real URL would mean a server-side HTTP call for something
+        // that's supposed to be a pure client-side embed, which this project avoids.
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"/video/(\d+)");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private string GetGoogleDriveEmbedUrl()
+    {
+        var fileId = ExtractGoogleDriveFileId(Url);
+
+        if (DetectedMediaType == StreamMediaType.GoogleDrivePresentation)
+            return $"https://docs.google.com/presentation/d/{fileId}/embed?start=false&loop={Loop.ToString().ToLower()}&delayms=3000";
+
+        return $"https://drive.google.com/file/d/{fileId}/preview";
+    }
+
+    private string ExtractGoogleDriveFileId(string url)
+    {
+        // Handle drive.google.com/file/d/FILE_ID/view format
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"/d/([a-zA-Z0-9_-]+)");
+        if (match.Success) return match.Groups[1].Value;
+
+        // Handle drive.google.com/open?id=FILE_ID format
+        match = System.Text.RegularExpressions.Regex.Match(url, @"id=([a-zA-Z0-9_-]+)");
+        if (match.Success) return match.Groups[1].Value;
+
+        return "";
+    }
+
+    private string GetSoundCloudEmbedUrl()
+    {
+        return $"https://w.soundcloud.com/player/?url={Uri.EscapeDataString(Url)}&color=%238c2f52&auto_play={AutoPlay.ToString().ToLower()}&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false";
+    }
+
+    private string GetSpotifyEmbedUrl()
+    {
+        // Convert spotify.com URLs to embed URLs
+        var url = Url.Replace("open.spotify.com", "open.spotify.com/embed");
+        if (!url.Contains("/embed"))
+            url = url.Replace("spotify.com/", "spotify.com/embed/");
+        return url;
+    }
+
+    private string GetPdfViewerUrl()
+    {
+        // Use Google Docs viewer for PDFs
+        return $"https://docs.google.com/viewer?url={Uri.EscapeDataString(Url)}&embedded=true";
+    }
+
+    private string GetOfficeOnlineUrl()
+    {
+        // Use Office Online viewer for PowerPoint
+        return $"https://view.officeapps.live.com/op/embed.aspx?src={Uri.EscapeDataString(Url)}";
+    }
+
+    private string GetVideoMimeType()
+    {
+        var ext = GetUrlExtension(Url);
+        return ext switch
+        {
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".ogg" => "video/ogg",
+            ".mov" => "video/quicktime",
+            _ => "video/mp4"
+        };
+    }
+
+    private string GetAudioMimeType()
+    {
+        var ext = GetUrlExtension(Url);
+        return ext switch
+        {
+            ".mp3" => "audio/mpeg",
+            ".wav" => "audio/wav",
+            ".ogg" => "audio/ogg",
+            ".aac" => "audio/aac",
+            ".flac" => "audio/flac",
+            ".m4a" => "audio/mp4",
+            _ => "audio/mpeg"
+        };
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !jsInitialized)
+        {
+            jsInitialized = true;
+            dotNetRef = DotNetObjectReference.Create(this);
+
+            // Register media end detection based on media type
+            var mediaType = DetectedMediaType;
+
+            try
+            {
+                if (mediaType == StreamMediaType.DirectVideo)
+                {
+                    await JS.InvokeVoidAsync("mediaPlayerInterop.registerMediaElement", videoElementId, dotNetRef);
+                }
+                else if (mediaType == StreamMediaType.DirectAudio)
+                {
+                    await JS.InvokeVoidAsync("mediaPlayerInterop.registerMediaElement", audioElementId, dotNetRef);
+                }
+                else if (mediaType == StreamMediaType.YouTube)
+                {
+                    await JS.InvokeVoidAsync("mediaPlayerInterop.registerYouTubePlayer", youtubeIframeId, dotNetRef);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to register media element: {ex.Message}");
+            }
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnMediaEndedCallback()
+    {
+        if (OnMediaEnded.HasDelegate)
+        {
+            await OnMediaEnded.InvokeAsync();
+        }
+    }
+
+    private async Task HandleMediaError()
+    {
+        if (OnMediaError.HasDelegate)
+        {
+            await OnMediaError.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnMediaErrorCallback()
+    {
+        if (OnMediaError.HasDelegate)
+        {
+            await OnMediaError.InvokeAsync();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            var mediaType = DetectedMediaType;
+
+            if (mediaType == StreamMediaType.DirectVideo)
+            {
+                await JS.InvokeVoidAsync("mediaPlayerInterop.unregisterMediaElement", videoElementId);
+            }
+            else if (mediaType == StreamMediaType.DirectAudio)
+            {
+                await JS.InvokeVoidAsync("mediaPlayerInterop.unregisterMediaElement", audioElementId);
+            }
+            else if (mediaType == StreamMediaType.YouTube)
+            {
+                await JS.InvokeVoidAsync("mediaPlayerInterop.unregisterMediaElement", youtubeIframeId);
+            }
+        }
+        catch
+        {
+            // Ignore errors during disposal (component may already be gone)
+        }
+
+        dotNetRef?.Dispose();
+    }
+
+    private enum StreamMediaType
+    {
+        Unknown,
+        YouTube,
+        Vimeo,
+        TikTok,
+        GoogleDriveVideo,
+        GoogleDrivePresentation,
+        GoogleDriveAudio,
+        SoundCloud,
+        Spotify,
+        DirectVideo,
+        DirectAudio,
+        Image,
+        Pdf,
+        PowerPointOnline
+    }
+}

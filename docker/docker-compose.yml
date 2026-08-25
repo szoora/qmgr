@@ -1,0 +1,103 @@
+# Local/dev compose file. Secrets below have safe local defaults but are
+# overridable via a `.env` file next to this one (see .env.example) or real
+# environment variables — DO NOT deploy with the defaults as-is. Before any
+# real deployment: set POSTGRES_PASSWORD/JWT_SECRET to real generated values
+# and set ASPNETCORE_ENVIRONMENT=Production (Development mode bypasses the
+# app's own placeholder-secret rejection check and enables verbose error
+# pages).
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: qmgr-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sav}
+      POSTGRES_DB: qmgr
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/001_InitialCreate.sql:/docker-entrypoint-initdb.d/001_InitialCreate.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: qmgr-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Q-Mgr API
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: qmgr-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=qmgr;Username=postgres;Password=${POSTGRES_PASSWORD:-sav}
+      - ConnectionStrings__Redis=redis:6379
+      - JWT__Secret=${JWT_SECRET:-YourSuperSecretKeyThatShouldBeAtLeast32CharactersLong!}
+      - JWT__Issuer=qmgr-api
+      - JWT__Audience=qmgr-clients
+      - Spotify__ClientId=${SPOTIFY_CLIENT_ID:-}
+      - Spotify__RedirectUri=${SPOTIFY_REDIRECT_URI:-}
+    ports:
+      - "5000:80"
+    volumes:
+      # Data Protection key ring (see Program.cs) — without this volume, every
+      # container redeploy loses the keys and makes the platform Spotify
+      # connection's encrypted tokens permanently undecryptable.
+      - dataprotection_keys:/app/dataprotection-keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Q-Mgr Web (Blazor)
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    container_name: qmgr-web
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
+      - ASPNETCORE_URLS=http://+:80
+      - ApiBaseUrl=http://api:80
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=qmgr;Username=postgres;Password=${POSTGRES_PASSWORD:-sav}
+    ports:
+      - "5001:80"
+    volumes:
+      # Without this, every container restart/redeploy wipes all
+      # tenant-uploaded advertising content (MediaLibrary.razor writes
+      # directly to wwwroot/uploads/media on local disk — see
+      # docs/TASK_TRACKER.md Phase 7 for the real fix, cloud storage).
+      - media_uploads:/app/wwwroot/uploads
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_uploads:
+  dataprotection_keys:
+
+networks:
+  default:
+    name: qmgr-network

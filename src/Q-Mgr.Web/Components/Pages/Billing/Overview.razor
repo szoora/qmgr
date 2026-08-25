@@ -1,0 +1,822 @@
+@page "/billing/overview"
+@using System.Text.Json
+@inject HttpClient Http
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>Billing Overview - Q-Mgr</PageTitle>
+
+<!-- Page Header -->
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="credit-card-fill" Size="32" />
+            Billing Overview
+        </h1>
+        <div class="breadcrumb">
+            <span>Manage your subscription, invoices, and payment methods</span>
+        </div>
+    </div>
+    <div class="header-right">
+        <QButton Icon="arrow-repeat"
+                 Text="Refresh"
+                 Variant="secondary"
+                 OnClick="@LoadData"
+                 Disabled="@isLoading" />
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading billing information...</span>
+    </div>
+}
+else if (billingInfo != null)
+{
+    <!-- Subscription Status Card -->
+    <div class="billing-grid">
+        <QCard Class="subscription-card" Title="Current Plan" Icon="star-fill">
+            <HeaderActions>
+                <span class="plan-badge @GetPlanClass(billingInfo.PlanName)">
+                    @billingInfo.PlanName
+                </span>
+            </HeaderActions>
+            <ChildContent>
+                <div class="plan-price">
+                    <span class="currency">@billingInfo.Currency</span>
+                    <span class="amount">@billingInfo.MonthlyAmount.ToString("N2")</span>
+                    <span class="period">/month</span>
+                </div>
+                <div class="plan-details">
+                    <div class="detail-item">
+                        <QIcon Name="calendar-check-fill" />
+                        <span>Billing Period: @billingInfo.BillingCycle</span>
+                    </div>
+                    <div class="detail-item">
+                        <QIcon Name="clock-fill" />
+                        <span>Next Billing: @billingInfo.NextBillingDate?.ToString("MMM dd, yyyy")</span>
+                    </div>
+                    <div class="detail-item">
+                        <QIcon Name="credit-card-fill" />
+                        <span>Status: <strong class="@GetStatusClass(billingInfo.Status)">@billingInfo.Status</strong></span>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <QButton Text="Upgrade Plan"
+                             Icon="arrow-up-circle-fill"
+                             Variant="primary"
+                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
+                    <QButton Text="Manage Subscription"
+                             Icon="gear-fill"
+                             Variant="secondary"
+                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
+                </div>
+            </ChildContent>
+        </QCard>
+
+        <!-- Quick Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon success">
+                    <QIcon Name="check-circle-fill" Size="24" />
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Account Status</span>
+                    <span class="stat-value">@billingInfo.Status</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon primary">
+                    <QIcon Name="calendar-event-fill" Size="24" />
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Days Until Renewal</span>
+                    <span class="stat-value">@GetDaysUntilRenewal()</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon warning">
+                    <QIcon Name="receipt" Size="24" />
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">Unpaid Invoices</span>
+                    <span class="stat-value">@unpaidInvoices.Count</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon info">
+                    <QIcon Name="graph-up" Size="24" />
+                </div>
+                <div class="stat-content">
+                    <span class="stat-label">This Month's Total</span>
+                    <span class="stat-value">@billingInfo.Currency @billingInfo.MonthlyAmount.ToString("N2")</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Usage Summary -->
+    <div class="usage-summary">
+        <h2>
+            <QIcon Name="bar-chart-line-fill" Size="24" />
+            Usage This Month
+        </h2>
+        <div class="usage-grid">
+            <div class="usage-item">
+                <div class="usage-header">
+                    <span class="usage-label">
+                        <QIcon Name="people-fill" />
+                        Active Users
+                    </span>
+                    <span class="usage-value">@billingInfo.ActiveUsers / @billingInfo.MaxUsers</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.ActiveUsers, billingInfo.MaxUsers)%"></div>
+                </div>
+            </div>
+
+            <div class="usage-item">
+                <div class="usage-header">
+                    <span class="usage-label">
+                        <QIcon Name="building-fill" />
+                        Branches
+                    </span>
+                    <span class="usage-value">@billingInfo.ActiveBranches / @billingInfo.MaxBranches</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.ActiveBranches, billingInfo.MaxBranches)%"></div>
+                </div>
+            </div>
+
+            <div class="usage-item">
+                <div class="usage-header">
+                    <span class="usage-label">
+                        <QIcon Name="ticket-fill" />
+                        Tokens Issued
+                    </span>
+                    <span class="usage-value">@billingInfo.TokensThisMonth / @(billingInfo.MaxTokensPerMonth == 0 ? "∞" : billingInfo.MaxTokensPerMonth.ToString())</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.TokensThisMonth, billingInfo.MaxTokensPerMonth)%"></div>
+                </div>
+            </div>
+
+            <div class="usage-item">
+                <div class="usage-header">
+                    <span class="usage-label">
+                        <QIcon Name="database-fill" />
+                        Storage Used
+                    </span>
+                    <span class="usage-value">@FormatBytes(billingInfo.StorageUsedBytes) / @FormatBytes(billingInfo.MaxStorageBytes)</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @GetUsagePercentage(billingInfo.StorageUsedBytes, billingInfo.MaxStorageBytes)%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Invoices -->
+    <div class="recent-invoices">
+        <div class="section-header">
+            <h2>
+                <QIcon Name="receipt" Size="24" />
+                Recent Invoices
+            </h2>
+            <QButton Text="View All"
+                     Icon="arrow-right"
+                     Variant="link"
+                     OnClick="@(() => Navigation.NavigateTo("/billing/invoices"))" />
+        </div>
+
+        @if (recentInvoices.Any())
+        {
+            <div class="table-responsive">
+                <table class="table recent-invoices-table">
+                    <thead>
+                        <tr>
+                            <th>Invoice #</th>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var invoice in recentInvoices.Take(5))
+                        {
+                            <tr>
+                                <td class="invoice-number">@invoice.InvoiceNumber</td>
+                                <td>@invoice.InvoiceDate.ToString("MMM dd, yyyy")</td>
+                                <td>@invoice.Description</td>
+                                <td><strong>@invoice.Currency @invoice.Amount.ToString("N2")</strong></td>
+                                <td>
+                                    <QBadge Variant="@GetInvoiceStatusVariant(invoice.Status)" Text="@invoice.Status" />
+                                </td>
+                                <td>
+                                    <QButton Icon="download" Variant="outline-primary" Size="sm" OnClick="@(() => DownloadInvoice(invoice.Id))" />
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">
+                <QIcon Name="receipt" Size="48" />
+                <p>No invoices yet</p>
+            </div>
+        }
+    </div>
+
+    <!-- Payment Methods -->
+    <div class="payment-methods">
+        <div class="section-header">
+            <h2>
+                <QIcon Name="wallet2" Size="24" />
+                Payment Methods
+            </h2>
+            <QButton Text="Manage"
+                     Icon="gear-fill"
+                     Variant="link"
+                     OnClick="@(() => Navigation.NavigateTo("/billing/payment-methods"))" />
+        </div>
+
+        @if (paymentMethods.Any())
+        {
+            <div class="payment-cards">
+                @foreach (var method in paymentMethods)
+                {
+                    <div class="payment-card @(method.IsDefault ? "default" : "")">
+                        <div class="card-icon">
+                            <QIcon Name="@GetCardIcon(method.CardBrand)" Size="32" />
+                        </div>
+                        <div class="card-details">
+                            <span class="card-brand">@method.CardBrand</span>
+                            <span class="card-number">•••• @method.Last4</span>
+                            <span class="card-expiry">Expires @method.ExpiryMonth/@method.ExpiryYear</span>
+                        </div>
+                        @if (method.IsDefault)
+                        {
+                            <span class="default-badge">Default</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">
+                <QIcon Name="wallet2" Size="48" />
+                <p>No payment methods added</p>
+                <QButton Text="Add Payment Method"
+                         Icon="plus"
+                         Variant="primary"
+                         OnClick="@(() => Navigation.NavigateTo("/billing/payment-methods"))" />
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .billing-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin-bottom: 32px;
+    }
+
+    .subscription-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        overflow: hidden;
+    }
+
+    .subscription-card .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        background: var(--qm-gradient-primary);
+        color: white;
+    }
+
+    .subscription-card .header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .subscription-card h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    .plan-badge {
+        padding: 6px 16px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    .plan-price {
+        padding: 32px 20px;
+        text-align: center;
+        background: var(--qm-bg-elevated);
+    }
+
+    .plan-price .currency {
+        font-size: 20px;
+        color: var(--qm-text-secondary);
+        vertical-align: super;
+    }
+
+    .plan-price .amount {
+        font-size: 48px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .plan-price .period {
+        font-size: 16px;
+        color: var(--qm-text-secondary);
+    }
+
+    .plan-details {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .detail-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-text-secondary);
+    }
+
+    .card-actions {
+        padding: 20px;
+        border-top: 1px solid var(--qm-border);
+        display: flex;
+        gap: 12px;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .stat-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .stat-icon.success {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .stat-icon.primary {
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+    }
+
+    .stat-icon.warning {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .stat-icon.info {
+        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
+        color: var(--qm-info);
+    }
+
+    .stat-content {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stat-label {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .usage-summary,
+    .recent-invoices,
+    .payment-methods {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        margin-bottom: 24px;
+    }
+
+    .usage-summary h2,
+    .recent-invoices h2,
+    .payment-methods h2 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 24px;
+        font-size: 20px;
+        font-weight: 600;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+
+    .section-header h2 {
+        margin: 0;
+    }
+
+    .usage-grid {
+        display: grid;
+        gap: 20px;
+    }
+
+    .usage-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .usage-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .usage-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .usage-value {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+    }
+
+    .progress-bar {
+        height: 8px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-full);
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: var(--qm-gradient-primary);
+        transition: width 0.3s ease;
+    }
+
+    .payment-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+    }
+
+    .payment-card {
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        position: relative;
+    }
+
+    .payment-card.default {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .card-icon {
+        color: var(--qm-text-secondary);
+    }
+
+    .card-details {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .card-brand {
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .card-number {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .card-expiry {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .default-badge {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: var(--qm-primary);
+        color: white;
+        padding: 4px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .recent-invoices-table {
+        margin: 0;
+        /* Bootstrap's own .table sets --bs-table-bg/color, which render as a plain
+           white table on dark text regardless of theme unless overridden here —
+           same root cause and fix as Invoices.razor's own table (see Phase 39). */
+        --bs-table-bg: transparent;
+        --bs-table-color: var(--qm-text-primary);
+        color: var(--qm-text-primary);
+        background: transparent;
+    }
+
+    .recent-invoices-table thead th {
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        font-size: 13px;
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--qm-border);
+        background: transparent;
+    }
+
+    .recent-invoices-table tbody tr,
+    .recent-invoices-table td {
+        background: transparent;
+        color: var(--qm-text-primary);
+        border-color: var(--qm-border);
+    }
+
+    .recent-invoices-table .invoice-number {
+        font-weight: 600;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state i {
+        color: var(--qm-text-muted);
+        margin-bottom: 16px;
+    }
+
+    .badge.badge-paid {
+        background: var(--qm-success);
+        color: white;
+    }
+
+    .badge.badge-pending {
+        background: var(--qm-warning);
+        color: white;
+    }
+
+    .badge.badge-failed {
+        background: var(--qm-danger);
+        color: white;
+    }
+
+    .status-active {
+        color: var(--qm-success);
+    }
+
+    .status-cancelled,
+    .status-suspended {
+        color: var(--qm-danger);
+    }
+
+    @@media (max-width: 968px) {
+        .billing-grid,
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private BillingOverview? billingInfo;
+    private List<InvoiceDto> recentInvoices = new();
+    private List<InvoiceDto> unpaidInvoices = new();
+    private List<PaymentMethodDto> paymentMethods = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var hasPermission = await PermissionService.HasPermissionAsync("billing.view");
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+
+        try
+        {
+            // Load billing overview
+            var response = await Http.GetAsync("api/v1/billing/overview");
+            if (response.IsSuccessStatusCode)
+            {
+                billingInfo = await response.Content.ReadFromJsonAsync<BillingOverview>(JsonOptions);
+            }
+
+            // Load recent invoices
+            var invoicesResponse = await Http.GetAsync("api/v1/billing/invoices?limit=5");
+            if (invoicesResponse.IsSuccessStatusCode)
+            {
+                recentInvoices = await invoicesResponse.Content.ReadFromJsonAsync<List<InvoiceDto>>(JsonOptions) ?? new();
+                unpaidInvoices = recentInvoices.Where(i => i.Status == "Pending" || i.Status == "Overdue").ToList();
+            }
+
+            // Load payment methods
+            var paymentResponse = await Http.GetAsync("api/v1/billing/payment-methods");
+            if (paymentResponse.IsSuccessStatusCode)
+            {
+                paymentMethods = await paymentResponse.Content.ReadFromJsonAsync<List<PaymentMethodDto>>(JsonOptions) ?? new();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading billing data: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetPlanClass(string planName) => planName.ToLower() switch
+    {
+        "free" => "plan-free",
+        "starter" => "plan-starter",
+        "professional" => "plan-professional",
+        "enterprise" => "plan-enterprise",
+        _ => ""
+    };
+
+    private string GetStatusClass(string status) => status.ToLower() switch
+    {
+        "active" => "status-active",
+        "cancelled" or "suspended" => "status-cancelled",
+        _ => ""
+    };
+
+    private string GetInvoiceStatusVariant(string status) => status.ToLower() switch
+    {
+        "paid" => "success",
+        "pending" or "overdue" => "warning",
+        "failed" => "danger",
+        _ => "secondary"
+    };
+
+    private int GetDaysUntilRenewal()
+    {
+        if (billingInfo?.NextBillingDate == null) return 0;
+        return (billingInfo.NextBillingDate.Value - DateTime.UtcNow).Days;
+    }
+
+    private double GetUsagePercentage(long used, long max)
+    {
+        if (max == 0) return 0;
+        return Math.Min((double)used / max * 100, 100);
+    }
+
+    private string FormatBytes(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    private string GetCardIcon(string brand) => brand.ToLower() switch
+    {
+        "visa" => "credit-card",
+        "mastercard" => "credit-card-2-front",
+        "amex" => "credit-card",
+        _ => "wallet2"
+    };
+
+    private async Task DownloadInvoice(Guid invoiceId)
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/billing/invoices/{invoiceId}/download");
+            if (response.IsSuccessStatusCode)
+            {
+                // Handle PDF download
+                var bytes = await response.Content.ReadAsByteArrayAsync();
+                // Trigger download via JS
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading invoice: {ex.Message}");
+        }
+    }
+
+    // DTOs
+    private record BillingOverview
+    {
+        public string PlanName { get; init; } = "";
+        public string BillingCycle { get; init; } = "";
+        public decimal MonthlyAmount { get; init; }
+        public string Currency { get; init; } = "USD";
+        public string Status { get; init; } = "";
+        public DateTime? NextBillingDate { get; init; }
+        public int ActiveUsers { get; init; }
+        public int MaxUsers { get; init; }
+        public int ActiveBranches { get; init; }
+        public int MaxBranches { get; init; }
+        public long TokensThisMonth { get; init; }
+        public long MaxTokensPerMonth { get; init; }
+        public long StorageUsedBytes { get; init; }
+        public long MaxStorageBytes { get; init; }
+    }
+
+    private record InvoiceDto
+    {
+        public Guid Id { get; init; }
+        public string InvoiceNumber { get; init; } = "";
+        public DateTime InvoiceDate { get; init; }
+        public string Description { get; init; } = "";
+        public decimal Amount { get; init; }
+        public string Currency { get; init; } = "USD";
+        public string Status { get; init; } = "";
+    }
+
+    private record PaymentMethodDto
+    {
+        public Guid Id { get; init; }
+        public string CardBrand { get; init; } = "";
+        public string Last4 { get; init; } = "";
+        public int ExpiryMonth { get; init; }
+        public int ExpiryYear { get; init; }
+        public bool IsDefault { get; init; }
+    }
+}

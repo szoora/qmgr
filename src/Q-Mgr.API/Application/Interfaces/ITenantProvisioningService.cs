@@ -1,0 +1,124 @@
+using QMgr.Domain.Entities.Organization;
+
+namespace QMgr.Application.Interfaces;
+
+/// <summary>
+/// Service for provisioning and managing tenant organizations in the SaaS platform
+/// </summary>
+public interface ITenantProvisioningService
+{
+    /// <summary>
+    /// Provision a new tenant organization with admin user
+    /// </summary>
+    Task<TenantProvisioningResult> ProvisionTenantAsync(ProvisionTenantRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Seed default data for a new organization (service types, settings, etc.)
+    /// </summary>
+    Task SeedDefaultDataAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validate if a slug is available for use
+    /// </summary>
+    Task<bool> ValidateSlugAvailabilityAsync(string slug, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generate a unique slug from an organization name
+    /// </summary>
+    Task<string> GenerateUniqueSlugAsync(string organizationName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Verify email and activate tenant
+    /// </summary>
+    Task<bool> VerifyEmailAsync(Guid organizationId, string verificationToken, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generate email verification token
+    /// </summary>
+    Task<string> GenerateVerificationTokenAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Suspend a tenant
+    /// </summary>
+    Task SuspendTenantAsync(Guid organizationId, string reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reactivate a suspended tenant
+    /// </summary>
+    Task ReactivateTenantAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Complete onboarding for a tenant
+    /// </summary>
+    Task CompleteOnboardingAsync(Guid organizationId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Request model for provisioning a new tenant
+/// </summary>
+public record ProvisionTenantRequest
+{
+    /// <summary>Organization name</summary>
+    public string OrganizationName { get; init; } = string.Empty;
+
+    /// <summary>Desired slug (optional, will be generated if not provided)</summary>
+    public string? Slug { get; init; }
+
+    /// <summary>Admin user email</summary>
+    public string AdminEmail { get; init; } = string.Empty;
+
+    /// <summary>Admin user password</summary>
+    public string AdminPassword { get; init; } = string.Empty;
+
+    /// <summary>Admin first name</summary>
+    public string AdminFirstName { get; init; } = string.Empty;
+
+    /// <summary>Admin last name</summary>
+    public string AdminLastName { get; init; } = string.Empty;
+
+    /// <summary>Admin phone (optional)</summary>
+    public string? AdminPhone { get; init; }
+
+    /// <summary>Organization contact phone</summary>
+    public string? ContactPhone { get; init; }
+
+    /// <summary>Industry type for default setup</summary>
+    public string? IndustryType { get; init; }
+
+    /// <summary>Preferred currency (USD, UGX)</summary>
+    public string PreferredCurrency { get; init; } = "USD";
+
+    /// <summary>Source of registration (web, api, referral)</summary>
+    public string? Source { get; init; }
+
+    /// <summary>Referral code if applicable</summary>
+    public string? ReferralCode { get; init; }
+}
+
+/// <summary>
+/// Result of tenant provisioning
+/// </summary>
+public record TenantProvisioningResult
+{
+    public bool Success { get; init; }
+    public string? ErrorMessage { get; init; }
+    public Guid OrganizationId { get; init; }
+    public Guid AdminUserId { get; init; }
+    public string Slug { get; init; } = string.Empty;
+    public string? VerificationToken { get; init; }
+
+    public static TenantProvisioningResult Succeeded(Guid orgId, Guid userId, string slug, string? verificationToken) => new()
+    {
+        Success = true,
+        OrganizationId = orgId,
+        AdminUserId = userId,
+        Slug = slug,
+        VerificationToken = verificationToken
+    };
+
+    public static TenantProvisioningResult Failed(string error) => new()
+    {
+        Success = false,
+        ErrorMessage = error
+    };
+}

@@ -1,0 +1,84 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<div class="q-spinner @GetSizeClass() @GetVariantClass() @Class" role="status" @attributes="AdditionalAttributes">
+    @if (Type == "border")
+    {
+        <div class="q-spinner__border"></div>
+    }
+    else if (Type == "dots")
+    {
+        <div class="q-spinner__dots">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+    }
+    else if (Type == "pulse")
+    {
+        <div class="q-spinner__pulse"></div>
+    }
+    else
+    {
+        <div class="q-spinner__border"></div>
+    }
+    @if (!string.IsNullOrEmpty(Text))
+    {
+        <span class="q-spinner__text">@Text</span>
+    }
+    <span class="visually-hidden">@(string.IsNullOrEmpty(Text) ? "Loading..." : Text)</span>
+</div>
+
+@code {
+    /// <summary>
+    /// Spinner type: border, dots, pulse
+    /// </summary>
+    [Parameter] public string Type { get; set; } = "border";
+
+    /// <summary>
+    /// Spinner size: sm, md, lg, xl
+    /// </summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>
+    /// Spinner color variant: primary, secondary, light, dark
+    /// </summary>
+    [Parameter] public string Variant { get; set; } = "primary";
+
+    /// <summary>
+    /// Optional loading text
+    /// </summary>
+    [Parameter] public string? Text { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string GetSizeClass()
+    {
+        return Size.ToLowerInvariant() switch
+        {
+            "sm" or "small" => "q-spinner--sm",
+            "lg" or "large" => "q-spinner--lg",
+            "xl" => "q-spinner--xl",
+            _ => "q-spinner--md"
+        };
+    }
+
+    private string GetVariantClass()
+    {
+        return Variant.ToLowerInvariant() switch
+        {
+            "secondary" => "q-spinner--secondary",
+            "light" => "q-spinner--light",
+            "dark" => "q-spinner--dark",
+            _ => "q-spinner--primary"
+        };
+    }
+}

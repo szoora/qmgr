@@ -1,0 +1,22 @@
+@inject NavigationManager Navigation
+
+@code {
+    protected override void OnInitialized()
+    {
+        // Get the current URL to redirect back after login
+        var currentUri = Navigation.Uri;
+        var returnUrl = Navigation.ToBaseRelativePath(currentUri);
+
+        // Don't include login/unauthorized pages in return URL
+        if (string.IsNullOrEmpty(returnUrl) ||
+            returnUrl.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
+            returnUrl.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
+        {
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+        else
+        {
+            Navigation.NavigateTo($"/login?returnUrl={Uri.EscapeDataString("/" + returnUrl)}", forceLoad: true);
+        }
+    }
+}

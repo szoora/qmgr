@@ -1,0 +1,518 @@
+@page "/reports/feedback"
+@inject IQueueApiService QueueApi
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Customer Feedback - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Customer Feedback</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Reports", "/reports"), new("Customer Feedback") })" />
+    </div>
+</div>
+
+<div class="feedback-page">
+    <!-- Summary Stats -->
+    <div class="stats-row">
+        <QCard Class="rating-card">
+            <div class="rating-display">
+                <span class="rating-value">@overallRating.ToString("F1")</span>
+                <div class="rating-stars">
+                    @for (int i = 1; i <= 5; i++)
+                    {
+                        <QIcon Name="@(i <= Math.Round(overallRating) ? "star-fill" : "star")"
+                            Style="@($"color: {(i <= Math.Round(overallRating) ? "#ffc107" : "#ddd")}")" />
+                    }
+                </div>
+                <span class="rating-label">Overall Rating</span>
+                <span class="rating-count">Based on @totalFeedback reviews</span>
+            </div>
+        </QCard>
+
+        <div class="mini-stats">
+            <div class="mini-stat positive">
+                <QIcon Name="emoji-smile-fill" />
+                <div class="mini-info">
+                    <span class="mini-value">@positivePercent%</span>
+                    <span class="mini-label">Positive</span>
+                </div>
+            </div>
+            <div class="mini-stat neutral">
+                <QIcon Name="emoji-neutral-fill" />
+                <div class="mini-info">
+                    <span class="mini-value">@neutralPercent%</span>
+                    <span class="mini-label">Neutral</span>
+                </div>
+            </div>
+            <div class="mini-stat negative">
+                <QIcon Name="emoji-frown-fill" />
+                <div class="mini-info">
+                    <span class="mini-value">@negativePercent%</span>
+                    <span class="mini-label">Negative</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <QCard Class="filter-card">
+        <div class="filter-row">
+            <div class="filter-item">
+                <QSelect TValue="string" TItem="string" @bind-Value="@selectedPeriod" Items="@periods" Label="Date Range" />
+            </div>
+            <div class="filter-item">
+                <QSelect TValue="string" TItem="string" @bind-Value="@selectedRating" Items="@ratings" Label="Rating" Placeholder="All Ratings" AllowClear="true" />
+            </div>
+            <div class="filter-item">
+                <QSelect TValue="string" TItem="string" @bind-Value="@selectedService" Items="@services" Label="Service Type" Placeholder="All Services" AllowClear="true" />
+            </div>
+            <div class="filter-item">
+                <QButton Text="Apply Filters" Icon="funnel-fill" Variant="primary" OnClick="@ApplyFilters" />
+            </div>
+        </div>
+    </QCard>
+
+    <!-- Rating Distribution Chart -->
+    <div class="charts-row">
+        <QCard Class="chart-card">
+            <h4>Rating Distribution</h4>
+            <div class="rating-bars">
+                @foreach (var dist in ratingDistribution)
+                {
+                    <div class="rating-bar-row">
+                        <span class="bar-label">@dist.Stars star</span>
+                        <div class="bar-container">
+                            <div class="bar-fill" style="width: @(dist.Percent)%; background: @GetBarColor(dist.Stars)"></div>
+                        </div>
+                        <span class="bar-count">@dist.Count</span>
+                    </div>
+                }
+            </div>
+        </QCard>
+
+        <QCard Class="chart-card">
+            <h4>Feedback Trend</h4>
+            <RadzenChart Style="height: 250px;">
+                <RadzenLineSeries Data="@trendData" CategoryProperty="Date" ValueProperty="Rating" Title="Avg Rating" Smooth="true" />
+                <RadzenCategoryAxis />
+                <RadzenValueAxis Min="1" Max="5">
+                    <RadzenGridLines Visible="true" />
+                </RadzenValueAxis>
+            </RadzenChart>
+        </QCard>
+    </div>
+
+    <!-- Feedback List -->
+    <QCard Class="feedback-list-card">
+        <div class="list-header">
+            <h4>Recent Feedback</h4>
+            <QButton Text="Export All" Icon="cloud-download-fill" Variant="secondary" Size="sm" />
+        </div>
+
+        <div class="feedback-list">
+            @foreach (var feedback in feedbackList)
+            {
+                <div class="feedback-item">
+                    <div class="feedback-left">
+                        <div class="feedback-rating">
+                            @for (int i = 1; i <= 5; i++)
+                            {
+                                <QIcon Name="@(i <= feedback.Rating ? "star-fill" : "star")"
+                                    Style="@($"color: {(i <= feedback.Rating ? "#ffc107" : "#ddd")}; font-size: 16px;")" />
+                            }
+                        </div>
+                        <div class="feedback-meta">
+                            <span class="feedback-service">@feedback.ServiceType</span>
+                            <span class="feedback-date">@feedback.Date.ToString("MMM dd, yyyy HH:mm")</span>
+                        </div>
+                    </div>
+                    <div class="feedback-content">
+                        @if (!string.IsNullOrEmpty(feedback.Comment))
+                        {
+                            <p class="feedback-comment">"@feedback.Comment"</p>
+                        }
+                        else
+                        {
+                            <p class="feedback-no-comment">No comment provided</p>
+                        }
+                    </div>
+                    <div class="feedback-right">
+                        <span class="feedback-counter">@feedback.Counter</span>
+                        <span class="feedback-token">Token: @feedback.TokenNumber</span>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="list-pagination">
+            <RadzenPager Count="@totalFeedback" PageSize="10" PageNumbersCount="5" />
+        </div>
+    </QCard>
+</div>
+
+<style>
+    .feedback-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 20px;
+    }
+
+    .rating-card {
+        padding: 30px;
+        text-align: center;
+    }
+
+    .rating-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .rating-value {
+        font-size: 56px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        line-height: 1;
+    }
+
+    .rating-stars {
+        font-size: 24px;
+        display: flex;
+        gap: 2px;
+    }
+
+    .rating-label {
+        font-size: 16px;
+        font-weight: 600;
+        margin-top: 8px;
+    }
+
+    .rating-count {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .mini-stats {
+        display: flex;
+        gap: 16px;
+        align-items: stretch;
+    }
+
+    .mini-stat {
+        flex: 1;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .mini-stat .rzi {
+        font-size: 40px;
+    }
+
+    .mini-stat.positive .rzi { color: var(--qm-success); }
+    .mini-stat.neutral .rzi { color: var(--qm-warning); }
+    .mini-stat.negative .rzi { color: var(--qm-danger); }
+
+    .mini-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .mini-value {
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .mini-label {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .filter-card {
+        padding: 16px 24px;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 20px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .charts-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 20px;
+    }
+
+    .chart-card {
+        padding: 20px;
+    }
+
+    .chart-card h4 {
+        margin: 0 0 20px 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .rating-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .rating-bar-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .bar-label {
+        width: 60px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .bar-container {
+        flex: 1;
+        height: 24px;
+        background: var(--qm-bg-card-hover);
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .bar-fill {
+        height: 100%;
+        border-radius: var(--qm-radius-sm);
+        transition: width 0.3s ease;
+    }
+
+    .bar-count {
+        width: 40px;
+        text-align: right;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .feedback-list-card {
+        padding: 20px;
+    }
+
+    .list-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .list-header h4 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .feedback-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .feedback-item {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .feedback-left {
+        width: 160px;
+    }
+
+    .feedback-rating {
+        display: flex;
+        gap: 2px;
+        margin-bottom: 4px;
+    }
+
+    .feedback-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .feedback-service {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--qm-primary);
+    }
+
+    .feedback-date {
+        font-size: 11px;
+        color: var(--qm-text-secondary);
+    }
+
+    .feedback-content {
+        flex: 1;
+    }
+
+    .feedback-comment {
+        margin: 0;
+        font-style: italic;
+        color: var(--qm-text-primary);
+    }
+
+    .feedback-no-comment {
+        margin: 0;
+        color: var(--qm-text-muted);
+        font-style: italic;
+    }
+
+    .feedback-right {
+        width: 120px;
+        text-align: right;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .feedback-counter {
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .feedback-token {
+        font-size: 11px;
+        color: var(--qm-text-secondary);
+    }
+
+    .list-pagination {
+        margin-top: 20px;
+        display: flex;
+        justify-content: center;
+    }
+</style>
+
+@code {
+    private double overallRating = 4.2;
+    private int totalFeedback = 156;
+    private int positivePercent = 72;
+    private int neutralPercent = 18;
+    private int negativePercent = 10;
+
+    private string selectedPeriod = "month";
+    private string? selectedRating;
+    private string? selectedService;
+
+    private List<string> periods = new() { "today", "week", "month", "quarter", "year" };
+    private List<string> ratings = new() { "5 Stars", "4 Stars", "3 Stars", "2 Stars", "1 Star" };
+    private List<string> services = new() { "General Inquiry", "Account Services", "Teller Services", "Loan Applications", "Customer Support" };
+
+    private List<RatingDistribution> ratingDistribution = new();
+    private List<TrendData> trendData = new();
+    private List<FeedbackItem> feedbackList = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        LoadData();
+    }
+
+    private void LoadData()
+    {
+        // Sample rating distribution
+        ratingDistribution = new()
+        {
+            new() { Stars = 5, Count = 68, Percent = 44 },
+            new() { Stars = 4, Count = 45, Percent = 29 },
+            new() { Stars = 3, Count = 28, Percent = 18 },
+            new() { Stars = 2, Count = 10, Percent = 6 },
+            new() { Stars = 1, Count = 5, Percent = 3 }
+        };
+
+        // Sample trend data
+        trendData = Enumerable.Range(0, 7).Select(i => new TrendData
+        {
+            Date = DateTime.Today.AddDays(-6 + i).ToString("MMM dd"),
+            Rating = 3.8 + Random.Shared.NextDouble() * 0.8
+        }).ToList();
+
+        // Sample feedback list
+        feedbackList = new()
+        {
+            new() { Rating = 5, ServiceType = "Account Services", Date = DateTime.Now.AddHours(-2), Comment = "Excellent service, very helpful staff!", Counter = "Counter 1", TokenNumber = "A045" },
+            new() { Rating = 4, ServiceType = "Teller Services", Date = DateTime.Now.AddHours(-4), Comment = "Quick and efficient service.", Counter = "Counter 3", TokenNumber = "T032" },
+            new() { Rating = 5, ServiceType = "General Inquiry", Date = DateTime.Now.AddHours(-5), Comment = "", Counter = "Counter 2", TokenNumber = "G018" },
+            new() { Rating = 3, ServiceType = "Loan Applications", Date = DateTime.Now.AddDays(-1), Comment = "Wait time was a bit long but staff was friendly.", Counter = "Counter 4", TokenNumber = "L007" },
+            new() { Rating = 5, ServiceType = "Customer Support", Date = DateTime.Now.AddDays(-1), Comment = "Problem resolved quickly. Very satisfied!", Counter = "Counter 1", TokenNumber = "C023" },
+            new() { Rating = 2, ServiceType = "Account Services", Date = DateTime.Now.AddDays(-2), Comment = "Had to wait too long. Staff seemed overwhelmed.", Counter = "Counter 2", TokenNumber = "A089" },
+            new() { Rating = 4, ServiceType = "Teller Services", Date = DateTime.Now.AddDays(-2), Comment = "", Counter = "Counter 3", TokenNumber = "T056" }
+        };
+    }
+
+    private void ApplyFilters()
+    {
+        // TODO: Implement filtering
+        LoadData();
+    }
+
+    private string GetBarColor(int stars)
+    {
+        return stars switch
+        {
+            5 => "#4caf50",
+            4 => "#8bc34a",
+            3 => "#ffc107",
+            2 => "#ff9800",
+            _ => "#f44336"
+        };
+    }
+
+    private class RatingDistribution
+    {
+        public int Stars { get; set; }
+        public int Count { get; set; }
+        public int Percent { get; set; }
+    }
+
+    private class TrendData
+    {
+        public string Date { get; set; } = "";
+        public double Rating { get; set; }
+    }
+
+    private class FeedbackItem
+    {
+        public int Rating { get; set; }
+        public string ServiceType { get; set; } = "";
+        public DateTime Date { get; set; }
+        public string Comment { get; set; } = "";
+        public string Counter { get; set; } = "";
+        public string TokenNumber { get; set; } = "";
+    }
+}

@@ -1,0 +1,1016 @@
+@page "/"
+@using QMgr.Application.DTOs
+@implements IDisposable
+@inject IQueueApiService QueueApi
+@inject ISignalRService SignalR
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Dashboard - Q-Mgr</PageTitle>
+
+<!-- Page Header -->
+<div class="page-header">
+    <div class="header-left">
+        <h1>Dashboard</h1>
+        <div class="breadcrumb">
+            <span>Welcome back! Here's your queue overview for today.</span>
+        </div>
+    </div>
+    <div class="header-right">
+        @if (lastUpdated != default)
+        {
+            <span class="last-updated">Last updated: @lastUpdated.ToString("HH:mm:ss")</span>
+        }
+        <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@RefreshData" Disabled="@isLoading" />
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-banner">
+        <QIcon Name="exclamation-triangle-fill" />
+        <span>@errorMessage</span>
+        <QButton Text="Retry" Icon="arrow-clockwise" Variant="danger" Size="sm" OnClick="@RefreshData" />
+    </div>
+}
+
+@if (isLoading)
+{
+    <!-- Loading State -->
+    <div class="loading-overlay" style="position: relative; min-height: 400px; background: transparent;">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading dashboard data...</span>
+    </div>
+}
+else if (!BranchState.HasBranches)
+{
+    <!-- No Branches Exist - Getting Started -->
+    <div class="welcome-container">
+        <div class="welcome-content">
+            <div class="welcome-icon">
+                <QIcon Name="rocket-takeoff-fill" />
+            </div>
+            <h2>Welcome to Q-Mgr!</h2>
+            <p class="welcome-message">
+                Your queue management system is ready. To get started, you'll need to set up your first branch location.
+            </p>
+            <div class="welcome-steps">
+                <div class="step-item">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <strong>Create a Branch</strong>
+                        <span>Set up your first service location</span>
+                    </div>
+                </div>
+                <div class="step-item">
+                    <span class="step-number">2</span>
+                    <div class="step-content">
+                        <strong>Add Service Types</strong>
+                        <span>Define the services you offer</span>
+                    </div>
+                </div>
+                <div class="step-item">
+                    <span class="step-number">3</span>
+                    <div class="step-content">
+                        <strong>Configure Counters</strong>
+                        <span>Set up service counters</span>
+                    </div>
+                </div>
+            </div>
+            <div class="welcome-action">
+                <QButton Text="Create First Branch" Icon="plus-lg" OnClick="@NavigateToBranches" />
+            </div>
+        </div>
+    </div>
+}
+else if (noBranchSelected)
+{
+    <!-- Branches Exist but None Selected -->
+    <div class="welcome-container">
+        <div class="welcome-content">
+            <div class="welcome-icon select-branch">
+                <QIcon Name="building-fill" />
+            </div>
+            <h2>Select a Branch</h2>
+            <p class="welcome-message">
+                Please select a branch to view the dashboard. Use the branch selector at the bottom of the sidebar to choose your active location.
+            </p>
+            <div class="welcome-hint">
+                <QIcon Name="arrow-down-left" />
+                <span>Click on the branch selector in the sidebar footer</span>
+            </div>
+        </div>
+    </div>
+}
+else if (queueStatus != null)
+{
+    <!-- Statistics Cards -->
+    <div class="stats-row">
+        <div class="stats-card primary">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@queueStatus.Summary.TotalWaiting</span>
+                    <span class="stats-label">Waiting in Queue</span>
+                    <span class="stats-change positive">
+                        <QIcon Name="graph-up-arrow" /> +12% from yesterday
+                    </span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="hourglass-split" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card success">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@queueStatus.Summary.TotalServing</span>
+                    <span class="stats-label">Being Served Now</span>
+                    <span class="stats-change positive">
+                        <QIcon Name="person-fill" /> Active customers
+                    </span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="headset" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card warning">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@queueStatus.Summary.AverageWaitMinutes.ToString("F0")<small>min</small></span>
+                    <span class="stats-label">Average Wait Time</span>
+                    <span class="stats-change negative">
+                        <QIcon Name="clock-fill" /> Target: 10 min
+                    </span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="stopwatch-fill" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card danger">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@queueStatus.Summary.TotalCompletedToday</span>
+                    <span class="stats-label">Completed Today</span>
+                    <span class="stats-change positive">
+                        <QIcon Name="check-circle-fill" /> Great progress!
+                    </span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="check2-all" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="dashboard-grid">
+        <!-- Now Serving Panel -->
+        <QCard Class="now-serving-card" Title="Now Serving" Icon="bell-fill">
+            <HeaderActions>
+                <span class="live-badge">
+                    <span class="live-dot"></span> LIVE
+                </span>
+            </HeaderActions>
+            <ChildContent>
+                @if (queueStatus.Counters.Any(c => c.Status == "Active" && !string.IsNullOrEmpty(c.CurrentTokenDisplay)))
+                {
+                    <div class="now-serving-list">
+                        @foreach (var counter in queueStatus.Counters.Where(c => c.Status == "Active" && !string.IsNullOrEmpty(c.CurrentTokenDisplay)))
+                        {
+                            <div class="now-serving-item">
+                                <div class="token-display serving">@counter.CurrentTokenDisplay</div>
+                                <div class="counter-info">
+                                    <span class="counter-name">Counter @counter.CounterNumber</span>
+                                    <span class="counter-agent">@(counter.ServingCustomerName ?? "Customer")</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="no-serving">
+                        <QIcon Name="cup-hot-fill" Size="xl" />
+                        <span>No customers being served</span>
+                    </div>
+                }
+            </ChildContent>
+        </QCard>
+
+        <!-- Queue by Service Type -->
+        <QCard Class="service-types-card" Title="Service Types" Icon="grid-fill">
+            <HeaderActions>
+                <QButton Text="View All" Icon="list-ul" Variant="ghost" Size="sm" />
+            </HeaderActions>
+            <ChildContent>
+                <RadzenDataGrid Data="@queueStatus.ServiceTypes" TItem="ServiceTypeQueueDto"
+                                AllowSorting="true" class="service-types-grid">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="Name" Title="Service" Width="auto">
+                            <Template Context="item">
+                                <div class="service-cell">
+                                    <span class="service-code" style="background: @GetServiceColor(item.Code)">@item.Code</span>
+                                    <span class="service-name">@item.Name</span>
+                                </div>
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="WaitingCount" Title="Queue" Width="80px" TextAlign="TextAlign.Center">
+                            <Template Context="item">
+                                <span class="queue-badge">@item.WaitingCount</span>
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="EstimatedWaitMinutes" Title="Wait" Width="80px" TextAlign="TextAlign.Center">
+                            <Template Context="item">
+                                <span class="wait-time">@item.EstimatedWaitMinutes min</span>
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="CountersActive" Title="Counters" Width="100px" TextAlign="TextAlign.Center">
+                            <Template Context="item">
+                                <span class="counter-count">@item.CountersActive active</span>
+                            </Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+            </ChildContent>
+        </QCard>
+
+        <!-- Counter Status -->
+        <QCard Class="counters-card" Title="Counter Status" Icon="shop">
+            <HeaderActions>
+                <QButton Text="Manage" Icon="gear-fill" Variant="ghost" Size="sm" />
+            </HeaderActions>
+            <ChildContent>
+                <div class="counters-grid">
+                    @foreach (var counter in queueStatus.Counters)
+                    {
+                        <div class="counter-card @GetCounterStatusClass(counter.Status)">
+                            <div class="counter-header">
+                                <span class="counter-number">Counter @counter.CounterNumber</span>
+                                <QBadge Variant="@GetCounterStatusVariant(counter.Status)" Text="@counter.Status" Size="sm" Class="counter-status-badge-solid" />
+                            </div>
+                            <div class="counter-body">
+                                @if (!string.IsNullOrEmpty(counter.CurrentTokenDisplay))
+                                {
+                                    <span class="current-token">@counter.CurrentTokenDisplay</span>
+                                }
+                                else
+                                {
+                                    <span class="no-token">--</span>
+                                }
+                            </div>
+                            <div class="counter-footer">
+                                <span class="served-count">@counter.TokensServedToday served today</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </ChildContent>
+        </QCard>
+
+        <!-- Quick Actions -->
+        <QCard Class="quick-actions-card" Title="Quick Actions" Icon="lightning-fill">
+            <div class="quick-actions-grid">
+                <button class="quick-action-btn" @onclick="OpenKiosk">
+                    <QIcon Name="hand-index-fill" />
+                    <span>Open Kiosk</span>
+                </button>
+                <button class="quick-action-btn" @onclick="OpenCounterTerminal">
+                    <QIcon Name="shop" />
+                    <span>Counter Terminal</span>
+                </button>
+                <button class="quick-action-btn" @onclick="OpenCustomerDisplay">
+                    <QIcon Name="tv-fill" />
+                    <span>Customer Display</span>
+                </button>
+                <button class="quick-action-btn" @onclick="OpenReports">
+                    <QIcon Name="bar-chart-fill" />
+                    <span>View Reports</span>
+                </button>
+            </div>
+        </QCard>
+    </div>
+}
+
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .last-updated {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .error-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        border: 1px solid var(--qm-danger);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 24px;
+        color: var(--qm-danger);
+    }
+
+    .error-banner .rzi {
+        font-size: 24px;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 24px;
+        margin-bottom: 24px;
+    }
+
+    .stats-card .stats-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .stats-card .stats-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stats-card .stats-number small {
+        font-size: 16px;
+        font-weight: 500;
+        margin-left: 4px;
+    }
+
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 24px;
+    }
+
+    .dashboard-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        box-shadow: var(--qm-shadow-sm);
+        overflow: hidden;
+    }
+
+    .dashboard-card .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dashboard-card .card-header h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .dashboard-card .card-header h3 .rz-icon {
+        color: var(--qm-primary);
+    }
+
+    .dashboard-card .card-body {
+        padding: 20px;
+    }
+
+    /* Now Serving Card */
+    .now-serving-card {
+        grid-column: span 1;
+    }
+
+    .live-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: var(--qm-danger);
+        color: white;
+        border-radius: var(--qm-radius-full);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1px;
+    }
+
+    .live-dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+    }
+
+    .now-serving-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .now-serving-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .counter-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .counter-name {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .counter-agent {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .no-serving {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px;
+        color: var(--qm-text-muted);
+    }
+
+    .no-serving .rz-icon {
+        font-size: 48px;
+        margin-bottom: 12px;
+        color: var(--qm-border);
+    }
+
+    /* Service Types */
+    .service-cell {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .service-code {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--qm-radius-lg);
+        font-size: 12px;
+        font-weight: 600;
+        color: white;
+    }
+
+    .service-name {
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .queue-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 28px;
+        height: 28px;
+        background: var(--qm-primary);
+        color: white;
+        border-radius: var(--qm-radius-full);
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .wait-time {
+        color: var(--qm-text-muted);
+        font-size: 13px;
+    }
+
+    .counter-count {
+        color: var(--qm-success);
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    /* Counter Status Grid */
+    .counters-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 16px;
+    }
+
+    .counter-card {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        text-align: center;
+        border-left: 4px solid var(--qm-border);
+        transition: all 0.3s ease;
+    }
+
+    .counter-card:hover {
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .counter-card.active {
+        border-left-color: var(--qm-success);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-success) 5%, transparent) 0%, var(--qm-bg-elevated) 100%);
+    }
+
+    .counter-card.onbreak {
+        border-left-color: var(--qm-warning);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-warning) 5%, transparent) 0%, var(--qm-bg-elevated) 100%);
+    }
+
+    .counter-card.inactive, .counter-card.closed {
+        border-left-color: var(--qm-text-muted);
+        opacity: 0.7;
+    }
+
+    .counter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .counter-number {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    /* Solid-fill override on top of QBadge's own (translucent-tint) variant colors —
+       this dashboard widget deliberately uses solid backgrounds, not QBadge's default. */
+    .counter-status-badge-solid.q-badge--success {
+        background: var(--qm-success);
+        color: white;
+    }
+
+    .counter-status-badge-solid.q-badge--warning {
+        background: var(--qm-warning);
+        color: #1a1a1a;
+    }
+
+    .counter-status-badge-solid.q-badge--secondary {
+        background: var(--qm-text-muted);
+        color: white;
+    }
+
+    .counter-body {
+        margin: 16px 0;
+    }
+
+    .current-token {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .no-token {
+        font-size: 28px;
+        font-weight: 300;
+        color: var(--qm-text-muted);
+    }
+
+    .counter-footer {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Quick Actions */
+    .quick-actions-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .quick-action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 20px;
+        background: var(--qm-bg-elevated);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .quick-action-btn:hover {
+        border-color: var(--qm-primary);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-primary) 10%, transparent) 0%, var(--qm-bg-elevated) 100%);
+        transform: translateY(-2px);
+    }
+
+    .quick-action-btn .rz-icon {
+        font-size: 28px;
+        color: var(--qm-primary);
+    }
+
+    .quick-action-btn span {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    /* Service Types DataGrid - Dark Mode Fix */
+    .service-types-grid {
+        background: transparent;
+    }
+
+    .service-types-grid .rz-datatable-thead th,
+    .service-types-grid .rz-datatable-thead .rz-column-title {
+        background: var(--qm-bg-elevated) !important;
+        color: var(--qm-text-muted) !important;
+        border-bottom: 1px solid var(--qm-border) !important;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .service-types-grid .rz-datatable-tbody tr {
+        background: transparent;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .service-types-grid .rz-datatable-tbody tr:hover {
+        background: var(--qm-bg-elevated);
+    }
+
+    .service-types-grid .rz-datatable-tbody td {
+        color: var(--qm-text-primary);
+        border: none;
+    }
+
+    .service-types-grid .rz-sortable-column .rz-column-title-content,
+    .service-types-grid .rz-cell-data {
+        color: inherit;
+    }
+
+    @@media (max-width: 992px) {
+        .dashboard-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @@media (max-width: 768px) {
+        .stats-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .counters-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    /* Welcome / Getting Started State */
+    .welcome-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: calc(100vh - 300px);
+        padding: 2rem;
+    }
+
+    .welcome-content {
+        text-align: center;
+        max-width: 520px;
+        padding: 3rem;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        box-shadow: var(--qm-shadow-lg);
+    }
+
+    .welcome-icon {
+        font-size: 4rem;
+        color: var(--qm-primary);
+        margin-bottom: 1.5rem;
+    }
+
+    .welcome-icon.select-branch {
+        color: var(--qm-warning);
+    }
+
+    .welcome-content h2 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        margin-bottom: 1rem;
+    }
+
+    .welcome-message {
+        font-size: 1rem;
+        color: var(--qm-text-secondary);
+        margin-bottom: 2rem;
+        line-height: 1.6;
+    }
+
+    .welcome-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        text-align: left;
+    }
+
+    .step-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        border: 1px solid var(--qm-border);
+    }
+
+    .step-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        background: var(--qm-primary);
+        color: white;
+        border-radius: 50%;
+        font-weight: 600;
+        font-size: 0.875rem;
+        flex-shrink: 0;
+    }
+
+    .step-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .step-content strong {
+        color: var(--qm-text-primary);
+        font-weight: 600;
+    }
+
+    .step-content span {
+        font-size: 0.875rem;
+        color: var(--qm-text-muted);
+    }
+
+    .welcome-action {
+        margin-top: 1.5rem;
+    }
+
+    .welcome-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 1rem;
+        background: color-mix(in srgb, var(--qm-warning) 10%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-warning) 30%, transparent);
+        border-radius: var(--qm-radius-lg);
+        font-size: 0.875rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .welcome-hint .rz-icon {
+        color: var(--qm-warning);
+        flex-shrink: 0;
+        animation: bounce 1.5s ease-in-out infinite;
+    }
+
+    @@keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(5px); }
+    }
+</style>
+
+@code {
+    private QueueStatusDto? queueStatus;
+    private string? errorMessage;
+    private bool isLoading = true;
+    private DateTime lastUpdated;
+    private bool noBranchSelected = false;
+    private bool branchStateInitialized = false;
+
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.DashboardView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        // Subscribe to branch changes
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        // Note: We'll load data in OnAfterRenderAsync when BranchState is properly initialized
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Wait for BranchState to be initialized (requires localStorage)
+            await BranchState.InitializeAsync();
+            branchStateInitialized = true;
+
+            // Check if branches exist and one is selected
+            if (!BranchState.HasBranches)
+            {
+                // No branches exist - show getting started
+                isLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (BranchId == Guid.Empty)
+            {
+                // Branches exist but none selected
+                noBranchSelected = true;
+                isLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            await LoadQueueStatus();
+
+            try
+            {
+                await SignalR.ConnectAsync(BranchId);
+                SignalR.OnQueueUpdated += HandleQueueUpdated;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SignalR connection failed: {ex.Message}");
+            }
+
+            StateHasChanged();
+        }
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            // Check if branches exist and one is selected
+            if (!BranchState.HasBranches)
+            {
+                isLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            if (BranchId == Guid.Empty)
+            {
+                noBranchSelected = true;
+                isLoading = false;
+                StateHasChanged();
+                return;
+            }
+
+            noBranchSelected = false;
+            await LoadQueueStatus();
+            try
+            {
+                await SignalR.ConnectAsync(BranchId);
+            }
+            catch { }
+        });
+    }
+
+    private async Task LoadQueueStatus()
+    {
+        // Don't load if no branches exist or none selected
+        if (!BranchState.HasBranches || BranchId == Guid.Empty)
+        {
+            noBranchSelected = BranchId == Guid.Empty;
+            isLoading = false;
+            return;
+        }
+
+        noBranchSelected = false;
+        isLoading = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            queueStatus = await QueueApi.GetQueueStatusAsync(BranchId);
+            if (queueStatus == null)
+            {
+                errorMessage = "Unable to load queue data. Please ensure the API is running and the selected branch is valid.";
+            }
+            else
+            {
+                lastUpdated = DateTime.Now;
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            errorMessage = "Unable to connect to the API server. Please check if the API is running.";
+            Console.WriteLine($"Dashboard connection error: {ex}");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading data: {ex.Message}";
+            Console.WriteLine($"Dashboard load error: {ex}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        await LoadQueueStatus();
+    }
+
+    private void HandleQueueUpdated(QueueStatusDto status)
+    {
+        queueStatus = status;
+        lastUpdated = DateTime.Now;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetServiceColor(string code)
+    {
+        var firstChar = string.IsNullOrEmpty(code) ? '_' : char.ToUpperInvariant(code[0]);
+        return firstChar switch
+        {
+            'A' => "#8c2f52",
+            'B' => "#16a34a",
+            'C' => "#d97706",
+            'D' => "#dc2626",
+            'E' => "#0d9488",
+            'F' => "#47393f",
+            _ => "#8c2f52"
+        };
+    }
+
+    private string GetCounterStatusClass(string status)
+    {
+        return status.ToLower() switch
+        {
+            "active" => "active",
+            "onbreak" => "onbreak",
+            "inactive" => "inactive",
+            "closed" => "closed",
+            _ => ""
+        };
+    }
+
+    private static string GetCounterStatusVariant(string status) => status.ToLowerInvariant() switch
+    {
+        "active" => "success",
+        "onbreak" => "warning",
+        "inactive" or "closed" => "secondary",
+        _ => "secondary"
+    };
+
+    private void OpenKiosk() => NavigationManager.NavigateTo("/queue/kiosk");
+    private void OpenCounterTerminal() => NavigationManager.NavigateTo("/queue/counter");
+    private void OpenCustomerDisplay() => NavigationManager.NavigateTo($"/queue/display/{BranchId}");
+    private void OpenReports() => NavigationManager.NavigateTo("/reports");
+    private void NavigateToBranches() => NavigationManager.NavigateTo("/admin/branches");
+
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+        SignalR.OnQueueUpdated -= HandleQueueUpdated;
+    }
+}

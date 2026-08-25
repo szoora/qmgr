@@ -1,0 +1,1132 @@
+@page "/queue/counter"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@implements IDisposable
+@inject IQueueApiService QueueApi
+@inject ISignalRService SignalR
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Counter Terminal - Q-Mgr</PageTitle>
+
+<div class="counter-terminal">
+    <!-- Terminal Header -->
+    <div class="counter-terminal-header">
+        <div class="header-left">
+            <h2><QIcon Name="cash-stack" /> Counter Terminal</h2>
+            <div class="counter-selector">
+                <QSelect TValue="Guid" TItem="CounterDto" Value="@selectedCounterId" ValueChanged="@OnCounterSelected" Items="@counters"
+                         TextSelector="@(c => c.DisplayName)" ValueSelector="@(c => c.Id)" Placeholder="Select Counter" Class="min-w-200" />
+            </div>
+        </div>
+        <div class="header-right">
+            @if (selectedCounterId != Guid.Empty)
+            {
+                <div class="status @GetStatusClass()">
+                    <span class="status-dot"></span>
+                    <span class="status-text">@counterStatus</span>
+                </div>
+                <div class="stats-summary">
+                    <span class="stat">
+                        <QIcon Name="people-fill" />
+                        <strong>@waitingTokens.Count</strong> waiting
+                    </span>
+                    <span class="stat">
+                        <QIcon Name="check-circle-fill" />
+                        <strong>@servedToday</strong> served today
+                    </span>
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (selectedCounterId != Guid.Empty)
+    {
+        <div class="counter-terminal-body">
+            <div class="terminal-grid">
+                <!-- Current Customer Panel -->
+                <div class="current-customer-panel">
+                    <div class="panel-header">
+                        <h3>Now Serving</h3>
+                        @if (currentToken != null)
+                        {
+                            <span class="serving-time">
+                                <QIcon Name="stopwatch-fill" /> @GetServingDuration()
+                            </span>
+                        }
+                    </div>
+                    <div class="panel-body">
+                        @if (currentToken != null)
+                        {
+                            <div class="customer-info">
+                                <div class="token-large">@currentToken.DisplayNumber</div>
+                                <div class="customer-details">
+                                    <div class="customer-name">
+                                        <QIcon Name="person-fill" />
+                                        @(currentToken.Customer?.Name ?? "Guest")
+                                    </div>
+                                    <div class="service-type">
+                                        <QIcon Name="tag-fill" />
+                                        @(currentToken.ServiceType?.Name ?? "General")
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(currentToken.Customer?.Phone))
+                                    {
+                                        <div class="customer-phone">
+                                            <QIcon Name="telephone-fill" />
+                                            @currentToken.Customer.Phone
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(currentToken.Notes))
+                                    {
+                                        <div class="customer-notes">
+                                            <QIcon Name="journal-text" />
+                                            @currentToken.Notes
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="no-customer">
+                                <div class="no-customer-icon">
+                                    <QIcon Name="person-plus-fill" />
+                                </div>
+                                <p>No customer being served</p>
+                                <span>Click "Call Next" to serve the next customer</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Action Buttons Panel -->
+                <div class="actions-panel">
+                    <div class="panel-header">
+                        <h3>Actions</h3>
+                    </div>
+                    <div class="panel-body">
+                        <div class="actions-grid">
+                            <button class="action-btn call-next @(currentToken != null ? "disabled" : "")"
+                                    @onclick="CallNext" disabled="@(currentToken != null)">
+                                <div class="action-icon">
+                                    <QIcon Name="megaphone-fill" />
+                                </div>
+                                <span class="action-text">Call Next</span>
+                                <span class="action-hint">@waitingTokens.Count in queue</span>
+                            </button>
+
+                            <button class="action-btn complete @(currentToken == null ? "disabled" : "")"
+                                    @onclick="CompleteService" disabled="@(currentToken == null)">
+                                <div class="action-icon">
+                                    <QIcon Name="check-circle-fill" />
+                                </div>
+                                <span class="action-text">Complete</span>
+                                <span class="action-hint">Finish service</span>
+                            </button>
+
+                            <button class="action-btn no-show @(currentToken == null ? "disabled" : "")"
+                                    @onclick="MarkNoShow" disabled="@(currentToken == null)">
+                                <div class="action-icon">
+                                    <QIcon Name="person-x-fill" />
+                                </div>
+                                <span class="action-text">No Show</span>
+                                <span class="action-hint">Customer absent</span>
+                            </button>
+
+                            <button class="action-btn recall @(currentToken == null ? "disabled" : "")"
+                                    @onclick="RecallToken" disabled="@(currentToken == null)">
+                                <div class="action-icon">
+                                    <QIcon Name="arrow-clockwise" />
+                                </div>
+                                <span class="action-text">Recall</span>
+                                <span class="action-hint">Call again</span>
+                            </button>
+
+                            <button class="action-btn transfer @(currentToken == null ? "disabled" : "")"
+                                    @onclick="TransferToken" disabled="@(currentToken == null)">
+                                <div class="action-icon">
+                                    <QIcon Name="arrow-left-right" />
+                                </div>
+                                <span class="action-text">Transfer</span>
+                                <span class="action-hint">To another counter</span>
+                            </button>
+
+                            <button class="action-btn break" @onclick="ToggleBreak">
+                                <div class="action-icon">
+                                    <QIcon Name="@(counterStatus == "OnBreak" ? "play-fill" : "pause-fill")" />
+                                </div>
+                                <span class="action-text">@(counterStatus == "OnBreak" ? "Resume" : "Break")</span>
+                                <span class="action-hint">@(counterStatus == "OnBreak" ? "Continue serving" : "Take a break")</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Waiting Queue -->
+            <div class="waiting-queue-panel">
+                <div class="panel-header">
+                    <h3><QIcon Name="list" /> Waiting Queue</h3>
+                    <div class="queue-filters">
+                        <QSelect TValue="string" TItem="FilterOption" Value="@serviceFilter" ValueChanged="@OnFilterSelected" Items="@serviceFilterOptions"
+                                 TextSelector="@(f => f.Text)" ValueSelector="@(f => f.Value)" Placeholder="All Services" Class="w-150" />
+                    </div>
+                </div>
+                <div class="panel-body">
+                    @if (filteredWaitingTokens.Any())
+                    {
+                        <div class="queue-list">
+                            @foreach (var token in filteredWaitingTokens)
+                            {
+                                <div class="queue-item @(token.Priority == TokenPriority.Priority ? "priority" : "") @(token.Priority == TokenPriority.VIP ? "vip" : "")">
+                                    <div class="queue-token">
+                                        <span class="token-number">@token.DisplayNumber</span>
+                                        @if (token.Priority != TokenPriority.Normal)
+                                        {
+                                            <span class="priority-badge @token.Priority.ToString().ToLower()">@token.Priority</span>
+                                        }
+                                    </div>
+                                    <div class="queue-details">
+                                        <span class="customer-name">@(token.Customer?.Name ?? "Guest")</span>
+                                        <span class="service-name">@token.ServiceType?.Name</span>
+                                    </div>
+                                    <div class="queue-wait">
+                                        <span class="wait-time">@token.EstimatedWaitMinutes min</span>
+                                        <span class="position">#@token.PositionInQueue</span>
+                                    </div>
+                                    <div class="queue-actions">
+                                        <button class="call-btn" @onclick="@(() => CallSpecific(token.Id))"
+                                                disabled="@(currentToken != null)" title="Call this customer">
+                                            <QIcon Name="megaphone-fill" />
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="empty-queue">
+                            <QIcon Name="inbox-fill" />
+                            <p>No customers waiting</p>
+                            <span>The queue is empty</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- No Counter Selected -->
+        <div class="no-counter-selected">
+            <div class="select-counter-prompt">
+                <div class="prompt-icon">
+                    <QIcon Name="cash-stack" />
+                </div>
+                <h3>Select a Counter</h3>
+                <p>Please select a counter from the dropdown above to start serving customers.</p>
+                <QSelect TValue="Guid" TItem="CounterDto" Value="@selectedCounterId" ValueChanged="@OnCounterSelected" Items="@counters"
+                         TextSelector="@(c => c.DisplayName)" ValueSelector="@(c => c.Id)" Placeholder="Select Counter" Class="w-250" />
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Confirmation Dialogs -->
+<ConfirmDialog
+    IsVisible="@showCompleteConfirm"
+    Title="Complete Service"
+    Message="Complete service for this customer?"
+    ConfirmText="Complete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-primary"
+    OnClose="@HandleCompleteConfirm" />
+
+<ConfirmDialog
+    IsVisible="@showNoShowConfirm"
+    Title="Confirm No-Show"
+    Message="Mark this token as no-show?"
+    ConfirmText="Yes"
+    CancelText="No"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleNoShowConfirm" />
+
+<!-- Transfer Token Dialog -->
+<QModal Visible="@showTransferDialog" VisibleChanged="@((bool v) => { if (!v) CancelTransfer(); })"
+        Title="Transfer Token" Icon="arrow-left-right" Size="sm" CloseOnBackdropClick="false">
+    <ChildContent>
+        @if (currentToken != null)
+        {
+            <p class="transfer-current-token">
+                Transferring <strong>@currentToken.DisplayNumber</strong>
+                (@(currentToken.Customer?.Name ?? "Guest")) to another counter.
+            </p>
+        }
+        <div class="transfer-field">
+            <label class="transfer-label">Destination Counter <span class="required">*</span></label>
+            <QSelect TValue="Guid" TItem="CounterDto" Value="@transferTargetCounterId"
+                     ValueChanged="@((Guid v) => transferTargetCounterId = v)"
+                     Items="@transferTargetOptions"
+                     TextSelector="@(c => c.DisplayName ?? c.CounterNumber)"
+                     ValueSelector="@(c => c.Id)"
+                     Placeholder="Select a counter" />
+        </div>
+        <div class="transfer-field">
+            <QInput TValue="string" Type="textarea" Rows="2" Label="Reason (optional)"
+                    Value="@transferReason" ValueChanged="@((string? v) => transferReason = v)"
+                    Placeholder="e.g. Wrong service type, escalation, customer request" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@CancelTransfer" Disabled="@transferInProgress" />
+        <QButton Text="Transfer" Icon="arrow-left-right" Variant="primary" OnClick="@ConfirmTransfer"
+                 Loading="@transferInProgress" Disabled="@(transferTargetCounterId == Guid.Empty)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .counter-terminal {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        margin: -24px;
+    }
+
+    .counter-terminal-header {
+        background: var(--qm-bg-card);
+        color: var(--qm-text-primary);
+        border-bottom: 1px solid var(--qm-border);
+        padding: 20px 30px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+    }
+
+    .header-left h2 {
+        color: var(--qm-text-primary);
+        margin: 0;
+        font-size: 22px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .counter-selector :deep(.rz-dropdown) {
+        background: var(--qm-bg-input);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+    }
+
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-full);
+        font-weight: 600;
+    }
+
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--qm-success);
+    }
+
+    .status.serving .status-dot { background: var(--qm-success); }
+    .status.active .status-dot { background: var(--qm-primary); }
+    .status.onbreak .status-dot { background: var(--qm-warning); }
+    .status.inactive .status-dot { background: var(--qm-text-muted); }
+
+    .stats-summary {
+        display: flex;
+        gap: 20px;
+    }
+
+    .stats-summary .stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        opacity: 0.9;
+    }
+
+    .counter-terminal-body {
+        padding: 24px;
+    }
+
+    .terminal-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin-bottom: 24px;
+    }
+
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .panel-header h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .panel-header h3 .q-icon {
+        color: var(--qm-primary);
+    }
+
+    /* Current Customer Panel */
+    .current-customer-panel {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        border-left: 4px solid var(--qm-primary);
+    }
+
+    .serving-time {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .customer-info {
+        text-align: center;
+    }
+
+    .token-large {
+        font-size: 72px;
+        font-weight: 700;
+        color: var(--qm-primary);
+        line-height: 1;
+        margin-bottom: 20px;
+    }
+
+    .customer-details {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .customer-details > div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 15px;
+        color: var(--qm-text-secondary);
+    }
+
+    .customer-details .q-icon {
+        color: var(--qm-text-muted);
+        font-size: 18px;
+    }
+
+    .customer-details .customer-name {
+        font-weight: 600;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .no-customer {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--qm-text-muted);
+    }
+
+    .no-customer-icon {
+        width: 80px;
+        height: 80px;
+        background: var(--qm-bg-elevated);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 16px;
+    }
+
+    .no-customer-icon .q-icon {
+        font-size: 36px;
+        color: var(--qm-text-muted);
+    }
+
+    .no-customer p {
+        font-size: 18px;
+        font-weight: 500;
+        margin: 0 0 8px;
+        color: var(--qm-text-secondary);
+    }
+
+    .no-customer span {
+        font-size: 14px;
+    }
+
+    /* Actions Panel */
+    .actions-panel {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .actions-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+
+    .action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 16px 12px;
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-align: center;
+    }
+
+    .action-btn:hover:not(.disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .action-btn.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .action-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 8px;
+        background: var(--qm-bg-elevated);
+    }
+
+    .action-icon .q-icon {
+        font-size: 24px;
+    }
+
+    .action-text {
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--qm-text-primary);
+        margin-bottom: 2px;
+    }
+
+    .action-hint {
+        font-size: 11px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Action Button Colors */
+    .action-btn.call-next:not(.disabled):hover {
+        border-color: var(--qm-success);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-success) 15%, transparent) 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.call-next .action-icon { background: color-mix(in srgb, var(--qm-success) 15%, transparent); }
+    .action-btn.call-next .action-icon .q-icon { color: var(--qm-success); }
+
+    .action-btn.complete:not(.disabled):hover {
+        border-color: var(--qm-primary);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-primary) 15%, transparent) 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.complete .action-icon { background: color-mix(in srgb, var(--qm-primary) 15%, transparent); }
+    .action-btn.complete .action-icon .q-icon { color: var(--qm-primary); }
+
+    .action-btn.no-show:not(.disabled):hover {
+        border-color: var(--qm-warning);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-warning) 15%, transparent) 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.no-show .action-icon { background: color-mix(in srgb, var(--qm-warning) 15%, transparent); }
+    .action-btn.no-show .action-icon .q-icon { color: var(--qm-warning); }
+
+    .action-btn.recall:not(.disabled):hover {
+        border-color: var(--qm-info);
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-info) 15%, transparent) 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.recall .action-icon { background: color-mix(in srgb, var(--qm-info) 15%, transparent); }
+    .action-btn.recall .action-icon .q-icon { color: var(--qm-info); }
+
+    .action-btn.transfer:not(.disabled):hover {
+        border-color: #6f42c1;
+        background: linear-gradient(135deg, #f3e5f5 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.transfer .action-icon { background: #e1d5e7; }
+    .action-btn.transfer .action-icon .q-icon { color: #6f42c1; }
+
+    .action-btn.break:hover {
+        border-color: #fd7e14;
+        background: linear-gradient(135deg, #fff4e5 0%, var(--qm-bg-card) 100%);
+    }
+    .action-btn.break .action-icon { background: #ffe5d0; }
+    .action-btn.break .action-icon .q-icon { color: #fd7e14; }
+
+    /* Waiting Queue Panel */
+    .waiting-queue-panel {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .queue-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .queue-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 16px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-lg);
+        border: 1px solid var(--qm-border);
+        transition: all 0.2s ease;
+    }
+
+    .queue-item:hover {
+        border-color: var(--qm-primary);
+        box-shadow: 0 2px 8px rgba(41, 155, 232, 0.1);
+    }
+
+    .queue-item.priority {
+        border-left: 4px solid var(--qm-warning);
+    }
+
+    .queue-item.vip {
+        border-left: 4px solid var(--qm-danger);
+        background: linear-gradient(90deg, color-mix(in srgb, var(--qm-danger) 15%, transparent) 0%, var(--qm-bg-card) 10%);
+    }
+
+    .queue-token {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 70px;
+    }
+
+    .queue-token .token-number {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .priority-badge {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: var(--qm-radius-full);
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-top: 4px;
+    }
+
+    .priority-badge.high { background: var(--qm-warning); color: #333; }
+    .priority-badge.vip { background: var(--qm-danger); color: white; }
+
+    .queue-details {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .queue-details .customer-name {
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .queue-details .service-name {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .queue-wait {
+        text-align: right;
+        min-width: 80px;
+    }
+
+    .queue-wait .wait-time {
+        display: block;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--qm-text-secondary);
+    }
+
+    .queue-wait .position {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .queue-actions .call-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: var(--qm-primary);
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+    }
+
+    .queue-actions .call-btn:hover:not(:disabled) {
+        background: #1d7ebf;
+        transform: scale(1.1);
+    }
+
+    .queue-actions .call-btn:disabled {
+        background: var(--qm-text-muted);
+        cursor: not-allowed;
+    }
+
+    .empty-queue {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-queue .q-icon {
+        font-size: 48px;
+        color: var(--qm-text-muted);
+        margin-bottom: 16px;
+    }
+
+    .empty-queue p {
+        font-size: 16px;
+        font-weight: 500;
+        margin: 0 0 8px;
+        color: var(--qm-text-secondary);
+    }
+
+    /* No Counter Selected */
+    .no-counter-selected {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 500px;
+        padding: 40px;
+    }
+
+    .select-counter-prompt {
+        text-align: center;
+        max-width: 400px;
+    }
+
+    .prompt-icon {
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-primary) 15%, transparent) 0%, var(--qm-bg-card) 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+    }
+
+    .prompt-icon .q-icon {
+        font-size: 48px;
+        color: var(--qm-primary);
+    }
+
+    .select-counter-prompt h3 {
+        font-size: 24px;
+        margin: 0 0 12px;
+        color: var(--qm-text-primary);
+    }
+
+    .select-counter-prompt p {
+        color: var(--qm-text-secondary);
+        margin-bottom: 24px;
+    }
+
+    @@media (max-width: 992px) {
+        .terminal-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .actions-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @@media (max-width: 768px) {
+        .counter-terminal-header {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .header-left, .header-right {
+            justify-content: center;
+        }
+
+        .token-large {
+            font-size: 56px;
+        }
+    }
+
+    .transfer-current-token {
+        margin: 0 0 16px;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
+    .transfer-field {
+        margin-bottom: 16px;
+    }
+
+    .transfer-field:last-child {
+        margin-bottom: 0;
+    }
+
+    .transfer-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .transfer-label .required {
+        color: var(--qm-danger, #ef4444);
+    }
+</style>
+
+@code {
+    private Guid selectedCounterId;
+    private string counterStatus = "Inactive";
+    private TokenDto? currentToken;
+    private List<TokenDto> waitingTokens = new();
+    private List<TokenDto> filteredWaitingTokens = new();
+    private List<CounterDto> counters = new();
+    private int servedToday = 0;
+    private DateTime? serviceStartTime;
+    private string? serviceFilter;
+    private List<FilterOption> serviceFilterOptions = new() { new FilterOption { Text = "All Services", Value = "" } };
+
+    // Confirm dialog state
+    private bool showCompleteConfirm = false;
+    private bool showNoShowConfirm = false;
+
+    // Transfer dialog state
+    private bool showTransferDialog = false;
+    private Guid transferTargetCounterId = Guid.Empty;
+    private string? transferReason;
+    private bool transferInProgress = false;
+    private List<CounterDto> transferTargetOptions = new();
+
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission - require QueueManage for counter terminal
+        if (!await PermissionService.HasPermissionAsync(Permissions.QueueManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        // Subscribe to branch changes
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadCounters();
+        await SignalR.ConnectAsync(BranchId);
+        SignalR.OnTokenCalled += HandleTokenCalled;
+        SignalR.OnTokenCompleted += HandleTokenCompleted;
+    }
+
+    private async Task LoadCounters()
+    {
+        counters = await QueueApi.GetCountersAsync(BranchId);
+        selectedCounterId = Guid.Empty;
+        currentToken = null;
+        counterStatus = "Inactive";
+        StateHasChanged();
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            await LoadCounters();
+            await SignalR.ConnectAsync(BranchId);
+        });
+    }
+
+    private async Task OnCounterSelected(Guid counterId)
+    {
+        selectedCounterId = counterId;
+        if (selectedCounterId != Guid.Empty)
+        {
+            counterStatus = "Active";
+            await LoadWaitingTokens();
+        }
+    }
+
+    private void OnFilterSelected(string filter)
+    {
+        serviceFilter = filter;
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        if (string.IsNullOrEmpty(serviceFilter))
+        {
+            filteredWaitingTokens = waitingTokens;
+        }
+        else
+        {
+            filteredWaitingTokens = waitingTokens.Where(t => t.ServiceType?.Code == serviceFilter).ToList();
+        }
+    }
+
+    private async Task LoadWaitingTokens()
+    {
+        waitingTokens = await QueueApi.GetWaitingTokensAsync(BranchId);
+        ApplyFilter();
+    }
+
+    private async Task CallNext()
+    {
+        var token = await QueueApi.CallNextTokenAsync(selectedCounterId);
+        if (token != null)
+        {
+            currentToken = token;
+            counterStatus = "Serving";
+            serviceStartTime = DateTime.Now;
+            await LoadWaitingTokens();
+            NotificationService.Notify(ToastSeverity.Success, "Token Called", $"Now serving {token.DisplayNumber}");
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Info, "No Waiting Tokens", "There are no customers waiting in the queue.");
+        }
+    }
+
+    private async Task CallSpecific(Guid tokenId)
+    {
+        var token = await QueueApi.CallSpecificTokenAsync(selectedCounterId, tokenId);
+        if (token != null)
+        {
+            currentToken = token;
+            counterStatus = "Serving";
+            serviceStartTime = DateTime.Now;
+            await LoadWaitingTokens();
+            NotificationService.Notify(ToastSeverity.Success, "Token Called", $"Now serving {token.DisplayNumber}");
+        }
+    }
+
+    private void CompleteService()
+    {
+        if (currentToken == null) return;
+        showCompleteConfirm = true;
+    }
+
+    private async Task HandleCompleteConfirm(bool confirmed)
+    {
+        showCompleteConfirm = false;
+        if (confirmed && currentToken != null)
+        {
+            await QueueApi.CompleteServiceAsync(selectedCounterId, currentToken.Id, null);
+            currentToken = null;
+            counterStatus = "Active";
+            serviceStartTime = null;
+            servedToday++;
+            await LoadWaitingTokens();
+            NotificationService.Notify(ToastSeverity.Success, "Service Completed");
+        }
+    }
+
+    private void MarkNoShow()
+    {
+        if (currentToken == null) return;
+        showNoShowConfirm = true;
+    }
+
+    private async Task HandleNoShowConfirm(bool confirmed)
+    {
+        showNoShowConfirm = false;
+        if (confirmed && currentToken != null)
+        {
+            await QueueApi.MarkNoShowAsync(selectedCounterId, currentToken.Id);
+            currentToken = null;
+            counterStatus = "Active";
+            serviceStartTime = null;
+            await LoadWaitingTokens();
+            NotificationService.Notify(ToastSeverity.Warning, "Marked as No-Show");
+        }
+    }
+
+    private async Task RecallToken()
+    {
+        if (currentToken == null) return;
+        // Re-announce the token
+        NotificationService.Notify(ToastSeverity.Info, "Token Recalled", $"Re-calling {currentToken.DisplayNumber}");
+        // Trigger announcement via SignalR
+    }
+
+    private void TransferToken()
+    {
+        if (currentToken == null) return;
+
+        // Matches the backend's own guard rails (TransferTokenCommandHandler, Phase 19):
+        // same-branch, Active status, and not the counter the token is already at.
+        transferTargetOptions = counters
+            .Where(c => c.Id != selectedCounterId && c.Status == CounterStatus.Active)
+            .ToList();
+
+        if (!transferTargetOptions.Any())
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No Available Counters",
+                "There are no other active counters in this branch to transfer to.");
+            return;
+        }
+
+        transferTargetCounterId = Guid.Empty;
+        transferReason = null;
+        showTransferDialog = true;
+    }
+
+    private void CancelTransfer()
+    {
+        showTransferDialog = false;
+        transferTargetCounterId = Guid.Empty;
+        transferReason = null;
+    }
+
+    private async Task ConfirmTransfer()
+    {
+        if (currentToken == null || transferTargetCounterId == Guid.Empty) return;
+
+        transferInProgress = true;
+        try
+        {
+            var result = await QueueApi.TransferTokenAsync(selectedCounterId, currentToken.Id, transferTargetCounterId, transferReason);
+            if (result != null)
+            {
+                var destName = transferTargetOptions.FirstOrDefault(c => c.Id == transferTargetCounterId)?.DisplayName ?? "the selected counter";
+                showTransferDialog = false;
+                currentToken = null;
+                counterStatus = "Active";
+                serviceStartTime = null;
+                await LoadWaitingTokens();
+                NotificationService.Notify(ToastSeverity.Success, "Token Transferred", $"Transferred to {destName}");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Transfer Failed",
+                    "Could not transfer the token. It may no longer be active, or the destination counter may no longer be available.");
+            }
+        }
+        finally
+        {
+            transferInProgress = false;
+        }
+    }
+
+    private async Task ToggleBreak()
+    {
+        if (counterStatus == "OnBreak")
+        {
+            counterStatus = "Active";
+            NotificationService.Notify(ToastSeverity.Success, "Back to Active", "You're now ready to serve customers");
+        }
+        else
+        {
+            counterStatus = "OnBreak";
+            NotificationService.Notify(ToastSeverity.Warning, "On Break", "Counter is now on break");
+        }
+    }
+
+    private void HandleTokenCalled(TokenDto token)
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadWaitingTokens();
+            StateHasChanged();
+        });
+    }
+
+    private void HandleTokenCompleted(Guid tokenId)
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadWaitingTokens();
+            StateHasChanged();
+        });
+    }
+
+    private string GetStatusClass()
+    {
+        return counterStatus.ToLower() switch
+        {
+            "serving" => "serving",
+            "active" => "active",
+            "onbreak" => "onbreak",
+            _ => "inactive"
+        };
+    }
+
+    private string GetServingDuration()
+    {
+        if (serviceStartTime == null) return "";
+        var duration = DateTime.Now - serviceStartTime.Value;
+        return $"{(int)duration.TotalMinutes}:{duration.Seconds:00}";
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+        SignalR.OnTokenCalled -= HandleTokenCalled;
+        SignalR.OnTokenCompleted -= HandleTokenCompleted;
+    }
+
+    private class FilterOption
+    {
+        public string Text { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+}

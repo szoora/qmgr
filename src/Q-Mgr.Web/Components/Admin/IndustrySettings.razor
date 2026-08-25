@@ -1,0 +1,715 @@
+@page "/admin/industry"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@inject IQueueApiService QueueApi
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager NavigationManager
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+
+<PageTitle>Industry Settings - Q-Mgr</PageTitle>
+
+<!-- Page Header -->
+<div class="page-header">
+    <div class="header-left">
+        <h1>Industry Settings</h1>
+        <div class="breadcrumb">
+            <span>Configure your organization's industry type to customize the kiosk experience.</span>
+        </div>
+    </div>
+</div>
+
+<div class="settings-container">
+    <!-- Current Industry Card -->
+    <QCard Class="current-industry" Title="Current Industry" Icon="building-fill">
+        <div class="current-selection">
+            <div class="industry-icon-large @GetIndustryClass(currentIndustry)">
+                <QIcon Name="@GetIndustryIcon(currentIndustry)" />
+            </div>
+            <div class="industry-details">
+                <h2>@GetIndustryDisplayName(currentIndustry)</h2>
+                <p>@GetIndustryDescription(currentIndustry)</p>
+            </div>
+        </div>
+    </QCard>
+
+    <!-- Select Industry Card -->
+    <QCard Title="Select Industry Type" Icon="grid-fill">
+        <HeaderActions>
+            <span class="helper-text">Choose the industry that best matches your organization</span>
+        </HeaderActions>
+        <ChildContent>
+        <div class="industry-grid">
+            @foreach (IndustryType industry in Enum.GetValues(typeof(IndustryType)))
+            {
+                <div class="industry-card @(currentIndustry == industry ? "selected" : "")" @onclick="@(() => SelectIndustry(industry))">
+                    <div class="industry-icon @GetIndustryClass(industry)">
+                        <QIcon Name="@GetIndustryIcon(industry)" />
+                    </div>
+                    <div class="industry-info">
+                        <span class="industry-name">@GetIndustryDisplayName(industry)</span>
+                        <span class="industry-desc">@GetIndustryShortDesc(industry)</span>
+                    </div>
+                    @if (currentIndustry == industry)
+                    {
+                        <div class="selected-check">
+                            <QIcon Name="check-circle-fill" />
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        </ChildContent>
+    </QCard>
+
+    <!-- Kiosk Customization Preview Card -->
+    <QCard Class="preview-card" Title="Kiosk Preview" Icon="eye-fill">
+        <HeaderActions>
+            <QButton Text="Open Full Kiosk" Icon="box-arrow-up-right" Variant="secondary" Size="sm" OnClick="@OpenKiosk" />
+        </HeaderActions>
+        <ChildContent>
+        <div class="kiosk-preview @GetIndustryClass(currentIndustry)">
+            <div class="preview-header">
+                <QIcon Name="@GetIndustryIcon(currentIndustry)" />
+                <span>@GetIndustryDisplayName(currentIndustry) Services</span>
+            </div>
+            <div class="preview-services">
+                @foreach (var service in GetIndustryDefaultServices(currentIndustry))
+                {
+                    <div class="preview-service-btn">
+                        <QIcon Name="@service.Icon" />
+                        <span>@service.Name</span>
+                    </div>
+                }
+            </div>
+            <div class="preview-footer">
+                <span>Touch to select a service</span>
+            </div>
+        </div>
+        </ChildContent>
+    </QCard>
+
+    <!-- Features by Industry Card -->
+    <QCard Class="features-card" Title="Industry-Specific Features" Icon="stars">
+        <div class="features-list">
+            @foreach (var feature in GetIndustryFeatures(currentIndustry))
+            {
+                <div class="feature-item">
+                    <QIcon Name="@feature.Icon" />
+                    <div class="feature-info">
+                        <span class="feature-name">@feature.Name</span>
+                        <span class="feature-desc">@feature.Description</span>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" @bind="feature.Enabled" />
+                    </div>
+                </div>
+            }
+        </div>
+    </QCard>
+
+    <!-- Save Actions -->
+    <div class="action-bar">
+        <QButton Text="Save Changes" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@isSaving" />
+        <QButton Text="Reset to Defaults" Icon="arrow-counterclockwise" Variant="secondary" OnClick="@ResetDefaults" />
+    </div>
+</div>
+
+<style>
+    .settings-container {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        max-width: 1200px;
+    }
+
+    .settings-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        overflow: hidden;
+    }
+
+    .settings-card .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .settings-card .card-header h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .settings-card .card-header h3 .rzi {
+        color: var(--qm-primary);
+    }
+
+    .helper-text {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .settings-card .card-body {
+        padding: 24px;
+    }
+
+    /* Current Industry Card */
+    .current-selection {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+    }
+
+    .industry-icon-large {
+        width: 80px;
+        height: 80px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--qm-primary-light);
+    }
+
+    .industry-icon-large .rzi {
+        font-size: 40px;
+        color: var(--qm-primary);
+    }
+
+    .industry-details h2 {
+        margin: 0 0 8px 0;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .industry-details p {
+        margin: 0;
+        color: var(--qm-text-secondary);
+        line-height: 1.5;
+    }
+
+    /* Industry Grid */
+    .industry-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+    }
+
+    .industry-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px;
+        background: var(--qm-bg-elevated);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        cursor: pointer;
+        transition: all 0.3s ease;
+        position: relative;
+    }
+
+    .industry-card:hover {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .industry-card.selected {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+        box-shadow: var(--qm-shadow-neon);
+    }
+
+    .industry-icon {
+        width: 52px;
+        height: 52px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .industry-icon .rzi {
+        font-size: 26px;
+    }
+
+    /* Industry-specific colors */
+    .industry-general .industry-icon, .industry-general.industry-icon-large { background: color-mix(in srgb, var(--qm-primary) 15%, transparent); }
+    .industry-general .industry-icon .rzi, .industry-general.industry-icon-large .rzi { color: var(--qm-primary); }
+
+    .industry-hospital .industry-icon, .industry-hospital.industry-icon-large { background: rgba(239, 68, 68, 0.15); }
+    .industry-hospital .industry-icon .rzi, .industry-hospital.industry-icon-large .rzi { color: #ef4444; }
+
+    .industry-bank .industry-icon, .industry-bank.industry-icon-large { background: rgba(34, 197, 94, 0.15); }
+    .industry-bank .industry-icon .rzi, .industry-bank.industry-icon-large .rzi { color: #22c55e; }
+
+    .industry-pharmacy .industry-icon, .industry-pharmacy.industry-icon-large { background: rgba(71, 57, 63, 0.15); }
+    .industry-pharmacy .industry-icon .rzi, .industry-pharmacy.industry-icon-large .rzi { color: #47393f; }
+
+    .industry-electronicsshop .industry-icon, .industry-electronicsshop.industry-icon-large { background: rgba(245, 158, 11, 0.15); }
+    .industry-electronicsshop .industry-icon .rzi, .industry-electronicsshop.industry-icon-large .rzi { color: #f59e0b; }
+
+    .industry-government .industry-icon, .industry-government.industry-icon-large { background: rgba(59, 130, 246, 0.15); }
+    .industry-government .industry-icon .rzi, .industry-government.industry-icon-large .rzi { color: #3b82f6; }
+
+    .industry-telecom .industry-icon, .industry-telecom.industry-icon-large { background: rgba(236, 72, 153, 0.15); }
+    .industry-telecom .industry-icon .rzi, .industry-telecom.industry-icon-large .rzi { color: #ec4899; }
+
+    .industry-restaurant .industry-icon, .industry-restaurant.industry-icon-large { background: rgba(249, 115, 22, 0.15); }
+    .industry-restaurant .industry-icon .rzi, .industry-restaurant.industry-icon-large .rzi { color: #f97316; }
+
+    .industry-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    .industry-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .industry-desc {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin-top: 4px;
+    }
+
+    .selected-check {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        color: var(--qm-primary);
+    }
+
+    .selected-check .rzi {
+        font-size: 24px;
+    }
+
+    /* Kiosk Preview */
+    .kiosk-preview {
+        background: var(--qm-bg-dark);
+        border-radius: var(--qm-radius-xl);
+        padding: 32px;
+        text-align: center;
+        border: 2px solid var(--qm-border);
+    }
+
+    .preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        margin-bottom: 32px;
+    }
+
+    .preview-header .rzi {
+        font-size: 32px;
+        color: var(--qm-primary);
+    }
+
+    .preview-header span {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .preview-services {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 16px;
+        margin-bottom: 32px;
+    }
+
+    .preview-service-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 24px 16px;
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        transition: all 0.3s ease;
+    }
+
+    .preview-service-btn:hover {
+        border-color: var(--qm-primary);
+        transform: translateY(-2px);
+    }
+
+    .preview-service-btn .rzi {
+        font-size: 32px;
+        color: var(--qm-primary);
+    }
+
+    .preview-service-btn span {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .preview-footer {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    /* Features List */
+    .features-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .feature-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 20px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+    }
+
+    .feature-item .rzi {
+        font-size: 24px;
+        color: var(--qm-primary);
+    }
+
+    .feature-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .feature-name {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .feature-desc {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin-top: 2px;
+    }
+
+    /* Action Bar */
+    .action-bar {
+        display: flex;
+        gap: 16px;
+        padding: 24px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+    }
+
+    @@media (max-width: 768px) {
+        .industry-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .current-selection {
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .preview-services {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+
+@code {
+    private IndustryType currentIndustry = IndustryType.General;
+    private bool isSaving = false;
+    private List<IndustryFeature> features = new();
+    private Guid organizationId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        {
+            NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user == null || user.OrganizationId == Guid.Empty)
+        {
+            NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        organizationId = user.OrganizationId;
+
+        var saved = await OrganizationApi.GetIndustrySettingsAsync(organizationId);
+        currentIndustry = saved?.IndustryType ?? IndustryType.General;
+        features = GetIndustryFeatures(currentIndustry);
+        ApplySavedFeatureStates(saved?.Features);
+    }
+
+    private void ApplySavedFeatureStates(Dictionary<string, bool>? savedFeatures)
+    {
+        if (savedFeatures == null || savedFeatures.Count == 0)
+            return;
+
+        foreach (var feature in features)
+        {
+            if (savedFeatures.TryGetValue(feature.Name, out var enabled))
+            {
+                feature.Enabled = enabled;
+            }
+        }
+    }
+
+    private void SelectIndustry(IndustryType industry)
+    {
+        currentIndustry = industry;
+        features = GetIndustryFeatures(industry);
+        StateHasChanged();
+    }
+
+    private async Task SaveSettings()
+    {
+        isSaving = true;
+        try
+        {
+            var request = new IndustrySettingsDto
+            {
+                IndustryType = currentIndustry,
+                Features = features.ToDictionary(f => f.Name, f => f.Enabled)
+            };
+
+            var response = await OrganizationApi.UpdateIndustrySettingsAsync(organizationId, request);
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Settings Saved", "Industry settings have been updated successfully.");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to save settings.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void ResetDefaults()
+    {
+        currentIndustry = IndustryType.General;
+        features = GetIndustryFeatures(currentIndustry);
+        StateHasChanged();
+    }
+
+    private void OpenKiosk()
+    {
+        NavigationManager.NavigateTo("/queue/kiosk", true);
+    }
+
+    private string GetIndustryClass(IndustryType industry) => $"industry-{industry.ToString().ToLower()}";
+
+    private string GetIndustryIcon(IndustryType industry) => industry switch
+    {
+        IndustryType.General => "building",
+        IndustryType.Hospital => "hospital",
+        IndustryType.Bank => "bank",
+        IndustryType.Pharmacy => "capsule",
+        IndustryType.ElectronicsShop => "laptop",
+        IndustryType.Government => "bank2",
+        IndustryType.Telecom => "broadcast-pin",
+        IndustryType.Restaurant => "cup-hot",
+        _ => "building"
+    };
+
+    private string GetIndustryDisplayName(IndustryType industry) => industry switch
+    {
+        IndustryType.General => "General Purpose",
+        IndustryType.Hospital => "Hospital / Healthcare",
+        IndustryType.Bank => "Bank / Financial",
+        IndustryType.Pharmacy => "Pharmacy / Drugstore",
+        IndustryType.ElectronicsShop => "Electronics Shop",
+        IndustryType.Government => "Government Office",
+        IndustryType.Telecom => "Telecom / Service Center",
+        IndustryType.Restaurant => "Restaurant / Food Service",
+        _ => "General Purpose"
+    };
+
+    private string GetIndustryShortDesc(IndustryType industry) => industry switch
+    {
+        IndustryType.General => "Generic queue management",
+        IndustryType.Hospital => "Medical services & patients",
+        IndustryType.Bank => "Banking & transactions",
+        IndustryType.Pharmacy => "Prescriptions & consultation",
+        IndustryType.ElectronicsShop => "Sales, repairs & support",
+        IndustryType.Government => "Public services & permits",
+        IndustryType.Telecom => "Phone & internet services",
+        IndustryType.Restaurant => "Tables & order pickup",
+        _ => "Generic queue management"
+    };
+
+    private string GetIndustryDescription(IndustryType industry) => industry switch
+    {
+        IndustryType.General => "A versatile queue management setup suitable for any type of business or organization. Customize service types to match your specific needs.",
+        IndustryType.Hospital => "Optimized for healthcare facilities with patient management, department routing, and medical terminology. Includes appointment integration and priority queuing for emergencies.",
+        IndustryType.Bank => "Designed for financial institutions with transaction types, priority customers, and secure queue management. Supports VIP banking and investment services.",
+        IndustryType.Pharmacy => "Tailored for pharmacies with prescription pickup, consultation services, and medication counseling. Integrates with pharmacy management systems.",
+        IndustryType.ElectronicsShop => "Perfect for electronics retailers with sales assistance, repair services, and technical support queues. Supports product categories and warranty services.",
+        IndustryType.Government => "Built for government offices with document processing, permit applications, and citizen services. Supports multiple departments and appointment scheduling.",
+        IndustryType.Telecom => "Ideal for telecom service centers with billing inquiries, technical support, and new service registration. Includes account management features.",
+        IndustryType.Restaurant => "Configured for restaurants with table management, takeout orders, and reservation handling. Supports waitlist and order pickup notifications.",
+        _ => "A versatile queue management setup suitable for any type of business."
+    };
+
+    private List<ServicePreview> GetIndustryDefaultServices(IndustryType industry) => industry switch
+    {
+        IndustryType.Hospital => new()
+        {
+            new("General Consultation", "clipboard2-pulse"),
+            new("Emergency", "exclamation-triangle"),
+            new("Lab Tests", "droplet"),
+            new("Pharmacy Pickup", "capsule"),
+            new("Radiology", "x-ray"),
+            new("Appointments", "calendar-check")
+        },
+        IndustryType.Bank => new()
+        {
+            new("Deposits & Withdrawals", "cash-coin"),
+            new("Account Services", "wallet2"),
+            new("Loans & Credit", "credit-card"),
+            new("Foreign Exchange", "currency-exchange"),
+            new("Investment Services", "graph-up-arrow"),
+            new("Customer Support", "headset")
+        },
+        IndustryType.Pharmacy => new()
+        {
+            new("Prescription Pickup", "receipt"),
+            new("Pharmacist Consultation", "person-badge"),
+            new("Health Screening", "heart-pulse"),
+            new("OTC Products", "basket"),
+            new("Refill Request", "arrow-repeat"),
+            new("Insurance Claims", "file-text")
+        },
+        IndustryType.ElectronicsShop => new()
+        {
+            new("Sales Assistance", "cart"),
+            new("Product Returns", "box-arrow-left"),
+            new("Repair Services", "tools"),
+            new("Technical Support", "question-circle"),
+            new("Warranty Claims", "shield-check"),
+            new("Installation", "gear-wide-connected")
+        },
+        IndustryType.Government => new()
+        {
+            new("ID & Documents", "person-badge"),
+            new("Permits & Licenses", "file-earmark-text"),
+            new("Tax Services", "receipt-cutoff"),
+            new("Social Services", "people"),
+            new("Land Registry", "map"),
+            new("General Inquiry", "question-circle")
+        },
+        IndustryType.Telecom => new()
+        {
+            new("New Connection", "plus-circle"),
+            new("Billing & Payments", "cash"),
+            new("Plan Upgrade", "arrow-up-circle"),
+            new("Technical Support", "headset"),
+            new("Device Repair", "phone"),
+            new("Complaints", "exclamation-circle")
+        },
+        IndustryType.Restaurant => new()
+        {
+            new("Table Seating", "table"),
+            new("Takeout Order", "bag"),
+            new("Reservation", "calendar-event"),
+            new("Online Order Pickup", "truck"),
+            new("Catering Inquiry", "balloon"),
+            new("Feedback", "chat-quote")
+        },
+        _ => new()
+        {
+            new("Service A", "1-circle"),
+            new("Service B", "2-circle"),
+            new("Service C", "3-circle"),
+            new("Information", "info-circle"),
+            new("Support", "headset"),
+            new("Other", "three-dots")
+        }
+    };
+
+    private List<IndustryFeature> GetIndustryFeatures(IndustryType industry)
+    {
+        var baseFeatures = new List<IndustryFeature>
+        {
+            new("Voice Announcements", "Enable spoken announcements when calling tokens", "mic", true),
+            new("SMS Notifications", "Send SMS when customer's turn is approaching", "chat-dots", false),
+            new("Priority Queue", "Allow priority customers to skip the regular queue", "arrow-up-circle", true)
+        };
+
+        var industryFeatures = industry switch
+        {
+            IndustryType.Hospital => new List<IndustryFeature>
+            {
+                new("Emergency Priority", "Automatic priority for emergency cases", "exclamation-triangle", true),
+                new("Appointment Integration", "Link with hospital appointment system", "calendar-check", false),
+                new("Patient History", "Show patient visit history to staff", "clock-history", false)
+            },
+            IndustryType.Bank => new List<IndustryFeature>
+            {
+                new("VIP Detection", "Automatically detect VIP account holders", "star-fill", true),
+                new("Transaction Limits", "Show estimated transaction time", "stopwatch", false),
+                new("Multi-Currency Display", "Show exchange rates on display", "currency-exchange", false)
+            },
+            IndustryType.Pharmacy => new List<IndustryFeature>
+            {
+                new("Prescription Ready Alert", "Notify when prescription is ready", "bell", true),
+                new("Drug Interaction Warnings", "Show important medication alerts", "exclamation-triangle", false),
+                new("Insurance Verification", "Quick insurance card scanning", "patch-check", false)
+            },
+            IndustryType.ElectronicsShop => new List<IndustryFeature>
+            {
+                new("Repair Status Tracking", "Real-time repair progress updates", "tools", true),
+                new("Product Availability", "Show stock status to customers", "box-seam", false),
+                new("Warranty Lookup", "Quick warranty status check", "shield-check", false)
+            },
+            _ => new List<IndustryFeature>()
+        };
+
+        return baseFeatures.Concat(industryFeatures).ToList();
+    }
+
+    private class ServicePreview
+    {
+        public string Name { get; set; }
+        public string Icon { get; set; }
+        public ServicePreview(string name, string icon) { Name = name; Icon = icon; }
+    }
+
+    private class IndustryFeature
+    {
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Icon { get; set; }
+        public bool Enabled { get; set; }
+        public IndustryFeature(string name, string desc, string icon, bool enabled)
+        {
+            Name = name; Description = desc; Icon = icon; Enabled = enabled;
+        }
+    }
+}

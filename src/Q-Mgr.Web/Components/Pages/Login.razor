@@ -1,0 +1,876 @@
+@page "/login"
+@layout KioskLayout
+@using QMgr.Web.Services
+@using System.ComponentModel.DataAnnotations
+@using Blazored.LocalStorage
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@attribute [AllowAnonymous]
+@inject IAuthService AuthService
+@inject ILocalStorageService LocalStorage
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Sign In - Q-Mgr</PageTitle>
+
+<div class="login-container">
+    <div class="login-card @(isLoading ? "loading" : "")">
+        @if (currentStep == LoginStep.Email)
+        {
+            <!-- Step 1: Email Input -->
+            <div class="login-header">
+                <div class="logo-wrapper">
+                    <div class="logo-circle">
+                        <QIcon Name="people-fill" Size="32" />
+                    </div>
+                </div>
+                <h1>Welcome</h1>
+                <p>Sign in to your Q-Mgr account</p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger animate-in">
+                    <div class="alert-icon">
+                        <QIcon Name="exclamation-circle-fill" />
+                    </div>
+                    <div class="alert-content">
+                        <strong>Error</strong>
+                        <p>@errorMessage</p>
+                    </div>
+                    <button type="button" class="alert-close" @onclick="@(() => errorMessage = null)">
+                        <QIcon Name="x" />
+                    </button>
+                </div>
+            }
+
+            <EditForm Model="@emailModel" OnValidSubmit="@HandleEmailSubmit" FormName="EmailLoginForm">
+                <DataAnnotationsValidator />
+
+                <div class="form-group">
+                    <label for="email">
+                        <QIcon Name="person-fill" Size="16" />
+                        <span>Email or Username</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <InputText id="email"
+                                   class="form-control"
+                                   type="text"
+                                   @bind-Value="emailModel.Email"
+                                   placeholder="you@company.com or username"
+                                   autocomplete="username"
+                                   disabled="@isLoading"
+                                   @onkeydown="@HandleKeyDown" />
+                        @if (!string.IsNullOrEmpty(emailModel.Email))
+                        {
+                            <button type="button" class="input-clear" @onclick="@(() => emailModel.Email = string.Empty)" tabindex="-1">
+                                <QIcon Name="x-circle-fill" />
+                            </button>
+                        }
+                    </div>
+                    <ValidationMessage For="@(() => emailModel.Email)" class="validation-message" />
+                </div>
+
+                <button type="submit" class="btn-login" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border"></span>
+                        <span>Checking...</span>
+                    }
+                    else
+                    {
+                        <span>Continue</span>
+                        <QIcon Name="arrow-right" Size="18" />
+                    }
+                </button>
+            </EditForm>
+        }
+        else
+        {
+            <!-- Step 2: Password Input -->
+            <div class="login-header">
+                <button type="button" class="btn-back" @onclick="@GoBackToEmail">
+                    <QIcon Name="arrow-left" Size="20" />
+                </button>
+                <div class="user-avatar">
+                    @GetInitials(identifyResponse?.Email ?? "")
+                </div>
+                <h2 class="user-email">@identifyResponse?.Email</h2>
+                <div class="org-badge">
+                    <QIcon Name="building-fill" Size="14" />
+                    <span>@identifyResponse?.OrganizationName</span>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger animate-in">
+                    <div class="alert-icon">
+                        <QIcon Name="exclamation-circle-fill" />
+                    </div>
+                    <div class="alert-content">
+                        <strong>Authentication Failed</strong>
+                        <p>@errorMessage</p>
+                    </div>
+                    <button type="button" class="alert-close" @onclick="@(() => errorMessage = null)">
+                        <QIcon Name="x" />
+                    </button>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <div class="alert alert-success animate-in">
+                    <div class="alert-icon">
+                        <QIcon Name="check-circle-fill" />
+                    </div>
+                    <div class="alert-content">
+                        <p>@successMessage</p>
+                    </div>
+                </div>
+            }
+
+            <EditForm Model="@passwordModel" OnValidSubmit="@HandlePasswordSubmit" FormName="PasswordLoginForm">
+                <DataAnnotationsValidator />
+
+                <div class="form-group">
+                    <label for="password">
+                        <QIcon Name="lock-fill" Size="16" />
+                        <span>Password</span>
+                    </label>
+                    <div class="input-wrapper">
+                        <InputText id="password"
+                                   type="@(showPassword ? "text" : "password")"
+                                   class="form-control"
+                                   @bind-Value="passwordModel.Password"
+                                   placeholder="Enter your password"
+                                   autocomplete="current-password"
+                                   disabled="@isLoading"
+                                   @onkeydown="@HandleKeyDown" />
+                        <button type="button" class="input-toggle" @onclick="@(() => showPassword = !showPassword)" tabindex="-1">
+                            <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
+                        </button>
+                    </div>
+                    <ValidationMessage For="@(() => passwordModel.Password)" class="validation-message" />
+                </div>
+
+                <div class="form-row">
+                    <label class="checkbox-wrapper">
+                        <InputCheckbox @bind-Value="passwordModel.RememberMe" disabled="@isLoading" />
+                        <span class="checkbox-label">Remember me for 30 days</span>
+                    </label>
+                    <a href="/forgot-password" class="link-forgot">Forgot password?</a>
+                </div>
+
+                <button type="submit" class="btn-login" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border"></span>
+                        <span>Signing in...</span>
+                    }
+                    else
+                    {
+                        <QIcon Name="box-arrow-in-right" Size="18" />
+                        <span>Sign In</span>
+                    }
+                </button>
+            </EditForm>
+        }
+
+        <div class="login-footer">
+            <p>
+                Don't have an account?
+                <a href="/register" class="link-register">Create one</a>
+            </p>
+            <div class="footer-links">
+                <a href="/privacy">Privacy Policy</a>
+                <span>•</span>
+                <a href="/terms">Terms of Service</a>
+                <span>•</span>
+                <a href="/support">Support</a>
+            </div>
+            <p class="powered-by">Powered by SACC Software</p>
+        </div>
+    </div>
+
+</div>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    .login-container {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--qm-primary);
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .login-card {
+        background: white;
+        border-radius: var(--qm-radius-xl);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+        padding: 48px;
+        width: 100%;
+        max-width: 480px;
+        position: relative;
+        z-index: 1;
+        animation: slideUp 0.5s ease-out;
+        transition: all 0.3s ease;
+    }
+
+    .login-card.loading {
+        opacity: 0.7;
+        pointer-events: none;
+    }
+
+    @@keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .login-header {
+        text-align: center;
+        margin-bottom: 32px;
+        position: relative;
+    }
+
+    .btn-back {
+        position: absolute;
+        left: 0;
+        top: 0;
+        background: #f5f5f5;
+        border: none;
+        border-radius: var(--qm-radius-lg);
+        padding: 8px;
+        cursor: pointer;
+        color: #666;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-back:hover {
+        background: #e0e0e0;
+        color: var(--qm-primary);
+    }
+
+    .logo-wrapper {
+        margin-bottom: 20px;
+    }
+
+    .logo-circle {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto;
+        background: var(--qm-primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .user-avatar {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 16px;
+        background: var(--qm-primary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 28px;
+        font-weight: 600;
+    }
+
+    .user-email {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1a1a1a;
+        margin: 0 0 12px 0;
+    }
+
+    .org-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #f0f0f0;
+        padding: 6px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 13px;
+        color: #666;
+    }
+
+    .login-header h1 {
+        font-size: 28px;
+        font-weight: 700;
+        color: #1a1a1a;
+        margin: 0 0 8px 0;
+    }
+
+    .login-header p {
+        color: #6c757d;
+        margin: 0;
+        font-size: 15px;
+    }
+
+    .alert {
+        padding: 16px;
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 24px;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        position: relative;
+    }
+
+    .animate-in {
+        animation: fadeInDown 0.3s ease-out;
+    }
+
+    @@keyframes fadeInDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .alert-icon {
+        flex-shrink: 0;
+        font-size: 20px;
+    }
+
+    .alert-content {
+        flex: 1;
+    }
+
+    .alert-content strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 14px;
+    }
+
+    .alert-content p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+
+    .alert-close {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        color: inherit;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+    }
+
+    .alert-close:hover {
+        opacity: 1;
+    }
+
+    .alert-danger {
+        background-color: #fee;
+        color: #c33;
+        border: 1px solid #fdd;
+    }
+
+    .alert-success {
+        background-color: #efe;
+        color: #3c3;
+        border: 1px solid #dfd;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: #333;
+        font-size: 14px;
+    }
+
+    .input-wrapper {
+        position: relative;
+    }
+
+    /* Scoped under .login-card so this beats the dashboard's generic
+       .form-group .form-control rule in app.css (both reuse Bootstrap's
+       class names; without this the dashboard's dark input styling was
+       leaking into this standalone page). */
+    .login-card .form-control {
+        width: 100%;
+        padding: 12px 40px 12px 16px;
+        border: 2px solid #e0e0e0;
+        border-radius: var(--qm-radius-lg);
+        font-size: 15px;
+        transition: all 0.2s;
+        background: #fafafa;
+        color: #1a1a1a;
+    }
+
+    .login-card .form-control:hover {
+        border-color: #d0d0d0;
+        background: white;
+    }
+
+    .login-card .form-control:focus {
+        outline: none;
+        border-color: var(--qm-primary);
+        background: white;
+        box-shadow: 0 0 0 4px var(--qm-primary-light);
+    }
+
+    .login-card .form-control:disabled {
+        background-color: #f5f5f5;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .input-toggle,
+    .input-clear {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #6c757d;
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+    }
+
+    .input-toggle:hover,
+    .input-clear:hover {
+        color: var(--qm-primary);
+    }
+
+    .form-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .checkbox-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .checkbox-label {
+        font-size: 14px;
+        color: #555;
+    }
+
+    .link-forgot {
+        color: var(--qm-primary);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: color 0.2s;
+    }
+
+    .link-forgot:hover {
+        color: var(--qm-primary-dark);
+        text-decoration: underline;
+    }
+
+    .btn-login {
+        width: 100%;
+        padding: 14px;
+        background: var(--qm-primary);
+        color: white;
+        border: none;
+        border-radius: var(--qm-radius-lg);
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+    }
+
+    .btn-login:hover:not(:disabled) {
+        background: var(--qm-primary-dark);
+    }
+
+    .btn-login:active:not(:disabled) {
+        transform: translateY(0);
+    }
+
+    .btn-login:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .spinner-border {
+        width: 18px;
+        height: 18px;
+        border: 2px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        animation: spinner-rotate 0.75s linear infinite;
+    }
+
+    @@keyframes spinner-rotate {
+        to { transform: rotate(360deg); }
+    }
+
+    .login-footer {
+        text-align: center;
+        padding-top: 24px;
+        border-top: 1px solid #e9ecef;
+    }
+
+    .login-footer p {
+        margin: 0 0 16px 0;
+        font-size: 14px;
+        color: #6c757d;
+    }
+
+    .link-register {
+        color: var(--qm-primary);
+        text-decoration: none;
+        font-weight: 600;
+        transition: color 0.2s;
+    }
+
+    .link-register:hover {
+        color: var(--qm-primary-dark);
+        text-decoration: underline;
+    }
+
+    .footer-links {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        font-size: 12px;
+    }
+
+    .footer-links a {
+        color: #6c757d;
+        text-decoration: none;
+        transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+        color: var(--qm-primary);
+    }
+
+    .footer-links span {
+        color: #dee2e6;
+    }
+
+    .login-footer p.powered-by {
+        margin: 12px 0 0 0;
+        font-size: 11px;
+        color: #adb5bd;
+        letter-spacing: 0.02em;
+    }
+
+    .validation-message {
+        color: #dc3545;
+        font-size: 12px;
+        margin-top: 6px;
+        display: block;
+        animation: shake 0.3s ease-in-out;
+    }
+
+    @@keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-5px); }
+        75% { transform: translateX(5px); }
+    }
+
+    /* Mobile Responsive */
+    @@media (max-width: 600px) {
+        .login-card {
+            padding: 32px 24px;
+        }
+
+        .login-header h1 {
+            font-size: 24px;
+        }
+
+        .logo-circle, .user-avatar {
+            width: 64px;
+            height: 64px;
+        }
+
+        .user-avatar {
+            font-size: 24px;
+        }
+
+        .form-row {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .link-forgot {
+            margin-left: auto;
+        }
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private enum LoginStep
+    {
+        Email,
+        Password
+    }
+
+    private LoginStep currentStep = LoginStep.Email;
+    private EmailModel emailModel = new();
+    private PasswordModel passwordModel = new();
+    private IdentifyUserResponse? identifyResponse;
+    private bool isLoading = false;
+    private bool showPassword = false;
+    private string? errorMessage;
+    private string? successMessage;
+    private int loginAttempts = 0;
+    private const int MaxLoginAttempts = 5;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if already authenticated, redirect to dashboard or return URL
+        if (await AuthService.IsAuthenticatedAsync())
+        {
+            var redirectUrl = GetSafeReturnUrl();
+            Navigation.NavigateTo(redirectUrl, forceLoad: true);
+            return;
+        }
+
+        // Load "remember me" preference
+        try
+        {
+            var remembered = await LocalStorage.GetItemAsync<bool>("remember_me");
+            passwordModel.RememberMe = remembered;
+        }
+        catch { }
+    }
+
+    private string GetSafeReturnUrl()
+    {
+        // Validate the return URL to prevent open redirect attacks
+        if (string.IsNullOrWhiteSpace(ReturnUrl))
+            return "/";
+
+        // Only allow relative URLs that start with /
+        if (!ReturnUrl.StartsWith("/") || ReturnUrl.StartsWith("//"))
+            return "/";
+
+        // Don't redirect back to login or unauthorized pages
+        if (ReturnUrl.StartsWith("/login", StringComparison.OrdinalIgnoreCase) ||
+            ReturnUrl.StartsWith("/unauthorized", StringComparison.OrdinalIgnoreCase))
+            return "/";
+
+        return ReturnUrl;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                // Auto-focus email field
+                await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('email')?.focus()");
+            }
+            catch { }
+        }
+    }
+
+    private async Task HandleEmailSubmit()
+    {
+        errorMessage = null;
+        isLoading = true;
+
+        try
+        {
+            var result = await AuthService.IdentifyUserAsync(emailModel.Email.Trim());
+
+            if (result == null)
+            {
+                errorMessage = "No account found with this email address. Please check and try again.";
+            }
+            else
+            {
+                identifyResponse = result;
+                currentStep = LoginStep.Password;
+
+                // Auto-focus password field after render
+                await Task.Delay(100);
+                try
+                {
+                    await JSRuntime.InvokeVoidAsync("eval", "document.getElementById('password')?.focus()");
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Unable to connect to the server. Please check your internet connection.";
+            Console.WriteLine($"Identify error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandlePasswordSubmit()
+    {
+        if (loginAttempts >= MaxLoginAttempts)
+        {
+            errorMessage = $"Too many login attempts. Please try again in a few minutes.";
+            return;
+        }
+
+        errorMessage = null;
+        successMessage = null;
+        isLoading = true;
+
+        try
+        {
+            var success = await AuthService.LoginAsync(
+                emailModel.Email.Trim(),
+                passwordModel.Password,
+                identifyResponse?.OrganizationId);
+
+            if (success)
+            {
+                // Save "remember me" preference
+                await LocalStorage.SetItemAsync("remember_me", passwordModel.RememberMe);
+
+                // Notify authentication state changed
+                if (AuthStateProvider is CustomAuthenticationStateProvider provider)
+                {
+                    provider.NotifyAuthenticationStateChanged();
+                }
+
+                successMessage = "Login successful! Redirecting...";
+                await Task.Delay(500); // Brief delay to show success message
+
+                // Redirect to return URL or dashboard
+                var redirectUrl = GetSafeReturnUrl();
+                Navigation.NavigateTo(redirectUrl, forceLoad: true);
+            }
+            else
+            {
+                loginAttempts++;
+                var attemptsLeft = MaxLoginAttempts - loginAttempts;
+
+                if (attemptsLeft > 0)
+                {
+                    errorMessage = $"Invalid password. {attemptsLeft} attempt{(attemptsLeft != 1 ? "s" : "")} remaining.";
+                }
+                else
+                {
+                    errorMessage = "Account temporarily locked due to too many failed attempts.";
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Unable to connect to the server. Please check your internet connection.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "An unexpected error occurred. Please try again.";
+            Console.WriteLine($"Login error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void GoBackToEmail()
+    {
+        currentStep = LoginStep.Email;
+        passwordModel.Password = string.Empty;
+        errorMessage = null;
+        successMessage = null;
+        loginAttempts = 0;
+    }
+
+    private string GetInitials(string email)
+    {
+        if (string.IsNullOrEmpty(email)) return "?";
+        var parts = email.Split('@');
+        if (parts.Length == 0) return "?";
+        var name = parts[0];
+        return name.Length >= 2 ? name.Substring(0, 2).ToUpper() : name.ToUpper();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isLoading)
+        {
+            if (currentStep == LoginStep.Email)
+                await HandleEmailSubmit();
+            else
+                await HandlePasswordSubmit();
+        }
+    }
+
+    private class EmailModel
+    {
+        // Accepts either an email address or a username — the server looks up both
+        // (AuthController.IdentifyUser/Login), so this is intentionally not [EmailAddress].
+        [Required(ErrorMessage = "Email or username is required")]
+        public string Email { get; set; } = string.Empty;
+    }
+
+    private class PasswordModel
+    {
+        // This is the login form — verifying an existing credential, not creating one — so it
+        // deliberately does not enforce a minimum length here. Password strength rules apply
+        // when a password is set/changed (PasswordValidationService), not when it's checked.
+        [Required(ErrorMessage = "Password is required")]
+        public string Password { get; set; } = string.Empty;
+
+        public bool RememberMe { get; set; } = false;
+    }
+}

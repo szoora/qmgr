@@ -1,0 +1,550 @@
+@page "/admin/service-types"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+
+<PageTitle>Service Types - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Service Types</h1>
+            <p class="subtitle">Configure service types for queue management</p>
+        </div>
+        @if (canCreate)
+        {
+            <QButton Text="Add Service Type" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading service types...</span>
+        </div>
+    }
+    else if (!serviceTypes.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="grid-fill" Size="xl" />
+            <h3>No Service Types</h3>
+            <p>Create service types to categorize your queue tickets</p>
+            @if (canCreate)
+            {
+                <QButton Text="Add First Service Type" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="service-types-grid">
+            @foreach (var service in serviceTypes)
+            {
+                <div class="service-card">
+                    <div class="service-header">
+                        <div class="service-code" style="background-color: @service.Color">
+                            @service.Code
+                        </div>
+                        <div class="service-actions">
+                            @if (canEdit)
+                            {
+                                <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(service))" Title="Edit" />
+                            }
+                            @if (canDelete)
+                            {
+                                <QButton Icon="trash-fill" Variant="ghost" Size="sm" Class="text-danger" OnClick="@(() => DeleteService(service))" Title="Delete" />
+                            }
+                        </div>
+                    </div>
+                    <div class="service-body">
+                        <h4>@service.Name</h4>
+                        <p class="service-description">@(service.Description ?? "No description")</p>
+                    </div>
+                    <div class="service-footer">
+                        <span class="service-stat">
+                            <QIcon Name="ticket-perforated-fill" />
+                            Prefix: @service.Prefix
+                        </span>
+                        <span class="service-stat">
+                            <QIcon Name="clock-fill" />
+                            ~@service.AverageServiceTimeMinutes min
+                        </span>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editingService == null ? "Add Service Type" : "Edit Service Type")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Code" Label="Code *" Placeholder="e.g., A, B, VIP" MaxLength="5" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Name" Label="Name *" Placeholder="Service name" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Description" Type="textarea" Label="Description" Placeholder="Brief description" Rows="2" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@formData.Prefix" Label="Prefix *" Placeholder="e.g., A, B" MaxLength="3" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@formData.EstimatedServiceTime" Type="number" Label="Est. Service Time (min)" Min="1" Max="120" />
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Color</label>
+            <div class="color-picker">
+                @foreach (var color in availableColors)
+                {
+                    <div class="color-option @(formData.Color == color ? "selected" : "")"
+                         style="background-color: @color"
+                         @onclick="@(() => formData.Color = color)"></div>
+                }
+            </div>
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formData.IsActive" Label="Service is active" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" />
+        <QButton Text="@(editingService == null ? "Create" : "Save")" Icon="@(editingService == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveService" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page {
+        padding: 0;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 {
+        margin: 0 0 4px;
+        font-size: 28px;
+        color: var(--qm-text-primary);
+    }
+
+    .subtitle {
+        margin: 0;
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: var(--qm-text-muted);
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        margin-bottom: 16px;
+        color: var(--qm-primary);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 20px;
+    }
+
+    .service-types-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .service-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .service-card:hover {
+        box-shadow: var(--qm-shadow-md);
+        border-color: var(--qm-primary);
+    }
+
+    .service-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .service-code {
+        width: 48px;
+        height: 48px;
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
+    }
+
+    .service-actions {
+        display: flex;
+        gap: 4px;
+    }
+
+    .service-body {
+        padding: 16px;
+    }
+
+    .service-body h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--qm-text-primary);
+    }
+
+    .service-description {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        line-height: 1.5;
+    }
+
+    .service-footer {
+        display: flex;
+        gap: 16px;
+        padding: 12px 16px;
+        background: var(--qm-bg-elevated);
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .service-stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .service-stat .rzi {
+        font-size: 16px;
+        color: var(--qm-primary);
+    }
+
+    /* Dialog */
+    .dialog-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        width: 90%;
+        max-width: 480px;
+        max-height: 90vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dialog-header h3 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .dialog-body {
+        padding: 24px;
+        overflow-y: auto;
+    }
+
+    .dialog-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated);
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-secondary);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .color-picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .color-option {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: all 0.2s ease;
+    }
+
+    .color-option:hover {
+        transform: scale(1.1);
+    }
+
+    .color-option.selected {
+        border-color: var(--qm-text-primary);
+        box-shadow: 0 0 0 2px var(--qm-bg-card), 0 0 0 4px var(--qm-primary);
+    }
+</style>
+
+@code {
+    private List<ServiceTypeDto> serviceTypes = new();
+    private bool isLoading = true;
+    private bool showDialog = false;
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+    private ServiceTypeDto? editingService;
+    private ServiceFormData formData = new();
+
+    private readonly string[] availableColors = new[]
+    {
+        "#8c2f52", "#8c2f52", "#47393f", "#2e242a",
+        "#16a34a", "#10b981", "#f59e0b", "#f59e0b",
+        "#dc2626", "#ef4444", "#d97706", "#e91e63"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Permission check and data loading moved to OnAfterRenderAsync
+        // to ensure tokens are loaded from localStorage first
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check permission (tokens are now loaded from localStorage)
+            if (!await PermissionService.HasPermissionAsync(Permissions.ServiceTypesView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canCreate = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesCreate);
+            canEdit = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesEdit);
+            canDelete = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesDelete);
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId;
+
+            if (branchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+                isLoading = false;
+                return;
+            }
+
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/service-types?includeInactive=true");
+            if (response.IsSuccessStatusCode)
+            {
+                serviceTypes = await response.Content.ReadFromJsonAsync<List<ServiceTypeDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load service types: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingService = null;
+        formData = new ServiceFormData
+        {
+            Code = "",
+            Name = "",
+            Prefix = "",
+            Color = availableColors[0],
+            EstimatedServiceTime = 10,
+            IsActive = true
+        };
+        showDialog = true;
+    }
+
+    private void ShowEditDialog(ServiceTypeDto service)
+    {
+        editingService = service;
+        formData = new ServiceFormData
+        {
+            Code = service.Code,
+            Name = service.Name,
+            Description = service.Description,
+            Prefix = service.Prefix,
+            Color = service.Color ?? availableColors[0],
+            EstimatedServiceTime = service.AverageServiceTimeMinutes,
+            IsActive = true
+        };
+        showDialog = true;
+    }
+
+    private async Task SaveService()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Code) || string.IsNullOrWhiteSpace(formData.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Code and Name are required");
+            return;
+        }
+
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var request = new
+            {
+                Code = formData.Code,
+                Name = formData.Name,
+                Description = formData.Description,
+                Prefix = formData.Prefix,
+                Color = formData.Color,
+                EstimatedServiceTime = formData.EstimatedServiceTime,
+                IsActive = formData.IsActive
+            };
+
+            HttpResponseMessage response;
+            if (editingService == null)
+            {
+                response = await Http.PostAsJsonAsync($"api/v1/branches/{branchId}/service-types", request, JsonOptions);
+            }
+            else
+            {
+                response = await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/service-types/{editingService.Id}", request, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingService == null ? "Service type created" : "Service type updated");
+                showDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save service type: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteService(ServiceTypeDto service)
+    {
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var response = await Http.DeleteAsync($"api/v1/branches/{branchId}/service-types/{service.Id}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Service type deleted");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete service type: {ex.Message}");
+        }
+    }
+
+    private class ServiceFormData
+    {
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string Prefix { get; set; } = "";
+        public string Color { get; set; } = "#8c2f52";
+        public int EstimatedServiceTime { get; set; } = 10;
+        public bool IsActive { get; set; } = true;
+    }
+}

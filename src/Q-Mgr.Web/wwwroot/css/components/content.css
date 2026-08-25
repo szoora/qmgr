@@ -1,0 +1,1105 @@
+/* ============================================
+   Q-Mgr Content Components CSS
+   Media Library, Playlists, Display Zones, Schedules
+   ============================================ */
+
+/* ==========================================
+   MEDIA LIBRARY
+   ========================================== */
+
+.qm-content-media-page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Toolbar */
+.qm-content-toolbar-card {
+    padding: 16px 24px;
+}
+
+.qm-content-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.qm-content-toolbar-left,
+.qm-content-toolbar-right {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+/* Loading State */
+.qm-content-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    gap: 16px;
+    color: var(--qm-text-muted);
+}
+
+/* Empty State */
+.qm-content-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 20px;
+    text-align: center;
+    background: var(--qm-bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--qm-border);
+}
+
+.qm-content-empty .rzi {
+    font-size: 64px;
+    color: var(--qm-text-muted);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.qm-content-empty h3 {
+    margin: 0 0 8px;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-empty p {
+    margin: 0 0 24px;
+    color: var(--qm-text-muted);
+}
+
+/* Media Grid */
+.qm-content-media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px;
+}
+
+/* Media Card */
+.qm-content-media-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.qm-content-media-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    border-color: var(--qm-primary);
+}
+
+.qm-content-media-preview {
+    position: relative;
+    height: 140px;
+    background: var(--qm-bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-content-media-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.qm-content-media-icon .rzi {
+    font-size: 48px;
+    color: var(--qm-text-muted);
+    opacity: 0.5;
+}
+
+.qm-content-media-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.qm-content-media-info {
+    padding: 12px 16px;
+}
+
+.qm-content-media-info h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-media-info p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-media-duration {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 2px 6px;
+    background: var(--qm-bg-elevated);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--qm-text-secondary);
+}
+
+.qm-content-media-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--qm-border);
+}
+
+/* Play Overlay */
+.qm-content-play-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.qm-content-media-card:hover .qm-content-play-overlay {
+    opacity: 1;
+}
+
+.qm-content-play-overlay .rzi {
+    font-size: 48px;
+    color: white;
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+/* ==========================================
+   UPLOAD DIALOG
+   ========================================== */
+
+.qm-content-upload-dialog {
+    max-width: 600px;
+}
+
+.qm-content-upload-area {
+    border: 2px dashed var(--qm-border);
+    border-radius: 12px;
+    padding: 40px 20px;
+    text-align: center;
+    transition: all 0.3s ease;
+    background: var(--qm-bg-elevated);
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-content-upload-area.dragging {
+    border-color: var(--qm-primary);
+    background: var(--qm-primary-light);
+}
+
+.qm-content-upload-area.has-files {
+    padding: 20px;
+    align-items: flex-start;
+}
+
+.qm-content-upload-prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.qm-content-upload-prompt .rzi {
+    font-size: 64px;
+    color: var(--qm-primary);
+    opacity: 0.7;
+}
+
+.qm-content-upload-prompt p {
+    margin: 0;
+    color: var(--qm-text-secondary);
+}
+
+.qm-content-file-input {
+    display: none;
+}
+
+.qm-content-browse-btn {
+    padding: 12px 28px;
+    background: var(--qm-gradient-primary);
+    color: white;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: none;
+}
+
+.qm-content-browse-btn:hover {
+    box-shadow: var(--qm-shadow-neon);
+    transform: translateY(-2px);
+}
+
+.qm-content-file-types {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+    margin-top: 8px;
+}
+
+/* Selected Files List */
+.qm-content-selected-files {
+    width: 100%;
+}
+
+.qm-content-file-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--qm-bg-card);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--qm-border);
+}
+
+.qm-content-file-item .rzi {
+    font-size: 28px;
+    color: var(--qm-primary);
+}
+
+.qm-content-file-details {
+    flex: 1;
+    text-align: left;
+}
+
+.qm-content-file-name {
+    display: block;
+    font-weight: 500;
+    color: var(--qm-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+}
+
+.qm-content-file-size {
+    display: block;
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-add-more {
+    text-align: center;
+    margin-top: 12px;
+}
+
+.qm-content-add-more-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    background: var(--qm-bg-card);
+    border: 1px dashed var(--qm-border);
+    border-radius: 8px;
+    color: var(--qm-text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.qm-content-add-more-btn:hover {
+    border-color: var(--qm-primary);
+    color: var(--qm-primary);
+}
+
+/* Upload Progress */
+.qm-content-upload-progress {
+    margin-top: 16px;
+    text-align: center;
+}
+
+.qm-content-upload-progress span {
+    display: block;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+}
+
+/* ==========================================
+   PREVIEW DIALOG
+   ========================================== */
+
+.qm-content-preview-dialog {
+    max-width: 900px;
+    width: 95%;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.qm-content-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--qm-border);
+    margin-bottom: 16px;
+}
+
+.qm-content-preview-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--qm-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    padding-right: 16px;
+}
+
+.qm-content-preview-body {
+    flex: 1;
+    overflow: hidden;
+    border-radius: 12px;
+    min-height: 300px;
+    background: #000;
+}
+
+.qm-content-preview-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 16px;
+    margin-top: 16px;
+    border-top: 1px solid var(--qm-border);
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.qm-content-media-details {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.qm-content-detail-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+}
+
+.qm-content-detail-item .rzi {
+    font-size: 16px;
+    color: var(--qm-primary);
+}
+
+.qm-content-preview-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* ==========================================
+   ADD URL DIALOG
+   ========================================== */
+
+.qm-content-url-dialog {
+    max-width: 560px;
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-primary);
+}
+
+.qm-content-url-dialog .form-label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: var(--qm-text-primary);
+    font-size: 13px;
+}
+
+.qm-content-url-dialog .required {
+    color: #ef4444;
+}
+
+.qm-content-url-dialog .optional {
+    color: var(--qm-text-muted);
+    font-weight: 400;
+}
+
+.qm-content-url-dialog .form-control,
+.qm-content-url-dialog .form-select {
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-primary);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    width: 100%;
+}
+
+.qm-content-url-dialog .form-control:focus,
+.qm-content-url-dialog .form-select:focus {
+    border-color: var(--qm-primary);
+    box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
+    outline: none;
+}
+
+.qm-content-url-input-wrapper {
+    position: relative;
+}
+
+.qm-content-url-input-wrapper .form-control {
+    padding-right: 120px;
+}
+
+.qm-content-url-spinner {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--qm-primary);
+}
+
+/* Platform Badges */
+.qm-content-platform-badge {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.qm-content-platform-badge.youtube {
+    background: rgba(255, 0, 0, 0.15);
+    color: #ff4444;
+}
+
+.qm-content-platform-badge.vimeo {
+    background: rgba(26, 183, 234, 0.15);
+    color: #1ab7ea;
+}
+
+.qm-content-platform-badge.google {
+    background: rgba(66, 133, 244, 0.15);
+    color: #4285f4;
+}
+
+.qm-content-platform-badge.spotify {
+    background: rgba(30, 215, 96, 0.15);
+    color: #1ed760;
+}
+
+.qm-content-platform-badge.soundcloud {
+    background: rgba(255, 85, 0, 0.15);
+    color: #ff5500;
+}
+
+.qm-content-platform-badge.direct {
+    background: rgba(140, 47, 82, 0.15);
+    color: var(--qm-primary);
+}
+
+/* URL Preview */
+.qm-content-url-preview {
+    margin: 16px 0;
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.qm-content-url-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--qm-bg-elevated);
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-url-preview-content {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-content-url-preview-content img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.qm-content-url-preview .play-icon {
+    position: absolute;
+    font-size: 48px;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+/* Supported Platforms */
+.qm-content-supported-platforms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+    background: var(--qm-bg-elevated);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 11px;
+}
+
+.qm-content-supported-platforms .label {
+    color: var(--qm-text-muted);
+    margin-right: 4px;
+}
+
+.qm-content-supported-platforms .platform {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    color: var(--qm-text-secondary);
+}
+
+/* ==========================================
+   PLAYLISTS
+   ========================================== */
+
+.qm-content-playlists-page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.qm-content-playlists-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.qm-content-playlist-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    gap: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.qm-content-playlist-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    border-color: var(--qm-primary);
+}
+
+.qm-content-playlist-icon {
+    width: 56px;
+    height: 56px;
+    background: var(--qm-gradient-primary);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.qm-content-playlist-icon .rzi {
+    font-size: 28px;
+    color: white;
+}
+
+.qm-content-playlist-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.qm-content-playlist-info h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-playlist-info p {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: var(--qm-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qm-content-playlist-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.qm-content-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-meta-item .rzi {
+    font-size: 14px;
+}
+
+.qm-content-playlist-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* ==========================================
+   DISPLAY ZONES
+   ========================================== */
+
+.qm-content-zones-page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.qm-content-zones-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.qm-content-zone-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.2s ease;
+}
+
+.qm-content-zone-card:hover {
+    border-color: var(--qm-primary);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.qm-content-zone-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}
+
+.qm-content-zone-name {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.qm-content-zone-name .rzi {
+    font-size: 24px;
+    color: var(--qm-primary);
+}
+
+.qm-content-zone-name h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-zone-status {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.qm-content-zone-status.active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+}
+
+.qm-content-zone-status.inactive {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.qm-content-zone-preview {
+    background: var(--qm-bg-elevated);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-zone-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-zone-info-item {
+    display: flex;
+    justify-content: space-between;
+}
+
+.qm-content-zone-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--qm-border);
+}
+
+/* ==========================================
+   SCHEDULES
+   ========================================== */
+
+.qm-content-schedules-page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.qm-content-schedule-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qm-content-schedule-item {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: all 0.2s ease;
+}
+
+.qm-content-schedule-item:hover {
+    border-color: var(--qm-primary);
+}
+
+.qm-content-schedule-time {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--qm-bg-elevated);
+    border-radius: 10px;
+    min-width: 100px;
+}
+
+.qm-content-schedule-time .time {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--qm-primary);
+}
+
+.qm-content-schedule-time .period {
+    font-size: 11px;
+    color: var(--qm-text-muted);
+    text-transform: uppercase;
+}
+
+.qm-content-schedule-info {
+    flex: 1;
+}
+
+.qm-content-schedule-info h4 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-schedule-info p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--qm-text-muted);
+}
+
+.qm-content-schedule-days {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.qm-content-schedule-day {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--qm-bg-elevated);
+    color: var(--qm-text-muted);
+}
+
+.qm-content-schedule-day.active {
+    background: var(--qm-primary);
+    color: white;
+}
+
+.qm-content-schedule-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* ==========================================
+   COMMON DIALOG STYLES
+   ========================================== */
+
+.qm-content-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.qm-content-dialog {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 16px;
+    padding: 24px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.qm-content-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--qm-border);
+}
+
+.qm-content-dialog-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-dialog h3 {
+    margin: 0 0 20px;
+    color: var(--qm-text-primary);
+}
+
+.qm-content-dialog .form-group {
+    margin-bottom: 16px;
+}
+
+.qm-content-dialog .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.qm-content-dialog .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 24px;
+}
+
+.qm-content-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--qm-border);
+}
+
+/* Close Button */
+.qm-content-close-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--qm-bg-elevated);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.qm-content-close-btn:hover {
+    background: var(--qm-primary);
+}
+
+.qm-content-close-btn:hover .rzi,
+.qm-content-close-btn:hover i {
+    color: white;
+}
+
+.qm-content-close-btn .rzi,
+.qm-content-close-btn i {
+    font-size: 20px;
+    color: var(--qm-text-secondary);
+}
+
+/* ==========================================
+   RESPONSIVE STYLES
+   ========================================== */
+
+@media (max-width: 768px) {
+    .qm-content-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .qm-content-toolbar-left,
+    .qm-content-toolbar-right {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .qm-content-media-grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 12px;
+    }
+
+    .qm-content-playlists-grid,
+    .qm-content-zones-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-content-playlist-card {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .qm-content-playlist-icon {
+        margin: 0 auto;
+    }
+
+    .qm-content-playlist-actions {
+        flex-direction: row;
+        justify-content: center;
+    }
+
+    .qm-content-schedule-item {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .qm-content-schedule-time {
+        width: 100%;
+    }
+
+    .qm-content-schedule-days {
+        justify-content: center;
+    }
+
+    .qm-content-dialog {
+        padding: 16px;
+        width: 95%;
+        max-height: 80vh;
+    }
+
+    .qm-content-dialog .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-content-preview-dialog {
+        max-width: 100%;
+        width: 100%;
+        height: 100%;
+        max-height: 100%;
+        border-radius: 0;
+    }
+
+    .qm-content-preview-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .qm-content-preview-actions {
+        justify-content: stretch;
+    }
+
+    .qm-content-preview-actions button {
+        flex: 1;
+    }
+}
+
+@media (max-width: 480px) {
+    .qm-content-media-preview {
+        height: 100px;
+    }
+
+    .qm-content-media-info {
+        padding: 8px 12px;
+    }
+
+    .qm-content-media-info h4 {
+        font-size: 13px;
+    }
+
+    .qm-content-playlist-info h3 {
+        font-size: 14px;
+    }
+
+    .qm-content-zone-name h3 {
+        font-size: 14px;
+    }
+}

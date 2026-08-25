@@ -1,0 +1,1105 @@
+@page "/admin/platform-settings"
+@using System.Text.Json
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IPermissionService PermissionService
+
+<PageTitle>Platform Settings - Q-Mgr</PageTitle>
+
+<!-- Page Header -->
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="gear-fill" Size="32" />
+            Platform Settings
+        </h1>
+        <div class="breadcrumb">
+            <span>Configure platform-wide settings • SuperAdmin Only</span>
+        </div>
+    </div>
+    <div class="header-right">
+        @if (canEdit)
+        {
+            <QButton Icon="arrow-clockwise"
+                     Text="Reload Cache"
+                     Variant="secondary"
+                     OnClick="@ReloadCache"
+                     Disabled="@isLoading" />
+        }
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-banner">
+        <QIcon Name="exclamation-triangle-fill" />
+        <span>@errorMessage</span>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div class="success-banner">
+        <QIcon Name="check-circle-fill" />
+        <span>@successMessage</span>
+    </div>
+}
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading platform settings...</span>
+    </div>
+}
+else if (settings != null && settings.Any())
+{
+    <div class="settings-grid">
+        @foreach (var setting in settings)
+        {
+            <QCard Class="settings-card" @key="setting.Id" Title="@setting.DisplayName" Icon="@setting.Icon">
+                <HeaderActions>
+                    @if (!setting.IsEnabled)
+                    {
+                        <QBadge Text="Disabled" Variant="warning" Size="sm" />
+                    }
+                    @if (!setting.IsEditable)
+                    {
+                        <QBadge Text="Locked" Variant="danger" Size="sm" />
+                    }
+                </HeaderActions>
+                <ChildContent>
+                    <p class="card-description">@setting.Description</p>
+
+                    @if (editingCategory == setting.Category)
+                    {
+                        <!-- Edit Mode: a real form per category, not a JSON textarea -->
+                        <div class="edit-mode">
+                            @switch (setting.Category)
+                            {
+                                case "JWT":
+                                    @RenderJwtForm()
+                                    break;
+                                case "CORS":
+                                    @RenderCorsForm()
+                                    break;
+                                case "RateLimiting":
+                                    @RenderRateLimitForm()
+                                    break;
+                                case "SaaS":
+                                    @RenderSaasForm()
+                                    break;
+                                case "Stripe":
+                                    @RenderStripeForm()
+                                    break;
+                                case "MobileMoney":
+                                    @RenderMobileMoneyForm()
+                                    break;
+                                case "Ads":
+                                    @RenderAdsForm()
+                                    break;
+                                case "Email":
+                                    @RenderEmailForm()
+                                    break;
+                                case "Security":
+                                    @RenderSecurityForm()
+                                    break;
+                            }
+
+                            @if (!string.IsNullOrEmpty(jsonError))
+                            {
+                                <div class="json-error">@jsonError</div>
+                            }
+
+                            <div class="edit-actions">
+                                <QButton Text="Cancel"
+                                         Icon="x-lg"
+                                         Variant="secondary"
+                                         OnClick="@(() => CancelEdit())"
+                                         Disabled="@isSaving" />
+                                <QButton Text="Save Changes"
+                                         Icon="check"
+                                         Variant="primary"
+                                         OnClick="@(() => SaveSettings(setting))"
+                                         Disabled="@isSaving" />
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- View Mode: friendly summary, not raw JSON -->
+                        <div class="settings-summary">
+                            @foreach (var row in GetSummaryRows(setting.Category, setting.SettingsJson))
+                            {
+                                <div class="summary-row">
+                                    <span class="summary-label">@row.Label</span>
+                                    <span class="summary-value">@row.Value</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </ChildContent>
+                <FooterContent>
+                    @if (editingCategory != setting.Category)
+                    {
+                        @if (setting.UpdatedAt.HasValue)
+                        {
+                            <span class="last-updated">
+                                Updated: @setting.UpdatedAt.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                            </span>
+                        }
+
+                        @if (setting.IsEditable && canEdit)
+                        {
+                            <QButton Text="Edit"
+                                     Icon="pencil-fill"
+                                     Variant="primary"
+                                     Size="sm"
+                                     OnClick="@(() => StartEdit(setting))" />
+                        }
+                    }
+                </FooterContent>
+            </QCard>
+        }
+    </div>
+}
+
+<style>
+    .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+        gap: 24px;
+        margin-top: 24px;
+    }
+
+    .settings-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 20px;
+        transition: box-shadow 0.2s;
+    }
+
+    .settings-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 12px;
+    }
+
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .header-left h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .header-right {
+        display: flex;
+        gap: 8px;
+    }
+
+    .card-description {
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        margin-bottom: 16px;
+        line-height: 1.5;
+    }
+
+    /* Friendly read-only summary (view mode) */
+    .settings-summary {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        padding: 4px 14px;
+        margin-bottom: 16px;
+    }
+
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .summary-row:last-child {
+        border-bottom: none;
+    }
+
+    .summary-label {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        flex-shrink: 0;
+    }
+
+    .summary-value {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+        text-align: right;
+        word-break: break-word;
+    }
+
+    .card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 16px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .last-updated {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .edit-mode {
+        background: var(--qm-bg-elevated);
+        border: 2px solid var(--qm-primary);
+        border-radius: var(--qm-radius-sm);
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .edit-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 16px;
+    }
+
+    .json-error {
+        color: var(--qm-danger);
+        font-size: 13px;
+        margin-top: 8px;
+        padding: 8px;
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        border-radius: var(--qm-radius-sm);
+    }
+
+    /* Settings form (edit mode) */
+    .settings-form-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+
+    .settings-form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 14px;
+    }
+
+    .settings-form-group label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .settings-form-group small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .settings-toggle-group {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .settings-toggle-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .settings-toggle-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .settings-toggle-info small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .settings-list-section {
+        margin-bottom: 14px;
+    }
+
+    .settings-list-section > label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+        margin-bottom: 8px;
+    }
+
+    .settings-list-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .settings-list-row .q-input-wrapper {
+        flex: 1;
+    }
+
+    .settings-rule-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr auto;
+        gap: 8px;
+        margin-bottom: 8px;
+        align-items: end;
+    }
+
+    /* Mobile responsive */
+    @@media (max-width: 768px) {
+        .settings-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .card-header {
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .header-right {
+            align-self: flex-start;
+        }
+
+        .settings-rule-row {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+@code {
+    private List<PlatformSettingDto>? settings;
+    private bool isLoading = false;
+    private bool isSaving = false;
+    private bool canEdit = false;
+    private string? errorMessage;
+    private string? successMessage;
+    private string? editingCategory;
+    private string? jsonError;
+
+    // One typed editing model per category — populated from SettingsJson when Edit is
+    // clicked, serialized back to SettingsJson on Save. This is what actually replaces the
+    // old generic JSON textarea with real, labeled form controls per category.
+    private JwtSettingsModel? editJwt;
+    private CorsSettingsModel? editCors;
+    private RateLimitSettingsModel? editRateLimit;
+    private SaasSettingsModel? editSaas;
+    private StripeSettingsModel? editStripe;
+    private MobileMoneySettingsModel? editMobileMoney;
+    private AdsSettingsModel? editAds;
+    private EmailSettingsModel? editEmail;
+    private SecuritySettingsModel? editSecurity;
+
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonWriteOpts = new() { WriteIndented = true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        var hasPermission = await PermissionService.HasPermissionAsync("platform.settings.view");
+        if (!hasPermission)
+        {
+            Navigation.NavigateTo("/unauthorized");
+            return;
+        }
+
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.PlatformSettingsEdit);
+
+        await LoadSettings();
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.GetAsync("api/v1/platform/settings");
+            if (response.IsSuccessStatusCode)
+            {
+                settings = await response.Content.ReadFromJsonAsync<List<PlatformSettingDto>>();
+            }
+            else
+            {
+                errorMessage = "Failed to load platform settings";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading settings: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void StartEdit(PlatformSettingDto setting)
+    {
+        jsonError = null;
+        try
+        {
+            switch (setting.Category)
+            {
+                case "JWT":
+                    editJwt = JsonSerializer.Deserialize<JwtSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "CORS":
+                    editCors = JsonSerializer.Deserialize<CorsSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "RateLimiting":
+                    editRateLimit = JsonSerializer.Deserialize<RateLimitSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "SaaS":
+                    editSaas = JsonSerializer.Deserialize<SaasSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "Stripe":
+                    editStripe = JsonSerializer.Deserialize<StripeSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "MobileMoney":
+                    editMobileMoney = JsonSerializer.Deserialize<MobileMoneySettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "Ads":
+                    editAds = JsonSerializer.Deserialize<AdsSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "Email":
+                    editEmail = JsonSerializer.Deserialize<EmailSettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+                case "Security":
+                    editSecurity = JsonSerializer.Deserialize<SecuritySettingsModel>(setting.SettingsJson, JsonOpts) ?? new();
+                    break;
+            }
+            editingCategory = setting.Category;
+        }
+        catch (JsonException ex)
+        {
+            errorMessage = $"Couldn't read the saved {setting.DisplayName} settings: {ex.Message}";
+        }
+    }
+
+    private void CancelEdit()
+    {
+        editingCategory = null;
+        jsonError = null;
+        editJwt = null;
+        editCors = null;
+        editRateLimit = null;
+        editSaas = null;
+        editStripe = null;
+        editMobileMoney = null;
+        editAds = null;
+        editEmail = null;
+        editSecurity = null;
+    }
+
+    private async Task SaveSettings(PlatformSettingDto setting)
+    {
+        isSaving = true;
+        errorMessage = null;
+        successMessage = null;
+        jsonError = null;
+
+        try
+        {
+            string json = setting.Category switch
+            {
+                "JWT" => JsonSerializer.Serialize(editJwt, JsonWriteOpts),
+                "CORS" => JsonSerializer.Serialize(editCors, JsonWriteOpts),
+                "RateLimiting" => JsonSerializer.Serialize(editRateLimit, JsonWriteOpts),
+                "SaaS" => JsonSerializer.Serialize(editSaas, JsonWriteOpts),
+                "Stripe" => JsonSerializer.Serialize(editStripe, JsonWriteOpts),
+                "MobileMoney" => JsonSerializer.Serialize(editMobileMoney, JsonWriteOpts),
+                "Ads" => JsonSerializer.Serialize(editAds, JsonWriteOpts),
+                "Email" => JsonSerializer.Serialize(editEmail, JsonWriteOpts),
+                "Security" => JsonSerializer.Serialize(editSecurity, JsonWriteOpts),
+                _ => "{}"
+            };
+
+            var response = await Http.PutAsJsonAsync($"api/v1/platform/settings/{setting.Category}", new
+            {
+                SettingsJson = json
+            });
+
+            if (response.IsSuccessStatusCode)
+            {
+                successMessage = $"{setting.DisplayName} updated successfully";
+                CancelEdit();
+                await LoadSettings();
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                errorMessage = error?.Message ?? "Failed to save settings";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving settings: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ReloadCache()
+    {
+        isLoading = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsync("api/v1/platform/settings/reload-cache", null);
+            if (response.IsSuccessStatusCode)
+            {
+                successMessage = "Settings cache reloaded successfully";
+            }
+            else
+            {
+                errorMessage = "Failed to reload cache";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error reloading cache: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ── Friendly read-only summaries (view mode) ─────────────────────────────
+
+    private const string SecretMask = "••••••••";
+
+    private List<(string Label, string Value)> GetSummaryRows(string category, string json)
+    {
+        try
+        {
+            switch (category)
+            {
+                case "JWT":
+                    var jwt = JsonSerializer.Deserialize<JwtSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Secret", string.IsNullOrEmpty(jwt.Secret) ? "(not set)" : SecretMask),
+                        ("Issuer", jwt.Issuer),
+                        ("Audience", jwt.Audience),
+                        ("Token Expiry", $"{jwt.ExpiryMinutes} minutes")
+                    };
+                case "CORS":
+                    var cors = JsonSerializer.Deserialize<CorsSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Allowed Origins", cors.AllowedOrigins.Count == 0 ? "(none)" : string.Join(", ", cors.AllowedOrigins)),
+                        ("Allow Credentials", cors.AllowCredentials ? "Yes" : "No")
+                    };
+                case "RateLimiting":
+                    var rl = JsonSerializer.Deserialize<RateLimitSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Enabled", rl.EnableEndpointRateLimiting ? "Yes" : "No"),
+                        ("Rules", $"{rl.GeneralRules.Count} configured"),
+                        ("Blocked Response Code", rl.HttpStatusCode.ToString())
+                    };
+                case "SaaS":
+                    var saas = JsonSerializer.Deserialize<SaasSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Base Domain", saas.BaseDomain),
+                        ("Trial Length", $"{saas.TrialDays} days"),
+                        ("Default Plan", saas.DefaultPlanCode),
+                        ("Custom Domains", saas.AllowCustomDomains ? "Allowed" : "Not allowed")
+                    };
+                case "Stripe":
+                    var stripe = JsonSerializer.Deserialize<StripeSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Enabled", stripe.Enabled ? "Yes" : "No"),
+                        ("Mode", stripe.TestMode ? "Test" : "Live"),
+                        ("Secret Key", string.IsNullOrEmpty(stripe.SecretKey) ? "(not set)" : SecretMask),
+                        ("Publishable Key", string.IsNullOrEmpty(stripe.PublishableKey) ? "(not set)" : stripe.PublishableKey),
+                        ("Webhook Secret", string.IsNullOrEmpty(stripe.WebhookSecret) ? "(not set)" : SecretMask)
+                    };
+                case "MobileMoney":
+                    var mm = JsonSerializer.Deserialize<MobileMoneySettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Enabled", mm.Enabled ? "Yes" : "No"),
+                        ("Gateway URL", string.IsNullOrEmpty(mm.CrmApiUrl) ? "(not set)" : mm.CrmApiUrl),
+                        ("API Key", string.IsNullOrEmpty(mm.ApiKey) ? "(not set)" : SecretMask)
+                    };
+                case "Ads":
+                    var ads = JsonSerializer.Deserialize<AdsSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Provider", ads.Provider),
+                        ("Show Ads on Free Plan", ads.ShowAdsOnFreePlan ? "Yes" : "No")
+                    };
+                case "Email":
+                    var email = JsonSerializer.Deserialize<EmailSettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("SMTP Host", string.IsNullOrEmpty(email.SmtpHost) ? "(not set)" : $"{email.SmtpHost}:{email.SmtpPort}"),
+                        ("From Address", $"{email.FromName} <{email.FromEmail}>"),
+                        ("Use SSL", email.UseSsl ? "Yes" : "No")
+                    };
+                case "Security":
+                    var sec = JsonSerializer.Deserialize<SecuritySettingsModel>(json, JsonOpts) ?? new();
+                    return new()
+                    {
+                        ("Max Login Attempts", sec.MaxLoginAttempts.ToString()),
+                        ("Lockout Duration", $"{sec.LockoutDurationMinutes} minutes"),
+                        ("Min Password Length", sec.PasswordMinLength.ToString()),
+                        ("Session Timeout", $"{sec.SessionTimeoutMinutes} minutes")
+                    };
+                default:
+                    return new();
+            }
+        }
+        catch
+        {
+            return new() { ("Configuration", "Unable to read saved settings") };
+        }
+    }
+
+    // ── Forms (edit mode) ────────────────────────────────────────────────────
+
+    private RenderFragment RenderJwtForm() => @<div>
+        <div class="settings-form-group">
+            <label>Secret Key</label>
+            <QInput TValue="string" @bind-Value="editJwt!.Secret" Type="password" Placeholder="At least 32 characters" HelperText="Used to sign and verify API tokens — changing this immediately invalidates every issued token." />
+        </div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>Issuer</label>
+                <QInput TValue="string" @bind-Value="editJwt!.Issuer" Placeholder="qmgr-api" />
+            </div>
+            <div class="settings-form-group">
+                <label>Audience</label>
+                <QInput TValue="string" @bind-Value="editJwt!.Audience" Placeholder="qmgr-clients" />
+            </div>
+            <div class="settings-form-group">
+                <label>Token Expiry (minutes)</label>
+                <QInput TValue="int" @bind-Value="editJwt!.ExpiryMinutes" Type="number" Min="1" />
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderCorsForm() => @<div>
+        <div class="settings-list-section">
+            <label>Allowed Origins</label>
+            @for (var i = 0; i < editCors!.AllowedOrigins.Count; i++)
+            {
+                var index = i;
+                <div class="settings-list-row">
+                    <QInput TValue="string" Value="@editCors.AllowedOrigins[index]" ValueChanged="@(v => editCors.AllowedOrigins[index] = v ?? "")" Placeholder="https://example.com" />
+                    <QButton Icon="trash-fill" Variant="danger" Size="sm" OnClick="@(() => editCors.AllowedOrigins.RemoveAt(index))" />
+                </div>
+            }
+            <QButton Text="Add Origin" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => editCors!.AllowedOrigins.Add(""))" />
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editCors!.AllowCredentials" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Allow Credentials</span>
+                <small>Allow cookies and auth headers on cross-origin requests</small>
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderRateLimitForm() => @<div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editRateLimit!.EnableEndpointRateLimiting" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Enable Rate Limiting</span>
+                <small>Turn off to stop enforcing any of the rules below</small>
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editRateLimit!.StackBlockedRequests" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Stack Blocked Requests</span>
+                <small>Count requests blocked by one rule toward other rules too</small>
+            </div>
+        </div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>Real IP Header</label>
+                <QInput TValue="string" @bind-Value="editRateLimit!.RealIpHeader" Placeholder="X-Real-IP" />
+            </div>
+            <div class="settings-form-group">
+                <label>Client ID Header</label>
+                <QInput TValue="string" @bind-Value="editRateLimit!.ClientIdHeader" Placeholder="X-ClientId" />
+            </div>
+            <div class="settings-form-group">
+                <label>Blocked Response Code</label>
+                <QInput TValue="int" @bind-Value="editRateLimit!.HttpStatusCode" Type="number" Min="400" Max="599" />
+            </div>
+        </div>
+        <div class="settings-list-section">
+            <label>Rules (endpoint / period / limit)</label>
+            @for (var i = 0; i < editRateLimit!.GeneralRules.Count; i++)
+            {
+                var rule = editRateLimit.GeneralRules[i];
+                <div class="settings-rule-row">
+                    <QInput TValue="string" @bind-Value="rule.Endpoint" Placeholder="* or post:/api/v1/*/tokens" />
+                    <QInput TValue="string" @bind-Value="rule.Period" Placeholder="1m, 1h" />
+                    <QInput TValue="int" @bind-Value="rule.Limit" Type="number" Min="1" />
+                    <QButton Icon="trash-fill" Variant="danger" Size="sm" OnClick="@(() => editRateLimit.GeneralRules.Remove(rule))" />
+                </div>
+            }
+            <QButton Text="Add Rule" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => editRateLimit!.GeneralRules.Add(new RateLimitRuleModel()))" />
+        </div>
+    </div>;
+
+    private RenderFragment RenderSaasForm() => @<div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>Base Domain</label>
+                <QInput TValue="string" @bind-Value="editSaas!.BaseDomain" Placeholder="qmgr.app" />
+            </div>
+            <div class="settings-form-group">
+                <label>Base URL</label>
+                <QInput TValue="string" @bind-Value="editSaas!.BaseUrl" Placeholder="https://qmgr.app" />
+            </div>
+            <div class="settings-form-group">
+                <label>Trial Length (days)</label>
+                <QInput TValue="int" @bind-Value="editSaas!.TrialDays" Type="number" Min="0" />
+            </div>
+            <div class="settings-form-group">
+                <label>Default Plan Code</label>
+                <QInput TValue="string" @bind-Value="editSaas!.DefaultPlanCode" Placeholder="free" />
+            </div>
+            <div class="settings-form-group">
+                <label>Max Organizations per User</label>
+                <QInput TValue="int" @bind-Value="editSaas!.MaxOrganizationsPerUser" Type="number" Min="1" />
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editSaas!.AllowCustomDomains" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Allow Custom Domains</span>
+                <small>Let tenants point their own domain at their kiosk/display screens</small>
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editSaas!.RequireEmailVerification" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Require Email Verification</span>
+                <small>New accounts must confirm their email before signing in</small>
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderStripeForm() => @<div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editStripe!.Enabled" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Enabled</span>
+                <small>When off, card payment collection is disabled platform-wide regardless of the fields below</small>
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label>Secret Key</label>
+            <QInput TValue="string" @bind-Value="editStripe!.SecretKey" Type="password" Placeholder="sk_live_... or sk_test_..." HelperText="Never share this — it can charge cards and issue refunds on your Stripe account." />
+        </div>
+        <div class="settings-form-group">
+            <label>Publishable Key</label>
+            <QInput TValue="string" @bind-Value="editStripe!.PublishableKey" Placeholder="pk_live_... or pk_test_..." />
+        </div>
+        <div class="settings-form-group">
+            <label>Webhook Secret</label>
+            <QInput TValue="string" @bind-Value="editStripe!.WebhookSecret" Type="password" Placeholder="whsec_..." />
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editStripe!.TestMode" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Test Mode</span>
+                <small>Use Stripe's test environment — no real charges happen</small>
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderMobileMoneyForm() => @<div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editMobileMoney!.Enabled" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Enabled</span>
+                <small>When off, mobile money payment collection is disabled platform-wide regardless of the fields below</small>
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label>Gateway URL</label>
+            <QInput TValue="string" @bind-Value="editMobileMoney!.CrmApiUrl" Placeholder="https://gateway.example.com" HelperText="Base URL of your mobile money payment gateway (e.g. CRM Epay) — not a CRM system." />
+        </div>
+        <div class="settings-form-group">
+            <label>API Key</label>
+            <QInput TValue="string" @bind-Value="editMobileMoney!.ApiKey" Type="password" />
+        </div>
+    </div>;
+
+    private RenderFragment RenderAdsForm() => @<div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>Provider</label>
+                <QInput TValue="string" @bind-Value="editAds!.Provider" Placeholder="internal" HelperText="internal or google" />
+            </div>
+            <div class="settings-form-group">
+                <label>Google AdSense Client ID</label>
+                <QInput TValue="string" @bind-Value="editAds!.GoogleAdSenseClientId" Placeholder="ca-pub-..." />
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label>Internal Ads API URL</label>
+            <QInput TValue="string" @bind-Value="editAds!.InternalAdsApiUrl" Placeholder="/api/v1/ads" />
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editAds!.ShowAdsOnFreePlan" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Show Ads on Free Plan</span>
+                <small>Display ad content on signage for tenants on the free tier</small>
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderEmailForm() => @<div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>SMTP Host</label>
+                <QInput TValue="string" @bind-Value="editEmail!.SmtpHost" Placeholder="smtp.example.com" />
+            </div>
+            <div class="settings-form-group">
+                <label>SMTP Port</label>
+                <QInput TValue="int" @bind-Value="editEmail!.SmtpPort" Type="number" Min="1" Max="65535" />
+            </div>
+            <div class="settings-form-group">
+                <label>SMTP Username</label>
+                <QInput TValue="string" @bind-Value="editEmail!.SmtpUsername" />
+            </div>
+            <div class="settings-form-group">
+                <label>SMTP Password</label>
+                <QInput TValue="string" @bind-Value="editEmail!.SmtpPassword" Type="password" />
+            </div>
+            <div class="settings-form-group">
+                <label>From Email</label>
+                <QInput TValue="string" @bind-Value="editEmail!.FromEmail" Placeholder="noreply@qmgr.app" />
+            </div>
+            <div class="settings-form-group">
+                <label>From Name</label>
+                <QInput TValue="string" @bind-Value="editEmail!.FromName" Placeholder="Q-Mgr" />
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editEmail!.UseSsl" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Use SSL</span>
+                <small>Encrypt the connection to the SMTP server</small>
+            </div>
+        </div>
+    </div>;
+
+    private RenderFragment RenderSecurityForm() => @<div>
+        <div class="settings-form-grid">
+            <div class="settings-form-group">
+                <label>Max Login Attempts</label>
+                <QInput TValue="int" @bind-Value="editSecurity!.MaxLoginAttempts" Type="number" Min="1" />
+            </div>
+            <div class="settings-form-group">
+                <label>Lockout Duration (minutes)</label>
+                <QInput TValue="int" @bind-Value="editSecurity!.LockoutDurationMinutes" Type="number" Min="1" />
+            </div>
+            <div class="settings-form-group">
+                <label>Min Password Length</label>
+                <QInput TValue="int" @bind-Value="editSecurity!.PasswordMinLength" Type="number" Min="4" />
+            </div>
+            <div class="settings-form-group">
+                <label>Session Timeout (minutes)</label>
+                <QInput TValue="int" @bind-Value="editSecurity!.SessionTimeoutMinutes" Type="number" Min="1" />
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireUppercase" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Require Uppercase Letter</span>
+                <small>Passwords must contain at least one uppercase letter</small>
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireDigit" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Require Digit</span>
+                <small>Passwords must contain at least one number</small>
+            </div>
+        </div>
+        <div class="settings-toggle-group">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" @bind="editSecurity!.RequireSpecialChar" />
+            </div>
+            <div class="settings-toggle-info">
+                <span class="settings-toggle-label">Require Special Character</span>
+                <small>Passwords must contain at least one symbol</small>
+            </div>
+        </div>
+    </div>;
+
+    // ── Typed models (mirror the API's Domain/Entities/Platform/PlatformSetting.cs
+    // setting classes field-for-field so JSON round-trips cleanly) ─────────────
+
+    private class JwtSettingsModel
+    {
+        public string Secret { get; set; } = string.Empty;
+        public string Issuer { get; set; } = string.Empty;
+        public string Audience { get; set; } = string.Empty;
+        public int ExpiryMinutes { get; set; } = 60;
+    }
+
+    private class CorsSettingsModel
+    {
+        public List<string> AllowedOrigins { get; set; } = new();
+        public bool AllowCredentials { get; set; } = true;
+    }
+
+    private class RateLimitSettingsModel
+    {
+        public bool EnableEndpointRateLimiting { get; set; } = true;
+        public bool StackBlockedRequests { get; set; }
+        public string RealIpHeader { get; set; } = "X-Real-IP";
+        public string ClientIdHeader { get; set; } = "X-ClientId";
+        public int HttpStatusCode { get; set; } = 429;
+        public List<RateLimitRuleModel> GeneralRules { get; set; } = new();
+    }
+
+    private class RateLimitRuleModel
+    {
+        public string Endpoint { get; set; } = string.Empty;
+        public string Period { get; set; } = string.Empty;
+        public int Limit { get; set; }
+    }
+
+    private class SaasSettingsModel
+    {
+        public string BaseDomain { get; set; } = "qmgr.app";
+        public string BaseUrl { get; set; } = "https://qmgr.app";
+        public int TrialDays { get; set; } = 14;
+        public string DefaultPlanCode { get; set; } = "free";
+        public bool AllowCustomDomains { get; set; } = true;
+        public bool RequireEmailVerification { get; set; } = true;
+        public int MaxOrganizationsPerUser { get; set; } = 5;
+    }
+
+    private class StripeSettingsModel
+    {
+        public string SecretKey { get; set; } = string.Empty;
+        public string PublishableKey { get; set; } = string.Empty;
+        public string WebhookSecret { get; set; } = string.Empty;
+        public bool TestMode { get; set; }
+        public bool Enabled { get; set; } = true;
+    }
+
+    private class MobileMoneySettingsModel
+    {
+        public string CrmApiUrl { get; set; } = string.Empty;
+        public string ApiKey { get; set; } = string.Empty;
+        public bool Enabled { get; set; }
+    }
+
+    private class AdsSettingsModel
+    {
+        public string Provider { get; set; } = "internal";
+        public string GoogleAdSenseClientId { get; set; } = string.Empty;
+        public string InternalAdsApiUrl { get; set; } = "/api/v1/ads";
+        public bool ShowAdsOnFreePlan { get; set; } = true;
+    }
+
+    private class EmailSettingsModel
+    {
+        public string SmtpHost { get; set; } = string.Empty;
+        public int SmtpPort { get; set; } = 587;
+        public string SmtpUsername { get; set; } = string.Empty;
+        public string SmtpPassword { get; set; } = string.Empty;
+        public string FromEmail { get; set; } = string.Empty;
+        public string FromName { get; set; } = "Q-Mgr";
+        public bool UseSsl { get; set; } = true;
+    }
+
+    private class SecuritySettingsModel
+    {
+        public int MaxLoginAttempts { get; set; } = 5;
+        public int LockoutDurationMinutes { get; set; } = 15;
+        public int PasswordMinLength { get; set; } = 8;
+        public bool RequireUppercase { get; set; } = true;
+        public bool RequireDigit { get; set; } = true;
+        public bool RequireSpecialChar { get; set; }
+        public int SessionTimeoutMinutes { get; set; } = 60;
+    }
+
+    private record PlatformSettingDto
+    {
+        public Guid Id { get; init; }
+        public string Category { get; init; } = string.Empty;
+        public string DisplayName { get; init; } = string.Empty;
+        public string? Description { get; init; }
+        public string SettingsJson { get; init; } = "{}";
+        public bool IsEnabled { get; init; }
+        public bool IsEditable { get; init; }
+        public int DisplayOrder { get; init; }
+        public string? Icon { get; init; }
+        public DateTime? UpdatedAt { get; init; }
+    }
+
+    private record ErrorResponse
+    {
+        public string Message { get; init; } = string.Empty;
+    }
+}

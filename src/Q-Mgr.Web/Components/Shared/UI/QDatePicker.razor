@@ -1,0 +1,79 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@if (ShowTime)
+{
+    <input type="time"
+           class="q-input @(HasError ? "q-input--error" : "") @Class"
+           value="@(Value?.ToString("HH:mm"))"
+           disabled="@Disabled"
+           @onchange="HandleTimeChanged"
+           @attributes="AdditionalAttributes" />
+}
+else
+{
+    <input type="date"
+           class="q-input @(HasError ? "q-input--error" : "") @Class"
+           value="@(Value?.ToString("yyyy-MM-dd"))"
+           disabled="@Disabled"
+           @onchange="HandleDateChanged"
+           @attributes="AdditionalAttributes" />
+}
+
+@code {
+    /// <summary>
+    /// The selected date (or time-of-day, when ShowTime is true — only the
+    /// hour/minute components are meaningful in that mode).
+    /// </summary>
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+
+    /// <summary>
+    /// When true, renders a time-of-day picker (native &lt;input type="time"&gt;)
+    /// instead of a date picker.
+    /// </summary>
+    [Parameter] public bool ShowTime { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool HasError { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task HandleDateChanged(ChangeEventArgs e)
+    {
+        var text = e.Value as string;
+        if (string.IsNullOrEmpty(text))
+        {
+            await SetValue(null);
+            return;
+        }
+
+        if (DateTime.TryParse(text, out var parsed))
+        {
+            await SetValue(parsed);
+        }
+    }
+
+    private async Task HandleTimeChanged(ChangeEventArgs e)
+    {
+        var text = e.Value as string;
+        if (string.IsNullOrEmpty(text))
+        {
+            await SetValue(null);
+            return;
+        }
+
+        if (TimeSpan.TryParse(text, out var time))
+        {
+            var baseDate = Value?.Date ?? DateTime.Today;
+            await SetValue(baseDate.Add(time));
+        }
+    }
+
+    private async Task SetValue(DateTime? value)
+    {
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

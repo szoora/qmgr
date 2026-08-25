@@ -1,0 +1,186 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@if (Visible)
+{
+    <div class="q-modal-backdrop @(Visible ? "q-modal-backdrop--visible" : "")" @onclick="HandleBackdropClick">
+        <div class="q-modal @GetSizeClass() @Class" @onclick:stopPropagation="true">
+            @if (!HideHeader)
+            {
+                <div class="q-modal__header">
+                    @if (!string.IsNullOrEmpty(Icon))
+                    {
+                        <i class="@GetIconClass() q-modal__icon"></i>
+                    }
+                    <h2 class="q-modal__title">@Title</h2>
+                    @if (ShowCloseButton)
+                    {
+                        <button type="button" class="q-modal__close" @onclick="Close" aria-label="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    }
+                </div>
+            }
+
+            <div class="q-modal__body @(NoPadding ? "q-modal__body--no-padding" : "")">
+                @ChildContent
+            </div>
+
+            @if (FooterContent != null || ShowDefaultFooter)
+            {
+                <div class="q-modal__footer">
+                    @if (FooterContent != null)
+                    {
+                        @FooterContent
+                    }
+                    else if (ShowDefaultFooter)
+                    {
+                        <QButton Variant="secondary" Icon="x-lg" Text="@CancelText" OnClick="HandleCancel" />
+                        <QButton Variant="primary" Text="@ConfirmText" OnClick="HandleConfirm" Loading="@ConfirmLoading" />
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// Whether the modal is visible
+    /// </summary>
+    [Parameter] public bool Visible { get; set; }
+
+    /// <summary>
+    /// Callback when visibility changes
+    /// </summary>
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>
+    /// Modal title
+    /// </summary>
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>
+    /// Bootstrap icon for the header
+    /// </summary>
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>
+    /// Modal size: sm, md, lg, xl, full
+    /// </summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>
+    /// Whether clicking the backdrop closes the modal
+    /// </summary>
+    [Parameter] public bool CloseOnBackdropClick { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show the close button in header
+    /// </summary>
+    [Parameter] public bool ShowCloseButton { get; set; } = true;
+
+    /// <summary>
+    /// Whether to hide the header entirely
+    /// </summary>
+    [Parameter] public bool HideHeader { get; set; }
+
+    /// <summary>
+    /// Remove padding from body
+    /// </summary>
+    [Parameter] public bool NoPadding { get; set; }
+
+    /// <summary>
+    /// Show default Cancel/Confirm footer buttons
+    /// </summary>
+    [Parameter] public bool ShowDefaultFooter { get; set; }
+
+    /// <summary>
+    /// Text for cancel button
+    /// </summary>
+    [Parameter] public string CancelText { get; set; } = "Cancel";
+
+    /// <summary>
+    /// Text for confirm button
+    /// </summary>
+    [Parameter] public string ConfirmText { get; set; } = "Confirm";
+
+    /// <summary>
+    /// Whether confirm button shows loading state
+    /// </summary>
+    [Parameter] public bool ConfirmLoading { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Main modal content
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Custom footer content
+    /// </summary>
+    [Parameter] public RenderFragment? FooterContent { get; set; }
+
+    /// <summary>
+    /// Called when modal is closed
+    /// </summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>
+    /// Called when cancel button is clicked
+    /// </summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    /// <summary>
+    /// Called when confirm button is clicked
+    /// </summary>
+    [Parameter] public EventCallback OnConfirm { get; set; }
+
+    private string GetSizeClass()
+    {
+        return Size.ToLowerInvariant() switch
+        {
+            "sm" or "small" => "q-modal--sm",
+            "lg" or "large" => "q-modal--lg",
+            "xl" => "q-modal--xl",
+            "full" => "q-modal--full",
+            _ => "q-modal--md"
+        };
+    }
+
+    private string GetIconClass()
+    {
+        if (string.IsNullOrEmpty(Icon)) return "";
+        if (Icon.StartsWith("bi-")) return $"bi {Icon}";
+        return $"bi bi-{Icon}";
+    }
+
+    private async Task HandleBackdropClick()
+    {
+        if (CloseOnBackdropClick)
+        {
+            await Close();
+        }
+    }
+
+    public async Task Close()
+    {
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task HandleCancel()
+    {
+        await OnCancel.InvokeAsync();
+        await Close();
+    }
+
+    private async Task HandleConfirm()
+    {
+        await OnConfirm.InvokeAsync();
+    }
+}

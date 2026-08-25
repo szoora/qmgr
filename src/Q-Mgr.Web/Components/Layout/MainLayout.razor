@@ -1,0 +1,877 @@
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@using System.Text.Json
+@inject NavigationManager NavigationManager
+@inject IAuthService AuthService
+@inject IPermissionService PermissionService
+@inject IQueueApiService QueueApi
+@inject IJSRuntime JSRuntime
+@inject IBranchStateService BranchState
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject INotificationApiService NotificationApi
+@inject INotificationClientService NotificationHub
+@inject AuthenticationStateProvider AuthStateProvider
+@using Blazored.LocalStorage
+@using Microsoft.AspNetCore.Components.Authorization
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+@inject ILocalStorageService LocalStorage
+@inject IAppInitializationService AppInit
+
+@* Show loading state until authentication is determined *@
+@if (!authChecked)
+{
+    <div class="qm-app-loading" data-theme="@currentTheme">
+        <div class="loading-content">
+            <img src="/images/icon-512.svg" alt="Q-Mgr" class="loading-logo" />
+            <div class="spinner-border text-primary mt-3" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="loading-text mt-2">Initializing...</p>
+        </div>
+        <style>
+            .qm-app-loading {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                background: var(--bg-color);
+            }
+            .loading-content {
+                text-align: center;
+            }
+            .loading-logo {
+                width: 80px;
+                height: 80px;
+            }
+            .loading-text {
+                color: var(--text-secondary);
+            }
+        </style>
+    </div>
+}
+else
+{
+<div class="qm-app" data-theme="@currentTheme">
+    <!-- Top Header -->
+    <header class="qm-header">
+        <div class="header-left">
+            <button class="sidebar-toggle" @onclick="ToggleSidebar">
+                <i class="bi bi-list"></i>
+            </button>
+            <a href="/" class="brand">
+                <span class="brand-logo">
+                    <img src="/images/icon-512@(currentTheme == "light" ? "-light" : "").svg" alt="Q-Mgr" />
+                </span>
+                <span class="brand-text">Q-Mgr</span>
+            </a>
+        </div>
+
+        <div class="header-right">
+            <!-- Server Connection Status -->
+            <ConnectionIndicator />
+
+            <!-- Theme Toggle -->
+            <button class="header-btn" @onclick="ToggleTheme" title="@(currentTheme == "dark" ? "Switch to Light Mode" : "Switch to Dark Mode")">
+                <i class="bi @(currentTheme == "dark" ? "bi-sun" : "bi-moon-stars")"></i>
+            </button>
+
+            <!-- Notifications -->
+            <div class="header-notifications">
+                <button class="header-btn" @onclick="ToggleNotifications">
+                    <i class="bi bi-bell"></i>
+                    @if (notificationCount > 0)
+                    {
+                        <span class="notification-badge">@(notificationCount > 99 ? "99+" : notificationCount.ToString())</span>
+                    }
+                </button>
+            </div>
+
+            <!-- Date/Time -->
+            <div class="header-datetime">
+                <span class="date">@currentDateTime.ToString("ddd, MMM dd")</span>
+                <span class="time">@currentDateTime.ToString("HH:mm")</span>
+            </div>
+
+            <!-- User Dropdown -->
+            <div class="dropdown">
+                <button class="user-dropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <div class="user-avatar">
+                        <span>@(currentUser?.FullName?.Substring(0, 1).ToUpper() ?? "U")</span>
+                    </div>
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    <li><span class="dropdown-header">@(currentUser?.FullName ?? "User")</span></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
+                    <li><a class="dropdown-item" href="admin/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
+                    <li><a class="dropdown-item" href="/api/docs" target="_blank"><i class="bi bi-book me-2"></i>API Documentation</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="#" @onclick="Logout" @onclick:preventDefault><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                </ul>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside class="qm-sidebar @(sidebarExpanded ? "expanded" : "collapsed")">
+        <nav class="sidebar-nav">
+            <ul class="nav-menu">
+                @if (canViewDashboard)
+                {
+                    <li class="nav-item">
+                        <a href="/" class="nav-link @(IsActive("/") ? "active" : "")">
+                            <i class="bi bi-speedometer2"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                }
+
+                <!-- Queue Management -->
+                @if (canViewQueue || canManageQueue)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("queue") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("queue"))" @onclick:preventDefault>
+                            <i class="bi bi-people"></i>
+                            <span>Queue Management</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            <li><a href="queue/board" class="@(IsActive("/queue/board") ? "active" : "")"><i class="bi bi-view-list"></i>Live Queue Board</a></li>
+                            @if (canManageQueue)
+                            {
+                                <li><a href="queue/counter" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
+                            }
+                            <li><a href="queue/kiosk" class="@(IsActive("/queue/kiosk") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
+                            <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" class="@(IsActive("/queue/display") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
+                        </ul>
+                    </li>
+                }
+
+                <!-- Digital Signage -->
+                @if (canViewContent)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("content") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("content"))" @onclick:preventDefault>
+                            <i class="bi bi-collection-play"></i>
+                            <span>Digital Signage</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            <li><a href="content/media" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
+                            <li><a href="content/playlists" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
+                            <li><a href="content/campaigns" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaigns</a></li>
+                            <li><a href="content/zones" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
+                            <li><a href="content/schedules" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
+                            <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" class="@(IsActive("/display/signage") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
+                        </ul>
+                    </li>
+                }
+
+                <!-- Reports & Analytics -->
+                @if (canViewReports)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("reports") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("reports"))" @onclick:preventDefault>
+                            <i class="bi bi-graph-up"></i>
+                            <span>Reports & Analytics</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            <li><a href="reports" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
+                            <li><a href="reports/queue" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
+                            <li><a href="reports/counters" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
+                            @if (canViewFeedback)
+                            {
+                                <li><a href="reports/feedback" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Customer Feedback</a></li>
+                            }
+                        </ul>
+                    </li>
+                }
+
+                <!-- Administration -->
+                @if (CanViewAdminSection)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("admin") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("admin"))" @onclick:preventDefault>
+                            <i class="bi bi-shield-lock"></i>
+                            <span>Administration</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            @if (canViewBranches)
+                            {
+                                <li><a href="admin/branches" class="@(IsActive("/admin/branches") ? "active" : "")"><i class="bi bi-building"></i>Branches</a></li>
+                            }
+                            @if (canViewCounters)
+                            {
+                                <li><a href="admin/counters" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
+                            }
+                            @if (canViewServiceTypes)
+                            {
+                                <li><a href="admin/service-types" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
+                            }
+                            @if (canViewUsers || canViewRoles)
+                            {
+                                <li><a href="admin/users" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
+                            }
+                            @if (canViewSettings)
+                            {
+                                <li><a href="admin/printer-settings" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
+                                <li><a href="admin/kiosk-settings" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
+                                <li><a href="admin/industry" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
+                                <li><a href="admin/branding-settings" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
+                            }
+                            @if (canViewApiClients)
+                            {
+                                <li><a href="admin/api-clients" class="@(IsActive("/admin/api-clients") ? "active" : "")"><i class="bi bi-braces"></i>API Clients</a></li>
+                            }
+                            @if (canViewFeedback)
+                            {
+                                <li><a href="admin/feedback" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
+                            }
+                            @if (canViewSettings)
+                            {
+                                <li><a href="admin/integrations" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
+                                <li><a href="admin/customer-links" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
+                            }
+                            @if (canViewNotifications)
+                            {
+                                <li><a href="admin/notification-settings" class="@(IsActive("/admin/notification-settings") ? "active" : "")"><i class="bi bi-bell-fill"></i>Notifications</a></li>
+                            }
+                            @if (canViewSettings)
+                            {
+                                <li><a href="admin/settings" class="@(IsActive("/admin/settings") ? "active" : "")"><i class="bi bi-sliders"></i>System Settings</a></li>
+                            }
+                        </ul>
+                    </li>
+                }
+
+                <!-- Billing & Subscription -->
+                @if (canViewBilling)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("billing") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("billing"))" @onclick:preventDefault>
+                            <i class="bi bi-credit-card"></i>
+                            <span>Billing</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            <li><a href="billing/overview" class="@(IsActive("/billing/overview") ? "active" : "")"><i class="bi bi-grid"></i>Overview</a></li>
+                            <li><a href="billing/subscription" class="@(IsActive("/billing/subscription") ? "active" : "")"><i class="bi bi-star"></i>Subscription</a></li>
+                            <li><a href="billing/invoices" class="@(IsActive("/billing/invoices") ? "active" : "")"><i class="bi bi-receipt"></i>Invoices</a></li>
+                            <li><a href="billing/payment-methods" class="@(IsActive("/billing/payment-methods") ? "active" : "")"><i class="bi bi-wallet2"></i>Payment Methods</a></li>
+                            <li><a href="billing/usage" class="@(IsActive("/billing/usage") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Usage & Limits</a></li>
+                        </ul>
+                    </li>
+                }
+
+                <!-- Platform Administration (SuperAdmin only) -->
+                @if (canViewPlatformAdmin)
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("platform") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("platform"))" @onclick:preventDefault>
+                            <i class="bi bi-cpu"></i>
+                            <span>Platform Admin</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            <li><a href="platform/dashboard" class="@(IsActive("/platform/dashboard") ? "active" : "")"><i class="bi bi-speedometer2"></i>Platform Dashboard</a></li>
+                            <li><a href="platform/tenants" class="@(IsActive("/platform/tenants") ? "active" : "")"><i class="bi bi-building"></i>Tenant Management</a></li>
+                            <li><a href="admin/platform-settings" class="@(IsActive("/admin/platform-settings") ? "active" : "")"><i class="bi bi-gear"></i>Platform Settings</a></li>
+                            <li><a href="admin/platform-spotify" class="@(IsActive("/admin/platform-spotify") ? "active" : "")"><i class="bi bi-spotify"></i>Spotify Integration</a></li>
+                            <li><a href="platform/analytics" class="@(IsActive("/platform/analytics") ? "active" : "")"><i class="bi bi-graph-up-arrow"></i>Platform Analytics</a></li>
+                            <li><a href="platform/system-health" class="@(IsActive("/platform/system-health") ? "active" : "")"><i class="bi bi-heart-pulse"></i>System Health</a></li>
+                        </ul>
+                    </li>
+                }
+            </ul>
+        </nav>
+
+        <!-- Branch Selector -->
+        <div class="sidebar-footer">
+            <div class="branch-selector" @onclick="ShowBranchSelector">
+                <i class="bi bi-building"></i>
+                <div class="branch-info">
+                    <span class="branch-label">Current Branch</span>
+                    <span class="branch-name">@currentBranch?.Name</span>
+                </div>
+                <i class="bi bi-chevron-expand"></i>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="qm-main @(sidebarExpanded ? "" : "expanded")">
+        <div class="page-container">
+            @Body
+        </div>
+
+        <!-- Footer -->
+        <footer class="qm-footer">
+            <span>&copy; @DateTime.Now.Year Q-Mgr Queue Management System</span>
+            <div class="footer-links">
+                <a href="/api/docs" target="_blank">API Docs</a>
+                <span class="version">v1.0.0</span>
+            </div>
+        </footer>
+    </main>
+
+    <!-- Branch Selector Modal -->
+    <QModal Visible="@showBranchDialog" VisibleChanged="@((bool v) => showBranchDialog = v)" Title="Select Branch" Icon="building" Size="md" NoPadding="true">
+        <ChildContent>
+            @if (!availableBranches.Any())
+            {
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-building fs-1 d-block mb-2"></i>
+                    <p class="mb-2">No branches available</p>
+                    <small>Please configure branches in Administration &gt; Branches</small>
+                </div>
+            }
+            else
+            {
+                <div class="branch-list">
+                    @foreach (var branch in availableBranches)
+                    {
+                        <div class="branch-item @(branch.Id == currentBranch?.Id ? "active" : "")" @onclick="() => SelectBranch(branch)">
+                            <i class="bi @(branch.Id == currentBranch?.Id ? "bi-check-circle-fill" : "bi-building")"></i>
+                            <div class="branch-item-info">
+                                <span class="branch-item-name">@branch.Name</span>
+                                <span class="branch-item-address">@branch.Address</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </ChildContent>
+    </QModal>
+
+    <!-- Notifications Panel -->
+    @if (showNotifications)
+    {
+        <div class="modal-backdrop show" @onclick="() => showNotifications = false"></div>
+        <div class="notifications-panel">
+            <div class="notifications-header">
+                <h6>Notifications</h6>
+                <QButton Text="Mark all read" Icon="check2-all" Variant="link" Size="sm" OnClick="MarkAllRead" />
+            </div>
+            <div class="notifications-list">
+                @if (!notifications.Any())
+                {
+                    <div class="notifications-empty">
+                        <i class="bi bi-bell-slash"></i>
+                        <span>No new notifications</span>
+                    </div>
+                }
+                else
+                {
+                    @foreach (var notification in notifications)
+                    {
+                        <div class="notification-item @(notification.IsRead ? "" : "unread")">
+                            <div class="notification-icon @notification.Type">
+                                <i class="bi @GetNotificationIcon(notification.Type)"></i>
+                            </div>
+                            <div class="notification-content">
+                                <span class="notification-title">@notification.Title</span>
+                                <span class="notification-message">@notification.Message</span>
+                                <span class="notification-time">@HumanizeDateTime(notification.CreatedAt)</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    <!-- Connection Lost Overlay -->
+    <ConnectionOverlay />
+</div>
+
+<ToastHost />
+}
+
+@code {
+    private bool authChecked = false;
+    private bool sidebarExpanded = true;
+    private UserInfo? currentUser;
+    private bool isSuperAdmin = false;
+    private string currentTheme = "dark";
+    private DateTime currentDateTime = DateTime.Now;
+    private System.Threading.Timer? clockTimer;
+    private HashSet<string> expandedMenus = new() { "queue" };
+
+    // Branch selector
+    private BranchInfo? currentBranch;
+    private List<BranchInfo> availableBranches = new();
+    private bool showBranchDialog = false;
+
+    // Notifications
+    private int notificationCount = 0;
+    private bool showNotifications = false;
+    private List<NotificationItem> notifications = new();
+
+    // Permissions - cached for menu visibility
+    private bool canViewDashboard = false;
+    private bool canViewQueue = false;
+    private bool canManageQueue = false;
+    private bool canViewContent = false;
+    private bool canViewReports = false;
+    private bool canViewBranches = false;
+    private bool canViewCounters = false;
+    private bool canViewServiceTypes = false;
+    private bool canViewUsers = false;
+    private bool canViewRoles = false;
+    private bool canViewSettings = false;
+    private bool canViewNotifications = false;
+    private bool canViewApiClients = false;
+    private bool canViewFeedback = false;
+    private bool canViewBilling = false;
+    private bool canViewPlatformAdmin = false;
+    private bool tokensInitialized = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // During pre-rendering, TokenStorageService is empty and localStorage isn't available
+        // We'll load everything in OnAfterRenderAsync instead
+        currentUser = await AuthService.GetCurrentUserAsync();
+
+        // If we have a user from TokenStorageService (already logged in this session)
+        if (currentUser != null)
+        {
+            isSuperAdmin = await PermissionService.IsSuperAdminAsync();
+
+            // Load permissions for menu visibility
+            await LoadPermissionsAsync();
+
+            // Load branches
+            await LoadBranches();
+
+            // Load notifications
+            await LoadNotifications();
+
+            // Mark auth as checked since we already have a user
+            authChecked = true;
+            tokensInitialized = true;
+        }
+        // If no user, don't set authChecked yet - wait for OnAfterRenderAsync to load tokens from localStorage
+
+        // Start clock timer
+        clockTimer = new System.Threading.Timer(async _ =>
+        {
+            currentDateTime = DateTime.Now;
+            await InvokeAsync(StateHasChanged);
+        }, null, 0, 1000);
+
+        // Load theme preference (works even without auth)
+        // This will be called after first render when JS interop is available
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Load theme from localStorage (requires JS interop)
+            try
+            {
+                var savedTheme = await LocalStorage.GetItemAsync<string>("qmgr-theme");
+                if (!string.IsNullOrEmpty(savedTheme))
+                {
+                    currentTheme = savedTheme;
+                }
+                await JSRuntime.InvokeVoidAsync("eval", $"document.documentElement.setAttribute('data-theme', '{currentTheme}')");
+            }
+            catch { }
+        }
+
+        if (firstRender && !tokensInitialized)
+        {
+            try
+            {
+                // Load tokens from localStorage into TokenStorageService on first render
+                // This is when JavaScript interop is available
+                await AppInit.InitializeAsync();
+                tokensInitialized = true;
+
+                // Reload user info now that tokens are available
+                currentUser = await AuthService.GetCurrentUserAsync();
+
+                // If we now have a user, refresh the UI
+                if (currentUser != null)
+                {
+                    isSuperAdmin = await PermissionService.IsSuperAdminAsync();
+                    await LoadPermissionsAsync();
+                    await LoadBranches();
+                    await LoadNotifications();
+
+                    // Mark auth as checked and show the app
+                    authChecked = true;
+                    StateHasChanged();
+                }
+                else
+                {
+                    // No auth found, redirect to login
+                    // Get the current path for return URL
+                    var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+                    if (string.IsNullOrEmpty(currentPath) ||
+                        currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
+                        currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
+                    {
+                        NavigationManager.NavigateTo("/login", forceLoad: true);
+                    }
+                    else
+                    {
+                        NavigationManager.NavigateTo($"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}", forceLoad: true);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error and redirect to login
+                Console.WriteLine($"Error loading auth state: {ex.Message}");
+                NavigationManager.NavigateTo("/login", forceLoad: true);
+            }
+        }
+    }
+
+    private async Task LoadBranches()
+    {
+        await BranchState.InitializeAsync();
+
+        try
+        {
+            // Load branches from API
+            var response = await Http.GetAsync("api/v1/branches");
+            if (response.IsSuccessStatusCode)
+            {
+                var apiBranches = await response.Content.ReadFromJsonAsync<List<BranchApiDto>>(JsonOptions);
+                availableBranches = apiBranches?.Select(b => new BranchInfo
+                {
+                    Id = b.Id,
+                    Name = b.Name,
+                    Address = b.Address ?? ""
+                }).ToList() ?? new List<BranchInfo>();
+            }
+        }
+        catch
+        {
+            // Fallback to empty list if API fails
+            availableBranches = new List<BranchInfo>();
+        }
+
+        // Update branch availability in state service
+        BranchState.SetBranchAvailability(availableBranches.Count);
+
+        // Set current branch if branches exist
+        if (availableBranches.Any())
+        {
+            currentBranch = availableBranches.FirstOrDefault(b => b.Id == BranchState.CurrentBranchId)
+                            ?? availableBranches.FirstOrDefault();
+
+            // Update BranchState if we selected a branch
+            if (currentBranch != null && BranchState.CurrentBranchId != currentBranch.Id)
+            {
+                await BranchState.SetBranchAsync(currentBranch.Id, currentBranch.Name);
+            }
+        }
+    }
+
+    private record BranchApiDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string? Address { get; init; }
+        public bool IsActive { get; init; }
+    }
+
+    private async Task LoadNotifications()
+    {
+        try
+        {
+            // Fetch notifications from API
+            var apiNotifications = await NotificationApi.GetNotificationsAsync(false, 20);
+            notifications = apiNotifications.Select(n => new NotificationItem
+            {
+                Id = n.Id,
+                Title = n.Title,
+                Message = n.Message,
+                Type = MapNotificationType(n.Type),
+                IconClass = n.IconClass,
+                CreatedAt = n.CreatedAt,
+                IsRead = n.IsRead,
+                ActionUrl = n.ActionUrl
+            }).ToList();
+
+            notificationCount = await NotificationApi.GetUnreadCountAsync();
+
+            // Connect to SignalR for real-time updates. BUG FIX: RenderMode.InteractiveServer
+            // prerenders by default, so OnInitializedAsync (and therefore LoadNotifications)
+            // genuinely runs twice per page load — once during the static prerender pass,
+            // once again for the real interactive circuit. Each invocation used to open its
+            // own live HubConnection (they're separate component/DI-scope instances, so the
+            // Phase 15 per-instance dedup fix in NotificationClientService doesn't cover this
+            // case), so a single server-side notification broadcast rendered as 2 duplicate
+            // entries — confirmed live: 1 real DB row, 2 items in the dropdown, on a single
+            // fresh page load. Only ever open the connection for the real interactive circuit.
+            if (currentUser != null && RendererInfo.IsInteractive)
+            {
+                await ConnectToNotificationHub(currentUser.Id);
+            }
+        }
+        catch
+        {
+            // Fallback to empty notifications if API fails
+            notifications = new List<NotificationItem>();
+            notificationCount = 0;
+        }
+    }
+
+    private async Task LoadPermissionsAsync()
+    {
+        canViewDashboard = await PermissionService.HasPermissionAsync(Permissions.DashboardView);
+        canViewQueue = await PermissionService.HasPermissionAsync(Permissions.QueueView);
+        canManageQueue = await PermissionService.HasPermissionAsync(Permissions.QueueManage);
+        canViewContent = await PermissionService.HasPermissionAsync(Permissions.ContentView);
+        canViewReports = await PermissionService.HasPermissionAsync(Permissions.ReportsView);
+        canViewBranches = await PermissionService.HasPermissionAsync(Permissions.BranchesView);
+        canViewCounters = await PermissionService.HasPermissionAsync(Permissions.CountersView);
+        canViewServiceTypes = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesView);
+        canViewUsers = await PermissionService.HasPermissionAsync(Permissions.UsersView);
+        canViewRoles = await PermissionService.HasPermissionAsync(Permissions.RolesView);
+        canViewSettings = await PermissionService.HasPermissionAsync(Permissions.SettingsView);
+        canViewNotifications = await PermissionService.HasPermissionAsync(Permissions.NotificationsView);
+        canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
+        canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
+        canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
+        canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
+    }
+
+    // Helper property to check if admin section should be visible
+    private bool CanViewAdminSection =>
+        canViewBranches || canViewCounters || canViewServiceTypes ||
+        canViewUsers || canViewRoles || canViewSettings ||
+        canViewNotifications || canViewApiClients || canViewFeedback;
+
+    private async Task ConnectToNotificationHub(Guid userId)
+    {
+        try
+        {
+            // BUG FIX: this method can genuinely run more than once for the same circuit
+            // (OnInitializedAsync during prerendering, then again in OnAfterRenderAsync for
+            // the real interactive circuit — and possibly a further retry if the first
+            // StartAsync attempt fails, which the web-run.log confirmed actually happens:
+            // "Failed to connect" immediately followed by a later successful "Connected" on
+            // the same page load). `+=` is not idempotent — subscribing twice registers the
+            // same handler twice, so a single server-side broadcast fires HandleNewNotification
+            // twice and renders as 2 duplicate entries even though only one HubConnection ends
+            // up alive (confirmed live: 1 real DB row, 2 items in the dropdown, on a single
+            // fresh page load, with the server log showing exactly one successful "Connected").
+            // Unsubscribe first so re-entry can never double-register.
+            NotificationHub.OnNotificationReceived -= HandleNewNotification;
+            NotificationHub.OnUnreadCountUpdated -= HandleUnreadCountUpdate;
+            NotificationHub.OnNotificationReceived += HandleNewNotification;
+            NotificationHub.OnUnreadCountUpdated += HandleUnreadCountUpdate;
+
+            // Start the connection
+            await NotificationHub.StartAsync(userId, currentBranch?.Id);
+        }
+        catch
+        {
+            // Silently fail - notifications will still work via polling
+        }
+    }
+
+    private async Task HandleNewNotification(NotificationDto notification)
+    {
+        await InvokeAsync(() =>
+        {
+            notifications.Insert(0, new NotificationItem
+            {
+                Id = notification.Id,
+                Title = notification.Title,
+                Message = notification.Message,
+                Type = MapNotificationType(notification.Type),
+                IconClass = notification.IconClass,
+                CreatedAt = notification.CreatedAt,
+                IsRead = notification.IsRead,
+                ActionUrl = notification.ActionUrl
+            });
+
+            // Keep only the latest 20 notifications
+            if (notifications.Count > 20)
+            {
+                notifications = notifications.Take(20).ToList();
+            }
+
+            notificationCount++;
+            StateHasChanged();
+        });
+    }
+
+    private async Task HandleUnreadCountUpdate(int count)
+    {
+        await InvokeAsync(() =>
+        {
+            notificationCount = count;
+            StateHasChanged();
+        });
+    }
+
+    private static string MapNotificationType(string type) => type switch
+    {
+        "TokenCreated" => "info",
+        "TokenCalled" => "success",
+        "TokenReminder" => "warning",
+        "TokenCancelled" => "error",
+        "SystemAlert" => "warning",
+        "CounterAlert" => "warning",
+        _ => "info"
+    };
+
+    private void ToggleSidebar()
+    {
+        sidebarExpanded = !sidebarExpanded;
+    }
+
+    private async Task ToggleTheme()
+    {
+        currentTheme = currentTheme == "dark" ? "light" : "dark";
+        try
+        {
+            await LocalStorage.SetItemAsync("qmgr-theme", currentTheme);
+            // Apply theme to html element for Radzen dialogs
+            await JSRuntime.InvokeVoidAsync("eval", $"document.documentElement.setAttribute('data-theme', '{currentTheme}')");
+        }
+        catch { }
+        StateHasChanged();
+    }
+
+    private void ToggleMenu(string menuKey)
+    {
+        if (expandedMenus.Contains(menuKey))
+            expandedMenus.Remove(menuKey);
+        else
+            expandedMenus.Add(menuKey);
+    }
+
+    private bool IsMenuExpanded(string menuKey) => expandedMenus.Contains(menuKey);
+
+    private bool IsActive(string path)
+    {
+        var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        if (string.IsNullOrEmpty(currentPath)) currentPath = "/";
+        else currentPath = "/" + currentPath;
+
+        return currentPath.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+               (path != "/" && currentPath.StartsWith(path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ShowBranchSelector()
+    {
+        showBranchDialog = true;
+    }
+
+    private async Task SelectBranch(BranchInfo branch)
+    {
+        currentBranch = branch;
+        showBranchDialog = false;
+        await BranchState.SetBranchAsync(branch.Id, branch.Name);
+        StateHasChanged();
+    }
+
+    private void ToggleNotifications()
+    {
+        showNotifications = !showNotifications;
+    }
+
+    private async Task MarkAllRead()
+    {
+        await NotificationApi.MarkAllAsReadAsync();
+        foreach (var n in notifications)
+        {
+            n.IsRead = true;
+        }
+        notificationCount = 0;
+        StateHasChanged();
+    }
+
+    private async Task MarkAsRead(NotificationItem notification)
+    {
+        if (!notification.IsRead)
+        {
+            await NotificationApi.MarkAsReadAsync(notification.Id);
+            notification.IsRead = true;
+            notificationCount = Math.Max(0, notificationCount - 1);
+            StateHasChanged();
+        }
+    }
+
+    private string GetNotificationIcon(string type) => type switch
+    {
+        "success" => "bi-check-circle",
+        "warning" => "bi-exclamation-triangle",
+        "error" => "bi-x-circle",
+        _ => "bi-info-circle"
+    };
+
+    private string HumanizeDateTime(DateTime dateTime)
+    {
+        // BUG FIX: dateTime (notification.CreatedAt) is always a UTC instant (the API sets it
+        // via DateTime.UtcNow), but this compared it against DateTime.Now — the Blazor Server
+        // *server's* local clock, not the browser's. Whenever the server's local timezone
+        // isn't UTC, every relative timestamp was off by exactly that offset (e.g. "3h ago"
+        // for a notification created a minute ago, on a UTC+3 server).
+        var diff = DateTime.UtcNow - dateTime;
+        if (diff.TotalMinutes < 1) return "Just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        return dateTime.ToString("MMM dd");
+    }
+
+    private async Task Logout()
+    {
+        await AuthService.LogoutAsync();
+
+        // Notify authentication state changed
+        if (AuthStateProvider is CustomAuthenticationStateProvider provider)
+        {
+            provider.NotifyAuthenticationStateChanged();
+        }
+
+        NavigationManager.NavigateTo("/login", forceLoad: true);
+    }
+
+    private class BranchInfo
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Address { get; set; } = "";
+    }
+
+    private class NotificationItem
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Type { get; set; } = "info";
+        public string? IconClass { get; set; }
+        public string? ActionUrl { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsRead { get; set; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        clockTimer?.Dispose();
+
+        // Unsubscribe from notification events
+        NotificationHub.OnNotificationReceived -= HandleNewNotification;
+        NotificationHub.OnUnreadCountUpdated -= HandleUnreadCountUpdate;
+
+        // Stop the SignalR connection
+        await NotificationHub.StopAsync();
+    }
+}

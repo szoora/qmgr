@@ -1,0 +1,337 @@
+@page "/reports"
+@using QMgr.Application.DTOs
+@inject IQueueApiService QueueApi
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+
+<PageTitle>Reports & Analytics - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Reports & Analytics</h1>
+    <div class="breadcrumb">
+        <span>Overview of queue performance and analytics</span>
+    </div>
+</div>
+
+<div class="reports-overview">
+    <!-- Quick Stats Summary -->
+    <div class="stats-row">
+        <div class="stats-card primary">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@todayServed</span>
+                    <span class="stats-label">Served Today</span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="check-circle-fill" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card success">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@avgWaitTime min</span>
+                    <span class="stats-label">Avg Wait Time</span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="clock-fill" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card warning">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@avgServiceTime min</span>
+                    <span class="stats-label">Avg Service Time</span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="stopwatch-fill" />
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-card info">
+            <div class="stats-content">
+                <div class="stats-info">
+                    <span class="stats-number">@activeCounters</span>
+                    <span class="stats-label">Active Counters</span>
+                </div>
+                <div class="stats-icon">
+                    <QIcon Name="door-open-fill" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Report Cards -->
+    <div class="report-cards">
+        <QCard Class="report-card" @onclick="@(() => NavigateToReport("queue"))">
+            <div class="report-card-icon queue">
+                <QIcon Name="bar-chart-fill" />
+            </div>
+            <h3>Queue Analytics</h3>
+            <p>Analyze queue patterns, peak hours, and service distribution</p>
+            <span class="report-link">View Report <QIcon Name="arrow-right" /></span>
+        </QCard>
+
+        <QCard Class="report-card" @onclick="@(() => NavigateToReport("counters"))">
+            <div class="report-card-icon counters">
+                <QIcon Name="speedometer2" />
+            </div>
+            <h3>Counter Performance</h3>
+            <p>Monitor counter efficiency, staff performance, and utilization</p>
+            <span class="report-link">View Report <QIcon Name="arrow-right" /></span>
+        </QCard>
+
+        <QCard Class="report-card" @onclick="@(() => NavigateToReport("feedback"))">
+            <div class="report-card-icon feedback">
+                <QIcon Name="chat-dots-fill" />
+            </div>
+            <h3>Customer Feedback</h3>
+            <p>Review customer satisfaction scores and feedback trends</p>
+            <span class="report-link">View Report <QIcon Name="arrow-right" /></span>
+        </QCard>
+    </div>
+
+    <!-- Date Range Selector -->
+    <QCard Class="filter-card">
+        <h4>Generate Custom Report</h4>
+        <div class="filter-row">
+            <div class="filter-item">
+                <label class="q-input__label">From Date</label>
+                <QDatePicker @bind-Value="@fromDate" />
+            </div>
+            <div class="filter-item">
+                <label class="q-input__label">To Date</label>
+                <QDatePicker @bind-Value="@toDate" />
+            </div>
+            <div class="filter-item">
+                <QSelect TValue="string" TItem="ReportTypeOption" @bind-Value="@selectedReportType" Items="@reportTypes"
+                    TextSelector="@(r => r.Text)" ValueSelector="@(r => r.Value)" Label="Report Type" />
+            </div>
+            <div class="filter-item filter-actions">
+                <QButton Text="Generate Report" Icon="file-earmark-text-fill" Variant="primary" OnClick="@GenerateReport" />
+                <QButton Text="Export PDF" Icon="file-pdf-fill" Variant="secondary" OnClick="@ExportPdf" />
+            </div>
+        </div>
+    </QCard>
+</div>
+
+<style>
+    .reports-overview {
+        padding: 0;
+    }
+
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stats-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid;
+    }
+
+    .stats-card.primary { border-left-color: var(--qm-primary); }
+    .stats-card.success { border-left-color: var(--qm-success); }
+    .stats-card.warning { border-left-color: var(--qm-warning); }
+    .stats-card.info { border-left-color: var(--qm-info); }
+
+    .stats-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .stats-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .stats-number {
+        font-size: 32px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .stats-label {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .stats-icon {
+        font-size: 48px;
+        opacity: 0.3;
+    }
+
+    .report-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .report-card {
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+        padding: 24px;
+    }
+
+    .report-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .report-card-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        margin-bottom: 16px;
+        color: white;
+    }
+
+    .report-card-icon.queue { background: var(--qm-gradient-primary); }
+    .report-card-icon.counters { background: linear-gradient(135deg, #47393f 0%, #2e242a 100%); }
+    .report-card-icon.feedback { background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); }
+
+    .report-card h3 {
+        margin: 0 0 8px 0;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    .report-card p {
+        margin: 0 0 16px 0;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .report-link {
+        color: var(--qm-primary);
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .filter-card {
+        padding: 24px;
+    }
+
+    .filter-card h4 {
+        margin: 0 0 20px 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        align-items: flex-end;
+    }
+
+    .filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .filter-actions {
+        display: flex;
+        gap: 10px;
+        flex-direction: row;
+    }
+</style>
+
+@code {
+    private int todayServed = 0;
+    private int avgWaitTime = 0;
+    private int avgServiceTime = 0;
+    private int activeCounters = 0;
+    private DateTime? fromDate = DateTime.Today.AddDays(-7);
+    private DateTime? toDate = DateTime.Today;
+    private string selectedReportType = "summary";
+
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+
+    private List<ReportTypeOption> reportTypes = new()
+    {
+        new ReportTypeOption { Text = "Summary Report", Value = "summary" },
+        new ReportTypeOption { Text = "Detailed Queue Report", Value = "queue" },
+        new ReportTypeOption { Text = "Counter Performance", Value = "counters" },
+        new ReportTypeOption { Text = "Service Type Analysis", Value = "services" }
+    };
+
+    private class ReportTypeOption
+    {
+        public string Text { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId != Guid.Empty
+                ? BranchState.CurrentBranchId
+                : Guid.Parse("00000000-0000-0000-0000-000000000001");
+            var status = await QueueApi.GetQueueStatusAsync(branchId);
+            if (status != null)
+            {
+                todayServed = status.Summary.TotalCompletedToday;
+                avgWaitTime = (int)status.Summary.AverageWaitMinutes;
+                avgServiceTime = (int)status.Summary.AverageServiceMinutes;
+                activeCounters = status.Counters?.Count(c => c.Status == "Active") ?? 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading report data: {ex.Message}");
+        }
+    }
+
+    private void NavigateToReport(string report)
+    {
+        NavigationManager.NavigateTo($"/reports/{report}");
+    }
+
+    private void GenerateReport()
+    {
+        // Not implemented yet — was previously a silent no-op button.
+        NotificationService.Notify(ToastSeverity.Info, "Coming soon", "Custom report generation isn't available yet.", 4000);
+    }
+
+    private void ExportPdf()
+    {
+        // Not implemented yet — was previously a silent no-op button.
+        NotificationService.Notify(ToastSeverity.Info, "Coming soon", "PDF export isn't available yet.", 4000);
+    }
+}

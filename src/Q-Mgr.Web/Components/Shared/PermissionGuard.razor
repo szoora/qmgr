@@ -1,0 +1,185 @@
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+@*
+    Permission Guard Component
+
+    Usage:
+    <PermissionGuard Permission="Permissions.UsersCreate">
+        <button @onclick="CreateUser">Create User</button>
+    </PermissionGuard>
+
+    With multiple permissions (any):
+    <PermissionGuard Permissions="@(new[] { "users.view", "users.edit" })" RequireAll="false">
+        <UserList />
+    </PermissionGuard>
+
+    With redirect on unauthorized:
+    <PermissionGuard Permission="Permissions.PlatformAdmin" RedirectOnUnauthorized="true">
+        <AdminPanel />
+    </PermissionGuard>
+
+    With fallback content:
+    <PermissionGuard Permission="Permissions.UsersCreate">
+        <Authorized><button>Create User</button></Authorized>
+        <NotAuthorized><span class="text-muted">No permission to create users</span></NotAuthorized>
+    </PermissionGuard>
+*@
+
+@if (_isLoading)
+{
+    @if (LoadingContent != null)
+    {
+        @LoadingContent
+    }
+}
+else if (_hasPermission)
+{
+    @if (Authorized != null)
+    {
+        @Authorized
+    }
+    else
+    {
+        @ChildContent
+    }
+}
+else
+{
+    @if (NotAuthorized != null)
+    {
+        @NotAuthorized
+    }
+    else if (ShowUnauthorizedMessage)
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-shield-x"></i> You don't have permission to view this content.
+        </div>
+    }
+}
+
+@code {
+    /// <summary>
+    /// Single permission to check (use this OR Permissions, not both)
+    /// </summary>
+    [Parameter]
+    public string? Permission { get; set; }
+
+    /// <summary>
+    /// Multiple permissions to check (use this OR Permission, not both)
+    /// </summary>
+    [Parameter]
+    public string[]? Permissions { get; set; }
+
+    /// <summary>
+    /// If true, user must have ALL permissions. If false (default), user needs ANY permission.
+    /// Only applies when using Permissions parameter.
+    /// </summary>
+    [Parameter]
+    public bool RequireAll { get; set; } = false;
+
+    /// <summary>
+    /// Content to display when user has permission
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Content to display when user has permission (alternative to ChildContent)
+    /// </summary>
+    [Parameter]
+    public RenderFragment? Authorized { get; set; }
+
+    /// <summary>
+    /// Content to display when user lacks permission
+    /// </summary>
+    [Parameter]
+    public RenderFragment? NotAuthorized { get; set; }
+
+    /// <summary>
+    /// Content to display while checking permissions
+    /// </summary>
+    [Parameter]
+    public RenderFragment? LoadingContent { get; set; }
+
+    /// <summary>
+    /// If true, shows a default "no permission" message when NotAuthorized is not provided
+    /// </summary>
+    [Parameter]
+    public bool ShowUnauthorizedMessage { get; set; } = false;
+
+    /// <summary>
+    /// If true, redirects to /unauthorized page when permission check fails
+    /// </summary>
+    [Parameter]
+    public bool RedirectOnUnauthorized { get; set; } = false;
+
+    /// <summary>
+    /// The URL to redirect to when unauthorized (default: /unauthorized)
+    /// </summary>
+    [Parameter]
+    public string UnauthorizedRedirectUrl { get; set; } = "/unauthorized";
+
+    private bool _isLoading = true;
+    private bool _hasPermission = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckPermissionAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await CheckPermissionAsync();
+    }
+
+    private async Task CheckPermissionAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Permission))
+            {
+                // Single permission check
+                _hasPermission = await PermissionService.HasPermissionAsync(Permission);
+            }
+            else if (Permissions != null && Permissions.Length > 0)
+            {
+                // Multiple permissions check
+                if (RequireAll)
+                {
+                    _hasPermission = await PermissionService.HasAllPermissionsAsync(Permissions);
+                }
+                else
+                {
+                    _hasPermission = await PermissionService.HasAnyPermissionAsync(Permissions);
+                }
+            }
+            else
+            {
+                // No permission specified - allow by default
+                _hasPermission = true;
+            }
+
+            // Handle redirect if unauthorized
+            if (!_hasPermission && RedirectOnUnauthorized)
+            {
+                Navigation.NavigateTo(UnauthorizedRedirectUrl, forceLoad: true);
+                return;
+            }
+        }
+        catch
+        {
+            // On error, deny access
+            _hasPermission = false;
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+}

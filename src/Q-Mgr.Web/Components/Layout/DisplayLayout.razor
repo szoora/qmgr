@@ -1,0 +1,75 @@
+@inherits LayoutComponentBase
+@using System.Text.RegularExpressions
+@using QMgr.Web.Services
+@inject IOrganizationApiService OrganizationApi
+@inject NavigationManager Navigation
+
+<div class="display-layout" data-theme="@displayTheme" style="@brandingStyle">
+    @Body
+</div>
+
+<style>
+    .display-layout {
+        min-height: 100vh;
+        overflow: hidden;
+    }
+</style>
+
+@code {
+    // Falls back to the demo branch only when the page's own URL carries no branch
+    // GUID segment (e.g. a bookmarked bare "/display" URL).
+    private static readonly Guid DefaultBranchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private string brandingStyle = string.Empty;
+    private string displayTheme = "dark";
+
+    // A @layout component doesn't receive its page's [Parameter] route values directly (the
+    // layout wraps *above* Body in the render tree, so the page can't cascade a value up to it)
+    // — reading the branch GUID back out of the already-resolved page URL is the standard
+    // workaround. Falls back to DefaultBranchId when the current URL has no GUID segment.
+    private Guid ResolveBranchIdFromUrl()
+    {
+        var path = new Uri(Navigation.Uri).AbsolutePath;
+        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Guid.TryParse(segment, out var parsed) && parsed != Guid.Empty)
+                return parsed;
+        }
+        return DefaultBranchId;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var branchId = ResolveBranchIdFromUrl();
+        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId);
+
+        // Applies regardless of WhitelabelEnabled — dark/light is a basic display
+        // preference available on every plan, unlike the colors/logo below.
+        displayTheme = branding.DisplayTheme is "light" ? "light" : "dark";
+
+        if (!branding.WhitelabelEnabled)
+            return;
+
+        // Scoped CSS custom-property overrides — only the tokens a tenant can
+        // actually customize, applied only to this layout's subtree, so a
+        // whitelabeled display never affects the rest of the app. Values come
+        // from the database (tenant-supplied), so they're validated as plain
+        // hex colors before going anywhere near an inline `style` attribute —
+        // a stray `;` or `}` in an unvalidated value could break out of the
+        // declaration.
+        var overrides = new List<string>();
+        AddIfValidColor(overrides, "--qm-primary", branding.PrimaryColor);
+        AddIfValidColor(overrides, "--qm-secondary", branding.SecondaryColor);
+        AddIfValidColor(overrides, "--qm-accent-orange", branding.AccentColor);
+
+        if (overrides.Count > 0)
+            brandingStyle = string.Join("; ", overrides);
+    }
+
+    private static readonly Regex HexColor = new(@"^#[0-9a-fA-F]{3,8}$", RegexOptions.Compiled);
+
+    private static void AddIfValidColor(List<string> overrides, string cssVar, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && HexColor.IsMatch(value))
+            overrides.Add($"{cssVar}: {value}");
+    }
+}

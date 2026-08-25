@@ -1,0 +1,273 @@
+@using Microsoft.JSInterop
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IContentApiService ContentApi
+@inject ISpotifyApiService SpotifyApi
+@inject ISignalRService SignalR
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@*
+    Single source of truth for "play this branch's ad/content playlist" — loading
+    the playlist, keeping it live via SignalR, recording campaign impressions, and
+    remembering the visitor's audio-unlock choice. Drop this in on any page that
+    needs to show a branch's signage content (CustomerDisplay's ad zone, the
+    full-screen SignageDisplay route, or any future placement) instead of each
+    page wiring up its own copy of this logic.
+*@
+
+@if (isLoading)
+{
+    @if (LoadingContent != null)
+    {
+        @LoadingContent
+    }
+}
+else if (playlist.Count == 0)
+{
+    @if (EmptyContent != null)
+    {
+        @EmptyContent
+    }
+}
+else
+{
+    <div class="@CssClass">
+        <PlaylistPlayer Playlist="playlist"
+                         AutoAdvance="true"
+                         Muted="@audioMuted"
+                         MutedChanged="HandleMutedChanged"
+                         ShowMuteToggle="true"
+                         ShowProgress="false"
+                         ShowControls="false"
+                         ShowNowPlaying="false"
+                         OnItemChanged="HandleItemChanged" />
+    </div>
+}
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public RenderFragment? LoadingContent { get; set; }
+    [Parameter] public RenderFragment? EmptyContent { get; set; }
+
+    private const string AudioPrefKey = "qmgr-signage-audio-enabled";
+
+    private bool isLoading = true;
+    private List<PlaylistPlayer.PlaylistItemModel> playlist = new();
+    private Guid? currentPlaylistId;
+    private string? spotifyPlaylistId;
+
+    // Browsers block unmuted autoplay without a user gesture, so playback starts
+    // muted by default; a tap on PlaylistPlayer's mute toggle unlocks it, and that
+    // choice is remembered per-browser via localStorage so it survives reloads.
+    private bool audioMuted = true;
+
+    private DotNetObjectReference<AdSignagePlayer>? spotifyDotNetRef;
+    private bool spotifyDeviceReady = false;
+    // Spotify access tokens last ~1 hour; signage runs unattended for days, so
+    // the player is periodically re-initialized with a fresh token rather than
+    // exposing the API's base URL to raw JS for a client-side refetch.
+    private System.Threading.Timer? spotifyTokenRefreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPlaylist();
+        await SignalR.ConnectAsync(BranchId);
+        SignalR.OnPlaylistUpdated += HandlePlaylistUpdated;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var enabled = await JS.InvokeAsync<string?>("localStorage.getItem", AudioPrefKey);
+            if (enabled == "true")
+            {
+                audioMuted = false;
+                await SyncSpotifyPlayback();
+                StateHasChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Plays whichever playlist is configured for this branch. Branches aren't
+    /// expected to run more than one "always on" playlist for signage today, so
+    /// the first result is the active one; an explicit zone-to-playlist
+    /// assignment (via Displays/DisplayZones) would be the next step if a branch
+    /// needs more than one.
+    /// </summary>
+    private async Task LoadPlaylist()
+    {
+        isLoading = true;
+
+        var playlists = await ContentApi.GetPlaylistsAsync(BranchId);
+        var target = playlists.FirstOrDefault();
+        if (target == null)
+        {
+            playlist = new();
+            isLoading = false;
+            return;
+        }
+
+        var detail = await ContentApi.GetPlaylistAsync(target.Id);
+        currentPlaylistId = target.Id;
+        var previousSpotifyPlaylistId = spotifyPlaylistId;
+        spotifyPlaylistId = detail?.SpotifyPlaylistId;
+
+        if (detail == null || detail.Items.Count == 0)
+        {
+            playlist = new();
+            isLoading = false;
+            return;
+        }
+
+        playlist = detail.Items
+            .Where(i => !string.IsNullOrEmpty(i.FileUrl))
+            .OrderBy(i => i.Position)
+            .Select(i => new PlaylistPlayer.PlaylistItemModel
+            {
+                Id = i.Id,
+                MediaContentId = i.MediaContentId,
+                Name = i.MediaName,
+                FileUrl = i.FileUrl!,
+                ContentType = i.MediaType,
+                DurationSeconds = i.DurationSeconds > 0 ? i.DurationSeconds : detail.DefaultDurationSeconds,
+                Order = i.Position,
+                CampaignId = i.CampaignId,
+                CampaignActive = i.CampaignActive
+            })
+            .ToList();
+
+        isLoading = false;
+
+        if (spotifyPlaylistId != previousSpotifyPlaylistId && !audioMuted)
+        {
+            await SyncSpotifyPlayback();
+        }
+    }
+
+    /// <summary>
+    /// Starts, switches, or stops Spotify background playback to match the
+    /// current playlist's SpotifyPlaylistId and mute state. Playback is
+    /// deliberately gated behind the same unmute gesture as the video/image
+    /// content — the Web Playback SDK is subject to the same browser
+    /// autoplay-without-a-gesture restriction as a plain &lt;video&gt; element.
+    /// </summary>
+    private async Task SyncSpotifyPlayback()
+    {
+        if (audioMuted || string.IsNullOrEmpty(spotifyPlaylistId))
+        {
+            if (spotifyDeviceReady)
+            {
+                var pauseToken = await SpotifyApi.GetPlaybackTokenAsync();
+                if (pauseToken != null)
+                    await JS.InvokeVoidAsync("spotifyPlayerInterop.pause", pauseToken);
+            }
+            return;
+        }
+
+        var token = await SpotifyApi.GetPlaybackTokenAsync();
+        if (token == null)
+            return; // Spotify not connected at the platform level — nothing to play
+
+        spotifyDotNetRef ??= DotNetObjectReference.Create(this);
+
+        if (!spotifyDeviceReady)
+        {
+            await JS.InvokeVoidAsync("spotifyPlayerInterop.init", token, spotifyDotNetRef);
+            StartSpotifyTokenRefreshTimer();
+            // Actual playback starts from OnPlayerReady once the device comes online.
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("spotifyPlayerInterop.playPlaylist", token, spotifyPlaylistId);
+        }
+    }
+
+    private void StartSpotifyTokenRefreshTimer()
+    {
+        spotifyTokenRefreshTimer?.Dispose();
+        spotifyTokenRefreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (audioMuted || string.IsNullOrEmpty(spotifyPlaylistId)) return;
+
+            var freshToken = await SpotifyApi.GetPlaybackTokenAsync();
+            if (freshToken != null && spotifyDotNetRef != null)
+            {
+                await InvokeAsync(() => JS.InvokeVoidAsync("spotifyPlayerInterop.init", freshToken, spotifyDotNetRef));
+            }
+        }, null, TimeSpan.FromMinutes(45), TimeSpan.FromMinutes(45));
+    }
+
+    [JSInvokable]
+    public async Task OnPlayerReady(string deviceId)
+    {
+        spotifyDeviceReady = true;
+        if (!audioMuted && !string.IsNullOrEmpty(spotifyPlaylistId))
+        {
+            var token = await SpotifyApi.GetPlaybackTokenAsync();
+            if (token != null)
+                await JS.InvokeVoidAsync("spotifyPlayerInterop.playPlaylist", token, spotifyPlaylistId);
+        }
+    }
+
+    [JSInvokable]
+    public void OnPlayerError(string message)
+    {
+        Console.WriteLine($"Spotify playback error on branch {BranchId}: {message}");
+    }
+
+    /// <summary>
+    /// Fired by PlaylistPlayer each time a new item starts displaying. Records a
+    /// campaign impression when the item is campaign-attached and the campaign is
+    /// currently within its active date range (computed server-side, not trusted
+    /// to this page's own clock — see ContentController.GetPlaylist's CampaignActive
+    /// mapping). Fire-and-forget: an impression-recording failure shouldn't affect
+    /// what's actually playing on the display.
+    /// </summary>
+    private async Task HandleItemChanged(PlaylistPlayer.PlaylistItemModel item)
+    {
+        if (item.CampaignId.HasValue && item.CampaignActive)
+        {
+            await ContentApi.RecordCampaignImpressionAsync(item.CampaignId.Value, item.MediaContentId);
+        }
+    }
+
+    private async Task HandleMutedChanged(bool muted)
+    {
+        audioMuted = muted;
+        await JS.InvokeVoidAsync("localStorage.setItem", AudioPrefKey, (!muted).ToString().ToLowerInvariant());
+        await SyncSpotifyPlayback();
+    }
+
+    private void HandlePlaylistUpdated(Guid playlistId)
+    {
+        // Only the playlist currently on screen matters here; other branches'
+        // edits also flow through this group filter server-side, but re-check
+        // client-side too since a branch can have multiple playlists.
+        if (currentPlaylistId != null && currentPlaylistId != playlistId)
+            return;
+
+        InvokeAsync(async () =>
+        {
+            await LoadPlaylist();
+            StateHasChanged();
+        });
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        SignalR.OnPlaylistUpdated -= HandlePlaylistUpdated;
+        spotifyTokenRefreshTimer?.Dispose();
+
+        if (spotifyDeviceReady)
+        {
+            try { await JS.InvokeVoidAsync("spotifyPlayerInterop.disconnect"); }
+            catch { /* circuit may already be gone */ }
+        }
+
+        spotifyDotNetRef?.Dispose();
+    }
+}

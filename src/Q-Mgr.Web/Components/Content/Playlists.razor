@@ -1,0 +1,564 @@
+@page "/content/playlists"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@inject IContentApiService ContentApi
+@inject ISpotifyApiService SpotifyApi
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+
+<PageTitle>Playlists - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Playlists</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Playlists") })" />
+    </div>
+</div>
+
+<div class="playlists-page">
+    <!-- Toolbar -->
+    <QCard Class="toolbar-card">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search playlists..." IconLeft="search" />
+            </div>
+            <div class="toolbar-right">
+                @if (canCreate)
+                {
+                    <QButton Text="New Playlist" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+                }
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading playlists...</span>
+        </div>
+    }
+    else if (!playlists.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="collection-play-fill" />
+            <h3>No Playlists Yet</h3>
+            <p>Create playlists to organize your media content for display.</p>
+            @if (canCreate)
+            {
+                <QButton Text="Create First Playlist" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="playlists-grid">
+            @foreach (var playlist in FilteredPlaylists)
+            {
+                <QCard Class="playlist-card" @onclick="@(() => OpenPlaylist(playlist))">
+                    <div class="playlist-icon">
+                        <QIcon Name="collection-play-fill" />
+                    </div>
+                    <div class="playlist-info">
+                        <h3>@playlist.Name</h3>
+                        <p>@(playlist.Description ?? "No description")</p>
+                        <div class="playlist-meta">
+                            <span class="meta-item">
+                                <QIcon Name="images" />
+                                @playlist.ItemCount items
+                            </span>
+                            <span class="meta-item">
+                                <QIcon Name="clock-fill" />
+                                @playlist.ScheduleType
+                            </span>
+                            @if (playlist.Loop)
+                            {
+                                <span class="meta-item">
+                                    <QIcon Name="arrow-repeat" />
+                                    Loop
+                                </span>
+                            }
+                        </div>
+                    </div>
+                    <div class="playlist-actions">
+                        @if (canEdit)
+                        {
+                            <QButton Icon="pencil-fill" Size="sm" Variant="secondary" OnClick="@(async () => await EditPlaylist(playlist))" StopPropagation="true" />
+                        }
+                        @if (canDelete)
+                        {
+                            <QButton Icon="trash-fill" Size="sm" Variant="danger" OnClick="@(() => DeletePlaylist(playlist))" StopPropagation="true" />
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<!-- Create/Edit Playlist Dialog -->
+<QModal @bind-Visible="showDialog" Title="@(isEditing ? "Edit Playlist" : "Create Playlist")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@editModel.Name" Label="Name *" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@editModel.Description" Type="textarea" Label="Description" Rows="2" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="@editModel.ScheduleType" Items="@scheduleTypes" Label="Schedule Type" />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="@editModel.TransitionType" Items="@transitionTypes" Label="Transition" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@editModel.DefaultDurationSeconds" Type="number" Label="Default Duration (sec)" Min="1" Max="300" />
+            </div>
+            <div class="form-group checkbox-group">
+                <QCheckbox @bind-Value="@editModel.Loop" Label="Loop playlist" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="string" TItem="SpotifyPlaylistDto" Value="@editModel.SpotifyPlaylistId" ValueChanged="@OnSpotifyPlaylistSelected"
+                Items="@availableSpotifyPlaylists" ValueSelector="@(p => p.Id)" TextSelector="@(p => p.Name)"
+                AllowClear="true" Label="Background Music (optional)" Placeholder="No background music"
+                HelperText="Sourced from the platform's connected Spotify account (Administration → Spotify Integration)." />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseDialog" />
+        <QButton Text="@(isEditing ? "Save" : "Create")" Icon="@(isEditing ? "check-lg" : "plus-lg")" Variant="primary" OnClick="@SavePlaylist" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Playlist"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .playlists-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .toolbar-card {
+        padding: 16px 24px;
+    }
+
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        gap: 12px;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 80px 20px;
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+    }
+
+    .playlists-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+
+    .playlist-card {
+        padding: 20px;
+        display: flex;
+        gap: 16px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .playlist-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .playlist-icon {
+        width: 56px;
+        height: 56px;
+        background: linear-gradient(135deg, var(--qm-primary) 0%, var(--qm-primary-dark) 100%);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .playlist-icon .rzi {
+        font-size: 28px;
+        color: white;
+    }
+
+    .playlist-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .playlist-info h3 {
+        margin: 0 0 4px;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .playlist-info p {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .playlist-meta {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .meta-item .rzi {
+        font-size: 14px;
+    }
+
+    .playlist-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        width: 90%;
+        max-width: 500px;
+    }
+
+    .dialog-content h3 {
+        margin: 0 0 20px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group .rz-label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 24px;
+    }
+
+    .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 24px;
+    }
+</style>
+
+@code {
+    private List<PlaylistDto> playlists = new();
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private bool showDialog = false;
+    private bool isEditing = false;
+    private PlaylistEditModel editModel = new();
+    private Guid? editingId;
+
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private List<string> scheduleTypes = new() { "always", "scheduled", "conditional" };
+    private List<string> transitionTypes = new() { "fade", "slide", "none" };
+    private List<SpotifyPlaylistDto> availableSpotifyPlaylists = new();
+    private bool spotifyPlaylistsLoaded = false;
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private PlaylistDto? playlistToDelete;
+
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+
+    private IEnumerable<PlaylistDto> FilteredPlaylists => playlists
+        .Where(p => string.IsNullOrEmpty(searchTerm) || p.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        await LoadPlaylists();
+    }
+
+    private async Task LoadPlaylists()
+    {
+        isLoading = true;
+        playlists = await ContentApi.GetPlaylistsAsync(branchId);
+        isLoading = false;
+    }
+
+    private async Task ShowCreateDialog()
+    {
+        editModel = new PlaylistEditModel
+        {
+            ScheduleType = "always",
+            TransitionType = "fade",
+            DefaultDurationSeconds = 10,
+            Loop = true
+        };
+        isEditing = false;
+        editingId = null;
+        showDialog = true;
+        await EnsureSpotifyPlaylistsLoaded();
+    }
+
+    private async Task EditPlaylist(PlaylistDto playlist)
+    {
+        editModel = new PlaylistEditModel
+        {
+            Name = playlist.Name,
+            Description = playlist.Description,
+            ScheduleType = playlist.ScheduleType,
+            TransitionType = playlist.TransitionType,
+            DefaultDurationSeconds = playlist.DefaultDurationSeconds,
+            Loop = playlist.Loop,
+            SpotifyPlaylistId = playlist.SpotifyPlaylistId,
+            SpotifyPlaylistName = playlist.SpotifyPlaylistName
+        };
+        isEditing = true;
+        editingId = playlist.Id;
+        showDialog = true;
+        await EnsureSpotifyPlaylistsLoaded();
+    }
+
+    private async Task EnsureSpotifyPlaylistsLoaded()
+    {
+        if (spotifyPlaylistsLoaded) return;
+        availableSpotifyPlaylists = await SpotifyApi.GetPlaylistsAsync();
+        spotifyPlaylistsLoaded = true;
+    }
+
+    private void OnSpotifyPlaylistSelected(string? spotifyPlaylistId)
+    {
+        editModel.SpotifyPlaylistId = spotifyPlaylistId;
+        editModel.SpotifyPlaylistName = availableSpotifyPlaylists.FirstOrDefault(p => p.Id == spotifyPlaylistId)?.Name;
+    }
+
+    private void CloseDialog()
+    {
+        showDialog = false;
+    }
+
+    private async Task SavePlaylist()
+    {
+        if (string.IsNullOrEmpty(editModel.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name is required.");
+            return;
+        }
+
+        if (isEditing && editingId.HasValue)
+        {
+            var request = new UpdatePlaylistRequest
+            {
+                Name = editModel.Name,
+                Description = editModel.Description,
+                ScheduleType = editModel.ScheduleType,
+                TransitionType = editModel.TransitionType,
+                DefaultDurationSeconds = editModel.DefaultDurationSeconds,
+                Loop = editModel.Loop
+            };
+
+            var result = await ContentApi.UpdatePlaylistAsync(editingId.Value, request);
+            if (result != null)
+            {
+                await ContentApi.SetPlaylistSpotifyBackgroundAsync(editingId.Value, new SetPlaylistSpotifyBackgroundRequest
+                {
+                    SpotifyPlaylistId = editModel.SpotifyPlaylistId,
+                    SpotifyPlaylistName = editModel.SpotifyPlaylistName
+                });
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Playlist updated.");
+                showDialog = false;
+                await LoadPlaylists();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update playlist.");
+            }
+        }
+        else
+        {
+            var request = new CreatePlaylistRequest
+            {
+                Name = editModel.Name,
+                Description = editModel.Description,
+                ScheduleType = editModel.ScheduleType,
+                TransitionType = editModel.TransitionType,
+                DefaultDurationSeconds = editModel.DefaultDurationSeconds,
+                Loop = editModel.Loop
+            };
+
+            var result = await ContentApi.CreatePlaylistAsync(branchId, request);
+            if (result != null)
+            {
+                if (!string.IsNullOrEmpty(editModel.SpotifyPlaylistId))
+                {
+                    await ContentApi.SetPlaylistSpotifyBackgroundAsync(result.Id, new SetPlaylistSpotifyBackgroundRequest
+                    {
+                        SpotifyPlaylistId = editModel.SpotifyPlaylistId,
+                        SpotifyPlaylistName = editModel.SpotifyPlaylistName
+                    });
+                }
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Playlist created.");
+                showDialog = false;
+                await LoadPlaylists();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create playlist.");
+            }
+        }
+    }
+
+    private void DeletePlaylist(PlaylistDto playlist)
+    {
+        playlistToDelete = playlist;
+        deleteConfirmMessage = $"Delete '{playlist.Name}'?";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && playlistToDelete != null)
+        {
+            var success = await ContentApi.DeletePlaylistAsync(playlistToDelete.Id);
+            if (success)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Deleted", "Playlist deleted.");
+                await LoadPlaylists();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete playlist.");
+            }
+        }
+
+        playlistToDelete = null;
+    }
+
+    private void OpenPlaylist(PlaylistDto playlist)
+    {
+        NotificationService.Notify(ToastSeverity.Info, "Opening", $"Playlist: {playlist.Name}");
+    }
+
+    private class PlaylistEditModel
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string ScheduleType { get; set; } = "always";
+        public string TransitionType { get; set; } = "fade";
+        public int DefaultDurationSeconds { get; set; } = 10;
+        public bool Loop { get; set; } = true;
+        public string? SpotifyPlaylistId { get; set; }
+        public string? SpotifyPlaylistName { get; set; }
+    }
+}

@@ -1,0 +1,529 @@
+@page "/queue/board"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@inject IQueueApiService QueueApi
+@inject ISignalRService SignalR
+@inject IBranchStateService BranchState
+@inject IConfiguration Configuration
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>Queue Board - Q-Mgr</PageTitle>
+
+<div class="queue-board">
+    <!-- Header -->
+    <div class="board-header">
+        <div class="header-left">
+            <h1>Queue Management Board</h1>
+            <span class="qb-branch-name">@BranchName</span>
+        </div>
+        <div class="header-right">
+            <span class="current-time">@currentTime.ToString("HH:mm:ss")</span>
+            <span class="current-date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
+        </div>
+    </div>
+
+    <div class="board-content">
+        <!-- Now Serving Section -->
+        <div class="qb-now-serving-section">
+            <h2>Now Serving</h2>
+            <div class="counters-grid">
+                @if (counters != null && counters.Any())
+                {
+                    @foreach (var counter in counters.Where(c => c.Status == CounterStatus.Active))
+                    {
+                        <div class="counter-card @(counter.CurrentToken != null ? "serving" : "available")">
+                            <div class="counter-number">@counter.DisplayName</div>
+                            @if (counter.CurrentToken != null)
+                            {
+                                <div class="token-display @(IsNewToken(counter.CurrentToken.Id) ? "flash" : "")">
+                                    @counter.CurrentToken.DisplayNumber
+                                </div>
+                                <div class="customer-name">@(counter.CurrentToken.Customer?.Name ?? "Customer")</div>
+                            }
+                            else
+                            {
+                                <div class="token-display empty">---</div>
+                                <div class="status-text">Available</div>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="no-counters">No active counters</div>
+                }
+            </div>
+        </div>
+
+        <!-- Waiting Queue Section -->
+        <div class="waiting-section">
+            <h2>Waiting Queue <span class="count">(@(waitingTokens?.Count ?? 0))</span></h2>
+            <div class="waiting-list">
+                @if (waitingTokens != null && waitingTokens.Any())
+                {
+                    @foreach (var token in waitingTokens.Take(20))
+                    {
+                        <div class="waiting-item @(token.Priority == TokenPriority.Priority ? "priority" : "") @(token.Priority == TokenPriority.VIP ? "vip" : "")">
+                            <span class="token-number">@token.DisplayNumber</span>
+                            <span class="service-type">@(token.ServiceType?.Name ?? "General")</span>
+                            @if (token.Priority != TokenPriority.Normal)
+                            {
+                                <span class="priority-badge">@token.Priority</span>
+                            }
+                        </div>
+                    }
+                    @if (waitingTokens.Count > 20)
+                    {
+                        <div class="more-waiting">+@(waitingTokens.Count - 20) more waiting...</div>
+                    }
+                }
+                else
+                {
+                    <div class="no-waiting">No customers waiting</div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Footer -->
+    <div class="board-footer">
+        <div class="stat-item">
+            <span class="stat-value">@(waitingTokens?.Count ?? 0)</span>
+            <span class="stat-label">Waiting</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value">@(counters?.Count(c => c.Status == CounterStatus.Active) ?? 0)</span>
+            <span class="stat-label">Active Counters</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value">@avgWaitTime min</span>
+            <span class="stat-label">Avg Wait Time</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value">@servedToday</span>
+            <span class="stat-label">Served Today</span>
+        </div>
+    </div>
+</div>
+
+<style>
+    .queue-board {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+        overflow: hidden;
+    }
+
+    .board-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 40px;
+        background: var(--qm-bg-card);
+        border-bottom: 2px solid var(--qm-primary);
+    }
+
+    .board-header h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .qb-branch-name {
+        color: var(--qm-primary);
+        font-size: 16px;
+    }
+
+    .header-right {
+        text-align: right;
+    }
+
+    .current-time {
+        display: block;
+        font-size: 36px;
+        font-weight: bold;
+        color: var(--qm-primary);
+    }
+
+    .current-date {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .board-content {
+        flex: 1;
+        display: flex;
+        gap: 20px;
+        padding: 20px 40px;
+        overflow: hidden;
+    }
+
+    .qb-now-serving-section {
+        flex: 2;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .qb-now-serving-section h2,
+    .waiting-section h2 {
+        margin: 0 0 20px 0;
+        font-size: 24px;
+        color: var(--qm-primary);
+        border-bottom: 2px solid var(--qm-primary);
+        padding-bottom: 10px;
+    }
+
+    .count {
+        color: var(--qm-warning);
+    }
+
+    .counters-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        flex: 1;
+    }
+
+    .counter-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 25px;
+        text-align: center;
+        border: 2px solid var(--qm-border);
+        transition: all 0.3s ease;
+    }
+
+    .counter-card.serving {
+        border-color: var(--qm-success);
+        background: color-mix(in srgb, var(--qm-success) 15%, var(--qm-bg-card));
+    }
+
+    .counter-card.available {
+        border-color: var(--qm-primary);
+    }
+
+    .counter-number {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        margin-bottom: 15px;
+    }
+
+    .token-display {
+        font-size: 48px;
+        font-weight: bold;
+        color: var(--qm-primary);
+        margin: 10px 0;
+    }
+
+    .token-display.empty {
+        color: var(--qm-text-muted);
+    }
+
+    .token-display.flash {
+        animation: flash 0.5s ease-in-out 3;
+    }
+
+    @@keyframes flash {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.1); }
+    }
+
+    .customer-name {
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .status-text {
+        color: var(--qm-primary);
+        font-size: 14px;
+    }
+
+    .waiting-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+    }
+
+    .waiting-list {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .waiting-item {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 12px 15px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 8px;
+        border-left: 4px solid var(--qm-primary);
+    }
+
+    .waiting-item.priority {
+        border-left-color: var(--qm-warning);
+        background: color-mix(in srgb, var(--qm-warning) 10%, var(--qm-bg-card));
+    }
+
+    .waiting-item.vip {
+        border-left-color: #9b59b6;
+        background: rgba(155, 89, 182, 0.1);
+    }
+
+    .token-number {
+        font-size: 18px;
+        font-weight: bold;
+        min-width: 80px;
+    }
+
+    .service-type {
+        flex: 1;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .priority-badge {
+        background: var(--qm-warning);
+        color: #000;
+        padding: 2px 8px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 11px;
+        font-weight: bold;
+    }
+
+    .waiting-item.vip .priority-badge {
+        background: #9b59b6;
+        color: white;
+    }
+
+    .no-counters, .no-waiting {
+        text-align: center;
+        color: var(--qm-text-muted);
+        padding: 40px;
+        font-size: 18px;
+    }
+
+    .more-waiting {
+        text-align: center;
+        color: var(--qm-primary);
+        padding: 10px;
+        font-style: italic;
+    }
+
+    .board-footer {
+        display: flex;
+        justify-content: space-around;
+        padding: 20px 40px;
+        background: var(--qm-bg-card);
+        border-top: 2px solid var(--qm-primary);
+    }
+
+    .stat-item {
+        text-align: center;
+    }
+
+    .stat-value {
+        display: block;
+        font-size: 32px;
+        font-weight: bold;
+        color: var(--qm-primary);
+    }
+
+    .stat-label {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    /* Scrollbar styling */
+    .waiting-list::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .waiting-list::-webkit-scrollbar-track {
+        background: var(--qm-bg-dark);
+        border-radius: var(--qm-radius-sm);
+    }
+
+    .waiting-list::-webkit-scrollbar-thumb {
+        background: var(--qm-primary);
+        border-radius: var(--qm-radius-sm);
+    }
+</style>
+
+@code {
+    private Guid BranchId => BranchState.CurrentBranchId;
+    private string BranchName => BranchState.CurrentBranchName ?? "Select Branch";
+    private List<CounterDto>? counters;
+    private List<TokenDto>? waitingTokens;
+    private DateTime currentTime = DateTime.Now;
+    private int avgWaitTime = 0;
+    private int servedToday = 0;
+    private HashSet<Guid> newTokenIds = new();
+    private System.Threading.Timer? timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.QueueView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        // Initialize branch state
+        await BranchState.InitializeAsync();
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        // Start clock timer
+        timer = new System.Threading.Timer(async _ =>
+        {
+            currentTime = DateTime.Now;
+            await InvokeAsync(StateHasChanged);
+        }, null, 0, 1000);
+
+        // Load initial data
+        await LoadData();
+
+        // Connect to SignalR
+        await ConnectSignalR();
+    }
+
+    private async Task ConnectSignalR()
+    {
+        try
+        {
+            await SignalR.ConnectAsync(BranchId);
+            SignalR.OnTokenCreated += HandleTokenCreated;
+            SignalR.OnTokenCalled += HandleTokenCalled;
+            SignalR.OnTokenCompleted += HandleTokenCompleted;
+            SignalR.OnQueueUpdated += HandleQueueUpdated;
+            SignalR.OnCounterStatusChanged += HandleCounterStatusChanged;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SignalR connection failed: {ex.Message}");
+        }
+    }
+
+    private async void HandleBranchChanged()
+    {
+        // Reconnect SignalR to new branch
+        await ConnectSignalR();
+        // Reload data for new branch
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var countersTask = QueueApi.GetCountersAsync(BranchId);
+        var tokensTask = QueueApi.GetWaitingTokensAsync(BranchId);
+        var statusTask = QueueApi.GetQueueStatusAsync(BranchId);
+
+        await Task.WhenAll(countersTask, tokensTask, statusTask);
+
+        counters = await countersTask;
+        waitingTokens = await tokensTask;
+
+        var status = await statusTask;
+        if (status != null)
+        {
+            avgWaitTime = (int)status.Summary.AverageWaitMinutes;
+            servedToday = status.Summary.TotalCompletedToday;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool IsNewToken(Guid tokenId) => newTokenIds.Contains(tokenId);
+
+    private async void HandleTokenCreated(TokenDto token)
+    {
+        if (token.BranchId == BranchId)
+        {
+            waitingTokens ??= new();
+            waitingTokens.Insert(0, token);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async void HandleTokenCalled(TokenDto token)
+    {
+        if (token.BranchId == BranchId)
+        {
+            // Add to new tokens for flash effect
+            newTokenIds.Add(token.Id);
+
+            // Remove from waiting list
+            waitingTokens?.RemoveAll(t => t.Id == token.Id);
+
+            // Update counter display
+            if (counters != null && token.CounterId.HasValue)
+            {
+                var counter = counters.FirstOrDefault(c => c.Id == token.CounterId.Value);
+                if (counter != null)
+                {
+                    var index = counters.IndexOf(counter);
+                    counters[index] = counter with { CurrentToken = token };
+                }
+            }
+
+            await InvokeAsync(StateHasChanged);
+
+            // Remove flash effect after 3 seconds
+            _ = Task.Delay(3000).ContinueWith(async _ =>
+            {
+                newTokenIds.Remove(token.Id);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
+    }
+
+    private async void HandleTokenCompleted(Guid tokenId)
+    {
+        // Update counter to show available
+        if (counters != null)
+        {
+            var counter = counters.FirstOrDefault(c => c.CurrentToken?.Id == tokenId);
+            if (counter != null)
+            {
+                var index = counters.IndexOf(counter);
+                counters[index] = counter with { CurrentToken = null };
+            }
+        }
+        servedToday++;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void HandleQueueUpdated(QueueStatusDto status)
+    {
+        avgWaitTime = (int)status.Summary.AverageWaitMinutes;
+        servedToday = status.Summary.TotalCompletedToday;
+        await LoadData();
+    }
+
+    private async void HandleCounterStatusChanged(CounterStatusDto counterStatus)
+    {
+        await LoadData();
+    }
+
+    public void Dispose()
+    {
+        timer?.Dispose();
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+        SignalR.OnTokenCreated -= HandleTokenCreated;
+        SignalR.OnTokenCalled -= HandleTokenCalled;
+        SignalR.OnTokenCompleted -= HandleTokenCompleted;
+        SignalR.OnQueueUpdated -= HandleQueueUpdated;
+        SignalR.OnCounterStatusChanged -= HandleCounterStatusChanged;
+    }
+}

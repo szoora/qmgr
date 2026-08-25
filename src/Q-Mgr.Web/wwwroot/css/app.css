@@ -1,0 +1,1265 @@
+/* Q-Mgr Custom Styles */
+/* Theme variables and fonts are loaded once via <link> tags in App.razor
+   (layout.css, qm-theme.css, q-components.css, Google Fonts) —
+   do not re-@import them here; @import is render-blocking and was
+   duplicating the font/theme request. */
+
+/* ================================
+   Light Mode - Component Overrides
+   Theme TOKENS ([data-theme="light"] custom properties) live in
+   qm-theme.css only — that is the single source of truth. This file
+   only applies those variables to specific component selectors below;
+   it must never redefine the tokens themselves (a duplicate copy here
+   previously drifted out of sync with qm-theme.css and silently won
+   the cascade since this file loads later).
+   ================================ */
+
+/* Body & Root */
+[data-theme="light"] html,
+[data-theme="light"] body {
+    background-color: var(--qm-bg-dark) !important;
+    color: var(--qm-text-primary) !important;
+}
+
+/* Header */
+[data-theme="light"] .rz-layout-header {
+    background: var(--qm-gradient-header) !important;
+    border-bottom: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-sm) !important;
+}
+
+[data-theme="light"] .header-brand .brand-text {
+    background: var(--qm-gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+[data-theme="light"] .header-datetime {
+    color: var(--qm-text-secondary) !important;
+    border-color: var(--qm-border) !important;
+}
+
+[data-theme="light"] .header-datetime .time {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .theme-toggle,
+[data-theme="light"] .notification-btn {
+    color: var(--qm-text-secondary) !important;
+}
+
+[data-theme="light"] .theme-toggle:hover,
+[data-theme="light"] .notification-btn:hover {
+    background: rgba(122, 40, 71, 0.1) !important;
+    color: var(--qm-primary) !important;
+}
+
+/* Sidebar */
+[data-theme="light"] .rz-sidebar {
+    background: var(--qm-gradient-sidebar) !important;
+    border-right: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-sm) !important;
+}
+
+[data-theme="light"] .sidebar-header {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .sidebar-title {
+    color: var(--qm-text-muted) !important;
+}
+
+/* Panel Menu - Navigation */
+[data-theme="light"] .rz-panelmenu {
+    background: transparent !important;
+}
+
+[data-theme="light"] .rz-panelmenu-header {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-header > a {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-header > a:hover {
+    background: rgba(0, 0, 0, 0.04) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-header > a .rz-icon {
+    color: var(--qm-primary) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-item a {
+    color: var(--qm-text-secondary) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-item:hover a {
+    background: rgba(122, 40, 71, 0.08) !important;
+    color: var(--qm-primary) !important;
+}
+
+[data-theme="light"] .rz-panelmenu-item.rz-state-active a,
+[data-theme="light"] .rz-panelmenu-item-selected a {
+    background: var(--qm-gradient-primary) !important;
+    color: white !important;
+}
+
+/* Sidebar Footer & Branch Selector */
+[data-theme="light"] .sidebar-footer {
+    border-top: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .branch-selector {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .branch-selector:hover {
+    background: rgba(122, 40, 71, 0.05) !important;
+    border-color: var(--qm-primary) !important;
+}
+
+[data-theme="light"] .branch-selector .rzi {
+    color: var(--qm-primary) !important;
+}
+
+[data-theme="light"] .branch-label {
+    color: var(--qm-text-muted) !important;
+}
+
+[data-theme="light"] .branch-name {
+    color: var(--qm-text-primary) !important;
+}
+
+/* Body Content */
+[data-theme="light"] .rz-layout-body {
+    background: var(--qm-bg-dark) !important;
+}
+
+/* Footer */
+[data-theme="light"] .rz-layout-footer {
+    background: var(--qm-bg-darker) !important;
+    border-top: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .footer-text {
+    color: var(--qm-text-muted) !important;
+}
+
+/* Page Header */
+[data-theme="light"] .page-header {
+    background: var(--qm-gradient-header) !important;
+    border-bottom: 1px solid var(--qm-border);
+}
+
+[data-theme="light"] .page-header h1 {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .page-header .breadcrumb {
+    color: var(--qm-text-secondary) !important;
+}
+
+/* Cards */
+[data-theme="light"] .rz-card,
+[data-theme="light"] .dashboard-card,
+[data-theme="light"] .settings-card {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-sm) !important;
+}
+
+[data-theme="light"] .card-header {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .card-header h3 {
+    color: var(--qm-text-primary) !important;
+}
+
+/* Stats Cards */
+[data-theme="light"] .stats-card {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .stats-card .stats-number {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .stats-card .stats-label {
+    color: var(--qm-text-secondary) !important;
+}
+
+/* DataGrid / Tables */
+[data-theme="light"] .rz-datatable {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-datatable-header,
+[data-theme="light"] .rz-datatable thead {
+    background: var(--qm-bg-darker) !important;
+}
+
+[data-theme="light"] .rz-datatable thead th {
+    color: var(--qm-text-secondary) !important;
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-datatable tbody tr {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-datatable tbody tr:hover {
+    background: rgba(122, 40, 71, 0.05) !important;
+}
+
+[data-theme="light"] .rz-datatable tbody td {
+    color: var(--qm-text-primary) !important;
+}
+
+/* Form Controls */
+[data-theme="light"] .rz-textbox,
+[data-theme="light"] .rz-dropdown,
+[data-theme="light"] .rz-inputtext,
+[data-theme="light"] .rz-textarea {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-textbox:focus,
+[data-theme="light"] .rz-dropdown.rz-state-focused {
+    border-color: var(--qm-primary) !important;
+    box-shadow: 0 0 0 3px rgba(122, 40, 71, 0.1) !important;
+}
+
+[data-theme="light"] .rz-dropdown-panel {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+[data-theme="light"] .rz-dropdown-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-dropdown-item:hover {
+    background: rgba(122, 40, 71, 0.08) !important;
+}
+
+/* Buttons */
+[data-theme="light"] .rz-button-light,
+[data-theme="light"] .rz-button.rz-light {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-button-light:hover,
+[data-theme="light"] .rz-button.rz-light:hover {
+    background: var(--qm-bg-darker) !important;
+    border-color: var(--qm-primary) !important;
+}
+
+/* Dialogs - Use html[data-theme] for Radzen dialogs rendered at body level */
+[data-theme="light"] .rz-dialog,
+html[data-theme="light"] .rz-dialog {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+[data-theme="light"] .rz-dialog-titlebar,
+html[data-theme="light"] .rz-dialog-titlebar {
+    background: var(--qm-bg-darker) !important;
+    color: var(--qm-text-primary) !important;
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-dialog-titlebar .rz-dialog-title,
+html[data-theme="light"] .rz-dialog-titlebar .rz-dialog-title {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-dialog-content,
+html[data-theme="light"] .rz-dialog-content {
+    background: var(--qm-bg-card) !important;
+    color: var(--qm-text-primary) !important;
+}
+
+/* Radzen Confirm Dialog specific */
+[data-theme="light"] .rz-dialog-wrapper,
+html[data-theme="light"] .rz-dialog-wrapper {
+    background: var(--qm-bg-card) !important;
+}
+
+[data-theme="light"] .rz-confirm-dialog,
+html[data-theme="light"] .rz-confirm-dialog {
+    background: var(--qm-bg-card) !important;
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-dialog .rz-dialog-close,
+html[data-theme="light"] .rz-dialog .rz-dialog-close {
+    color: var(--qm-text-secondary) !important;
+}
+
+[data-theme="light"] .rz-dialog .rz-dialog-close:hover,
+html[data-theme="light"] .rz-dialog .rz-dialog-close:hover {
+    color: var(--qm-text-primary) !important;
+    background: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Dialog Overlays */
+[data-theme="light"] .dialog-overlay {
+    background: rgba(0, 0, 0, 0.5) !important;
+}
+
+[data-theme="light"] .dialog-content,
+[data-theme="light"] .branch-dialog {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .dialog-header {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .dialog-header h3 {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .branch-item {
+    background: transparent !important;
+}
+
+[data-theme="light"] .branch-item:hover {
+    background: rgba(122, 40, 71, 0.05) !important;
+}
+
+[data-theme="light"] .branch-item.active {
+    background: rgba(122, 40, 71, 0.08) !important;
+    border: 1px solid var(--qm-primary) !important;
+}
+
+[data-theme="light"] .branch-item-name {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .branch-item-address {
+    color: var(--qm-text-muted) !important;
+}
+
+/* Notifications Panel */
+[data-theme="light"] .notifications-panel {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+[data-theme="light"] .notifications-header {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .notifications-header h3 {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .notification-item {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .notification-item:hover {
+    background: var(--qm-bg-darker) !important;
+}
+
+[data-theme="light"] .notification-item.unread {
+    background: rgba(122, 40, 71, 0.05) !important;
+}
+
+[data-theme="light"] .notification-title {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .notification-message {
+    color: var(--qm-text-secondary) !important;
+}
+
+[data-theme="light"] .notification-time {
+    color: var(--qm-text-muted) !important;
+}
+
+/* Profile Menu */
+[data-theme="light"] .rz-profile-menu-dropdown {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-profile-menu-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-profile-menu-item:hover {
+    background: rgba(122, 40, 71, 0.08) !important;
+}
+
+/* Tabs */
+[data-theme="light"] .rz-tabview-nav {
+    border-bottom: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-tabview-nav li a {
+    color: var(--qm-text-secondary) !important;
+}
+
+[data-theme="light"] .rz-tabview-nav li.rz-state-active a {
+    color: var(--qm-primary) !important;
+}
+
+/* Notifications Toast - Radzen renders these at body level */
+[data-theme="light"] .rz-notification,
+html[data-theme="light"] .rz-notification {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    color: var(--qm-text-primary) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+[data-theme="light"] .rz-notification-content,
+html[data-theme="light"] .rz-notification-content {
+    color: var(--qm-text-primary) !important;
+}
+
+/* Radzen Tooltip - renders at body level */
+[data-theme="light"] .rz-tooltip,
+html[data-theme="light"] .rz-tooltip {
+    background: var(--qm-bg-card) !important;
+    color: var(--qm-text-primary) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-md) !important;
+}
+
+/* Radzen Context Menu - renders at body level */
+[data-theme="light"] .rz-contextmenu,
+html[data-theme="light"] .rz-contextmenu {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+[data-theme="light"] .rz-contextmenu-item,
+html[data-theme="light"] .rz-contextmenu-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-contextmenu-item:hover,
+html[data-theme="light"] .rz-contextmenu-item:hover {
+    background: rgba(122, 40, 71, 0.08) !important;
+}
+
+/* Radzen Dropdown Panel - often renders at body level */
+[data-theme="light"] .rz-dropdown-panel,
+html[data-theme="light"] .rz-dropdown-panel {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+[data-theme="light"] .rz-dropdown-item,
+html[data-theme="light"] .rz-dropdown-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-dropdown-item:hover,
+html[data-theme="light"] .rz-dropdown-item:hover {
+    background: rgba(122, 40, 71, 0.08) !important;
+}
+
+/* Radzen Multiselect/Checkbox in dropdown - light theme */
+[data-theme="light"] .rz-dropdown-panel .rz-chkbox-label,
+html[data-theme="light"] .rz-dropdown-panel .rz-chkbox-label,
+[data-theme="light"] .rz-multiselect-item,
+html[data-theme="light"] .rz-multiselect-item,
+[data-theme="light"] .rz-listbox-item,
+html[data-theme="light"] .rz-listbox-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-dropdown-panel .rz-chkbox-box,
+html[data-theme="light"] .rz-dropdown-panel .rz-chkbox-box {
+    border-color: var(--qm-border) !important;
+    background: var(--qm-bg-card) !important;
+}
+
+[data-theme="light"] .rz-dropdown-panel .rz-chkbox-box.rz-state-active,
+html[data-theme="light"] .rz-dropdown-panel .rz-chkbox-box.rz-state-active {
+    background: var(--qm-primary) !important;
+    border-color: var(--qm-primary) !important;
+}
+
+/* Radzen Menu - renders at body level */
+[data-theme="light"] .rz-menu,
+html[data-theme="light"] .rz-menu {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+}
+
+[data-theme="light"] .rz-menu-item,
+html[data-theme="light"] .rz-menu-item {
+    color: var(--qm-text-primary) !important;
+}
+
+[data-theme="light"] .rz-menu-item:hover,
+html[data-theme="light"] .rz-menu-item:hover {
+    background: rgba(122, 40, 71, 0.08) !important;
+}
+
+/* Radzen Popup/Overlay */
+[data-theme="light"] .rz-popup,
+html[data-theme="light"] .rz-popup {
+    background: var(--qm-bg-card) !important;
+    border: 1px solid var(--qm-border) !important;
+    box-shadow: var(--qm-shadow-lg) !important;
+}
+
+/* Scrollbars */
+[data-theme="light"] ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+    background: var(--qm-primary);
+}
+
+/* Loading Overlay */
+[data-theme="light"] .loading-overlay {
+    background: rgba(248, 250, 252, 0.95) !important;
+}
+
+[data-theme="light"] .loading-text {
+    color: var(--qm-text-secondary) !important;
+}
+
+/* ================================
+   Base Overrides
+   ================================ */
+html, body {
+    font-family: var(--qm-font-primary, 'Poppins', 'Segoe UI', -apple-system, sans-serif);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Smooth theme transitions */
+*, *::before, *::after {
+    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Dashboard Cards */
+.dashboard-card {
+    border-radius: 16px;
+    transition: transform 0.2s, box-shadow 0.3s;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-4px);
+}
+
+/* Queue Board */
+.token-badge {
+    font-size: 1.5rem;
+    padding: 0.75rem 1.25rem;
+    border-radius: 12px;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+}
+
+/* Print Styles */
+@media print {
+    .no-print,
+    .rz-sidebar,
+    .rz-layout-header,
+    .rz-layout-footer {
+        display: none !important;
+    }
+
+    body {
+        background: white !important;
+        color: black !important;
+    }
+
+    .print-token {
+        width: 80mm;
+        padding: 10mm;
+        font-family: monospace;
+    }
+
+    .print-token .token-number {
+        font-size: 48pt;
+        font-weight: bold;
+        text-align: center;
+    }
+}
+
+/* Animations */
+.fade-in {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.slide-up {
+    animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Theme toggle button animation */
+.theme-toggle {
+    position: relative;
+    overflow: hidden;
+}
+
+.theme-toggle .rz-icon {
+    transition: transform 0.3s ease;
+}
+
+.theme-toggle:hover .rz-icon {
+    transform: rotate(15deg);
+}
+
+/* Notification badge animation */
+.notification-badge {
+    animation: badge-pulse 2s infinite;
+}
+
+@keyframes badge-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+/* Branch selector hover effect */
+.branch-selector {
+    position: relative;
+    overflow: hidden;
+}
+
+.branch-selector::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(140, 47, 82, 0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.branch-selector:hover::after {
+    left: 100%;
+}
+
+/* ================================
+   Mobile Utility Classes
+   ================================ */
+
+/* Hide/Show utilities */
+.hide-mobile {
+    display: block;
+}
+.show-mobile {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .hide-mobile {
+        display: none !important;
+    }
+    .show-mobile {
+        display: block !important;
+    }
+}
+
+/* Text alignment for mobile */
+@media (max-width: 576px) {
+    .text-center-mobile {
+        text-align: center !important;
+    }
+    .text-left-mobile {
+        text-align: left !important;
+    }
+}
+
+/* Flex utilities for mobile */
+@media (max-width: 768px) {
+    .flex-column-mobile {
+        flex-direction: column !important;
+    }
+    .flex-wrap-mobile {
+        flex-wrap: wrap !important;
+    }
+    .gap-sm-mobile {
+        gap: 8px !important;
+    }
+}
+
+/* Width utilities for mobile */
+@media (max-width: 576px) {
+    .w-100-mobile {
+        width: 100% !important;
+    }
+    .max-w-100-mobile {
+        max-width: 100% !important;
+    }
+}
+
+/* ================================
+   Common Page Patterns - Responsive
+   ================================ */
+
+/* Page Header */
+.page-header {
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--qm-border, rgba(255, 255, 255, 0.08));
+}
+
+.page-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.page-header h1 i {
+    color: var(--qm-primary, #8c2f52);
+}
+
+.page-header .subtitle {
+    margin: 0;
+    font-size: 14px;
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+@media (max-width: 576px) {
+    .page-header {
+        margin-bottom: 16px;
+        padding-bottom: 16px;
+    }
+
+    .page-header h1 {
+        font-size: 22px;
+        gap: 10px;
+    }
+
+    .page-header h1 i {
+        font-size: 24px;
+    }
+
+    .page-header .subtitle {
+        font-size: 13px;
+    }
+}
+
+/* Content Cards */
+.content-card {
+    background: var(--qm-bg-card, #1e1e2d);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+}
+
+@media (max-width: 576px) {
+    .content-card {
+        padding: 16px;
+        border-radius: 12px;
+        margin-bottom: 12px;
+    }
+}
+
+/* Form Groups - Mobile Optimized */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--qm-text-muted, #a0a0a0);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.form-group .form-control,
+.form-group .form-select {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--qm-bg-elevated, #252536);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 10px;
+    color: var(--qm-text-primary, #fff);
+    font-size: 15px;
+    transition: all 0.2s ease;
+}
+
+.form-group .form-control:focus,
+.form-group .form-select:focus {
+    border-color: var(--qm-primary, #8c2f52);
+    box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
+    outline: none;
+}
+
+@media (max-width: 576px) {
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group .form-control,
+    .form-group .form-select {
+        padding: 14px 16px;
+        font-size: 16px; /* Prevents iOS zoom on focus */
+        border-radius: 12px;
+    }
+}
+
+/* Buttons - Mobile Touch Friendly */
+.btn-primary,
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    min-height: 44px; /* Touch target */
+}
+
+.btn-primary {
+    background: var(--qm-gradient-primary, #8c2f52);
+    color: white;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(140, 47, 82, 0.4);
+}
+
+.btn-secondary {
+    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--qm-border, #2d2d3a);
+    color: var(--qm-text-primary, #fff);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--qm-primary, #8c2f52);
+}
+
+@media (max-width: 576px) {
+    .btn-primary,
+    .btn-secondary {
+        padding: 14px 20px;
+        font-size: 15px;
+        border-radius: 12px;
+        min-height: 48px;
+    }
+
+    /* Full width buttons on mobile when in button group */
+    .btn-group-mobile .btn-primary,
+    .btn-group-mobile .btn-secondary {
+        width: 100%;
+    }
+}
+
+/* Data Tables - Mobile Responsive */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+}
+
+.data-table th {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+@media (max-width: 768px) {
+    .data-table-responsive {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 12px;
+        font-size: 13px;
+    }
+}
+
+/* Card Grids - Responsive */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+@media (max-width: 768px) {
+    .card-grid {
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+    }
+}
+
+@media (max-width: 576px) {
+    .card-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+}
+
+/* Stats Grid - Responsive */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+}
+
+@media (max-width: 576px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .stats-grid .stat-card {
+        padding: 16px;
+    }
+
+    .stats-grid .stat-value {
+        font-size: 24px;
+    }
+
+    .stats-grid .stat-label {
+        font-size: 12px;
+    }
+}
+
+/* Empty States - Responsive */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    background: var(--qm-bg-card, #1e1e2d);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 16px;
+}
+
+/* :not(.q-btn__icon) — this selector is meant for the big decorative icon
+   an empty-state shows on its own (e.g. QIcon Name="wallet2" Size="48"), but
+   without scoping it also matched any QButton's *internal* icon whenever that
+   button sat inside an .empty-state block (e.g. "Add Payment Method"), forcing
+   its icon up to this same 64px and blowing the whole button out of shape. */
+.empty-state i:not(.q-btn__icon) {
+    font-size: 64px;
+    color: var(--qm-text-muted, #a0a0a0);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.empty-state h3 {
+    margin: 0 0 8px;
+    font-size: 20px;
+    color: var(--qm-text-primary, #fff);
+}
+
+.empty-state p {
+    margin: 0;
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+@media (max-width: 576px) {
+    .empty-state {
+        padding: 40px 16px;
+        border-radius: 12px;
+    }
+
+    .empty-state i:not(.q-btn__icon) {
+        font-size: 48px;
+    }
+
+    .empty-state h3 {
+        font-size: 18px;
+    }
+
+    .empty-state p {
+        font-size: 14px;
+    }
+}
+
+/* Action Bars - Mobile Sticky */
+.action-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 0;
+    margin-bottom: 20px;
+}
+
+@media (max-width: 576px) {
+    .action-bar {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .action-bar > * {
+        width: 100%;
+    }
+
+    /* Sticky action bar at bottom for mobile */
+    .action-bar-sticky {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--qm-bg-card, #1e1e2d);
+        border-top: 1px solid var(--qm-border, #2d2d3a);
+        padding: 12px 16px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 100;
+        margin: 0;
+    }
+}
+
+/* Tabs - Mobile Scrollable */
+.tabs-container {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+    margin-bottom: 20px;
+}
+
+.tab-item {
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--qm-text-muted, #a0a0a0);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.tab-item.active {
+    color: var(--qm-primary, #8c2f52);
+    border-color: var(--qm-primary, #8c2f52);
+}
+
+@media (max-width: 576px) {
+    .tabs-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .tabs-container::-webkit-scrollbar {
+        display: none;
+    }
+
+    .tab-item {
+        padding: 14px 16px;
+        min-height: 48px;
+    }
+}
+
+/* Search Input - Mobile Optimized */
+.search-input-group {
+    position: relative;
+    max-width: 400px;
+}
+
+.search-input-group input {
+    width: 100%;
+    padding: 12px 16px 12px 44px;
+    background: var(--qm-bg-elevated, #252536);
+    border: 1px solid var(--qm-border, #2d2d3a);
+    border-radius: 10px;
+    color: var(--qm-text-primary, #fff);
+    font-size: 14px;
+}
+
+.search-input-group i {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+@media (max-width: 576px) {
+    .search-input-group {
+        max-width: 100%;
+    }
+
+    .search-input-group input {
+        padding: 14px 16px 14px 44px;
+        font-size: 16px; /* Prevents iOS zoom */
+        border-radius: 12px;
+    }
+}
+
+/* Floating Action Button (FAB) */
+.fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--qm-gradient-primary, #8c2f52);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(140, 47, 82, 0.4);
+    transition: all 0.2s ease;
+    z-index: 100;
+}
+
+.fab:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 30px rgba(140, 47, 82, 0.5);
+}
+
+@media (max-width: 576px) {
+    .fab {
+        bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px));
+        right: 16px;
+    }
+}
+
+/* Pull to Refresh Indicator */
+.pull-refresh-indicator {
+    display: none;
+    justify-content: center;
+    padding: 16px;
+    color: var(--qm-text-muted, #a0a0a0);
+}
+
+@media (max-width: 768px) {
+    .pull-refresh-indicator.visible {
+        display: flex;
+    }
+}
+
+/* Skeleton Loading - Mobile */
+.skeleton {
+    background: linear-gradient(90deg,
+        var(--qm-bg-elevated, #252536) 25%,
+        var(--qm-bg-card, #1e1e2d) 50%,
+        var(--qm-bg-elevated, #252536) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+    border-radius: 8px;
+}
+
+@keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Bottom Sheet (Mobile Only) */
+@media (max-width: 576px) {
+    .bottom-sheet {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--qm-bg-card, #1e1e2d);
+        border-top: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: 20px 20px 0 0;
+        padding: 20px;
+        padding-bottom: max(20px, env(safe-area-inset-bottom));
+        z-index: 1000;
+        transform: translateY(100%);
+        transition: transform 0.3s ease;
+    }
+
+    .bottom-sheet.open {
+        transform: translateY(0);
+    }
+
+    .bottom-sheet-handle {
+        width: 40px;
+        height: 4px;
+        background: var(--qm-border, #2d2d3a);
+        border-radius: 2px;
+        margin: 0 auto 16px;
+    }
+}
+
+/* Blazor Server's built-in circuit-failure banner. Framework JS toggles this
+   element's visibility directly by id ("blazor-error-ui") whenever the current
+   circuit hits an unhandled exception or the connection can't be recovered —
+   without it present in the DOM, a dropped circuit fails completely silently
+   (buttons stop responding, no feedback at all). */
+#blazor-error-ui {
+    background: var(--qm-warning, #d97706);
+    color: #fff;
+    bottom: 0;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.25);
+    display: none;
+    left: 0;
+    padding: 0.9rem 3.5rem 0.9rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 10000;
+    font-size: 14px;
+}
+
+#blazor-error-ui .reload {
+    color: #fff;
+    text-decoration: underline;
+    font-weight: 600;
+    margin-left: 12px;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 1rem;
+    top: 0.75rem;
+}

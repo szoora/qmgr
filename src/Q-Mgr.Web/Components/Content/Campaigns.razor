@@ -1,0 +1,493 @@
+@page "/content/campaigns"
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared
+@inject IContentApiService ContentApi
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+
+<PageTitle>Campaigns - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Campaigns</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Campaigns") })" />
+    </div>
+</div>
+
+<div class="campaigns-page">
+    <!-- Toolbar -->
+    <QCard Class="toolbar-card">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search campaigns..." IconLeft="search" />
+            </div>
+            <div class="toolbar-right">
+                @if (canCreate)
+                {
+                    <QButton Text="New Campaign" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+                }
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading campaigns...</span>
+        </div>
+    }
+    else if (!campaigns.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="megaphone-fill" />
+            <h3>No Campaigns Yet</h3>
+            <p>Create a campaign to run date-ranged promotions across your existing playlist content, with impression tracking on the public display.</p>
+            @if (canCreate)
+            {
+                <QButton Text="Create First Campaign" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="campaigns-grid">
+            @foreach (var campaign in FilteredCampaigns)
+            {
+                <QCard Class="campaign-card">
+                    <div class="campaign-icon">
+                        <QIcon Name="megaphone-fill" />
+                    </div>
+                    <div class="campaign-info">
+                        <div class="campaign-title-row">
+                            <h3>@campaign.Name</h3>
+                            <QBadge Variant="@(GetStatusBadgeStyle(campaign))" Text="@GetStatusLabel(campaign)" />
+                        </div>
+                        <p>@(campaign.Description ?? "No description")</p>
+                        <div class="campaign-meta">
+                            <span class="meta-item">
+                                <QIcon Name="calendar-event-fill" />
+                                @campaign.StartDate.ToString("MMM d, yyyy") &ndash; @campaign.EndDate.ToString("MMM d, yyyy")
+                            </span>
+                        </div>
+                    </div>
+                    <div class="campaign-actions">
+                        @if (canEdit)
+                        {
+                            <QButton Icon="pencil-fill" Size="sm" Variant="secondary" OnClick="@(() => EditCampaign(campaign))" />
+                        }
+                        @if (canDelete)
+                        {
+                            <QButton Icon="trash-fill" Size="sm" Variant="danger" OnClick="@(() => DeleteCampaign(campaign))" />
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<!-- Create/Edit Campaign Dialog -->
+<QModal @bind-Visible="showDialog" Title="@(isEditing ? "Edit Campaign" : "Create Campaign")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@editModel.Name" Label="Name *" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@editModel.Description" Type="textarea" Label="Description" Rows="2" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Start Date *</label>
+                <QDatePicker @bind-Value="@editModel.StartDate" />
+            </div>
+            <div class="form-group">
+                <label>End Date *</label>
+                <QDatePicker @bind-Value="@editModel.EndDate" />
+            </div>
+        </div>
+        @if (isEditing)
+        {
+            <div class="form-group checkbox-group">
+                <QCheckbox @bind-Value="@editModel.IsActive" Label="Active" />
+            </div>
+        }
+        <p class="qm-admin-form-hint">Attach existing media to this campaign from the Media Library's "Add to Playlist" dialog once it's created.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseDialog" />
+        <QButton Text="@(isEditing ? "Save" : "Create")" Icon="@(isEditing ? "check-lg" : "plus-lg")" Variant="primary" OnClick="@SaveCampaign" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Campaign"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .campaigns-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .toolbar-card {
+        padding: 16px 24px;
+    }
+
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        gap: 12px;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 80px 20px;
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+        max-width: 480px;
+    }
+
+    .campaigns-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 20px;
+    }
+
+    .campaign-card {
+        padding: 20px;
+        display: flex;
+        gap: 16px;
+    }
+
+    .campaign-icon {
+        width: 56px;
+        height: 56px;
+        background: linear-gradient(135deg, var(--qm-primary) 0%, var(--qm-primary-dark) 100%);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .campaign-icon .rzi {
+        font-size: 28px;
+        color: white;
+    }
+
+    .campaign-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .campaign-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+    }
+
+    .campaign-title-row h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .campaign-info p {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .campaign-meta {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .meta-item .rzi {
+        font-size: 14px;
+    }
+
+    .campaign-actions {
+        display: flex;
+        align-items: center;
+        align-self: center;
+        gap: 8px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        font-size: 13px;
+    }
+
+    .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+</style>
+
+@code {
+    private List<CampaignDto> campaigns = new();
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private bool showDialog = false;
+    private bool isEditing = false;
+    private CampaignEditModel editModel = new();
+    private Guid? editingId;
+
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private CampaignDto? campaignToDelete;
+
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+
+    private IEnumerable<CampaignDto> FilteredCampaigns => campaigns
+        .Where(c => string.IsNullOrEmpty(searchTerm) || c.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        await LoadCampaigns();
+    }
+
+    private async Task LoadCampaigns()
+    {
+        isLoading = true;
+        campaigns = await ContentApi.GetCampaignsAsync(branchId);
+        isLoading = false;
+    }
+
+    private string GetStatusLabel(CampaignDto c)
+    {
+        var now = DateTime.UtcNow;
+        if (!c.IsActive) return "Paused";
+        if (now < c.StartDate) return "Scheduled";
+        if (now > c.EndDate) return "Ended";
+        return "Running";
+    }
+
+    private string GetStatusBadgeStyle(CampaignDto c) => GetStatusLabel(c) switch
+    {
+        "Running" => "success",
+        "Scheduled" => "info",
+        "Ended" => "secondary",
+        _ => "warning"
+    };
+
+    private void ShowCreateDialog()
+    {
+        editModel = new CampaignEditModel
+        {
+            StartDate = DateTime.UtcNow.Date,
+            EndDate = DateTime.UtcNow.Date.AddDays(30),
+            IsActive = true
+        };
+        isEditing = false;
+        editingId = null;
+        showDialog = true;
+    }
+
+    private void EditCampaign(CampaignDto campaign)
+    {
+        editModel = new CampaignEditModel
+        {
+            Name = campaign.Name,
+            Description = campaign.Description,
+            StartDate = campaign.StartDate,
+            EndDate = campaign.EndDate,
+            IsActive = campaign.IsActive
+        };
+        isEditing = true;
+        editingId = campaign.Id;
+        showDialog = true;
+    }
+
+    private void CloseDialog() => showDialog = false;
+
+    private async Task SaveCampaign()
+    {
+        if (string.IsNullOrEmpty(editModel.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name is required.");
+            return;
+        }
+
+        if (editModel.StartDate == null || editModel.EndDate == null)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Start and end date are required.");
+            return;
+        }
+
+        if (editModel.EndDate < editModel.StartDate)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "End date must be on or after the start date.");
+            return;
+        }
+
+        if (isEditing && editingId.HasValue)
+        {
+            var request = new UpdateCampaignRequest
+            {
+                Name = editModel.Name,
+                Description = editModel.Description,
+                StartDate = editModel.StartDate,
+                EndDate = editModel.EndDate,
+                IsActive = editModel.IsActive
+            };
+
+            var result = await ContentApi.UpdateCampaignAsync(editingId.Value, request);
+            if (result != null)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Campaign updated.");
+                showDialog = false;
+                await LoadCampaigns();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update campaign.");
+            }
+        }
+        else
+        {
+            var request = new CreateCampaignRequest
+            {
+                Name = editModel.Name,
+                Description = editModel.Description,
+                StartDate = editModel.StartDate.Value,
+                EndDate = editModel.EndDate.Value
+            };
+
+            var result = await ContentApi.CreateCampaignAsync(branchId, request);
+            if (result != null)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Campaign created.");
+                showDialog = false;
+                await LoadCampaigns();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create campaign.");
+            }
+        }
+    }
+
+    private void DeleteCampaign(CampaignDto campaign)
+    {
+        campaignToDelete = campaign;
+        deleteConfirmMessage = $"Delete '{campaign.Name}'? Playlist items attached to it keep playing, just no longer as part of this campaign.";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && campaignToDelete != null)
+        {
+            var success = await ContentApi.DeleteCampaignAsync(campaignToDelete.Id);
+            if (success)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Deleted", "Campaign deleted.");
+                await LoadCampaigns();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete campaign.");
+            }
+        }
+
+        campaignToDelete = null;
+    }
+
+    private class CampaignEditModel
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public DateTime? StartDate { get; set; } = DateTime.UtcNow.Date;
+        public DateTime? EndDate { get; set; } = DateTime.UtcNow.Date.AddDays(30);
+        public bool IsActive { get; set; } = true;
+    }
+}

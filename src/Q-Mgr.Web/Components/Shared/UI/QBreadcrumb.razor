@@ -1,0 +1,31 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<span class="q-breadcrumb @Class" @attributes="AdditionalAttributes">
+    @for (var i = 0; i < Items.Count; i++)
+    {
+        var item = Items[i];
+        var isLast = i == Items.Count - 1;
+        @if (!isLast && !string.IsNullOrEmpty(item.Path))
+        {
+            <a href="@item.Path">@item.Text</a>
+            <span class="q-breadcrumb__separator">/</span>
+        }
+        else
+        {
+            <span class="q-breadcrumb__current">@item.Text</span>
+        }
+    }
+</span>
+
+@code {
+    /// <summary>
+    /// Breadcrumb trail, in order — every item except the last renders as a link
+    /// (if it has a Path); the last item always renders as plain text.
+    /// </summary>
+    [Parameter, EditorRequired] public List<QBreadcrumbItem> Items { get; set; } = new();
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+}

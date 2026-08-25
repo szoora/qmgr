@@ -1,0 +1,140 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<div class="q-card @GetVariantClass() @(Clickable ? "q-card--clickable" : "") @(NoPadding ? "q-card--no-padding" : "") @Class"
+     @onclick="HandleClick"
+     @attributes="AdditionalAttributes">
+    @if (HeaderContent != null || !string.IsNullOrEmpty(Title))
+    {
+        <div class="q-card__header">
+            @if (HeaderContent != null)
+            {
+                @HeaderContent
+            }
+            else
+            {
+                @if (!string.IsNullOrEmpty(Icon))
+                {
+                    <i class="@GetIconClass() q-card__icon"></i>
+                }
+                <div class="q-card__header-text">
+                    <h3 class="q-card__title">@Title</h3>
+                    @if (!string.IsNullOrEmpty(Subtitle))
+                    {
+                        <p class="q-card__subtitle">@Subtitle</p>
+                    }
+                </div>
+                @if (HeaderActions != null)
+                {
+                    <div class="q-card__header-actions">
+                        @HeaderActions
+                    </div>
+                }
+            }
+        </div>
+    }
+
+    <div class="q-card__body">
+        @ChildContent
+    </div>
+
+    @if (FooterContent != null)
+    {
+        <div class="q-card__footer">
+            @FooterContent
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>
+    /// Card title
+    /// </summary>
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>
+    /// Card subtitle
+    /// </summary>
+    [Parameter] public string? Subtitle { get; set; }
+
+    /// <summary>
+    /// Bootstrap icon name for the header
+    /// </summary>
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>
+    /// Card variant: default, elevated, outlined, flat
+    /// </summary>
+    [Parameter] public string Variant { get; set; } = "default";
+
+    /// <summary>
+    /// Whether the card is clickable (adds hover effects)
+    /// </summary>
+    [Parameter] public bool Clickable { get; set; }
+
+    /// <summary>
+    /// Remove default padding from card body
+    /// </summary>
+    [Parameter] public bool NoPadding { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Click event callback
+    /// </summary>
+    [Parameter] public EventCallback<MouseEventArgs> OnClick { get; set; }
+
+    /// <summary>
+    /// Main card content
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Custom header content (overrides Title/Subtitle)
+    /// </summary>
+    [Parameter] public RenderFragment? HeaderContent { get; set; }
+
+    /// <summary>
+    /// Actions to display in the header (right side)
+    /// </summary>
+    [Parameter] public RenderFragment? HeaderActions { get; set; }
+
+    /// <summary>
+    /// Footer content
+    /// </summary>
+    [Parameter] public RenderFragment? FooterContent { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string GetVariantClass()
+    {
+        return Variant.ToLowerInvariant() switch
+        {
+            "elevated" => "q-card--elevated",
+            "outlined" => "q-card--outlined",
+            "flat" => "q-card--flat",
+            _ => "q-card--default"
+        };
+    }
+
+    private string GetIconClass()
+    {
+        if (string.IsNullOrEmpty(Icon)) return "";
+        if (Icon.StartsWith("bi-")) return $"bi {Icon}";
+        return $"bi bi-{Icon}";
+    }
+
+    private async Task HandleClick(MouseEventArgs args)
+    {
+        if (Clickable && OnClick.HasDelegate)
+        {
+            await OnClick.InvokeAsync(args);
+        }
+    }
+}

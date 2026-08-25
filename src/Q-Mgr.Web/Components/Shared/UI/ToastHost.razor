@@ -1,0 +1,88 @@
+@namespace QMgr.Web.Components.Shared.UI
+@inject IToastService ToastService
+@implements IDisposable
+
+<div class="q-toast-container q-toast-container--topright">
+    @foreach (var toast in toasts)
+    {
+        <div class="q-toast q-toast--@GetVariant(toast.Severity)" @key="toast.Id">
+            <QIcon Name="@GetIconName(toast.Severity)" Class="q-toast__icon" />
+            <div class="q-toast__content">
+                <div class="q-toast__title">@toast.Title</div>
+                @if (!string.IsNullOrEmpty(toast.Message))
+                {
+                    <div class="q-toast__message">@toast.Message</div>
+                }
+            </div>
+            <button type="button" class="q-toast__close" @onclick="() => Remove(toast.Id)" aria-label="Dismiss">
+                <QIcon Name="x-lg" />
+            </button>
+            <div class="q-toast__progress" style="animation-duration: @(toast.DurationMs)ms"></div>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly List<ToastMessage> toasts = new();
+    private readonly Dictionary<Guid, System.Threading.Timer> timers = new();
+
+    protected override void OnInitialized()
+    {
+        ToastService.OnShow += HandleShow;
+        ToastService.OnDismiss += HandleExternalDismiss;
+    }
+
+    private void HandleExternalDismiss(Guid id) => InvokeAsync(() => Remove(id));
+
+    private void HandleShow(ToastMessage toast)
+    {
+        InvokeAsync(() =>
+        {
+            toasts.Add(toast);
+            StateHasChanged();
+
+            if (toast.DurationMs > 0)
+            {
+                timers[toast.Id] = new System.Threading.Timer(_ =>
+                {
+                    InvokeAsync(() => Remove(toast.Id));
+                }, null, toast.DurationMs, System.Threading.Timeout.Infinite);
+            }
+        });
+    }
+
+    private void Remove(Guid id)
+    {
+        toasts.RemoveAll(t => t.Id == id);
+        if (timers.TryGetValue(id, out var timer))
+        {
+            timer.Dispose();
+            timers.Remove(id);
+        }
+        StateHasChanged();
+    }
+
+    private static string GetVariant(ToastSeverity severity) => severity switch
+    {
+        ToastSeverity.Success => "success",
+        ToastSeverity.Warning => "warning",
+        ToastSeverity.Error => "error",
+        _ => "info"
+    };
+
+    private static string GetIconName(ToastSeverity severity) => severity switch
+    {
+        ToastSeverity.Success => "check-circle-fill",
+        ToastSeverity.Warning => "exclamation-triangle-fill",
+        ToastSeverity.Error => "exclamation-circle-fill",
+        _ => "info-circle-fill"
+    };
+
+    public void Dispose()
+    {
+        ToastService.OnShow -= HandleShow;
+        ToastService.OnDismiss -= HandleExternalDismiss;
+        foreach (var timer in timers.Values) timer.Dispose();
+        timers.Clear();
+    }
+}

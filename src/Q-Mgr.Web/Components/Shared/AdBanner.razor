@@ -1,0 +1,76 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IOrganizationApiService OrganizationApi
+
+@if (config?.ShouldShowAds == true)
+{
+    <div class="ad-banner @CssClass">
+        @if (config.Provider == "google" && !string.IsNullOrEmpty(config.GoogleAdSenseClientId))
+        {
+            <ins class="adsbygoogle"
+                 style="display:block"
+                 data-ad-client="@config.GoogleAdSenseClientId"
+                 data-ad-format="auto"
+                 data-full-width-responsive="true"></ins>
+            <script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=@config.GoogleAdSenseClientId" crossorigin="anonymous"></script>
+            <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+        }
+        else
+        {
+            <div class="ad-banner-internal">
+                <QIcon Name="stars" />
+                <span>You're on the Free plan — <a href="/billing/subscription">upgrade</a> to remove ads.</span>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .ad-banner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+    }
+
+    .ad-banner-internal {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.75);
+        background: rgba(0, 0, 0, 0.25);
+        border-radius: var(--qm-radius-md, 8px);
+    }
+
+    .ad-banner-internal a {
+        color: var(--display-accent, var(--qm-primary));
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .ad-banner-internal a:hover {
+        text-decoration: underline;
+    }
+</style>
+
+@code {
+    /// <summary>
+    /// The branch whose organization's Ads entitlement/config to fetch (same
+    /// anonymous, branch-scoped pattern as DisplayBanner / branding).
+    /// </summary>
+    [Parameter] public Guid BranchId { get; set; }
+
+    [Parameter] public string? CssClass { get; set; }
+
+    private AdsConfigDto? config;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (BranchId != Guid.Empty)
+        {
+            config = await OrganizationApi.GetAdsConfigAsync(BranchId);
+        }
+    }
+}

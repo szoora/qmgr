@@ -1,0 +1,277 @@
+@using QMgr.Web.Services
+@inject IConnectionMonitorService ConnectionMonitor
+@implements IDisposable
+
+@if (ShowOverlay)
+{
+    <div class="connection-overlay @(IsReconnecting ? "reconnecting" : "disconnected")">
+        <div class="overlay-content">
+            <div class="overlay-icon">
+                @if (IsReconnecting)
+                {
+                    <div class="reconnecting-spinner">
+                        <i class="bi bi-arrow-repeat"></i>
+                    </div>
+                }
+                else
+                {
+                    <i class="bi bi-wifi-off"></i>
+                }
+            </div>
+
+            <h2>@Title</h2>
+            <p class="message">@Message</p>
+
+            @if (ConnectionMonitor.LastConnectedAt.HasValue)
+            {
+                <p class="last-connected">
+                    Last connected: @GetTimeAgo(ConnectionMonitor.LastConnectedAt.Value)
+                </p>
+            }
+
+            @if (!IsReconnecting)
+            {
+                <div class="overlay-actions">
+                    <button class="btn-retry" @onclick="RetryConnection">
+                        <i class="bi bi-arrow-clockwise"></i>
+                        Try Again
+                    </button>
+                </div>
+
+                <div class="troubleshooting">
+                    <p class="troubleshooting-title">Troubleshooting tips:</p>
+                    <ul>
+                        <li>Check your internet connection</li>
+                        <li>The server may be temporarily unavailable</li>
+                        <li>Try refreshing the page</li>
+                    </ul>
+                </div>
+            }
+            else
+            {
+                <div class="retry-info">
+                    <p>Attempt @ConnectionMonitor.ReconnectAttempts of 3</p>
+                    <div class="retry-progress">
+                        <div class="retry-bar" style="width: @(ConnectionMonitor.ReconnectAttempts * 33.33)%"></div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .connection-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        animation: fadeIn 0.3s ease;
+    }
+
+    @@keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    .overlay-content {
+        background: var(--qm-bg-card, #1a1f2e);
+        border: 1px solid var(--qm-border, rgba(255, 255, 255, 0.1));
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        max-width: 480px;
+        width: 90%;
+        text-align: center;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    .overlay-icon {
+        font-size: 64px;
+        margin-bottom: 24px;
+    }
+
+    .connection-overlay.disconnected .overlay-icon {
+        color: var(--qm-danger, #ef4444);
+    }
+
+    .connection-overlay.reconnecting .overlay-icon {
+        color: var(--qm-warning, #ffc107);
+    }
+
+    .reconnecting-spinner {
+        display: inline-block;
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .overlay-content h2 {
+        margin: 0 0 12px;
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--qm-text-primary, #ffffff);
+    }
+
+    .overlay-content .message {
+        margin: 0 0 16px;
+        font-size: 16px;
+        color: var(--qm-text-secondary, #a0aec0);
+        line-height: 1.6;
+    }
+
+    .last-connected {
+        font-size: 13px;
+        color: var(--qm-text-muted, #718096);
+        margin-bottom: 24px;
+    }
+
+    .overlay-actions {
+        margin-bottom: 32px;
+    }
+
+    .btn-retry {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 32px;
+        background: var(--qm-gradient-primary, #8c2f52);
+        border: none;
+        border-radius: var(--qm-radius-xl);
+        color: white;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .btn-retry:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(140, 47, 82, 0.3);
+    }
+
+    .btn-retry:active {
+        transform: translateY(0);
+    }
+
+    .btn-retry i {
+        font-size: 18px;
+    }
+
+    .troubleshooting {
+        text-align: left;
+        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+        border-radius: var(--qm-radius-xl);
+        padding: 16px 20px;
+    }
+
+    .troubleshooting-title {
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-secondary, #a0aec0);
+    }
+
+    .troubleshooting ul {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--qm-text-muted, #718096);
+        font-size: 13px;
+    }
+
+    .troubleshooting li {
+        margin-bottom: 4px;
+    }
+
+    .retry-info {
+        margin-top: 24px;
+    }
+
+    .retry-info p {
+        margin: 0 0 12px;
+        font-size: 14px;
+        color: var(--qm-text-muted, #718096);
+    }
+
+    .retry-progress {
+        height: 4px;
+        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.1));
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .retry-bar {
+        height: 100%;
+        background: var(--qm-warning, #ffc107);
+        transition: width 0.3s ease;
+    }
+
+    /* Light mode */
+    [data-theme="light"] .connection-overlay {
+        background: rgba(255, 255, 255, 0.9);
+    }
+
+    [data-theme="light"] .overlay-content {
+        background: var(--qm-bg-card, #ffffff);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+    }
+
+    [data-theme="light"] .btn-retry {
+        color: #ffffff;
+    }
+</style>
+
+@code {
+    private bool ShowOverlay => ConnectionMonitor.Status == ConnectionStatus.Disconnected ||
+                                 ConnectionMonitor.Status == ConnectionStatus.Reconnecting;
+
+    private bool IsReconnecting => ConnectionMonitor.Status == ConnectionStatus.Reconnecting;
+
+    private string Title => IsReconnecting ? "Reconnecting..." : "Connection Lost";
+
+    private string Message => IsReconnecting
+        ? "Please wait while we try to reconnect to the server."
+        : ConnectionMonitor.StatusMessage;
+
+    protected override void OnInitialized()
+    {
+        ConnectionMonitor.OnStatusChanged += HandleStatusChanged;
+    }
+
+    private void HandleStatusChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RetryConnection()
+    {
+        await ConnectionMonitor.CheckConnectionAsync();
+    }
+
+    private string GetTimeAgo(DateTime dateTime)
+    {
+        var diff = DateTime.Now - dateTime;
+
+        if (diff.TotalSeconds < 60)
+            return "just now";
+        if (diff.TotalMinutes < 60)
+            return $"{(int)diff.TotalMinutes} minute{((int)diff.TotalMinutes != 1 ? "s" : "")} ago";
+        if (diff.TotalHours < 24)
+            return $"{(int)diff.TotalHours} hour{((int)diff.TotalHours != 1 ? "s" : "")} ago";
+
+        return dateTime.ToString("MMM dd, HH:mm");
+    }
+
+    public void Dispose()
+    {
+        ConnectionMonitor.OnStatusChanged -= HandleStatusChanged;
+    }
+}

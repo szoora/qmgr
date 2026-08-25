@@ -1,0 +1,2521 @@
+@page "/queue/kiosk"
+@page "/kiosk"
+@page "/kiosk/{IndustryParam}"
+@layout KioskLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using System.Text.Json
+@inject IQueueApiService QueueApi
+@inject IBranchStateService BranchState
+@inject IToastService NotificationService
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@inject JsonSerializerOptions JsonOptions
+@inject NavigationManager Navigation
+
+<div class="kiosk-container @GetIndustryClass()">
+    <!-- Header -->
+    <div class="kiosk-header">
+        <div class="header-content">
+            <div class="logo-area">
+                <div class="logo-icon">
+                    <QIcon Name="@GetIndustryIcon()" />
+                </div>
+                <span class="logo-text">@GetIndustryTitle()</span>
+            </div>
+            <div class="header-info">
+                <span class="datetime">@currentDateTime.ToString("dddd, MMMM dd, yyyy")</span>
+                <span class="time">@currentDateTime.ToString("HH:mm:ss")</span>
+            </div>
+        </div>
+        <div class="welcome-section">
+            <h1>@GetWelcomeMessage()</h1>
+            <p>@GetInstructionMessage()</p>
+        </div>
+    </div>
+
+    <!-- Services Grid -->
+    <div class="kiosk-body">
+        <div class="services-grid">
+            @foreach (var serviceType in serviceTypes)
+            {
+                <div class="service-card" @onclick="@(() => SelectService(serviceType))">
+                    <div class="service-icon-wrapper">
+                        <div class="service-icon">
+                            <QIcon Name="@GetServiceIcon(serviceType.Code)" />
+                        </div>
+                    </div>
+                    <div class="service-content">
+                        <h3 class="service-name">@serviceType.Name</h3>
+                        <p class="service-description">@GetServiceDescription(serviceType.Code)</p>
+                    </div>
+                    <div class="service-stats">
+                        <div class="stat">
+                            <span class="stat-value">@serviceType.WaitingCount</span>
+                            <span class="stat-label">Waiting</span>
+                        </div>
+                        <div class="stat-divider"></div>
+                        <div class="stat">
+                            <span class="stat-value">~@serviceType.EstimatedWaitMinutes</span>
+                            <span class="stat-label">Minutes</span>
+                        </div>
+                    </div>
+                    <div class="service-action">
+                        <span>Tap to Get Ticket</span>
+                        <QIcon Name="hand-index-fill" />
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="kiosk-footer">
+        <div class="footer-content">
+            <span>Need assistance? Please ask our staff for help.</span>
+            <div class="language-selector">
+                <button class="lang-btn active">EN</button>
+                <button class="lang-btn">AR</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ticket Modal -->
+@if (showTicket)
+{
+    <div class="ticket-overlay @GetIndustryClass()" @onclick="CloseTicket">
+        <div class="ticket-modal" @onclick:stopPropagation="true">
+            <div class="ticket-success">
+                <div class="success-icon">
+                    <QIcon Name="check-circle-fill" />
+                </div>
+                <h2>Your Ticket</h2>
+            </div>
+
+            <div class="ticket-number-display">
+                <span class="ticket-number">@generatedToken?.DisplayNumber</span>
+            </div>
+
+            <div class="ticket-info">
+                <div class="info-row">
+                    <span class="info-label">Service</span>
+                    <span class="info-value">@selectedService?.Name</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Position</span>
+                    <span class="info-value">#@generatedToken?.PositionInQueue in queue</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Estimated Wait</span>
+                    <span class="info-value">@generatedToken?.EstimatedWaitMinutes minutes</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Time Issued</span>
+                    <span class="info-value">@generatedToken?.CreatedAt.ToString("HH:mm")</span>
+                </div>
+            </div>
+
+            <div class="ticket-qr">
+                <div class="qr-placeholder">
+                    <QIcon Name="qr-code" />
+                </div>
+                <span>Scan for digital ticket</span>
+            </div>
+
+            @if (!string.IsNullOrEmpty(ticketFeedbackCode))
+            {
+                <div class="ticket-feedback-url">
+                    <QIcon Name="chat-square-text-fill" />
+                    <div class="feedback-url-info">
+                        <span class="feedback-url-label">Give feedback later:</span>
+                        <span class="feedback-url-code">@(Navigation.BaseUri)feedback/@ticketFeedbackCode</span>
+                    </div>
+                </div>
+            }
+
+            <div class="ticket-actions">
+                <button class="ticket-btn primary" @onclick="PrintToken">
+                    <QIcon Name="printer-fill" />
+                    <span>Print Ticket</span>
+                </button>
+                <button class="ticket-btn secondary" @onclick="SendSMS">
+                    <QIcon Name="chat-dots-fill" />
+                    <span>Send SMS</span>
+                </button>
+            </div>
+
+            <div class="ticket-notice">
+                <QIcon Name="info-circle-fill" />
+                <p>Please wait in the waiting area. Your number will be displayed on the screen when called.</p>
+            </div>
+
+            <div class="feedback-prompt">
+                <button class="feedback-prompt-btn" @onclick="ShowFeedbackModal">
+                    <QIcon Name="chat-square-text-fill" />
+                    <span>Rate Your Experience</span>
+                </button>
+            </div>
+
+            @if (kioskSettings?.ShowCountdown == true && redirectTimer != null)
+            {
+                <div class="countdown-display" @onclick="ResetRedirectTimer">
+                    <QIcon Name="clock-history" />
+                    <span>Returning to home in @countdownSeconds seconds...</span>
+                    <small>Tap anywhere to stay on this screen</small>
+                </div>
+            }
+
+            <button class="close-btn" @onclick="CloseTicket">
+                <QIcon Name="x-lg" />
+            </button>
+        </div>
+    </div>
+}
+
+<!-- Feedback Modal -->
+@if (showFeedbackModal)
+{
+    <div class="feedback-overlay @GetIndustryClass()" @onclick="CloseFeedbackModal">
+        <div class="feedback-modal" @onclick:stopPropagation="true">
+            <button class="close-btn" @onclick="CloseFeedbackModal">
+                <QIcon Name="x-lg" />
+            </button>
+
+            @if (!feedbackSubmitted)
+            {
+                <div class="feedback-header">
+                    <div class="feedback-icon">
+                        <QIcon Name="emoji-smile-fill" />
+                    </div>
+                    <h2>How was your experience?</h2>
+                    <p>Your feedback helps us improve our services</p>
+                </div>
+
+                <div class="star-rating">
+                    @for (int i = 1; i <= 5; i++)
+                    {
+                        var rating = i;
+                        <button class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
+                                @onclick="@(() => SetRating(rating))"
+                                @onmouseenter="@(() => hoverRating = rating)"
+                                @onmouseleave="@(() => hoverRating = 0)">
+                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" />
+                        </button>
+                    }
+                </div>
+
+                <div class="rating-label">
+                    @GetRatingLabel()
+                </div>
+
+                <div class="feedback-categories">
+                    <p class="category-label">What can we improve?</p>
+                    <div class="category-chips">
+                        @foreach (var cat in feedbackCategories)
+                        {
+                            <button class="category-chip @(selectedCategory == cat.Value ? "selected" : "")"
+                                    @onclick="@(() => selectedCategory = cat.Value)">
+                                <QIcon Name="@cat.Icon" />
+                                <span>@cat.Label</span>
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="feedback-comment">
+                    <textarea @bind="feedbackComment"
+                              placeholder="Share your thoughts (optional)..."
+                              rows="3"></textarea>
+                </div>
+
+                <div class="feedback-actions">
+                    <button class="feedback-btn secondary" @onclick="CloseFeedbackModal">
+                        Skip
+                    </button>
+                    <button class="feedback-btn primary" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmittingFeedback)">
+                        @if (isSubmittingFeedback)
+                        {
+                            <QIcon Name="arrow-repeat" class="spinning" />
+                            <span>Submitting...</span>
+                        }
+                        else
+                        {
+                            <QIcon Name="send-fill" />
+                            <span>Submit Feedback</span>
+                        }
+                    </button>
+                </div>
+
+                <div class="feedback-link-section">
+                    <p>Prefer to give feedback later?</p>
+                    <button class="get-link-btn" @onclick="GenerateFeedbackLink">
+                        <QIcon Name="link-45deg" />
+                        <span>Get Feedback Link</span>
+                    </button>
+                    @if (!string.IsNullOrEmpty(feedbackLinkCode))
+                    {
+                        <div class="feedback-link-display">
+                            <span class="link-code">@feedbackLinkCode</span>
+                            <span class="link-hint">Visit: yoursite.com/feedback/@feedbackLinkCode</span>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="feedback-success">
+                    <div class="success-animation">
+                        <div class="success-checkmark">
+                            <QIcon Name="check-circle-fill" />
+                        </div>
+                    </div>
+                    <h2>Thank You!</h2>
+                    <p>Your feedback has been submitted successfully.</p>
+                    <p class="thank-you-message">We appreciate you taking the time to help us improve.</p>
+                    <button class="feedback-btn primary" @onclick="CloseFeedbackModal">
+                        <QIcon Name="check-lg" />
+                        <span>Done</span>
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<!-- Customer Info Modal -->
+@if (showCustomerForm)
+{
+    <div class="ticket-overlay @GetIndustryClass()" @onclick="@(() => showCustomerForm = false)">
+        <div class="customer-form-modal" @onclick:stopPropagation="true">
+            <h2>Customer Information</h2>
+            <p>Optional: Enter your details for notifications</p>
+
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" @bind="customerName" placeholder="Your name" />
+            </div>
+
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="tel" @bind="customerPhone" placeholder="+1234567890" />
+            </div>
+
+            <div class="form-actions">
+                <button class="form-btn secondary" @onclick="SkipCustomerInfo">Skip</button>
+                <button class="form-btn primary" @onclick="SubmitCustomerInfo">Continue</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .kiosk-container {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--kiosk-gradient, linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%));
+        overflow: hidden;
+    }
+
+    /* Industry-specific themes */
+    .kiosk-container.industry-general,
+    .ticket-overlay.industry-general,
+    .feedback-overlay.industry-general {
+        --kiosk-gradient: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+        /* Not var(--qm-primary): that token is tuned for light dashboard backgrounds
+           and fails WCAG AA here (as low as 1.98:1, needs 3:1+) against this always-dark
+           kiosk gradient. Fixed, lighter wine accent scoped to this dark-only context instead.
+           accent-dark is also used as .ticket-btn.primary's hover background, which
+           pairs with dark (#0f0f1a) button text — #8c2f52 there was only 2.96:1 against
+           that dark text (needs 4.5:1 at 16px/600), so accent-dark here is a *lighter*
+           tint than accent, not a literal "darker" shade. */
+        --kiosk-accent: #d1567f;
+        --kiosk-accent-dark: #e0759e;
+    }
+
+    .kiosk-container.industry-hospital,
+    .ticket-overlay.industry-hospital,
+    .feedback-overlay.industry-hospital {
+        --kiosk-gradient: linear-gradient(135deg, #1a0f0f 0%, #2e1a1a 100%);
+        --kiosk-accent: #ef4444;
+        /* Lightened from #dc2626 (3.94:1 vs the dark #0f0f1a button text — fails 4.5:1) */
+        --kiosk-accent-dark: #e56060;
+    }
+
+    .kiosk-container.industry-bank,
+    .ticket-overlay.industry-bank,
+    .feedback-overlay.industry-bank {
+        --kiosk-gradient: linear-gradient(135deg, #0f1a0f 0%, #1a2e1a 100%);
+        --kiosk-accent: #22c55e;
+        --kiosk-accent-dark: #16a34a;
+    }
+
+    .kiosk-container.industry-pharmacy,
+    .ticket-overlay.industry-pharmacy,
+    .feedback-overlay.industry-pharmacy {
+        --kiosk-gradient: linear-gradient(135deg, #1a0f1a 0%, #2e1a2e 100%);
+        /* Lightened from #3b5169 (2.33:1 against this gradient, 2.28:1 as text on it — both
+           fail) and #9333ea (3.54:1 vs dark button text — fails 4.5:1). */
+        --kiosk-accent: #82a3c9;
+        --kiosk-accent-dark: #b06ef0;
+    }
+
+    .kiosk-container.industry-electronicsshop,
+    .ticket-overlay.industry-electronicsshop,
+    .feedback-overlay.industry-electronicsshop {
+        --kiosk-gradient: linear-gradient(135deg, #1a1a0f 0%, #2e2e1a 100%);
+        --kiosk-accent: #f59e0b;
+        --kiosk-accent-dark: #f59e0b;
+    }
+
+    .kiosk-container.industry-government,
+    .ticket-overlay.industry-government,
+    .feedback-overlay.industry-government {
+        --kiosk-gradient: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+        --kiosk-accent: #3b82f6;
+        /* Lightened from #2563eb (3.68:1 vs the dark #0f0f1a button text — fails 4.5:1) */
+        --kiosk-accent-dark: #467aee;
+    }
+
+    .kiosk-container.industry-telecom,
+    .ticket-overlay.industry-telecom,
+    .feedback-overlay.industry-telecom {
+        --kiosk-gradient: linear-gradient(135deg, #1a0f1a 0%, #2e1a2a 100%);
+        --kiosk-accent: #ec4899;
+        /* Lightened from #db2777 (4.14:1 vs the dark #0f0f1a button text — fails 4.5:1) */
+        --kiosk-accent-dark: #df3d85;
+    }
+
+    .kiosk-container.industry-restaurant,
+    .ticket-overlay.industry-restaurant,
+    .feedback-overlay.industry-restaurant {
+        --kiosk-gradient: linear-gradient(135deg, #1a100a 0%, #2e1a10 100%);
+        --kiosk-accent: #f97316;
+        --kiosk-accent-dark: #ea580c;
+    }
+
+    /* Header */
+    .kiosk-header {
+        padding: 30px 40px;
+        color: white;
+        background: linear-gradient(180deg, rgba(0,0,0,0.3) 0%, transparent 100%);
+    }
+
+    .header-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 40px;
+    }
+
+    .logo-area {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .logo-icon {
+        width: 60px;
+        height: 60px;
+        background: var(--kiosk-accent);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.3);
+    }
+
+    .logo-icon .q-icon {
+        font-size: 32px;
+        color: #0f0f1a;
+    }
+
+    .logo-text {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }
+
+    .header-info {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        background: rgba(255,255,255,0.05);
+        padding: 12px 20px;
+        border-radius: var(--qm-radius-xl);
+        backdrop-filter: blur(10px);
+    }
+
+    .header-info .datetime {
+        font-size: 14px;
+        opacity: 0.7;
+    }
+
+    .header-info .time {
+        font-size: 36px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--kiosk-accent);
+    }
+
+    .welcome-section {
+        text-align: center;
+    }
+
+    .welcome-section h1 {
+        font-size: 56px;
+        font-weight: 800;
+        margin: 0 0 16px;
+        color: white;
+        text-shadow: 0 0 40px rgba(255,255,255,0.1);
+    }
+
+    .welcome-section p {
+        font-size: 22px;
+        opacity: 0.8;
+        margin: 0;
+    }
+
+    /* Body */
+    .kiosk-body {
+        flex: 1;
+        padding: 0 40px 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .services-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+        max-width: 1400px;
+        width: 100%;
+    }
+
+    .service-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--qm-radius-xl);
+        padding: 32px;
+        cursor: pointer;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        overflow: hidden;
+        backdrop-filter: blur(20px);
+    }
+
+    .service-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, var(--kiosk-accent), var(--kiosk-accent-dark));
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .service-card::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at center, var(--kiosk-accent) 0%, transparent 70%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .service-card:hover {
+        transform: translateY(-12px) scale(1.02);
+        border-color: var(--kiosk-accent);
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4), 0 0 40px rgba(140, 47, 82, 0.15);
+    }
+
+    .service-card:hover::before {
+        opacity: 1;
+    }
+
+    .service-card:hover::after {
+        opacity: 0.05;
+    }
+
+    .service-card:active {
+        transform: translateY(-6px) scale(0.98);
+    }
+
+    .service-icon-wrapper {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 24px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .service-icon {
+        width: 90px;
+        height: 90px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.4s ease;
+    }
+
+    .service-icon .q-icon {
+        font-size: 40px;
+        color: var(--kiosk-accent);
+    }
+
+    .service-card:hover .service-icon {
+        background: var(--kiosk-accent);
+        border-color: var(--kiosk-accent);
+        transform: scale(1.1);
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.4);
+    }
+
+    .service-card:hover .service-icon .q-icon {
+        color: #0f0f1a;
+    }
+
+    .service-content {
+        text-align: center;
+        margin-bottom: 20px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .service-name {
+        font-size: 22px;
+        font-weight: 700;
+        color: white;
+        margin: 0 0 8px;
+    }
+
+    .service-description {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.6);
+        margin: 0;
+    }
+
+    .service-stats {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 24px;
+        padding: 20px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 16px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .stat {
+        text-align: center;
+    }
+
+    .stat-value {
+        display: block;
+        font-size: 28px;
+        font-weight: 800;
+        color: var(--kiosk-accent);
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stat-label {
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+    }
+
+    .stat-divider {
+        width: 1px;
+        height: 40px;
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .service-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: var(--kiosk-accent);
+        font-weight: 600;
+        font-size: 15px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .service-action .q-icon {
+        font-size: 22px;
+        animation: pulse-tap 2s infinite;
+    }
+
+    @@keyframes pulse-tap {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.2); }
+    }
+
+    /* Footer */
+    .kiosk-footer {
+        padding: 24px 40px;
+        background: rgba(0, 0, 0, 0.3);
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .footer-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: rgba(255, 255, 255, 0.7);
+    }
+
+    .language-selector {
+        display: flex;
+        gap: 10px;
+    }
+
+    .lang-btn {
+        padding: 10px 20px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.05);
+        color: white;
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    .lang-btn:hover, .lang-btn.active {
+        background: var(--kiosk-accent);
+        color: #0f0f1a;
+        border-color: var(--kiosk-accent);
+    }
+
+    /* Ticket Modal */
+    .ticket-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        animation: fadeIn 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+
+    @@keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    .ticket-modal {
+        background: linear-gradient(145deg, #1a1a2e 0%, #0f0f1a 100%);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        max-width: 480px;
+        width: 90%;
+        position: relative;
+        animation: slideUp 0.4s ease;
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 0 60px rgba(140, 47, 82, 0.1);
+    }
+
+    @@keyframes slideUp {
+        from { opacity: 0; transform: translateY(50px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .close-btn {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+    }
+
+    .close-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: var(--kiosk-accent);
+    }
+
+    .close-btn .q-icon {
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .ticket-success {
+        text-align: center;
+        margin-bottom: 24px;
+    }
+
+    .success-icon {
+        width: 90px;
+        height: 90px;
+        background: rgba(34, 197, 94, 0.15);
+        border: 2px solid rgba(34, 197, 94, 0.3);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 20px;
+    }
+
+    .success-icon .q-icon {
+        font-size: 48px;
+        color: #22c55e;
+    }
+
+    .ticket-success h2 {
+        font-size: 24px;
+        margin: 0;
+        color: white;
+    }
+
+    .ticket-number-display {
+        text-align: center;
+        padding: 32px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        margin-bottom: 24px;
+    }
+
+    .ticket-number {
+        font-size: 90px;
+        font-weight: 800;
+        color: var(--kiosk-accent);
+        line-height: 1;
+        font-family: 'JetBrains Mono', monospace;
+        text-shadow: 0 0 40px rgba(140, 47, 82, 0.4);
+    }
+
+    .ticket-info {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        margin-bottom: 24px;
+    }
+
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .info-row:last-child {
+        border-bottom: none;
+    }
+
+    .info-label {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 14px;
+    }
+
+    .info-value {
+        font-weight: 600;
+        color: white;
+    }
+
+    .ticket-qr {
+        text-align: center;
+        margin-bottom: 24px;
+    }
+
+    .qr-placeholder {
+        width: 110px;
+        height: 110px;
+        background: white;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 12px;
+    }
+
+    .qr-placeholder .q-icon {
+        font-size: 70px;
+        color: #0f0f1a;
+    }
+
+    .ticket-qr span {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.5);
+    }
+
+    .ticket-actions {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .ticket-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 18px 24px;
+        border-radius: var(--qm-radius-xl);
+        border: none;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .ticket-btn.primary {
+        background: var(--kiosk-accent);
+        color: #0f0f1a;
+    }
+
+    .ticket-btn.primary:hover {
+        background: var(--kiosk-accent-dark);
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.3);
+    }
+
+    .ticket-btn.secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .ticket-btn.secondary:hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .ticket-feedback-url {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 18px;
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.2);
+        border-radius: var(--qm-radius-xl);
+        margin-bottom: 20px;
+    }
+
+    .ticket-feedback-url > .q-icon {
+        color: #22c55e;
+        font-size: 24px;
+        flex-shrink: 0;
+    }
+
+    .feedback-url-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        overflow: hidden;
+    }
+
+    .feedback-url-label {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .feedback-url-code {
+        font-size: 13px;
+        font-weight: 500;
+        color: #22c55e;
+        word-break: break-all;
+    }
+
+    .ticket-notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 18px;
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .ticket-notice .q-icon {
+        color: #f59e0b;
+        font-size: 22px;
+        flex-shrink: 0;
+    }
+
+    .ticket-notice p {
+        margin: 0;
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.8);
+        line-height: 1.5;
+    }
+
+    /* Countdown Display */
+    .countdown-display {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 16px 20px;
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: var(--qm-radius-xl);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .countdown-display:hover {
+        background: rgba(59, 130, 246, 0.25);
+        border-color: rgba(59, 130, 246, 0.5);
+    }
+
+    .countdown-display .q-icon {
+        color: #3b82f6;
+        font-size: 24px;
+    }
+
+    .countdown-display span {
+        font-size: 15px;
+        color: #3b82f6;
+        font-weight: 500;
+    }
+
+    .countdown-display small {
+        font-size: 12px;
+        color: rgba(59, 130, 246, 0.7);
+    }
+
+    /* Customer Form Modal */
+    .customer-form-modal {
+        background: linear-gradient(145deg, #1a1a2e 0%, #0f0f1a 100%);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        padding: 40px;
+        max-width: 420px;
+        width: 90%;
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+    }
+
+    .customer-form-modal h2 {
+        margin: 0 0 8px;
+        font-size: 26px;
+        color: white;
+    }
+
+    .customer-form-modal > p {
+        color: rgba(255, 255, 255, 0.6);
+        margin: 0 0 28px;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 16px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        font-size: 16px;
+        color: white;
+        transition: all 0.3s ease;
+    }
+
+    .form-group input::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+    }
+
+    .form-group input:focus {
+        outline: none;
+        border-color: var(--kiosk-accent);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 14px;
+        margin-top: 32px;
+    }
+
+    .form-btn {
+        flex: 1;
+        padding: 18px;
+        border-radius: var(--qm-radius-xl);
+        border: none;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .form-btn.primary {
+        background: var(--kiosk-accent);
+        color: #0f0f1a;
+    }
+
+    .form-btn.primary:hover {
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.3);
+    }
+
+    .form-btn.secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .form-btn.secondary:hover {
+        background: rgba(255, 255, 255, 0.12);
+    }
+
+    /* Feedback Prompt Button */
+    .feedback-prompt {
+        margin-top: 20px;
+        text-align: center;
+    }
+
+    .feedback-prompt-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 16px 32px;
+        background: linear-gradient(135deg, #f59e0b 0%, #f59e0b 100%);
+        border: none;
+        border-radius: var(--qm-radius-xl);
+        color: #0f0f1a;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        animation: pulse-feedback 2s infinite;
+    }
+
+    .feedback-prompt-btn:hover {
+        transform: scale(1.05);
+        box-shadow: 0 0 30px rgba(245, 158, 11, 0.4);
+    }
+
+    @@keyframes pulse-feedback {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+        50% { box-shadow: 0 0 20px 10px rgba(245, 158, 11, 0.2); }
+    }
+
+    /* Feedback Modal */
+    .feedback-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.95);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1100;
+        animation: fadeIn 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+
+    .feedback-modal {
+        background: linear-gradient(145deg, #1a1a2e 0%, #0f0f1a 100%);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        max-width: 560px;
+        width: 90%;
+        position: relative;
+        animation: slideUp 0.4s ease;
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5), 0 0 60px rgba(140, 47, 82, 0.1);
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .feedback-header {
+        text-align: center;
+        margin-bottom: 32px;
+    }
+
+    .feedback-icon {
+        width: 80px;
+        height: 80px;
+        background: linear-gradient(135deg, #f59e0b 0%, #f59e0b 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 20px;
+    }
+
+    .feedback-icon .q-icon {
+        font-size: 44px;
+        color: #0f0f1a;
+    }
+
+    .feedback-header h2 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        color: white;
+    }
+
+    .feedback-header p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 16px;
+    }
+
+    /* Star Rating */
+    .star-rating {
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+
+    .star-btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        width: 64px;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .star-btn .q-icon {
+        font-size: 36px;
+        color: rgba(255, 255, 255, 0.3);
+        transition: all 0.3s ease;
+    }
+
+    .star-btn:hover, .star-btn.hover {
+        background: rgba(245, 158, 11, 0.1);
+        border-color: rgba(245, 158, 11, 0.3);
+        transform: scale(1.1);
+    }
+
+    .star-btn:hover .q-icon, .star-btn.hover .q-icon {
+        color: #f59e0b;
+    }
+
+    .star-btn.active {
+        background: rgba(245, 158, 11, 0.15);
+        border-color: #f59e0b;
+    }
+
+    .star-btn.active .q-icon {
+        color: #f59e0b;
+        text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
+    }
+
+    .rating-label {
+        text-align: center;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--kiosk-accent);
+        min-height: 28px;
+        margin-bottom: 24px;
+    }
+
+    /* Categories */
+    .feedback-categories {
+        margin-bottom: 24px;
+    }
+
+    .category-label {
+        text-align: center;
+        margin: 0 0 16px;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 14px;
+    }
+
+    .category-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+    }
+
+    .category-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .category-chip .q-icon {
+        font-size: 18px;
+    }
+
+    .category-chip:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .category-chip.selected {
+        background: rgba(140, 47, 82, 0.15);
+        border-color: var(--kiosk-accent);
+        color: var(--kiosk-accent);
+    }
+
+    /* Comment */
+    .feedback-comment {
+        margin-bottom: 24px;
+    }
+
+    .feedback-comment textarea {
+        width: 100%;
+        padding: 16px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        font-size: 15px;
+        color: white;
+        resize: none;
+        transition: all 0.3s ease;
+        font-family: inherit;
+    }
+
+    .feedback-comment textarea::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+    }
+
+    .feedback-comment textarea:focus {
+        outline: none;
+        border-color: var(--kiosk-accent);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Actions */
+    .feedback-actions {
+        display: flex;
+        gap: 14px;
+        margin-bottom: 24px;
+    }
+
+    .feedback-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 18px 24px;
+        border-radius: var(--qm-radius-xl);
+        border: none;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .feedback-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .feedback-btn.primary {
+        background: var(--kiosk-accent);
+        color: #0f0f1a;
+    }
+
+    .feedback-btn.primary:hover:not(:disabled) {
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.3);
+    }
+
+    .feedback-btn.secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        border: 2px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .feedback-btn.secondary:hover {
+        background: rgba(255, 255, 255, 0.12);
+    }
+
+    .spinning {
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    /* Feedback Link Section */
+    .feedback-link-section {
+        text-align: center;
+        padding-top: 20px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .feedback-link-section > p {
+        margin: 0 0 12px;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 13px;
+    }
+
+    .get-link-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-lg);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .get-link-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: var(--kiosk-accent);
+        color: var(--kiosk-accent);
+    }
+
+    .feedback-link-display {
+        margin-top: 16px;
+        padding: 16px;
+        background: rgba(140, 47, 82, 0.1);
+        border: 1px solid rgba(140, 47, 82, 0.2);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .link-code {
+        display: block;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--kiosk-accent);
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 2px;
+        margin-bottom: 8px;
+    }
+
+    .link-hint {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+    }
+
+    /* Success State */
+    .feedback-success {
+        text-align: center;
+        padding: 20px 0;
+    }
+
+    .success-animation {
+        margin-bottom: 24px;
+    }
+
+    .success-checkmark {
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        animation: success-pop 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .success-checkmark .q-icon {
+        font-size: 56px;
+        color: white;
+    }
+
+    @@keyframes success-pop {
+        0% { transform: scale(0); opacity: 0; }
+        50% { transform: scale(1.2); }
+        100% { transform: scale(1); opacity: 1; }
+    }
+
+    .feedback-success h2 {
+        margin: 0 0 12px;
+        font-size: 32px;
+        color: white;
+    }
+
+    .feedback-success p {
+        margin: 0 0 8px;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 16px;
+    }
+
+    .thank-you-message {
+        color: rgba(255, 255, 255, 0.5) !important;
+        font-size: 14px !important;
+        margin-bottom: 24px !important;
+    }
+
+    /* Responsive */
+    @@media (max-width: 768px) {
+        .kiosk-header {
+            padding: 20px;
+        }
+
+        .welcome-section h1 {
+            font-size: 32px;
+        }
+
+        .welcome-section p {
+            font-size: 16px;
+        }
+
+        .kiosk-body {
+            padding: 0 20px 20px;
+        }
+
+        .services-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .service-card {
+            padding: 20px;
+        }
+
+        .service-icon {
+            width: 60px;
+            height: 60px;
+        }
+
+        .service-name {
+            font-size: 16px;
+        }
+
+        .ticket-number {
+            font-size: 56px;
+        }
+    }
+
+    /* ================================
+       Light Theme Override
+       Admin-selectable per-organization (see BrandingSettings.razor "Display
+       Theme"); applied via [data-theme] on the KioskLayout wrapper. Every
+       color above is a hardcoded dark-mode literal (not a --qm-* token), so
+       each one needs an explicit light counterpart here rather than inheriting
+       automatically from qm-theme.css's own [data-theme="light"] block.
+
+       NOT overridden here, intentionally:
+       - --kiosk-accent / --kiosk-accent-dark (per industry-* rule above):
+         these are already a working, industry-scoped design system, and many
+         uses pair them as a *background* with the theme-independent literal
+         color #0f0f1a as text on top (.ticket-btn.primary, .logo-icon .q-icon,
+         .lang-btn.active, etc.) - that pairing's contrast doesn't depend on
+         the page theme, so re-tuning the accent per theme would break it.
+         The accents are bright/saturated enough to keep working as text
+         color on the light backgrounds below too.
+       - .qr-placeholder / .qr-placeholder .q-icon: a QR code needs a white
+         quiet zone regardless of site theme.
+       - .ticket-overlay / .feedback-overlay: full-screen modal scrims are
+         conventionally dark in both light and dark UIs.
+       - Colored badges/pills that already use a saturated tint (green success,
+         amber warning, blue info, e.g. .ticket-feedback-url, .ticket-notice,
+         .countdown-display, .success-icon, .feedback-icon, .feedback-prompt-btn,
+         .category-chip.selected, .feedback-link-display): these read fine
+         unchanged on either background.
+       ================================ */
+
+    /* Industry background gradients: dark -> light tint, same hue family.
+       Also defines --kiosk-accent-onlight per industry: --kiosk-accent itself is
+       deliberately NOT overridden here, because it's used in two contradictory
+       ways — (a) as `color` directly on the page/card background (e.g. the giant
+       .ticket-number), which on a light card needs a DARKER, more saturated color
+       than the original bright dark-mode value; and (b) as a `background` paired
+       with dark #0f0f1a button text (.ticket-btn.primary etc.), which needs to
+       STAY bright/light for that pairing to keep working in any theme. Darkening
+       --kiosk-accent itself would fix (a) but break (b) into dark-text-on-dark-bg.
+       --kiosk-accent-onlight is the (a)-only darkened variant, applied via
+       explicit overrides below to just the text/glyph selectors that need it —
+       found live: the ticket number was unreadable in light mode before this. */
+    [data-theme="light"] .kiosk-container.industry-general,
+    [data-theme="light"] .ticket-overlay.industry-general,
+    [data-theme="light"] .feedback-overlay.industry-general {
+        --kiosk-gradient: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        --kiosk-accent-onlight: #7a2847;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-hospital,
+    [data-theme="light"] .ticket-overlay.industry-hospital,
+    [data-theme="light"] .feedback-overlay.industry-hospital {
+        --kiosk-gradient: linear-gradient(135deg, #fdf8f8 0%, #f7eeee 100%);
+        --kiosk-accent-onlight: #b91c1c;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-bank,
+    [data-theme="light"] .ticket-overlay.industry-bank,
+    [data-theme="light"] .feedback-overlay.industry-bank {
+        --kiosk-gradient: linear-gradient(135deg, #f8fdf8 0%, #eef7ee 100%);
+        --kiosk-accent-onlight: #15803d;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-pharmacy,
+    [data-theme="light"] .ticket-overlay.industry-pharmacy,
+    [data-theme="light"] .feedback-overlay.industry-pharmacy {
+        --kiosk-gradient: linear-gradient(135deg, #fdf8fd 0%, #f7eef7 100%);
+        --kiosk-accent-onlight: #47393f;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-electronicsshop,
+    [data-theme="light"] .ticket-overlay.industry-electronicsshop,
+    [data-theme="light"] .feedback-overlay.industry-electronicsshop {
+        --kiosk-gradient: linear-gradient(135deg, #fdfdf8 0%, #f7f7ee 100%);
+        --kiosk-accent-onlight: #b45309;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-government,
+    [data-theme="light"] .ticket-overlay.industry-government,
+    [data-theme="light"] .feedback-overlay.industry-government {
+        --kiosk-gradient: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        --kiosk-accent-onlight: #1d4ed8;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-telecom,
+    [data-theme="light"] .ticket-overlay.industry-telecom,
+    [data-theme="light"] .feedback-overlay.industry-telecom {
+        --kiosk-gradient: linear-gradient(135deg, #fdf8fb 0%, #f7eef3 100%);
+        --kiosk-accent-onlight: #be185d;
+    }
+
+    [data-theme="light"] .kiosk-container.industry-restaurant,
+    [data-theme="light"] .ticket-overlay.industry-restaurant,
+    [data-theme="light"] .feedback-overlay.industry-restaurant {
+        --kiosk-gradient: linear-gradient(135deg, #fdfaf8 0%, #f7f0ea 100%);
+        --kiosk-accent-onlight: #c2410c;
+    }
+
+    /* Text/glyph elements that use --kiosk-accent as a foreground color directly on
+       the page/card background (not as a button background paired with dark text —
+       those, e.g. .ticket-btn.primary, correctly keep using the original bright
+       --kiosk-accent unchanged, since it still pairs fine with #0f0f1a in any theme). */
+    [data-theme="light"] .header-info .time,
+    [data-theme="light"] .service-icon .q-icon,
+    [data-theme="light"] .stat-value,
+    [data-theme="light"] .service-action,
+    [data-theme="light"] .ticket-number,
+    [data-theme="light"] .rating-label,
+    [data-theme="light"] .category-chip.selected,
+    [data-theme="light"] .get-link-btn:hover,
+    [data-theme="light"] .link-code {
+        color: var(--kiosk-accent-onlight);
+    }
+
+    [data-theme="light"] .category-chip.selected {
+        background: rgba(122, 40, 71, 0.08);
+        border-color: var(--kiosk-accent-onlight);
+    }
+
+    [data-theme="light"] .get-link-btn:hover {
+        border-color: var(--kiosk-accent-onlight);
+    }
+
+    /* Header */
+    [data-theme="light"] .kiosk-header {
+        color: #1e293b;
+        background: transparent;
+    }
+
+    [data-theme="light"] .header-info {
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    [data-theme="light"] .welcome-section h1 {
+        color: #1e293b;
+        text-shadow: none;
+    }
+
+    /* Services grid */
+    [data-theme="light"] .service-card {
+        background: rgba(255, 255, 255, 0.75);
+        border: 2px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .service-card:hover {
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.12), 0 0 40px rgba(122, 40, 71, 0.15);
+    }
+
+    [data-theme="light"] .service-icon {
+        background: rgba(0, 0, 0, 0.05);
+        border: 2px solid rgba(0, 0, 0, 0.12);
+    }
+
+    [data-theme="light"] .service-name {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .service-description {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .service-stats {
+        border-top: 1px solid rgba(0, 0, 0, 0.1);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="light"] .stat-label {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .stat-divider {
+        background: rgba(0, 0, 0, 0.1);
+    }
+
+    /* Footer */
+    [data-theme="light"] .kiosk-footer {
+        background: rgba(0, 0, 0, 0.03);
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .footer-content {
+        color: rgba(0, 0, 0, 0.7);
+    }
+
+    [data-theme="light"] .lang-btn {
+        border: 2px solid rgba(0, 0, 0, 0.15);
+        background: rgba(0, 0, 0, 0.04);
+        color: #1e293b;
+    }
+
+    /* Ticket Modal */
+    [data-theme="light"] .ticket-modal {
+        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.15), 0 0 60px rgba(122, 40, 71, 0.1);
+    }
+
+    [data-theme="light"] .close-btn {
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    [data-theme="light"] .close-btn:hover {
+        background: rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .close-btn .q-icon {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .ticket-success h2 {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .ticket-number-display {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .ticket-info {
+        background: rgba(0, 0, 0, 0.03);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .info-row {
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .info-label {
+        color: rgba(0, 0, 0, 0.55);
+    }
+
+    [data-theme="light"] .info-value {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .ticket-qr span {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .ticket-btn.secondary {
+        background: rgba(0, 0, 0, 0.05);
+        color: #1e293b;
+        border: 2px solid rgba(0, 0, 0, 0.12);
+    }
+
+    [data-theme="light"] .ticket-btn.secondary:hover {
+        background: rgba(0, 0, 0, 0.08);
+        border-color: rgba(0, 0, 0, 0.2);
+    }
+
+    [data-theme="light"] .feedback-url-label {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .ticket-notice p {
+        color: rgba(0, 0, 0, 0.75);
+    }
+
+    /* Customer Form Modal */
+    [data-theme="light"] .customer-form-modal {
+        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.15);
+    }
+
+    [data-theme="light"] .customer-form-modal h2 {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .customer-form-modal > p {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .form-group label {
+        color: rgba(0, 0, 0, 0.75);
+    }
+
+    [data-theme="light"] .form-group input {
+        background: rgba(0, 0, 0, 0.04);
+        border: 2px solid rgba(0, 0, 0, 0.15);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .form-group input::placeholder {
+        color: rgba(0, 0, 0, 0.35);
+    }
+
+    [data-theme="light"] .form-group input:focus {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="light"] .form-btn.secondary {
+        background: rgba(0, 0, 0, 0.05);
+        color: #1e293b;
+        border: 2px solid rgba(0, 0, 0, 0.12);
+    }
+
+    [data-theme="light"] .form-btn.secondary:hover {
+        background: rgba(0, 0, 0, 0.08);
+    }
+
+    /* Feedback Modal */
+    [data-theme="light"] .feedback-modal {
+        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.15), 0 0 60px rgba(122, 40, 71, 0.1);
+    }
+
+    [data-theme="light"] .feedback-header h2 {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .feedback-header p {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .star-btn {
+        background: rgba(0, 0, 0, 0.04);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="light"] .star-btn .q-icon {
+        color: rgba(0, 0, 0, 0.25);
+    }
+
+    [data-theme="light"] .category-label {
+        color: rgba(0, 0, 0, 0.65);
+    }
+
+    [data-theme="light"] .category-chip {
+        background: rgba(0, 0, 0, 0.04);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        color: rgba(0, 0, 0, 0.65);
+    }
+
+    [data-theme="light"] .category-chip:hover {
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.15);
+    }
+
+    [data-theme="light"] .feedback-comment textarea {
+        background: rgba(0, 0, 0, 0.04);
+        border: 2px solid rgba(0, 0, 0, 0.15);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .feedback-comment textarea::placeholder {
+        color: rgba(0, 0, 0, 0.35);
+    }
+
+    [data-theme="light"] .feedback-comment textarea:focus {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="light"] .feedback-btn.secondary {
+        background: rgba(0, 0, 0, 0.05);
+        color: #1e293b;
+        border: 2px solid rgba(0, 0, 0, 0.12);
+    }
+
+    [data-theme="light"] .feedback-btn.secondary:hover {
+        background: rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .feedback-link-section {
+        border-top: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="light"] .feedback-link-section > p {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .get-link-btn {
+        background: rgba(0, 0, 0, 0.04);
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        color: rgba(0, 0, 0, 0.65);
+    }
+
+    [data-theme="light"] .get-link-btn:hover {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="light"] .link-hint {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .feedback-success h2 {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .feedback-success p {
+        color: rgba(0, 0, 0, 0.65);
+    }
+
+    [data-theme="light"] .thank-you-message {
+        color: rgba(0, 0, 0, 0.5) !important;
+    }
+</style>
+
+@code {
+    [Parameter] public string? IndustryParam { get; set; }
+
+    private IndustryType currentIndustry = IndustryType.General;
+    private List<ServiceTypeQueueDto> serviceTypes = new();
+    private ServiceTypeQueueDto? selectedService;
+    private TokenDto? generatedToken;
+    private bool showTicket = false;
+    private bool showCustomerForm = false;
+    private string? customerName;
+    private string? customerPhone;
+    private DateTime currentDateTime = DateTime.Now;
+    private System.Threading.Timer? clockTimer;
+
+    // Feedback state
+    private bool showFeedbackModal = false;
+    private bool feedbackSubmitted = false;
+    private bool isSubmittingFeedback = false;
+    private int feedbackRating = 0;
+    private int hoverRating = 0;
+    private FeedbackCategory selectedCategory = FeedbackCategory.General;
+    private string? feedbackComment;
+    private string? feedbackLinkCode;
+    private string? ticketFeedbackCode;
+
+    // Kiosk settings & auto-redirect timer
+    private KioskSettingsDto? kioskSettings;
+    private System.Threading.Timer? redirectTimer;
+    private int countdownSeconds;
+    private bool ticketPrinted = false;
+
+    private readonly List<(FeedbackCategory Value, string Label, string Icon)> feedbackCategories = new()
+    {
+        (FeedbackCategory.General, "General", "chat"),
+        (FeedbackCategory.ServiceQuality, "Service", "star-fill"),
+        (FeedbackCategory.WaitTime, "Wait Time", "clock-history"),
+        (FeedbackCategory.StaffBehavior, "Staff", "person"),
+        (FeedbackCategory.Facility, "Facility", "building"),
+        (FeedbackCategory.Other, "Other", "three-dots")
+    };
+
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Initialize branch state
+        await BranchState.InitializeAsync();
+
+        // If no branch is configured, auto-select the first available branch
+        if (BranchState.CurrentBranchId == Guid.Empty)
+        {
+            try
+            {
+                var response = await Http.GetAsync("api/v1/branches");
+                if (response.IsSuccessStatusCode)
+                {
+                    var branches = await response.Content.ReadFromJsonAsync<List<BranchApiDto>>(JsonOptions);
+                    var firstBranch = branches?.FirstOrDefault(b => b.IsActive);
+                    if (firstBranch != null)
+                    {
+                        await BranchState.SetBranchAsync(firstBranch.Id, firstBranch.Name);
+                    }
+                }
+            }
+            catch
+            {
+                // Unable to load branches - will show error when trying to create token
+            }
+        }
+
+        // Industry is configured by admin in Organization settings
+        // URL parameter is only for admin preview/testing purposes
+        if (!string.IsNullOrEmpty(IndustryParam) && Enum.TryParse<IndustryType>(IndustryParam, true, out var industry))
+        {
+            currentIndustry = industry; // Admin preview mode
+        }
+        else
+        {
+            // Production: Load from organization settings via API
+            // TODO: currentIndustry = await QueueApi.GetOrganizationIndustryAsync(BranchId);
+        }
+
+        await LoadServiceTypes();
+        await LoadKioskSettings();
+
+        // Start clock timer for real-time display
+        clockTimer = new System.Threading.Timer(async _ =>
+        {
+            currentDateTime = DateTime.Now;
+            await InvokeAsync(StateHasChanged);
+        }, null, 0, 1000);
+    }
+
+    private async Task LoadKioskSettings()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/kiosk-settings");
+            if (response.IsSuccessStatusCode)
+            {
+                kioskSettings = await response.Content.ReadFromJsonAsync<KioskSettingsDto>(JsonOptions);
+            }
+        }
+        catch
+        {
+            // Use defaults if settings can't be loaded
+            kioskSettings = new KioskSettingsDto();
+        }
+        kioskSettings ??= new KioskSettingsDto();
+    }
+
+    public void Dispose()
+    {
+        clockTimer?.Dispose();
+        StopRedirectTimer();
+    }
+
+    private void StartRedirectTimer()
+    {
+        StopRedirectTimer();
+        countdownSeconds = kioskSettings?.TicketDisplayTimeoutSeconds ?? 15;
+        ticketPrinted = false;
+
+        redirectTimer = new System.Threading.Timer(async _ =>
+        {
+            countdownSeconds--;
+            if (countdownSeconds <= 0)
+            {
+                StopRedirectTimer();
+
+                // Auto-print if enabled and not already printed
+                if (kioskSettings?.AutoPrintBeforeRedirect == true && !ticketPrinted && generatedToken != null)
+                {
+                    await InvokeAsync(PrintToken);
+                }
+
+                await InvokeAsync(CloseTicket);
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, 1000, 1000);
+    }
+
+    private void StopRedirectTimer()
+    {
+        redirectTimer?.Dispose();
+        redirectTimer = null;
+    }
+
+    private void ResetRedirectTimer()
+    {
+        if (redirectTimer != null)
+        {
+            countdownSeconds = kioskSettings?.TicketDisplayTimeoutSeconds ?? 15;
+        }
+    }
+
+    private async Task LoadServiceTypes()
+    {
+        var status = await QueueApi.GetQueueStatusAsync(BranchId);
+        serviceTypes = status?.ServiceTypes ?? new();
+    }
+
+    private async Task SelectService(ServiceTypeQueueDto serviceType)
+    {
+        selectedService = serviceType;
+        // Option: Show customer form first
+        // showCustomerForm = true;
+        // Or directly create token
+        await CreateToken();
+    }
+
+    private async Task SubmitCustomerInfo()
+    {
+        showCustomerForm = false;
+        await CreateToken();
+    }
+
+    private async Task SkipCustomerInfo()
+    {
+        customerName = null;
+        customerPhone = null;
+        showCustomerForm = false;
+        await CreateToken();
+    }
+
+    private async Task CreateToken()
+    {
+        if (selectedService == null) return;
+
+        // Check if branch is configured
+        if (BranchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Configuration Error", "No branch configured. Please contact administrator.");
+            return;
+        }
+
+        generatedToken = await QueueApi.CreateTokenAsync(BranchId, selectedService.Code,
+            new CustomerDto { Name = customerName, Phone = customerPhone });
+
+        if (generatedToken != null)
+        {
+            showTicket = true;
+            await LoadServiceTypes();
+
+            // Generate feedback link for the ticket
+            try
+            {
+                var feedbackResponse = await Http.PostAsync(
+                    $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback-link",
+                    null);
+
+                if (feedbackResponse.IsSuccessStatusCode)
+                {
+                    var result = await feedbackResponse.Content.ReadFromJsonAsync<FeedbackLinkResponse>(JsonOptions);
+                    ticketFeedbackCode = result?.FeedbackCode;
+                }
+            }
+            catch
+            {
+                // Feedback link generation is not critical
+            }
+
+            // Check if auto-print is enabled and print automatically
+            await CheckAndAutoPrint();
+
+            // Start the auto-redirect timer
+            StartRedirectTimer();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to generate token. Please try again.");
+        }
+    }
+
+    private async Task CheckAndAutoPrint()
+    {
+        if (generatedToken == null) return;
+
+        try
+        {
+            // Get printer settings to check if auto-print is enabled
+            var settingsResponse = await Http.GetAsync($"api/v1/branches/{BranchId}/printer-settings");
+            if (settingsResponse.IsSuccessStatusCode)
+            {
+                var settings = await settingsResponse.Content.ReadFromJsonAsync<PrinterSettingsResponse>(JsonOptions);
+                if (settings?.AutoPrintOnTokenCreate == true)
+                {
+                    // Auto-print is enabled, trigger print
+                    await PrintToken();
+                }
+            }
+        }
+        catch
+        {
+            // Auto-print check is not critical - user can still print manually
+        }
+    }
+
+    private async Task PrintToken()
+    {
+        if (generatedToken == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "No token to print.");
+            return;
+        }
+
+        NotificationService.Notify(ToastSeverity.Info, "Printing...", "Preparing your ticket...");
+
+        try
+        {
+            // Get print data from API
+            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/print-data");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                NotificationService.Notify(ToastSeverity.Error, "Print Error", "Failed to get print data.");
+                return;
+            }
+
+            var printData = await response.Content.ReadFromJsonAsync<PrintDataResponse>(JsonOptions);
+
+            if (printData == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Print Error", "Invalid print data received.");
+                return;
+            }
+
+            // Get method name from enum value
+            var methodName = await JSRuntime.InvokeAsync<string>("QMgrPrint.getMethodName", (int)printData.PreferredMethod);
+
+            // Initialize print service with preferred method
+            await JSRuntime.InvokeVoidAsync("QMgrPrint.init", methodName);
+
+            // Prepare print data object for JavaScript
+            var jsPrintData = new
+            {
+                htmlContent = printData.HtmlContent,
+                escPosData = printData.EscPosData,
+                printerName = printData.PrinterName,
+                printerIpAddress = printData.PrinterIpAddress,
+                printerPort = printData.PrinterPort
+            };
+
+            // Execute print
+            var result = await JSRuntime.InvokeAsync<PrintJsResult>("QMgrPrint.print", jsPrintData);
+
+            if (result.Success)
+            {
+                ticketPrinted = true;
+                ResetRedirectTimer(); // Give user more time after printing
+                NotificationService.Notify(ToastSeverity.Success, "Print Sent", result.Message ?? "Please collect your ticket from the printer.");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed. Please check the printer.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Print Error", $"Failed to print: {ex.Message}");
+        }
+    }
+
+    private void SendSMS()
+    {
+        NotificationService.Notify(ToastSeverity.Info, "SMS", "SMS notification feature coming soon.");
+    }
+
+    private void CloseTicket()
+    {
+        StopRedirectTimer();
+        showTicket = false;
+        selectedService = null;
+        generatedToken = null;
+        customerName = null;
+        customerPhone = null;
+        ticketFeedbackCode = null;
+        ticketPrinted = false;
+    }
+
+    private string GetServiceIcon(string code)
+    {
+        return code.ToUpper() switch
+        {
+            "GY" => "gender-female",
+            "PD" => "balloon",
+            "GP" => "heart-pulse",
+            "LAB" => "flask",
+            "PH" => "capsule",
+            "RX" => "receipt",
+            "TELL" => "currency-dollar",
+            "LOAN" => "bank",
+            "CS" => "headset",
+            "INQ" => "question-circle",
+            _ => "tag"
+        };
+    }
+
+    private string GetServiceDescription(string code)
+    {
+        return code.ToUpper() switch
+        {
+            "GY" => "Gynecology & Obstetrics",
+            "PD" => "Pediatric Services",
+            "GP" => "General Practice",
+            "LAB" => "Laboratory Tests",
+            "PH" => "Pharmacy Services",
+            "RX" => "Prescription Pickup",
+            "TELL" => "Teller Services",
+            "LOAN" => "Loan Applications",
+            "CS" => "Customer Service",
+            "INQ" => "General Inquiries",
+            _ => "General Services"
+        };
+    }
+
+    // Industry-specific methods
+    private string GetIndustryClass() => $"industry-{currentIndustry.ToString().ToLower()}";
+
+    private string GetIndustryIcon() => currentIndustry switch
+    {
+        IndustryType.Hospital => "hospital",
+        IndustryType.Bank => "bank",
+        IndustryType.Pharmacy => "capsule",
+        IndustryType.ElectronicsShop => "laptop",
+        IndustryType.Government => "bank",
+        IndustryType.Telecom => "broadcast",
+        IndustryType.Restaurant => "shop",
+        _ => "collection"
+    };
+
+    private string GetIndustryTitle() => currentIndustry switch
+    {
+        IndustryType.Hospital => "Healthcare Services",
+        IndustryType.Bank => "Banking Services",
+        IndustryType.Pharmacy => "Pharmacy",
+        IndustryType.ElectronicsShop => "Tech Support",
+        IndustryType.Government => "Public Services",
+        IndustryType.Telecom => "Service Center",
+        IndustryType.Restaurant => "Welcome",
+        _ => "Q-Mgr"
+    };
+
+    private string GetWelcomeMessage() => currentIndustry switch
+    {
+        IndustryType.Hospital => "Welcome to Our Healthcare Facility",
+        IndustryType.Bank => "Welcome to Our Bank",
+        IndustryType.Pharmacy => "Welcome to Our Pharmacy",
+        IndustryType.ElectronicsShop => "Welcome to Tech Support",
+        IndustryType.Government => "Welcome to Public Services",
+        IndustryType.Telecom => "Welcome to Our Service Center",
+        IndustryType.Restaurant => "Welcome! Table Service",
+        _ => "Welcome!"
+    };
+
+    private string GetInstructionMessage() => currentIndustry switch
+    {
+        IndustryType.Hospital => "Please select the department or service you need",
+        IndustryType.Bank => "Please select the service you require",
+        IndustryType.Pharmacy => "Please select your service type",
+        IndustryType.ElectronicsShop => "How can we help you today?",
+        IndustryType.Government => "Please select the service you need",
+        IndustryType.Telecom => "What can we help you with today?",
+        IndustryType.Restaurant => "Please select from our services below",
+        _ => "Please select the service you require to receive your queue number"
+    };
+
+    // Feedback methods
+    private void ShowFeedbackModal()
+    {
+        StopRedirectTimer(); // Stop timer while giving feedback
+        showFeedbackModal = true;
+        feedbackSubmitted = false;
+        feedbackRating = 0;
+        hoverRating = 0;
+        selectedCategory = FeedbackCategory.General;
+        feedbackComment = null;
+        feedbackLinkCode = null;
+    }
+
+    private void CloseFeedbackModal()
+    {
+        showFeedbackModal = false;
+        if (showTicket)
+        {
+            StartRedirectTimer(); // Restart timer after closing feedback
+        }
+    }
+
+    private void SetRating(int rating)
+    {
+        feedbackRating = rating;
+    }
+
+    private string GetRatingLabel()
+    {
+        return feedbackRating switch
+        {
+            1 => "Very Poor",
+            2 => "Poor",
+            3 => "Average",
+            4 => "Good",
+            5 => "Excellent!",
+            _ => "Tap a star to rate"
+        };
+    }
+
+    private async Task SubmitFeedback()
+    {
+        if (feedbackRating == 0 || generatedToken == null) return;
+
+        isSubmittingFeedback = true;
+        StateHasChanged();
+
+        try
+        {
+            var request = new
+            {
+                Rating = feedbackRating,
+                Comment = feedbackComment,
+                Category = selectedCategory,
+                CustomerName = customerName,
+                CustomerPhone = customerPhone
+            };
+
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback",
+                request, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                feedbackSubmitted = true;
+                NotificationService.Notify(ToastSeverity.Success, "Thank You!", "Your feedback has been submitted.");
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to submit feedback. Please try again.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to submit feedback: {ex.Message}");
+        }
+        finally
+        {
+            isSubmittingFeedback = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GenerateFeedbackLink()
+    {
+        if (generatedToken == null) return;
+
+        try
+        {
+            var response = await Http.PostAsync(
+                $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback-link",
+                null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<FeedbackLinkResponse>(JsonOptions);
+                feedbackLinkCode = result?.FeedbackCode;
+                StateHasChanged();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to generate feedback link.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to generate link: {ex.Message}");
+        }
+    }
+
+    private record FeedbackLinkResponse
+    {
+        public string FeedbackCode { get; init; } = string.Empty;
+        public string FeedbackUrl { get; init; } = string.Empty;
+    }
+
+    private record BranchApiDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string? Address { get; init; }
+        public bool IsActive { get; init; }
+    }
+
+    private record PrintDataResponse
+    {
+        public Guid TokenId { get; init; }
+        public string TokenNumber { get; init; } = string.Empty;
+        public PrintMethod PreferredMethod { get; init; }
+        public string? PrinterName { get; init; }
+        public string? PrinterIpAddress { get; init; }
+        public int PrinterPort { get; init; }
+        public string? EscPosData { get; init; }
+        public string? HtmlContent { get; init; }
+        public bool AutoPrint { get; init; }
+    }
+
+    private record PrintJsResult
+    {
+        public bool Success { get; init; }
+        public string? Message { get; init; }
+    }
+
+    // PrintMethod enum mirror for deserialization
+    private enum PrintMethod
+    {
+        BrowserPrint = 0,
+        QZTray = 1,
+        WebUSB = 2,
+        ServerPrint = 3,
+        NetworkPrinter = 4
+    }
+
+    private record PrinterSettingsResponse
+    {
+        public Guid BranchId { get; init; }
+        public PrintMethod PreferredPrintMethod { get; init; }
+        public bool AutoPrintOnTokenCreate { get; init; }
+    }
+
+    private record KioskSettingsDto
+    {
+        public int TicketDisplayTimeoutSeconds { get; init; } = 15;
+        public int IdleTimeoutSeconds { get; init; } = 60;
+        public bool ShowCountdown { get; init; } = true;
+        public bool AutoPrintBeforeRedirect { get; init; } = false;
+    }
+}

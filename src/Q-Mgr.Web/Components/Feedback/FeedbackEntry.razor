@@ -1,0 +1,272 @@
+@page "/feedback"
+@layout KioskLayout
+@inject NavigationManager Navigation
+
+<PageTitle>Give Feedback - Q-Mgr</PageTitle>
+
+<div class="feedback-entry-page">
+    <div class="entry-card">
+        <div class="logo">
+            <QIcon Name="chat-square-text-fill" />
+        </div>
+        <h1>Share Your Feedback</h1>
+        <p>Enter your feedback code to share your experience</p>
+
+        <div class="code-input-section">
+            <label>Feedback Code</label>
+            <input type="text"
+                   @bind="feedbackCode"
+                   @bind:event="oninput"
+                   @onkeyup="HandleKeyUp"
+                   placeholder="e.g., ABC12345"
+                   maxlength="10"
+                   class="code-input" />
+            <small>You can find this code on your printed ticket</small>
+        </div>
+
+        <button class="submit-btn" @onclick="GoToFeedback" disabled="@(string.IsNullOrWhiteSpace(feedbackCode))">
+            <QIcon Name="arrow-right" />
+            <span>Continue</span>
+        </button>
+
+        <div class="help-section">
+            <p>Don't have a feedback code?</p>
+            <p class="help-hint">
+                The feedback code is provided on your service ticket after completing your visit.
+                If you didn't receive a code, please contact our staff.
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .feedback-entry-page {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 20px;
+    }
+
+    .entry-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        max-width: 480px;
+        width: 100%;
+        text-align: center;
+        color: white;
+        backdrop-filter: blur(20px);
+    }
+
+    .logo {
+        width: 80px;
+        height: 80px;
+        background: #8c2f52;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+    }
+
+    .logo .q-icon {
+        font-size: 40px;
+        color: #0f0f1a;
+    }
+
+    .entry-card h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        font-weight: 700;
+    }
+
+    .entry-card > p {
+        margin: 0 0 32px;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 16px;
+    }
+
+    .code-input-section {
+        text-align: left;
+        margin-bottom: 24px;
+    }
+
+    .code-input-section label {
+        display: block;
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 8px;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .code-input {
+        width: 100%;
+        padding: 18px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: 4px;
+        text-align: center;
+        text-transform: uppercase;
+        color: white;
+        transition: all 0.3s ease;
+    }
+
+    .code-input::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+        font-size: 18px;
+        letter-spacing: 2px;
+    }
+
+    .code-input:focus {
+        outline: none;
+        border-color: #8c2f52;
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: 0 0 0 4px rgba(140, 47, 82, 0.1);
+    }
+
+    .code-input-section small {
+        display: block;
+        margin-top: 8px;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 12px;
+    }
+
+    .submit-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 18px 48px;
+        background: #8c2f52;
+        border: none;
+        border-radius: var(--qm-radius-xl);
+        color: #0f0f1a;
+        font-size: 18px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+
+    .submit-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .submit-btn:hover:not(:disabled) {
+        transform: scale(1.02);
+        box-shadow: 0 0 40px rgba(140, 47, 82, 0.4);
+    }
+
+    .help-section {
+        margin-top: 32px;
+        padding-top: 24px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .help-section p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 14px;
+    }
+
+    .help-hint {
+        margin-top: 8px !important;
+        font-size: 13px !important;
+        line-height: 1.5;
+    }
+
+    @@media (max-width: 640px) {
+        .entry-card {
+            padding: 32px 24px;
+            border-radius: var(--qm-radius-xl);
+        }
+
+        .entry-card h1 {
+            font-size: 26px;
+        }
+
+        .code-input {
+            font-size: 20px;
+            letter-spacing: 3px;
+        }
+    }
+
+    /* ================================
+       Light Theme Override
+       Admin-selectable per-organization (see BrandingSettings.razor "Display
+       Theme"); applied via [data-theme] on the KioskLayout wrapper. Every
+       color above is a hardcoded dark-mode literal (not a --qm-* token), so
+       each one needs an explicit light counterpart here rather than inheriting
+       automatically from qm-theme.css's own [data-theme="light"] block.
+       ================================ */
+    [data-theme="light"] .feedback-entry-page {
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+    }
+
+    [data-theme="light"] .entry-card {
+        background: rgba(255, 255, 255, 0.7);
+        border: 2px solid rgba(0, 0, 0, 0.08);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .entry-card > p {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .code-input-section label {
+        color: rgba(0, 0, 0, 0.75);
+    }
+
+    [data-theme="light"] .code-input {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.12);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .code-input::placeholder {
+        color: rgba(0, 0, 0, 0.35);
+    }
+
+    [data-theme="light"] .code-input:focus {
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    [data-theme="light"] .code-input-section small {
+        color: rgba(0, 0, 0, 0.45);
+    }
+
+    [data-theme="light"] .help-section {
+        border-top: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="light"] .help-section p {
+        color: rgba(0, 0, 0, 0.5);
+    }
+</style>
+
+@code {
+    private string feedbackCode = string.Empty;
+
+    private void GoToFeedback()
+    {
+        if (!string.IsNullOrWhiteSpace(feedbackCode))
+        {
+            Navigation.NavigateTo($"/feedback/{feedbackCode.Trim().ToUpperInvariant()}");
+        }
+    }
+
+    private void HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(feedbackCode))
+        {
+            GoToFeedback();
+        }
+    }
+}

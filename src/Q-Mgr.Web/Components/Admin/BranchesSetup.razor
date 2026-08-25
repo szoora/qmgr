@@ -1,0 +1,729 @@
+@page "/admin/branches"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Branches - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="building-fill" /> Branches</h1>
+        <p class="page-subtitle">Manage organization branches and locations</p>
+    </div>
+    <div class="header-actions">
+        @if (canCreate)
+        {
+            <QButton Text="Add Branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+</div>
+
+<div class="admin-content">
+    <QCard Class="mb-4" Title="All Branches" Icon="list-ul">
+        <HeaderActions>
+            <span class="branch-count">@branches.Count branches</span>
+        </HeaderActions>
+        <ChildContent>
+            @if (isLoading)
+            {
+                <div class="loading-state">
+                    <QSpinner Size="lg" />
+                    <span>Loading branches...</span>
+                </div>
+            }
+            else if (!branches.Any())
+            {
+                <div class="empty-state">
+                    <QIcon Name="building-fill" Size="xl" />
+                    <h4>No Branches Configured</h4>
+                    <p>Add your first branch to get started.</p>
+                    @if (canCreate)
+                    {
+                        <QButton Text="Add Your First Branch" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="branches-grid">
+                    @foreach (var branch in branches)
+                    {
+                        <div class="branch-card @(branch.IsActive ? "" : "inactive")">
+                            <div class="branch-header">
+                                <div class="branch-icon">
+                                    <QIcon Name="building-fill" />
+                                </div>
+                                <QBadge Text="@(branch.IsActive ? "Active" : "Inactive")" Variant="@(branch.IsActive ? "success" : "secondary")" />
+                            </div>
+                            <div class="branch-body">
+                                <h4>@branch.Name</h4>
+                                <p class="branch-code">Code: @branch.Code</p>
+                                @if (!string.IsNullOrEmpty(branch.Address))
+                                {
+                                    <p class="branch-address">
+                                        <QIcon Name="geo-alt-fill" />
+                                        @branch.Address
+                                    </p>
+                                }
+                                <p class="branch-timezone">
+                                    <QIcon Name="clock-fill" />
+                                    @branch.Timezone
+                                </p>
+                            </div>
+                            <div class="branch-stats">
+                                <div class="stat">
+                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.CounterCount ?? 0)</span>
+                                    <span class="stat-label">Counters</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.ServiceCount ?? 0)</span>
+                                    <span class="stat-label">Services</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-value">@(branchStats.GetValueOrDefault(branch.Id)?.TodayTokens ?? 0)</span>
+                                    <span class="stat-label">Today</span>
+                                </div>
+                            </div>
+                            <div class="branch-footer">
+                                @if (canEdit)
+                                {
+                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(branch))" Title="Edit" />
+                                }
+                                <QButton Icon="gear-fill" Variant="ghost" Size="sm" OnClick="@(() => ManageBranch(branch))" Title="Settings" />
+                                @if (canEdit)
+                                {
+                                    <QButton Icon="@(branch.IsActive ? "toggle-on" : "toggle-off")" Variant="ghost" Size="sm"
+                                              OnClick="@(() => ToggleBranch(branch))" Title="@(branch.IsActive ? "Disable" : "Enable")"
+                                              Class="@(branch.IsActive ? "btn-toggle-on" : "btn-toggle-off")" />
+                                }
+                                @if (canDelete)
+                                {
+                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm"
+                                              OnClick="@(() => DeleteBranch(branch))" Title="Delete" Disabled="@(branches.Count <= 1)"
+                                              Class="btn-delete" />
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </ChildContent>
+    </QCard>
+</div>
+
+<!-- Add/Edit Dialog -->
+<QModal @bind-Visible="showDialog" Title="@(editingBranch == null ? "Add Branch" : "Edit Branch")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Name" Label="Branch Name *" Placeholder="e.g., Main Branch, Downtown Office" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Code" Label="Branch Code *" Placeholder="e.g., MAIN, DT01" MaxLength="10" HelperText="Short code for this branch (max 10 characters)" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Address" Type="textarea" Label="Address" Placeholder="Full address..." Rows="2" />
+        </div>
+        <div class="form-group">
+            <QSelect TValue="string" TItem="string" @bind-Value="@formData.Timezone" Items="@timezones" Label="Timezone" />
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formData.IsActive" Label="Branch is active" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@CloseDialog" />
+        <QButton Text="@(editingBranch == null ? "Add Branch" : "Save Changes")" Icon="@(editingBranch == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveBranch" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Branch"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-header h1 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 8px;
+        font-size: 28px;
+        color: var(--qm-text-primary);
+    }
+
+    .page-header h1 .rzi {
+        color: var(--qm-primary);
+    }
+
+    .page-subtitle {
+        color: var(--qm-text-muted);
+        margin: 0;
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-header h3 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .branch-count {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .loading-state, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.3;
+    }
+
+    .empty-state h4 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+    }
+
+    .branches-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+    }
+
+    .branch-card {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .branch-card:hover {
+        border-color: var(--qm-primary);
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .branch-card.inactive {
+        opacity: 0.6;
+    }
+
+    .branch-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        background: var(--qm-bg-card);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .branch-icon {
+        width: 56px;
+        height: 56px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .branch-icon .rzi {
+        font-size: 28px;
+        color: white;
+    }
+
+    .branch-status {
+        padding: 6px 14px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .branch-status.active {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .branch-status.inactive {
+        background: color-mix(in srgb, var(--qm-text-muted) 15%, transparent);
+        color: var(--qm-text-muted);
+    }
+
+    .branch-body {
+        padding: 20px;
+    }
+
+    .branch-body h4 {
+        margin: 0 0 8px;
+        font-size: 20px;
+        color: var(--qm-text-primary);
+    }
+
+    .branch-code {
+        color: var(--qm-primary);
+        font-weight: 600;
+        font-size: 13px;
+        margin: 0 0 12px;
+    }
+
+    .branch-address, .branch-timezone {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        margin: 8px 0;
+    }
+
+    .branch-address .rzi, .branch-timezone .rzi {
+        font-size: 18px;
+        color: var(--qm-text-muted);
+        flex-shrink: 0;
+    }
+
+    .branch-stats {
+        display: flex;
+        justify-content: space-around;
+        padding: 16px 20px;
+        background: var(--qm-bg-card);
+        border-top: 1px solid var(--qm-border);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .branch-stats .stat {
+        text-align: center;
+    }
+
+    .branch-stats .stat-value {
+        display: block;
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .branch-stats .stat-label {
+        font-size: 11px;
+        color: var(--qm-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .branch-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 12px 16px;
+    }
+
+    .branch-footer .rz-button {
+        color: var(--qm-text-secondary);
+    }
+
+    .branch-footer .rz-button:hover {
+        color: var(--qm-primary);
+        background: color-mix(in srgb, var(--qm-primary) 10%, transparent);
+    }
+
+    .branch-footer .btn-toggle-on {
+        color: var(--qm-success);
+    }
+
+    .branch-footer .btn-toggle-off {
+        color: var(--qm-text-muted);
+    }
+
+    .branch-footer .btn-delete {
+        color: var(--qm-danger, #ef4444);
+    }
+
+    .branch-footer .btn-delete:hover {
+        color: #fff;
+        background: var(--qm-danger, #ef4444);
+    }
+
+    .branch-footer .btn-delete:disabled {
+        color: var(--qm-text-muted);
+        opacity: 0.5;
+    }
+
+    /* Dialog */
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        box-shadow: var(--qm-shadow-lg);
+        width: 90%;
+        max-width: 500px;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dialog-header h3 {
+        margin: 0;
+        color: var(--qm-text-primary);
+    }
+
+    .dialog-body {
+        padding: 24px;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .form-group small {
+        display: block;
+        margin-top: 4px;
+        color: var(--qm-text-muted);
+        font-size: 12px;
+    }
+
+    .dialog-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--qm-border);
+    }
+</style>
+
+@code {
+    private List<BranchDto> branches = new();
+    private Dictionary<Guid, BranchStats> branchStats = new();
+    private bool isLoading = true;
+    private bool showDialog = false;
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+    private BranchDto? editingBranch;
+    private BranchFormData formData = new();
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private BranchDto? branchToDelete;
+
+    private List<string> timezones = new()
+    {
+        "UTC",
+        "Africa/Johannesburg",
+        "Africa/Lagos",
+        "Africa/Nairobi",
+        "America/New_York",
+        "America/Chicago",
+        "America/Los_Angeles",
+        "Europe/London",
+        "Europe/Paris",
+        "Asia/Dubai",
+        "Asia/Singapore",
+        "Asia/Tokyo",
+        "Australia/Sydney"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Permission check will be done in OnAfterRenderAsync when tokens are available
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check permission (tokens are now loaded from localStorage)
+            if (!await PermissionService.HasPermissionAsync(Permissions.BranchesView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canCreate = await PermissionService.HasPermissionAsync(Permissions.BranchesCreate);
+            canEdit = await PermissionService.HasPermissionAsync(Permissions.BranchesEdit);
+            canDelete = await PermissionService.HasPermissionAsync(Permissions.BranchesDelete);
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            // Include inactive branches for admin view
+            branches = await Http.GetFromJsonAsync<List<BranchDto>>("api/v1/branches?includeInactive=true", JsonOptions) ?? new();
+
+            // Load stats for each branch
+            foreach (var branch in branches)
+            {
+                try
+                {
+                    var counters = await Http.GetFromJsonAsync<List<CounterDto>>($"api/v1/branches/{branch.Id}/counters?includeInactive=true", JsonOptions) ?? new();
+                    var services = await Http.GetFromJsonAsync<List<ServiceTypeDto>>($"api/v1/branches/{branch.Id}/service-types?includeInactive=true", JsonOptions) ?? new();
+
+                    branchStats[branch.Id] = new BranchStats
+                    {
+                        CounterCount = counters.Count,
+                        ServiceCount = services.Count,
+                        TodayTokens = 0 // TODO: Get from API
+                    };
+                }
+                catch
+                {
+                    branchStats[branch.Id] = new BranchStats();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to load branches");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingBranch = null;
+        formData = new BranchFormData
+        {
+            Timezone = "UTC",
+            IsActive = true
+        };
+        showDialog = true;
+    }
+
+    private void ShowEditDialog(BranchDto branch)
+    {
+        editingBranch = branch;
+        formData = new BranchFormData
+        {
+            Name = branch.Name,
+            Code = branch.Code,
+            Address = branch.Address,
+            Timezone = branch.Timezone,
+            IsActive = branch.IsActive
+        };
+        showDialog = true;
+    }
+
+    private void CloseDialog()
+    {
+        showDialog = false;
+        editingBranch = null;
+    }
+
+    private async Task SaveBranch()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Name) || string.IsNullOrWhiteSpace(formData.Code))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name and Code are required");
+            return;
+        }
+
+        try
+        {
+            var request = new
+            {
+                Name = formData.Name,
+                Code = formData.Code.ToUpper(),
+                Address = formData.Address,
+                Timezone = formData.Timezone,
+                IsActive = formData.IsActive
+            };
+
+            HttpResponseMessage response;
+            if (editingBranch == null)
+            {
+                response = await Http.PostAsJsonAsync("api/v1/branches", request, JsonOptions);
+            }
+            else
+            {
+                response = await Http.PutAsJsonAsync($"api/v1/branches/{editingBranch.Id}", request, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingBranch == null ? "Branch created" : "Branch updated");
+                CloseDialog();
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save branch: {ex.Message}");
+        }
+    }
+
+    private async Task ToggleBranch(BranchDto branch)
+    {
+        try
+        {
+            var response = await Http.PatchAsync($"api/v1/branches/{branch.Id}/toggle", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    branch.IsActive ? "Branch deactivated" : "Branch activated");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update branch: {ex.Message}");
+        }
+    }
+
+    private void DeleteBranch(BranchDto branch)
+    {
+        branchToDelete = branch;
+        deleteConfirmMessage = $"Are you sure you want to delete '{branch.Name}'? This action cannot be undone.";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && branchToDelete != null)
+        {
+            try
+            {
+                var response = await Http.DeleteAsync($"api/v1/branches/{branchToDelete.Id}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    NotificationService.Notify(ToastSeverity.Success, "Success", "Branch deleted");
+                    await LoadData();
+                }
+                else
+                {
+                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                    NotificationService.Notify(ToastSeverity.Error, title, detail);
+                }
+            }
+            catch (Exception ex)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete branch: {ex.Message}");
+            }
+        }
+
+        branchToDelete = null;
+    }
+
+    private void ManageBranch(BranchDto branch)
+    {
+        // Navigate to branch-specific settings
+        NotificationService.Notify(ToastSeverity.Info, "Info", "Branch settings coming soon");
+    }
+
+    private class BranchFormData
+    {
+        public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
+        public string? Address { get; set; }
+        public string Timezone { get; set; } = "UTC";
+        public bool IsActive { get; set; } = true;
+    }
+
+    private class BranchStats
+    {
+        public int CounterCount { get; set; }
+        public int ServiceCount { get; set; }
+        public int TodayTokens { get; set; }
+    }
+
+    // Using the BranchDto from the API
+    private record BranchDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string Code { get; init; } = "";
+        public string? Address { get; init; }
+        public string Timezone { get; init; } = "UTC";
+        public bool IsActive { get; init; }
+    }
+}

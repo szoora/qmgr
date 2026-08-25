@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Background themeable via CSS (currentColor) for Android adaptive icons -->
+  <rect class="qmgr-icon-bg" width="48" height="48" rx="12" fill="currentColor"/>
+  <circle cx="24" cy="24" r="11.25" fill="none" stroke="#ffffff" stroke-width="3.75"/>
+  <g transform="rotate(45 24 24)">
+    <rect x="35.25" y="22.125" width="4.6875" height="3.75" rx="0.5" fill="#ffffff"/>
+    <polygon points="39.9375,20.625 39.9375,27.375 44.0625,24" fill="#ffffff"/>
+  </g>
+</svg>

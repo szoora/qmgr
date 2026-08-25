@@ -1,0 +1,101 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<span class="q-badge @GetVariantClass() @GetSizeClass() @(Pill ? "q-badge--pill" : "") @(Dot ? "q-badge--dot" : "") @Class"
+      @attributes="AdditionalAttributes">
+    @if (!string.IsNullOrEmpty(Icon) && !Dot)
+    {
+        <i class="@GetIconClass() q-badge__icon"></i>
+    }
+    @if (!Dot)
+    {
+        @if (ChildContent != null)
+        {
+            @ChildContent
+        }
+        else
+        {
+            @Text
+        }
+    }
+</span>
+
+@code {
+    /// <summary>
+    /// Badge text
+    /// </summary>
+    [Parameter] public string? Text { get; set; }
+
+    /// <summary>
+    /// Badge variant: primary, secondary, success, danger, warning, info, light, dark
+    /// </summary>
+    [Parameter] public string Variant { get; set; } = "primary";
+
+    /// <summary>
+    /// Badge size: sm, md, lg
+    /// </summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>
+    /// Bootstrap icon name
+    /// </summary>
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>
+    /// Whether to use pill (rounded) style
+    /// </summary>
+    [Parameter] public bool Pill { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show as a small dot only
+    /// </summary>
+    [Parameter] public bool Dot { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Child content
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string GetVariantClass()
+    {
+        return Variant.ToLowerInvariant() switch
+        {
+            "primary" => "q-badge--primary",
+            "secondary" => "q-badge--secondary",
+            "success" => "q-badge--success",
+            "danger" => "q-badge--danger",
+            "warning" => "q-badge--warning",
+            "info" => "q-badge--info",
+            "light" => "q-badge--light",
+            "dark" => "q-badge--dark",
+            _ => "q-badge--primary"
+        };
+    }
+
+    private string GetSizeClass()
+    {
+        return Size.ToLowerInvariant() switch
+        {
+            "sm" or "small" => "q-badge--sm",
+            "lg" or "large" => "q-badge--lg",
+            _ => "q-badge--md"
+        };
+    }
+
+    private string GetIconClass()
+    {
+        if (string.IsNullOrEmpty(Icon)) return "";
+        if (Icon.StartsWith("bi-")) return $"bi {Icon}";
+        return $"bi bi-{Icon}";
+    }
+}

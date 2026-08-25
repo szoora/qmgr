@@ -1,0 +1,835 @@
+@page "/content/schedules"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IContentApiService ContentApi
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager NavigationManager
+@inject IBranchStateService BranchState
+
+<PageTitle>Schedules - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Content Schedules</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Schedules") })" />
+    </div>
+</div>
+
+<div class="schedules-page">
+    <!-- Toolbar -->
+    <QCard Class="toolbar-card">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search playlists..." IconLeft="search" />
+                <QSelect TValue="string" TItem="string" @bind-Value="@filterScheduleType" Items="@scheduleTypeOptions" Placeholder="All Schedule Types" AllowClear="true" />
+            </div>
+            <div class="toolbar-right">
+                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadPlaylists" />
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading schedules...</span>
+        </div>
+    }
+    else if (!playlists.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="clock-fill" />
+            <h3>No Playlists Found</h3>
+            <p>Create playlists first to configure their schedules.</p>
+            <QButton Text="Go to Playlists" Icon="collection-play-fill" Variant="primary" OnClick="@GoToPlaylists" />
+        </div>
+    }
+    else
+    {
+        <!-- Schedule Cards -->
+        <div class="schedules-grid">
+            @foreach (var playlist in FilteredPlaylists)
+            {
+                <QCard Class="schedule-card">
+                    <div class="schedule-header">
+                        <div class="playlist-info">
+                            <QIcon Name="collection-play-fill" />
+                            <div>
+                                <h3>@playlist.Name</h3>
+                                <p>@(playlist.Description ?? "No description")</p>
+                            </div>
+                        </div>
+                        <QBadge Variant="@GetScheduleBadgeStyle(playlist.ScheduleType)" Text="@GetScheduleTypeLabel(playlist.ScheduleType)" />
+                    </div>
+
+                    <div class="schedule-details">
+                        @if (playlist.ScheduleType == "always")
+                        {
+                            <div class="schedule-info always">
+                                <QIcon Name="infinity" />
+                                <span>Plays continuously - no schedule restrictions</span>
+                            </div>
+                        }
+                        else if (playlist.ScheduleType == "scheduled")
+                        {
+                            <div class="schedule-info scheduled">
+                                <QIcon Name="clock-fill" />
+                                @if (!string.IsNullOrEmpty(playlist.Schedule))
+                                {
+                                    <span>@FormatSchedule(playlist.Schedule)</span>
+                                }
+                                else
+                                {
+                                    <span class="not-configured">Schedule not configured</span>
+                                }
+                            </div>
+                        }
+                        else if (playlist.ScheduleType == "conditional")
+                        {
+                            <div class="schedule-info conditional">
+                                <QIcon Name="list-check" />
+                                @if (!string.IsNullOrEmpty(playlist.Schedule))
+                                {
+                                    <span>@FormatSchedule(playlist.Schedule)</span>
+                                }
+                                else
+                                {
+                                    <span class="not-configured">Conditions not configured</span>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="schedule-meta">
+                        <span class="meta-item">
+                            <QIcon Name="images" />
+                            @playlist.ItemCount items
+                        </span>
+                        <span class="meta-item">
+                            <QIcon Name="stopwatch-fill" />
+                            @playlist.DefaultDurationSeconds sec/item
+                        </span>
+                        @if (playlist.Loop)
+                        {
+                            <span class="meta-item">
+                                <QIcon Name="arrow-repeat" />
+                                Loop
+                            </span>
+                        }
+                    </div>
+
+                    <div class="schedule-actions">
+                        @if (canEdit)
+                        {
+                            <QButton Text="Configure Schedule" Icon="calendar-event-fill" Size="sm" Variant="primary" OnClick="@(() => ShowScheduleDialog(playlist))" />
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+
+        <!-- Weekly Timeline Preview -->
+        <QCard Class="timeline-card">
+            <h3>Weekly Schedule Overview</h3>
+            <div class="timeline-container">
+                <div class="timeline-header">
+                    <div class="time-label"></div>
+                    @foreach (var hour in Enumerable.Range(0, 24).Where(h => h % 3 == 0))
+                    {
+                        <div class="time-slot">@hour:00</div>
+                    }
+                </div>
+                @foreach (var day in daysOfWeek)
+                {
+                    <div class="timeline-row">
+                        <div class="day-label">@day</div>
+                        <div class="day-slots">
+                            @foreach (var playlist in playlists.Where(p => p.ScheduleType == "scheduled"))
+                            {
+                                @foreach (var block in GetScheduleBlocks(playlist, day))
+                                {
+                                    <div class="schedule-block" style="left: @(block.StartPercent)%; width: @(block.WidthPercent)%;" title="@playlist.Name">
+                                        <span>@playlist.Name</span>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </QCard>
+    }
+</div>
+
+<!-- Schedule Configuration Dialog -->
+<QModal @bind-Visible="showScheduleDialog" Title="@($"Configure Schedule - {selectedPlaylist?.Name}")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <label class="form-label">Schedule Type</label>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-always" value="always" checked="@(scheduleModel.ScheduleType == "always")" @onchange="@(() => scheduleModel.ScheduleType = "always")" />
+                <label class="form-check-label" for="schedule-always">Always (plays continuously)</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-scheduled" value="scheduled" checked="@(scheduleModel.ScheduleType == "scheduled")" @onchange="@(() => scheduleModel.ScheduleType = "scheduled")" />
+                <label class="form-check-label" for="schedule-scheduled">Scheduled (time-based)</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="scheduleType" id="schedule-conditional" value="conditional" checked="@(scheduleModel.ScheduleType == "conditional")" @onchange="@(() => scheduleModel.ScheduleType = "conditional")" />
+                <label class="form-check-label" for="schedule-conditional">Conditional (rule-based)</label>
+            </div>
+        </div>
+
+        @if (scheduleModel.ScheduleType == "scheduled")
+        {
+            <div class="schedule-config">
+                <h4>Time Schedule</h4>
+                <div class="form-group">
+                    <label class="form-label">Active Days</label>
+                    <div class="days-selector">
+                        @foreach (var day in daysOfWeek)
+                        {
+                            <QCheckbox @bind-Value="@scheduleModel.ActiveDays[day]" Label="@day.Substring(0, 3)" />
+                        }
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Time</label>
+                        <QDatePicker @bind-Value="@scheduleModel.StartTime" ShowTime="true" Style="width: 100%;" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Time</label>
+                        <QDatePicker @bind-Value="@scheduleModel.EndTime" ShowTime="true" Style="width: 100%;" />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date (Optional)</label>
+                        <QDatePicker @bind-Value="@scheduleModel.StartDate" Style="width: 100%;" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Date (Optional)</label>
+                        <QDatePicker @bind-Value="@scheduleModel.EndDate" Style="width: 100%;" />
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (scheduleModel.ScheduleType == "conditional")
+        {
+            <div class="schedule-config">
+                <h4>Conditional Rules</h4>
+                <div class="form-group">
+                    <QSelect TValue="string" TItem="string" @bind-Value="@scheduleModel.ConditionType" Items="@conditionTypes" Label="Condition Type" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" @bind-Value="@scheduleModel.ConditionValue" Placeholder="e.g., queue_count > 10" Label="Condition Value" />
+                </div>
+                <p class="help-text">
+                    Conditional schedules trigger based on system events like queue length, time of day, or custom triggers.
+                </p>
+            </div>
+        }
+
+        <div class="form-group">
+            <QInput TValue="int" @bind-Value="@scheduleModel.Priority" Type="number" Label="Priority (higher = more important)" Min="1" Max="100" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseDialog" />
+        <QButton Text="Save Schedule" Icon="check-lg" Variant="primary" OnClick="@SaveSchedule" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .schedules-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .toolbar-card {
+        padding: 16px 24px;
+    }
+
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .empty-state {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 80px 20px;
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+    }
+
+    .schedules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 20px;
+    }
+
+    .schedule-card {
+        padding: 20px;
+    }
+
+    .schedule-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+    }
+
+    .playlist-info {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+    }
+
+    .playlist-info .rzi {
+        font-size: 32px;
+        color: var(--qm-primary);
+    }
+
+    .playlist-info h3 {
+        margin: 0 0 4px;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .playlist-info p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .schedule-details {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .schedule-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .schedule-info .rzi {
+        font-size: 20px;
+    }
+
+    .schedule-info.always .rzi {
+        color: var(--qm-success);
+    }
+
+    .schedule-info.scheduled .rzi {
+        color: var(--qm-primary);
+    }
+
+    .schedule-info.conditional .rzi {
+        color: var(--qm-warning);
+    }
+
+    .schedule-info .not-configured {
+        color: var(--qm-text-muted);
+        font-style: italic;
+    }
+
+    .schedule-meta {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .meta-item .rzi {
+        font-size: 14px;
+    }
+
+    .schedule-actions {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    /* Timeline styles */
+    .timeline-card {
+        padding: 20px;
+    }
+
+    .timeline-card h3 {
+        margin: 0 0 20px;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    .timeline-container {
+        overflow-x: auto;
+    }
+
+    .timeline-header {
+        display: flex;
+        padding-left: 80px;
+        margin-bottom: 8px;
+    }
+
+    .time-label {
+        width: 80px;
+        flex-shrink: 0;
+    }
+
+    .time-slot {
+        flex: 1;
+        font-size: 11px;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .timeline-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+
+    .day-label {
+        width: 80px;
+        flex-shrink: 0;
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .day-slots {
+        flex: 1;
+        height: 28px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-sm);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .schedule-block {
+        position: absolute;
+        top: 2px;
+        bottom: 2px;
+        background: var(--qm-primary);
+        border-radius: var(--qm-radius-sm);
+        display: flex;
+        align-items: center;
+        padding: 0 6px;
+        min-width: 0;
+    }
+
+    .schedule-block span {
+        font-size: 10px;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Dialog styles */
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .dialog-content.dialog-large {
+        max-width: 600px;
+    }
+
+    .dialog-content h3 {
+        margin: 0 0 20px;
+    }
+
+    .dialog-content h4 {
+        margin: 16px 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-primary);
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group .form-label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        font-size: 14px;
+        color: var(--qm-text-primary);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .days-selector {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .schedule-config {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .schedule-config h4 {
+        margin-top: 0;
+    }
+
+    .help-text {
+        margin: 8px 0 0;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 24px;
+    }
+</style>
+
+@code {
+    private List<PlaylistDetailDto> playlists = new();
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private string? filterScheduleType;
+
+    private bool canEdit = false;
+
+    private bool showScheduleDialog = false;
+    private PlaylistDetailDto? selectedPlaylist;
+    private ScheduleEditModel scheduleModel = new();
+
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private List<string> scheduleTypeOptions = new() { "always", "scheduled", "conditional" };
+    private List<string> conditionTypes = new() { "queue_length", "time_of_day", "day_of_week", "custom" };
+    private List<string> daysOfWeek = new() { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+
+    private IEnumerable<PlaylistDetailDto> FilteredPlaylists => playlists
+        .Where(p => string.IsNullOrEmpty(searchTerm) || p.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+        .Where(p => string.IsNullOrEmpty(filterScheduleType) || p.ScheduleType == filterScheduleType);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
+
+        await LoadPlaylists();
+    }
+
+    private void GoToPlaylists()
+    {
+        NavigationManager.NavigateTo("/content/playlists");
+    }
+
+    private async Task LoadPlaylists()
+    {
+        isLoading = true;
+        var basicPlaylists = await ContentApi.GetPlaylistsAsync(branchId);
+
+        // Load detailed playlist info for each
+        playlists = new List<PlaylistDetailDto>();
+        foreach (var p in basicPlaylists)
+        {
+            var detail = await ContentApi.GetPlaylistAsync(p.Id);
+            if (detail != null)
+            {
+                playlists.Add(detail);
+            }
+        }
+
+        isLoading = false;
+    }
+
+    private void ShowScheduleDialog(PlaylistDetailDto playlist)
+    {
+        selectedPlaylist = playlist;
+        scheduleModel = ParseScheduleModel(playlist);
+        showScheduleDialog = true;
+    }
+
+    private void CloseDialog()
+    {
+        showScheduleDialog = false;
+        selectedPlaylist = null;
+    }
+
+    private async Task SaveSchedule()
+    {
+        if (selectedPlaylist == null) return;
+
+        var schedule = BuildScheduleJson();
+        var request = new UpdatePlaylistRequest
+        {
+            ScheduleType = scheduleModel.ScheduleType,
+            Schedule = schedule
+        };
+
+        var result = await ContentApi.UpdatePlaylistAsync(selectedPlaylist.Id, request);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Schedule updated successfully.");
+            showScheduleDialog = false;
+            await LoadPlaylists();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update schedule.");
+        }
+    }
+
+    private ScheduleEditModel ParseScheduleModel(PlaylistDetailDto playlist)
+    {
+        var model = new ScheduleEditModel
+        {
+            ScheduleType = playlist.ScheduleType,
+            Priority = 1
+        };
+
+        // Initialize all days as active by default
+        foreach (var day in daysOfWeek)
+        {
+            model.ActiveDays[day] = true;
+        }
+
+        // Try to parse existing schedule JSON
+        if (!string.IsNullOrEmpty(playlist.Schedule))
+        {
+            try
+            {
+                // Parse schedule JSON here if needed
+                // For now, just use defaults
+            }
+            catch { }
+        }
+
+        return model;
+    }
+
+    private string BuildScheduleJson()
+    {
+        if (scheduleModel.ScheduleType == "always")
+        {
+            return "{}";
+        }
+        else if (scheduleModel.ScheduleType == "scheduled")
+        {
+            var activeDays = scheduleModel.ActiveDays.Where(kv => kv.Value).Select(kv => kv.Key).ToList();
+            var schedule = new
+            {
+                days = activeDays,
+                startTime = scheduleModel.StartTime?.ToString("HH:mm"),
+                endTime = scheduleModel.EndTime?.ToString("HH:mm"),
+                startDate = scheduleModel.StartDate?.ToString("yyyy-MM-dd"),
+                endDate = scheduleModel.EndDate?.ToString("yyyy-MM-dd"),
+                priority = scheduleModel.Priority
+            };
+            return System.Text.Json.JsonSerializer.Serialize(schedule);
+        }
+        else if (scheduleModel.ScheduleType == "conditional")
+        {
+            var schedule = new
+            {
+                conditionType = scheduleModel.ConditionType,
+                conditionValue = scheduleModel.ConditionValue,
+                priority = scheduleModel.Priority
+            };
+            return System.Text.Json.JsonSerializer.Serialize(schedule);
+        }
+
+        return "{}";
+    }
+
+    private string GetScheduleBadgeStyle(string scheduleType) => scheduleType switch
+    {
+        "always" => "success",
+        "scheduled" => "primary",
+        "conditional" => "warning",
+        _ => "light"
+    };
+
+    private string GetScheduleTypeLabel(string scheduleType) => scheduleType switch
+    {
+        "always" => "Always Active",
+        "scheduled" => "Scheduled",
+        "conditional" => "Conditional",
+        _ => scheduleType
+    };
+
+    private string FormatSchedule(string? schedule)
+    {
+        if (string.IsNullOrEmpty(schedule) || schedule == "{}") return "Not configured";
+
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(schedule);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("days", out var days) && root.TryGetProperty("startTime", out var startTime))
+            {
+                var daysList = days.EnumerateArray().Select(d => d.GetString()?.Substring(0, 3)).ToList();
+                var daysStr = string.Join(", ", daysList);
+                var timeStr = startTime.GetString();
+
+                if (root.TryGetProperty("endTime", out var endTime))
+                {
+                    timeStr += " - " + endTime.GetString();
+                }
+
+                return $"{daysStr} @ {timeStr}";
+            }
+
+            if (root.TryGetProperty("conditionType", out var condType))
+            {
+                var condValue = root.TryGetProperty("conditionValue", out var cv) ? cv.GetString() : "";
+                return $"{condType.GetString()}: {condValue}";
+            }
+        }
+        catch { }
+
+        return "Custom schedule";
+    }
+
+    private List<ScheduleBlock> GetScheduleBlocks(PlaylistDetailDto playlist, string day)
+    {
+        var blocks = new List<ScheduleBlock>();
+
+        if (string.IsNullOrEmpty(playlist.Schedule) || playlist.Schedule == "{}")
+            return blocks;
+
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(playlist.Schedule);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("days", out var days))
+            {
+                var daysList = days.EnumerateArray().Select(d => d.GetString()).ToList();
+                if (!daysList.Contains(day)) return blocks;
+            }
+
+            if (root.TryGetProperty("startTime", out var startTime) && root.TryGetProperty("endTime", out var endTime))
+            {
+                var start = TimeSpan.Parse(startTime.GetString() ?? "00:00");
+                var end = TimeSpan.Parse(endTime.GetString() ?? "23:59");
+
+                var startPercent = (start.TotalHours / 24.0) * 100;
+                var duration = (end - start).TotalHours;
+                if (duration < 0) duration += 24; // Handle overnight
+                var widthPercent = (duration / 24.0) * 100;
+
+                blocks.Add(new ScheduleBlock { StartPercent = startPercent, WidthPercent = widthPercent });
+            }
+        }
+        catch { }
+
+        return blocks;
+    }
+
+    private class ScheduleEditModel
+    {
+        public string ScheduleType { get; set; } = "always";
+        public Dictionary<string, bool> ActiveDays { get; set; } = new();
+        public DateTime? StartTime { get; set; } = DateTime.Today.AddHours(8);
+        public DateTime? EndTime { get; set; } = DateTime.Today.AddHours(18);
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public string? ConditionType { get; set; }
+        public string? ConditionValue { get; set; }
+        public int Priority { get; set; } = 1;
+    }
+
+    private class ScheduleBlock
+    {
+        public double StartPercent { get; set; }
+        public double WidthPercent { get; set; }
+    }
+}

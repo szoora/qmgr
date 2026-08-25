@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Light-surface variant of the Q-Mgr mark: same geometry, brand color on white. -->
+  <rect width="512" height="512" rx="96" fill="#ffffff"/>
+  <rect width="512" height="512" rx="96" fill="none" stroke="#e2e8f0" stroke-width="2"/>
+  <circle cx="256" cy="256" r="120" fill="none" stroke="#8c2f52" stroke-width="40"/>
+  <g transform="rotate(45 256 256)">
+    <rect x="376" y="236" width="50" height="40" rx="5" fill="#8c2f52"/>
+    <polygon points="426,220 426,292 470,256" fill="#8c2f52"/>
+  </g>
+</svg>

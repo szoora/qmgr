@@ -1,0 +1,1009 @@
+@page "/admin/users"
+@inject HttpClient Http
+@inject IToastService NotificationService
+@inject JsonSerializerOptions JsonOptions
+@inject IPermissionService PermissionSvc
+@inject NavigationManager Navigation
+@using System.Text.Json
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+
+<PageTitle>Users & Roles - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Users & Roles</h1>
+            <p class="subtitle">Manage system users and their permissions</p>
+        </div>
+        @if (canCreateUsers)
+        {
+            <QButton Text="Add User" Icon="person-plus-fill" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+
+    <div class="tabs-container">
+        <div class="tab @(activeTab == "users" ? "active" : "")" @onclick="@(() => activeTab = "users")">
+            <QIcon Name="people-fill" /> Users
+        </div>
+        <div class="tab @(activeTab == "roles" ? "active" : "")" @onclick="@(() => activeTab = "roles")">
+            <QIcon Name="shield-lock-fill" /> Roles
+        </div>
+    </div>
+
+    @if (activeTab == "users")
+    {
+        @if (isLoading)
+        {
+            <div class="loading-container">
+                <QSpinner Size="lg" />
+            </div>
+        }
+        else
+        {
+            <div class="data-table-container">
+                <RadzenDataGrid Data="@users" TItem="UserInfo" AllowFiltering="true" AllowSorting="true" AllowPaging="true" PageSize="10">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="UserInfo" Property="FullName" Title="Name">
+                            <Template Context="user">
+                                <div class="user-cell">
+                                    <div class="user-avatar" style="background: @GetAvatarColor(user.FullName)">
+                                        @user.FullName?.Substring(0, 1).ToUpper()
+                                    </div>
+                                    <div class="user-info">
+                                        <span class="user-name">@user.FullName</span>
+                                        <span class="user-email">@user.Email</span>
+                                    </div>
+                                </div>
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="UserInfo" Property="Username" Title="Username" Width="150px" />
+                        <RadzenDataGridColumn TItem="UserInfo" Property="Role" Title="Role" Width="120px">
+                            <Template Context="user">
+                                <QBadge Variant="@GetRoleVariant(user.Role)" Text="@user.Role" Size="sm" />
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="UserInfo" Property="Branch" Title="Branch" Width="150px" />
+                        <RadzenDataGridColumn TItem="UserInfo" Property="IsActive" Title="Status" Width="100px">
+                            <Template Context="user">
+                                <QBadge Variant="@(user.IsActive ? "success" : "secondary")"
+                                        Text="@(user.IsActive ? "Active" : "Inactive")" Size="sm" />
+                            </Template>
+                        </RadzenDataGridColumn>
+                        <RadzenDataGridColumn TItem="UserInfo" Title="Actions" Width="100px" Sortable="false" Filterable="false">
+                            <Template Context="user">
+                                @if (canEditUsers)
+                                {
+                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditUser(user))" />
+                                }
+                                @if (canDeleteUsers)
+                                {
+                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteUser(user))" />
+                                }
+                            </Template>
+                        </RadzenDataGridColumn>
+                    </Columns>
+                </RadzenDataGrid>
+            </div>
+        }
+    }
+    else
+    {
+        @if (isLoadingRoles)
+        {
+            <div class="loading-container">
+                <QSpinner Size="lg" />
+            </div>
+        }
+        else
+        {
+            <div class="roles-grid">
+                @foreach (var role in roles)
+                {
+                    <div class="role-card">
+                        <div class="role-header">
+                            <div class="role-icon" style="background: @(role.Color ?? "#6b7280")">
+                                <QIcon Name="@(role.Icon ?? "shield")" />
+                            </div>
+                            <div class="role-title">
+                                <h4>@role.Name</h4>
+                                <span class="role-code">@role.Code</span>
+                                <span>@role.UserCount users</span>
+                            </div>
+                            @if (role.IsSystem)
+                            {
+                                <span class="system-badge">System</span>
+                            }
+                        </div>
+                        <div class="role-permissions">
+                            <h5>Permissions (@role.Permissions.Count)</h5>
+                            <ul>
+                                @foreach (var perm in role.Permissions.Take(5))
+                                {
+                                    <li><QIcon Name="check-lg" /> @perm</li>
+                                }
+                                @if (role.Permissions.Count > 5)
+                                {
+                                    <li class="more">+@(role.Permissions.Count - 5) more</li>
+                                }
+                            </ul>
+                        </div>
+                        <div class="role-actions">
+                            @if (canEditRoles)
+                            {
+                                <QButton Text="Edit Permissions" Icon="shield-lock-fill" Variant="secondary" Size="sm" OnClick="@(() => EditRole(role))" />
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editingUser == null ? "Add User" : "Edit User")" Size="md">
+    <ChildContent>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@formData.FirstName" Label="First Name *" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@formData.LastName" Label="Last Name *" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Email" Type="email" Label="Email *" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Username" Label="Username *" />
+        </div>
+        @if (editingUser == null)
+        {
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@formData.Password" Type="password" Label="Password *" />
+            </div>
+        }
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="Guid" TItem="RoleOption" @bind-Value="@formData.RoleId" Items="@roleOptions"
+                         ValueSelector="@(r => r.Id)" TextSelector="@(r => r.Name)" Label="Role *" />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="Guid?" TItem="BranchOption" @bind-Value="@formData.BranchId" Items="@branchOptions"
+                         ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Branch" AllowClear="true" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formData.IsActive" Label="User is active" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" />
+        <QButton Text="@(editingUser == null ? "Create" : "Save")" Icon="@(editingUser == null ? "person-plus-fill" : "check-lg")" Variant="primary" OnClick="@SaveUser" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete User"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<!-- Role Permissions Editor Dialog -->
+<QModal @bind-Visible="showRoleDialog" Title="@($"Edit Permissions: {editingRole?.Name}")" Size="lg">
+    <ChildContent>
+        @if (editingRole != null)
+        {
+            <div class="role-editor">
+                <div class="role-info-header">
+                    <div class="role-icon" style="background: @(editingRole.Color ?? "#6b7280")">
+                        <QIcon Name="@(editingRole.Icon ?? "shield")" />
+                    </div>
+                    <div>
+                        <h4>@editingRole.Name</h4>
+                        <span class="role-code">@editingRole.Code</span>
+                    </div>
+                </div>
+
+                <div class="permissions-editor">
+                    @foreach (var category in allPermissions.GroupBy(p => p.Category).OrderBy(g => g.Key))
+                    {
+                        <div class="permission-category">
+                            <h5 class="category-header">
+                                <span>@category.Key</span>
+                                <button class="select-all-btn" @onclick="@(() => ToggleCategoryPermissions(category.Key))">
+                                    @(AreAllCategoryPermissionsSelected(category.Key) ? "Deselect All" : "Select All")
+                                </button>
+                            </h5>
+                            <div class="permissions-list">
+                                @foreach (var permission in category.OrderBy(p => p.SortOrder))
+                                {
+                                    <div class="permission-item">
+                                        <QCheckbox @bind-Value="@selectedPermissions[permission.Code]"
+                                                   Label="@permission.Name"
+                                                   Disabled="@(editingRole.Code == "SuperAdmin")" />
+                                        @if (!string.IsNullOrEmpty(permission.Description))
+                                        {
+                                            <span class="permission-description">@permission.Description</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showRoleDialog = false)" />
+        <QButton Text="Save Permissions" Icon="check-lg" Variant="primary" OnClick="@SaveRolePermissions"
+                 Disabled="@(editingRole?.Code == "SuperAdmin")" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .tabs-container {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 24px;
+        border-bottom: 1px solid var(--qm-border);
+        padding-bottom: 0;
+    }
+
+    .tab {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        cursor: pointer;
+        color: var(--qm-text-muted);
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s ease;
+        margin-bottom: -1px;
+    }
+
+    .tab:hover { color: var(--qm-text-primary); }
+    .tab.active {
+        color: var(--qm-primary);
+        border-bottom-color: var(--qm-primary);
+    }
+
+    .loading-container {
+        display: flex;
+        justify-content: center;
+        padding: 60px;
+    }
+
+    .data-table-container {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        overflow: hidden;
+    }
+
+    .user-cell {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .user-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        color: white;
+    }
+
+    .user-info { display: flex; flex-direction: column; }
+    .user-name { font-weight: 500; color: var(--qm-text-primary); }
+    .user-email { font-size: 12px; color: var(--qm-text-muted); }
+
+    .roles-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+    }
+
+    .role-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+    }
+
+    .role-header {
+        display: flex;
+        gap: 14px;
+        margin-bottom: 16px;
+    }
+
+    .role-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .role-title h4 { margin: 0 0 4px; color: var(--qm-text-primary); }
+    .role-title span { font-size: 13px; color: var(--qm-text-muted); }
+
+    .role-permissions h5 {
+        margin: 0 0 10px;
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+    }
+
+    .role-permissions ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .role-permissions li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 0;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .role-permissions li .rzi { color: var(--qm-success); font-size: 16px; }
+    .role-permissions li.more { color: var(--qm-text-muted); font-style: italic; }
+
+    .role-actions {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    /* Dialog styles */
+    .dialog-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        width: 90%;
+        max-width: 520px;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dialog-header h3 { margin: 0; color: var(--qm-text-primary); }
+    .dialog-body { padding: 24px; }
+
+    .dialog-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated);
+    }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-secondary);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    /* Role code badge */
+    .role-code {
+        display: block;
+        font-size: 11px;
+        color: var(--qm-text-muted);
+        font-family: monospace;
+    }
+
+    /* System badge */
+    .system-badge {
+        padding: 2px 8px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        color: var(--qm-danger);
+        margin-left: auto;
+    }
+
+    /* Role editor styles */
+    .role-editor { padding: 0; }
+
+    .role-info-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--qm-border);
+        margin-bottom: 20px;
+    }
+
+    .role-info-header h4 { margin: 0; color: var(--qm-text-primary); }
+
+    .permissions-editor {
+        max-height: 500px;
+        overflow-y: auto;
+    }
+
+    .permission-category {
+        margin-bottom: 24px;
+    }
+
+    .category-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 0 0 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 14px;
+        color: var(--qm-text-primary);
+        text-transform: uppercase;
+    }
+
+    .select-all-btn {
+        background: none;
+        border: 1px solid var(--qm-border);
+        padding: 4px 10px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--qm-text-secondary);
+        transition: all 0.2s ease;
+    }
+
+    .select-all-btn:hover {
+        background: var(--qm-bg-elevated);
+        border-color: var(--qm-primary);
+        color: var(--qm-primary);
+    }
+
+    .permissions-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 8px;
+    }
+
+    .permission-item {
+        padding: 8px 12px;
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-elevated);
+    }
+
+    .permission-description {
+        display: block;
+        font-size: 11px;
+        color: var(--qm-text-muted);
+        margin-top: 4px;
+        margin-left: 28px;
+    }
+</style>
+
+@code {
+    private static string GetRoleVariant(string? role) => role?.ToLowerInvariant() switch
+    {
+        "superadmin" => "danger",
+        "operator" => "success",
+        "viewer" => "secondary",
+        _ => "primary" // admin and anything unrecognized
+    };
+
+    private string activeTab = "users";
+    private bool isLoading = true;
+    private bool isLoadingRoles = true;
+    private bool showDialog = false;
+    private bool showRoleDialog = false;
+    private UserInfo? editingUser;
+    private RoleInfo? editingRole;
+    private UserFormData formData = new();
+
+    private List<UserInfo> users = new();
+    private List<RoleInfo> roles = new();
+    private List<RoleOption> roleOptions = new();
+    private List<BranchOption> branchOptions = new();
+    private List<PermissionInfo> allPermissions = new();
+    private Dictionary<string, bool> selectedPermissions = new();
+
+    // Permission check
+    private bool canEditRoles = false;
+    private bool canCreateUsers = false;
+    private bool canEditUsers = false;
+    private bool canDeleteUsers = false;
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private UserInfo? userToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Permission check and data loading moved to OnAfterRenderAsync
+        // to ensure tokens are loaded from localStorage first
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check permission (tokens are now loaded from localStorage)
+            if (!await PermissionSvc.HasPermissionAsync(Permissions.UsersView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canEditRoles = await PermissionSvc.HasPermissionAsync(Permissions.RolesEdit);
+            canCreateUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersCreate);
+            canEditUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersEdit);
+            canDeleteUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersDelete);
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            // Load users from API
+            var usersResponse = await Http.GetAsync("api/v1/users?includeInactive=true");
+            if (usersResponse.IsSuccessStatusCode)
+            {
+                var apiUsers = await usersResponse.Content.ReadFromJsonAsync<List<UserDto>>(JsonOptions) ?? new();
+                users = apiUsers.Select(u => new UserInfo
+                {
+                    Id = u.Id,
+                    FullName = u.FullName,
+                    Username = u.Username,
+                    Email = u.Email,
+                    Role = u.RoleName,
+                    RoleId = u.RoleId,
+                    Branch = u.AssignedBranchName,
+                    BranchId = u.AssignedBranchId,
+                    IsActive = u.IsActive
+                }).ToList();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(usersResponse);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+
+            // Load branches for dropdown
+            var branchesResponse = await Http.GetAsync("api/v1/branches?includeInactive=true");
+            if (branchesResponse.IsSuccessStatusCode)
+            {
+                var apiBranches = await branchesResponse.Content.ReadFromJsonAsync<List<BranchDto>>(JsonOptions) ?? new();
+                branchOptions = apiBranches.Select(b => new BranchOption { Id = b.Id, Name = b.Name }).ToList();
+            }
+
+            // Load roles for dropdown
+            var rolesResponse = await Http.GetAsync("api/v1/roles");
+            if (rolesResponse.IsSuccessStatusCode)
+            {
+                var apiRoles = await rolesResponse.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
+                roleOptions = apiRoles.Select(r => new RoleOption { Id = r.Id, Name = r.Name }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Connection Error", $"Failed to connect to API: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+
+        // Load roles data for the roles tab
+        await LoadRolesData();
+    }
+
+    private async Task LoadRolesData()
+    {
+        isLoadingRoles = true;
+        try
+        {
+            // Load roles with permissions
+            var rolesResponse = await Http.GetAsync("api/v1/roles");
+            if (rolesResponse.IsSuccessStatusCode)
+            {
+                var apiRoles = await rolesResponse.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
+                roles = apiRoles.Select(r => new RoleInfo
+                {
+                    Id = r.Id,
+                    Name = r.Name,
+                    Code = r.Code,
+                    Icon = r.Icon,
+                    Color = r.Color,
+                    IsSystem = r.IsSystem,
+                    UserCount = users.Count(u => u.RoleId == r.Id),
+                    Permissions = r.Permissions?.ToList() ?? new()
+                }).ToList();
+            }
+
+            // Load all available permissions
+            var permissionsResponse = await Http.GetAsync("api/v1/roles/permissions");
+            if (permissionsResponse.IsSuccessStatusCode)
+            {
+                var apiPermissions = await permissionsResponse.Content.ReadFromJsonAsync<List<PermissionApiDto>>(JsonOptions) ?? new();
+                allPermissions = apiPermissions.Select(p => new PermissionInfo
+                {
+                    Id = p.Id,
+                    Code = p.Code,
+                    Name = p.Name,
+                    Description = p.Description,
+                    Category = p.Category,
+                    SortOrder = p.SortOrder
+                }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load roles: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingRoles = false;
+        }
+    }
+
+    private string GetAvatarColor(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return "#6b7280";
+        var colors = new[] { "#8c2f52", "#47393f", "#10b981", "#f59e0b", "#ef4444" };
+        return colors[Math.Abs(name.GetHashCode()) % colors.Length];
+    }
+
+    private void ShowAddDialog()
+    {
+        editingUser = null;
+        formData = new UserFormData
+        {
+            IsActive = true,
+            RoleId = roleOptions.FirstOrDefault(r => r.Name == "Staff")?.Id ?? roleOptions.FirstOrDefault()?.Id ?? Guid.Empty
+        };
+        showDialog = true;
+    }
+
+    private void EditUser(UserInfo user)
+    {
+        editingUser = user;
+        var names = user.FullName?.Split(' ') ?? Array.Empty<string>();
+        formData = new UserFormData
+        {
+            FirstName = names.FirstOrDefault() ?? "",
+            LastName = names.Length > 1 ? string.Join(" ", names.Skip(1)) : "",
+            Email = user.Email ?? "",
+            Username = user.Username ?? "",
+            RoleId = user.RoleId,
+            BranchId = user.BranchId,
+            IsActive = user.IsActive
+        };
+        showDialog = true;
+    }
+
+    private async Task SaveUser()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Username) || string.IsNullOrWhiteSpace(formData.Email))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Username and email are required");
+            return;
+        }
+
+        if (editingUser == null && string.IsNullOrWhiteSpace(formData.Password))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Password is required for new users");
+            return;
+        }
+
+        if (formData.RoleId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please select a role");
+            return;
+        }
+
+        try
+        {
+            HttpResponseMessage response;
+            if (editingUser == null)
+            {
+                var createRequest = new
+                {
+                    Username = formData.Username,
+                    Email = formData.Email,
+                    Password = formData.Password,
+                    FirstName = formData.FirstName,
+                    LastName = formData.LastName,
+                    RoleId = formData.RoleId,
+                    AssignedBranchId = formData.BranchId
+                };
+                response = await Http.PostAsJsonAsync("api/v1/users", createRequest, JsonOptions);
+            }
+            else
+            {
+                var updateRequest = new
+                {
+                    Email = formData.Email,
+                    Password = string.IsNullOrWhiteSpace(formData.Password) ? null : formData.Password,
+                    FirstName = formData.FirstName,
+                    LastName = formData.LastName,
+                    RoleId = formData.RoleId,
+                    AssignedBranchId = formData.BranchId
+                };
+                response = await Http.PutAsJsonAsync($"api/v1/users/{editingUser.Id}", updateRequest, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingUser == null ? "User created" : "User updated");
+                showDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save user: {ex.Message}");
+        }
+    }
+
+    private void DeleteUser(UserInfo user)
+    {
+        userToDelete = user;
+        deleteConfirmMessage = $"Are you sure you want to delete '{user.FullName}'? This action cannot be undone.";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && userToDelete != null)
+        {
+            try
+            {
+                var response = await Http.DeleteAsync($"api/v1/users/{userToDelete.Id}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    NotificationService.Notify(ToastSeverity.Success, "Success", "User deleted");
+                    await LoadData();
+                }
+                else
+                {
+                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                    NotificationService.Notify(ToastSeverity.Error, title, detail);
+                }
+            }
+            catch (Exception ex)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete user: {ex.Message}");
+            }
+        }
+
+        userToDelete = null;
+    }
+
+    // Role editing methods
+    private void EditRole(RoleInfo role)
+    {
+        editingRole = role;
+        selectedPermissions = allPermissions.ToDictionary(
+            p => p.Code,
+            p => role.Permissions.Contains(p.Code)
+        );
+        showRoleDialog = true;
+    }
+
+    private void ToggleCategoryPermissions(string category)
+    {
+        var categoryPermissions = allPermissions.Where(p => p.Category == category).ToList();
+        var allSelected = AreAllCategoryPermissionsSelected(category);
+
+        foreach (var perm in categoryPermissions)
+        {
+            selectedPermissions[perm.Code] = !allSelected;
+        }
+    }
+
+    private bool AreAllCategoryPermissionsSelected(string category)
+    {
+        var categoryPermissions = allPermissions.Where(p => p.Category == category);
+        return categoryPermissions.All(p => selectedPermissions.GetValueOrDefault(p.Code, false));
+    }
+
+    private async Task SaveRolePermissions()
+    {
+        if (editingRole == null) return;
+
+        try
+        {
+            var permissionCodes = selectedPermissions
+                .Where(kvp => kvp.Value)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            var response = await Http.PutAsJsonAsync(
+                $"api/v1/roles/{editingRole.Id}/permissions",
+                new { Permissions = permissionCodes },
+                JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Role permissions updated");
+                showRoleDialog = false;
+                await LoadRolesData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save permissions: {ex.Message}");
+        }
+    }
+
+    // DTOs for API
+    private record UserDto
+    {
+        public Guid Id { get; init; }
+        public string Username { get; init; } = "";
+        public string Email { get; init; } = "";
+        public string? FirstName { get; init; }
+        public string? LastName { get; init; }
+        public string FullName { get; init; } = "";
+        public Guid RoleId { get; init; }
+        public string RoleCode { get; init; } = "";
+        public string RoleName { get; init; } = "";
+        public string? RoleColor { get; init; }
+        public Guid? AssignedBranchId { get; init; }
+        public string? AssignedBranchName { get; init; }
+        public bool IsActive { get; init; }
+    }
+
+    private record BranchDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+
+    private record RoleApiDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string Code { get; init; } = "";
+        public string? Icon { get; init; }
+        public string? Color { get; init; }
+        public bool IsSystem { get; init; }
+        public List<string>? Permissions { get; init; }
+    }
+
+    private record PermissionApiDto
+    {
+        public Guid Id { get; init; }
+        public string Code { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string? Description { get; init; }
+        public string Category { get; init; } = "";
+        public int SortOrder { get; init; }
+    }
+
+    private class UserInfo
+    {
+        public Guid Id { get; set; }
+        public string? FullName { get; set; }
+        public string? Username { get; set; }
+        public string? Email { get; set; }
+        public string? Role { get; set; }
+        public Guid RoleId { get; set; }
+        public string? Branch { get; set; }
+        public Guid? BranchId { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    private class RoleInfo
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
+        public string? Icon { get; set; }
+        public string? Color { get; set; }
+        public bool IsSystem { get; set; }
+        public int UserCount { get; set; }
+        public List<string> Permissions { get; set; } = new();
+    }
+
+    private class PermissionInfo
+    {
+        public Guid Id { get; set; }
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string Category { get; set; } = "";
+        public int SortOrder { get; set; }
+    }
+
+    private class RoleOption
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    private class BranchOption
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    private class UserFormData
+    {
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+        public Guid RoleId { get; set; }
+        public Guid? BranchId { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

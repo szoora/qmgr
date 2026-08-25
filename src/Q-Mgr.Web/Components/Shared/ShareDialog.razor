@@ -1,0 +1,551 @@
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+
+@if (IsVisible)
+{
+    <div class="share-dialog-overlay" @onclick="Close">
+        <div class="share-dialog @(IsVisible ? "show" : "")" @onclick:stopPropagation="true">
+            <div class="share-header">
+                <h3><i class="bi bi-share"></i> @Title</h3>
+                <button class="close-btn" @onclick="Close">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+
+            <div class="share-content">
+                <!-- QR Code Section -->
+                <div class="qr-section">
+                    <div class="qr-code" id="qrcode-@instanceId">
+                        @if (!string.IsNullOrEmpty(qrCodeDataUrl))
+                        {
+                            <img src="@qrCodeDataUrl" alt="QR Code" />
+                        }
+                        else
+                        {
+                            <div class="qr-placeholder">
+                                <i class="bi bi-qr-code"></i>
+                            </div>
+                        }
+                    </div>
+                    <p class="qr-hint">Scan with your phone camera</p>
+                </div>
+
+                <!-- Link Section -->
+                <div class="link-section">
+                    <label class="section-label">Share Link</label>
+                    <div class="link-input-group">
+                        <input type="text" class="link-input" value="@Url" readonly @ref="linkInputRef" />
+                        <button class="copy-btn @(copied ? "copied" : "")" @onclick="CopyToClipboard" title="Copy link">
+                            <i class="bi @(copied ? "bi-check-lg" : "bi-clipboard")"></i>
+                            <span>@(copied ? "Copied!" : "Copy")</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Share Options -->
+                <div class="share-options">
+                    <label class="section-label">Share via</label>
+                    <div class="share-buttons">
+                        @if (supportsNativeShare)
+                        {
+                            <button class="share-btn native" @onclick="NativeShare" title="Share">
+                                <i class="bi bi-share"></i>
+                                <span>Share</span>
+                            </button>
+                        }
+                        <button class="share-btn whatsapp" @onclick="ShareWhatsApp" title="WhatsApp">
+                            <i class="bi bi-whatsapp"></i>
+                            <span>WhatsApp</span>
+                        </button>
+                        <button class="share-btn telegram" @onclick="ShareTelegram" title="Telegram">
+                            <i class="bi bi-telegram"></i>
+                            <span>Telegram</span>
+                        </button>
+                        <button class="share-btn twitter" @onclick="ShareTwitter" title="X (Twitter)">
+                            <i class="bi bi-twitter-x"></i>
+                            <span>X</span>
+                        </button>
+                        <button class="share-btn facebook" @onclick="ShareFacebook" title="Facebook">
+                            <i class="bi bi-facebook"></i>
+                            <span>Facebook</span>
+                        </button>
+                        <button class="share-btn email" @onclick="ShareEmail" title="Email">
+                            <i class="bi bi-envelope"></i>
+                            <span>Email</span>
+                        </button>
+                        <button class="share-btn sms" @onclick="ShareSMS" title="SMS">
+                            <i class="bi bi-chat-dots"></i>
+                            <span>SMS</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Download QR -->
+                <div class="download-section">
+                    <button class="download-qr-btn" @onclick="DownloadQRCode">
+                        <i class="bi bi-download"></i>
+                        Download QR Code
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .share-dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        padding: 16px;
+        animation: fadeIn 0.2s ease;
+    }
+
+    @@keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    .share-dialog {
+        background: var(--qm-bg-card, #1e1e2d);
+        border: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: var(--qm-radius-xl);
+        width: 100%;
+        max-width: 420px;
+        max-height: 90vh;
+        overflow-y: auto;
+        animation: slideUp 0.3s ease;
+    }
+
+    @@keyframes slideUp {
+        from { transform: translateY(20px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+    }
+
+    .share-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border, #2d2d3a);
+    }
+
+    .share-header h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary, #fff);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .share-header h3 i {
+        color: var(--qm-primary, #8c2f52);
+    }
+
+    .close-btn {
+        width: 36px;
+        height: 36px;
+        border: none;
+        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-muted, #a0a0a0);
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .close-btn:hover {
+        background: color-mix(in srgb, var(--qm-danger) 20%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .share-content {
+        padding: 24px;
+    }
+
+    /* QR Code Section */
+    .qr-section {
+        text-align: center;
+        margin-bottom: 24px;
+    }
+
+    .qr-code {
+        width: 180px;
+        height: 180px;
+        margin: 0 auto 12px;
+        background: #fff;
+        border-radius: var(--qm-radius-xl);
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .qr-code img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .qr-placeholder {
+        color: var(--qm-text-muted);
+        font-size: 64px;
+    }
+
+    .qr-hint {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-muted, #a0a0a0);
+    }
+
+    /* Link Section */
+    .link-section {
+        margin-bottom: 24px;
+    }
+
+    .section-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--qm-text-muted, #a0a0a0);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+
+    .link-input-group {
+        display: flex;
+        gap: 8px;
+    }
+
+    .link-input {
+        flex: 1;
+        padding: 12px 16px;
+        background: var(--qm-bg-elevated, #252536);
+        border: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-primary, #fff);
+        font-size: 13px;
+        font-family: monospace;
+        min-width: 0;
+    }
+
+    .copy-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 12px 16px;
+        background: var(--qm-primary, #8c2f52);
+        border: none;
+        border-radius: var(--qm-radius-lg);
+        color: white;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+    }
+
+    .copy-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 15px var(--qm-primary-glow);
+    }
+
+    .copy-btn.copied {
+        background: var(--qm-success, #16a34a);
+    }
+
+    /* Share Buttons */
+    .share-options {
+        margin-bottom: 24px;
+    }
+
+    .share-buttons {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+    }
+
+    .share-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 14px 8px;
+        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
+        border: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: var(--qm-radius-xl);
+        color: var(--qm-text-primary, #fff);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .share-btn i {
+        font-size: 22px;
+    }
+
+    .share-btn span {
+        font-size: 11px;
+        font-weight: 500;
+    }
+
+    .share-btn:hover {
+        transform: translateY(-2px);
+        border-color: transparent;
+    }
+
+    .share-btn.native:hover { background: var(--qm-primary); color: white; }
+    .share-btn.whatsapp:hover { background: #25D366; color: #fff; }
+    .share-btn.telegram:hover { background: #0088cc; color: #fff; }
+    .share-btn.twitter:hover { background: #000; color: #fff; }
+    .share-btn.facebook:hover { background: #1877F2; color: #fff; }
+    .share-btn.email:hover { background: #EA4335; color: #fff; }
+    .share-btn.sms:hover { background: #2e242a; color: #fff; }
+
+    /* Download Button */
+    .download-section {
+        text-align: center;
+    }
+
+    .download-qr-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 24px;
+        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
+        border: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-primary, #fff);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .download-qr-btn:hover {
+        background: var(--qm-primary);
+        color: white;
+        border-color: transparent;
+    }
+
+    /* Light mode */
+    [data-theme="light"] .share-dialog {
+        background: var(--qm-bg-card);
+        border-color: var(--qm-border);
+    }
+
+    [data-theme="light"] .link-input,
+    [data-theme="light"] .share-btn,
+    [data-theme="light"] .download-qr-btn {
+        background: var(--qm-bg-elevated);
+        border-color: var(--qm-border);
+    }
+
+    [data-theme="light"] .link-input {
+        color: var(--qm-text-primary);
+    }
+
+    /* Mobile Responsive */
+    @@media (max-width: 480px) {
+        .share-dialog {
+            max-height: 95vh;
+            border-radius: var(--qm-radius-xl) var(--qm-radius-xl) 0 0;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            max-width: none;
+            animation: slideUpMobile 0.3s ease;
+        }
+
+        @@keyframes slideUpMobile {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+
+        .share-buttons {
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        .share-btn {
+            padding: 12px 6px;
+        }
+
+        .share-btn i {
+            font-size: 20px;
+        }
+
+        .share-btn span {
+            font-size: 10px;
+        }
+
+        .qr-code {
+            width: 150px;
+            height: 150px;
+        }
+
+        .link-input-group {
+            flex-direction: column;
+        }
+
+        .copy-btn {
+            justify-content: center;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public EventCallback<bool> IsVisibleChanged { get; set; }
+    [Parameter] public string Url { get; set; } = "";
+    [Parameter] public string Title { get; set; } = "Share";
+    [Parameter] public string Description { get; set; } = "";
+
+    private ElementReference linkInputRef;
+    private string instanceId = Guid.NewGuid().ToString("N")[..8];
+    private string? qrCodeDataUrl;
+    private bool copied = false;
+    private bool supportsNativeShare = false;
+    private IJSObjectReference? jsModule;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                // Check if Web Share API is supported
+                supportsNativeShare = await JS.InvokeAsync<bool>("eval", "navigator.share !== undefined");
+                StateHasChanged();
+            }
+            catch { }
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsVisible && !string.IsNullOrEmpty(Url))
+        {
+            await GenerateQRCode();
+        }
+    }
+
+    private async Task GenerateQRCode()
+    {
+        try
+        {
+            // Generate QR code using JS (we'll use a simple SVG-based approach)
+            qrCodeDataUrl = await JS.InvokeAsync<string>("generateQRCode", Url);
+        }
+        catch
+        {
+            qrCodeDataUrl = null;
+        }
+    }
+
+    private async Task CopyToClipboard()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Url);
+            copied = true;
+            StateHasChanged();
+
+            await Task.Delay(2000);
+            copied = false;
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private async Task NativeShare()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.share", new
+            {
+                title = Title,
+                text = Description,
+                url = Url
+            });
+        }
+        catch { }
+    }
+
+    private void ShareWhatsApp()
+    {
+        var text = Uri.EscapeDataString($"{Description}\n{Url}");
+        NavigationManager.NavigateTo($"https://wa.me/?text={text}", true);
+    }
+
+    private void ShareTelegram()
+    {
+        var url = Uri.EscapeDataString(Url);
+        var text = Uri.EscapeDataString(Description);
+        NavigationManager.NavigateTo($"https://t.me/share/url?url={url}&text={text}", true);
+    }
+
+    private void ShareTwitter()
+    {
+        var text = Uri.EscapeDataString($"{Description} {Url}");
+        NavigationManager.NavigateTo($"https://twitter.com/intent/tweet?text={text}", true);
+    }
+
+    private void ShareFacebook()
+    {
+        var url = Uri.EscapeDataString(Url);
+        NavigationManager.NavigateTo($"https://www.facebook.com/sharer/sharer.php?u={url}", true);
+    }
+
+    private void ShareEmail()
+    {
+        var subject = Uri.EscapeDataString(Title);
+        var body = Uri.EscapeDataString($"{Description}\n\n{Url}");
+        NavigationManager.NavigateTo($"mailto:?subject={subject}&body={body}", true);
+    }
+
+    private void ShareSMS()
+    {
+        var text = Uri.EscapeDataString($"{Description} {Url}");
+        NavigationManager.NavigateTo($"sms:?body={text}", true);
+    }
+
+    private async Task DownloadQRCode()
+    {
+        if (!string.IsNullOrEmpty(qrCodeDataUrl))
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("downloadDataUrl", qrCodeDataUrl, $"qrcode-{Title.Replace(" ", "-").ToLower()}.png");
+            }
+            catch { }
+        }
+    }
+
+    private async Task Close()
+    {
+        await IsVisibleChanged.InvokeAsync(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (jsModule != null)
+        {
+            await jsModule.DisposeAsync();
+        }
+    }
+}

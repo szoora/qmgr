@@ -1,0 +1,76 @@
+@page "/display/signage"
+@page "/display/signage/{BranchId:guid}"
+@layout DisplayLayout
+@using QMgr.Web.Components.Shared
+
+<PageTitle>Signage - Q-Mgr</PageTitle>
+
+<div class="signage-display">
+    <AdSignagePlayer BranchId="@branchId" CssClass="signage-fill">
+        <LoadingContent>
+            <div class="signage-empty">
+                <QSpinner Size="lg" />
+            </div>
+        </LoadingContent>
+        <EmptyContent>
+            <div class="signage-empty">
+                <QIcon Name="collection-play-fill" />
+                <span>No signage content configured for this branch</span>
+            </div>
+        </EmptyContent>
+    </AdSignagePlayer>
+    <DisplayBanner BranchId="@branchId" />
+</div>
+
+<style>
+    .signage-display {
+        width: 100vw;
+        height: 100vh;
+        background: #000;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .signage-fill {
+        width: 100%;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .signage-empty {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .signage-empty .q-icon {
+        font-size: 64px;
+    }
+
+    .signage-empty span {
+        font-size: 20px;
+    }
+</style>
+
+@code {
+    // Falls back to the demo branch only when no {BranchId} route segment is present
+    // (e.g. a bookmarked bare "/display/signage" URL).
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    [Parameter]
+    public Guid? BranchId { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (BranchId.HasValue && BranchId.Value != Guid.Empty)
+        {
+            branchId = BranchId.Value;
+        }
+    }
+}

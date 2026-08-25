@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Loose logomark (no background container) — the queue-loop-into-arrow mark
+       for use on marketing/docs surfaces where the app-icon frame isn't wanted. -->
+  <circle cx="256" cy="256" r="120" fill="none" stroke="#0058cc" stroke-width="40"/>
+  <g transform="rotate(45 256 256)">
+    <rect x="376" y="236" width="50" height="40" rx="5" fill="#0058cc"/>
+    <polygon points="426,220 426,292 470,256" fill="#0058cc"/>
+  </g>
+</svg>

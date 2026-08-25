@@ -1,0 +1,614 @@
+@page "/admin/counters"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Counters Setup - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="door-open-fill" /> Counters Setup</h1>
+        <p class="page-subtitle">Manage service counters for your branch</p>
+    </div>
+    <div class="header-actions">
+        @if (canCreate)
+        {
+            <QButton Text="Add Counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+</div>
+
+<div class="admin-content">
+    <QCard Class="mb-4" Title="Counters" Icon="list-ul">
+        <HeaderActions>
+            <span class="counter-count">@counters.Count(c => c.IsActive) active / @counters.Count total</span>
+        </HeaderActions>
+        <ChildContent>
+            @if (isLoading)
+            {
+                <div class="loading-state">
+                    <QSpinner Size="lg" />
+                    <span>Loading counters...</span>
+                </div>
+            }
+            else if (!counters.Any())
+            {
+                <div class="empty-state">
+                    <QIcon Name="door-open-fill" Size="xl" />
+                    <h4>No Counters Configured</h4>
+                    <p>Add counters to allow staff to serve customers.</p>
+                    @if (canCreate)
+                    {
+                        <QButton Text="Add Your First Counter" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="counters-grid">
+                    @foreach (var counter in counters)
+                    {
+                        <div class="counter-card @(!counter.IsActive ? "inactive" : "")">
+                            <div class="counter-header">
+                                <div class="counter-number">@counter.CounterNumber</div>
+                                <div class="counter-status @counter.Status.ToString().ToLower()">
+                                    <span class="status-dot"></span>
+                                    @counter.Status
+                                </div>
+                            </div>
+                            <div class="counter-body">
+                                <h4>@counter.DisplayName</h4>
+                                @if (counter.ServiceTypes?.Any() == true)
+                                {
+                                    <div class="service-types">
+                                        @foreach (var st in counter.ServiceTypes.Take(3))
+                                        {
+                                            <span class="service-tag" style="background: @(st.Color ?? "#8c2f52")20; color: @(st.Color ?? "#8c2f52")">@st.Name</span>
+                                        }
+                                        @if (counter.ServiceTypes.Count > 3)
+                                        {
+                                            <span class="service-tag more">+@(counter.ServiceTypes.Count - 3) more</span>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="no-services">No services assigned</p>
+                                }
+                            </div>
+                            <div class="counter-footer">
+                                @if (canEdit)
+                                {
+                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(counter))" Title="Edit" />
+                                    <QButton Icon="@(counter.IsActive ? "eye-slash" : "eye")" Variant="ghost" Size="sm"
+                                              OnClick="@(() => ToggleCounter(counter))" Title="@(counter.IsActive ? "Disable" : "Enable")" />
+                                }
+                                @if (canDelete)
+                                {
+                                    <QButton Icon="trash-fill" Variant="ghost" Size="sm" Class="text-danger"
+                                              OnClick="@(() => DeleteCounter(counter))" Title="Delete" />
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </ChildContent>
+    </QCard>
+</div>
+
+<!-- Add/Edit Dialog -->
+<QModal @bind-Visible="showDialog" Title="@(editingCounter == null ? "Add Counter" : "Edit Counter")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.CounterNumber" Label="Counter Number *" Placeholder="e.g., 1, A1, T01" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.DisplayName" Label="Display Name" Placeholder="e.g., Counter 1, Teller A" />
+        </div>
+        <div class="form-group">
+            <QMultiSelect TValue="Guid" TItem="ServiceTypeDto"
+                          @bind-SelectedValues="@formData.ServiceTypeIds"
+                          Items="@availableServiceTypes"
+                          ValueSelector="@(s => s.Id)"
+                          TextSelector="@(s => s.Name)"
+                          Label="Assigned Services"
+                          Placeholder="Select services this counter handles" />
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formData.IsEnabled" Label="Counter is active" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@CloseDialog" />
+        <QButton Text="@(editingCounter == null ? "Add Counter" : "Save Changes")" Icon="@(editingCounter == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveCounter" />
+    </FooterContent>
+</QModal>
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Counter"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-header h1 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 8px;
+        font-size: 28px;
+        color: var(--qm-text-primary);
+    }
+
+    .page-header h1 .rzi {
+        color: var(--qm-primary);
+    }
+
+    .page-subtitle {
+        color: var(--qm-text-muted);
+        margin: 0;
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-header h3 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .counter-count {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .loading-state, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.3;
+    }
+
+    .empty-state h4 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+    }
+
+    .counters-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+    }
+
+    .counter-card {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .counter-card:hover {
+        border-color: var(--qm-primary);
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .counter-card.inactive {
+        opacity: 0.6;
+    }
+
+    .counter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: var(--qm-bg-card);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .counter-number {
+        width: 48px;
+        height: 48px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        font-weight: 700;
+        color: white;
+    }
+
+    .counter-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: capitalize;
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+
+    .counter-status.active { background: color-mix(in srgb, var(--qm-success) 15%, transparent); color: var(--qm-success); }
+    .counter-status.active .status-dot { background: var(--qm-success); }
+    .counter-status.serving { background: color-mix(in srgb, var(--qm-primary) 15%, transparent); color: var(--qm-primary); }
+    .counter-status.serving .status-dot { background: var(--qm-primary); }
+    .counter-status.onbreak { background: color-mix(in srgb, var(--qm-warning) 15%, transparent); color: var(--qm-warning); }
+    .counter-status.onbreak .status-dot { background: var(--qm-warning); }
+    .counter-status.closed { background: color-mix(in srgb, var(--qm-text-secondary) 15%, transparent); color: var(--qm-text-secondary); }
+    .counter-status.closed .status-dot { background: var(--qm-text-secondary); }
+    .counter-status.offline, .counter-status.inactive { background: color-mix(in srgb, var(--qm-danger) 15%, transparent); color: var(--qm-danger); }
+    .counter-status.offline .status-dot, .counter-status.inactive .status-dot { background: var(--qm-danger); }
+
+    .counter-body {
+        padding: 16px;
+    }
+
+    .counter-body h4 {
+        margin: 0 0 12px;
+        color: var(--qm-text-primary);
+    }
+
+    .service-types {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .service-tag {
+        padding: 4px 10px;
+        border-radius: var(--qm-radius-full);
+        font-size: 11px;
+        font-weight: 500;
+    }
+
+    .service-tag.more {
+        background: var(--qm-bg-card);
+        color: var(--qm-text-muted);
+    }
+
+    .no-services {
+        color: var(--qm-text-muted);
+        font-size: 13px;
+        margin: 0;
+    }
+
+    .counter-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    /* Dialog */
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+        box-shadow: var(--qm-shadow-lg);
+        width: 90%;
+        max-width: 480px;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dialog-header h3 {
+        margin: 0;
+        color: var(--qm-text-primary);
+    }
+
+    .dialog-body {
+        padding: 24px;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .dialog-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 16px 24px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    /* Ensure Radzen dropdown popup appears above modal */
+    :deep(.rz-popup) {
+        z-index: 10000 !important;
+    }
+</style>
+
+@code {
+    private List<CounterDto> counters = new();
+    private List<ServiceTypeDto> availableServiceTypes = new();
+    private bool isLoading = true;
+    private bool showDialog = false;
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+    private CounterDto? editingCounter;
+    private CounterFormData formData = new();
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private CounterDto? counterToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Permission check and data loading moved to OnAfterRenderAsync
+        // to ensure tokens are loaded from localStorage first
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Check permission (tokens are now loaded from localStorage)
+            if (!await PermissionService.HasPermissionAsync(Permissions.CountersView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canCreate = await PermissionService.HasPermissionAsync(Permissions.CountersCreate);
+            canEdit = await PermissionService.HasPermissionAsync(Permissions.CountersEdit);
+            canDelete = await PermissionService.HasPermissionAsync(Permissions.CountersDelete);
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId;
+
+            if (branchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+                isLoading = false;
+                return;
+            }
+
+            var countersTask = Http.GetFromJsonAsync<List<CounterDto>>($"api/v1/branches/{branchId}/counters?includeInactive=true", JsonOptions);
+            var servicesTask = Http.GetFromJsonAsync<List<ServiceTypeDto>>($"api/v1/branches/{branchId}/service-types?includeInactive=true", JsonOptions);
+
+            await Task.WhenAll(countersTask, servicesTask);
+
+            counters = await countersTask ?? new();
+            availableServiceTypes = await servicesTask ?? new();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load counters: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingCounter = null;
+        var nextNumber = counters.Any()
+            ? (int.TryParse(counters.Max(c => c.CounterNumber), out var max) ? (max + 1).ToString() : (counters.Count + 1).ToString())
+            : "1";
+        formData = new CounterFormData
+        {
+            CounterNumber = nextNumber,
+            IsEnabled = true
+        };
+        showDialog = true;
+    }
+
+    private void ShowEditDialog(CounterDto counter)
+    {
+        editingCounter = counter;
+        formData = new CounterFormData
+        {
+            CounterNumber = counter.CounterNumber,
+            DisplayName = counter.DisplayName,
+            ServiceTypeIds = counter.ServiceTypes?.Select(s => s.Id) ?? Enumerable.Empty<Guid>(),
+            IsEnabled = counter.Status != CounterStatus.Inactive
+        };
+        showDialog = true;
+    }
+
+    private void CloseDialog()
+    {
+        showDialog = false;
+        editingCounter = null;
+    }
+
+    private async Task SaveCounter()
+    {
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var endpoint = editingCounter == null
+                ? $"api/v1/branches/{branchId}/counters"
+                : $"api/v1/branches/{branchId}/counters/{editingCounter.Id}";
+
+            var request = new
+            {
+                CounterNumber = formData.CounterNumber,
+                DisplayName = formData.DisplayName ?? $"Counter {formData.CounterNumber}",
+                ServiceTypeIds = formData.ServiceTypeIds,
+                IsEnabled = formData.IsEnabled
+            };
+
+            HttpResponseMessage response;
+            if (editingCounter == null)
+            {
+                response = await Http.PostAsJsonAsync(endpoint, request, JsonOptions);
+            }
+            else
+            {
+                response = await Http.PutAsJsonAsync(endpoint, request, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingCounter == null ? "Counter added" : "Counter updated");
+                CloseDialog();
+                await LoadData();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to save counter");
+            }
+        }
+        catch
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to save counter");
+        }
+    }
+
+    private async Task ToggleCounter(CounterDto counter)
+    {
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var response = await Http.PatchAsync($"api/v1/branches/{branchId}/counters/{counter.Id}/toggle", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    counter.IsActive ? "Counter disabled" : "Counter enabled");
+                await LoadData();
+            }
+        }
+        catch
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update counter");
+        }
+    }
+
+    private void DeleteCounter(CounterDto counter)
+    {
+        counterToDelete = counter;
+        deleteConfirmMessage = $"Are you sure you want to delete Counter {counter.CounterNumber}?";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && counterToDelete != null)
+        {
+            try
+            {
+                var branchId = BranchState.CurrentBranchId;
+                var response = await Http.DeleteAsync($"api/v1/branches/{branchId}/counters/{counterToDelete.Id}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    NotificationService.Notify(ToastSeverity.Success, "Success", "Counter deleted");
+                    await LoadData();
+                }
+            }
+            catch
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete counter");
+            }
+        }
+
+        counterToDelete = null;
+    }
+
+    private class CounterFormData
+    {
+        public string CounterNumber { get; set; } = "1";
+        public string? DisplayName { get; set; }
+        public IEnumerable<Guid> ServiceTypeIds { get; set; } = Enumerable.Empty<Guid>();
+        public bool IsEnabled { get; set; } = true;
+    }
+}

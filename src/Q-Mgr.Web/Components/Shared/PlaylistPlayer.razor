@@ -1,0 +1,556 @@
+@using QMgr.Domain.Enums
+@implements IDisposable
+@inject IJSRuntime JS
+
+<div class="playlist-player @(IsFullscreen ? "fullscreen" : "")">
+    <!-- Current Content -->
+    <div class="player-content @(isTransitioning ? "transitioning" : "")">
+        @if (currentItem != null)
+        {
+            <div class="content-layer current @(showCurrent ? "visible" : "hidden")">
+                <MediaPlayer Url="@currentItem.FileUrl"
+                            Title="@currentItem.Name"
+                            ContentType="@currentItem.ContentType"
+                            AutoPlay="true"
+                            Loop="@(playlist.Count == 1)"
+                            Muted="@Muted"
+                            ElementId="@($"current-{currentIndex}")"
+                            OnMediaEnded="@HandleMediaEnded" />
+            </div>
+        }
+
+        <!-- Preloaded Next Content (for seamless transition) -->
+        @if (nextItem != null && preloadNext)
+        {
+            <div class="content-layer next @(showCurrent ? "hidden" : "visible")">
+                <MediaPlayer Url="@nextItem.FileUrl"
+                            Title="@nextItem.Name"
+                            ContentType="@nextItem.ContentType"
+                            AutoPlay="false"
+                            Muted="@Muted"
+                            ElementId="@($"next-{(currentIndex + 1) % playlist.Count}")" />
+            </div>
+        }
+    </div>
+
+    <!-- Progress Bar -->
+    @if (ShowProgress && currentItem != null)
+    {
+        <div class="player-progress">
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: @progressPercent%"></div>
+            </div>
+            <span class="progress-info">@(currentIndex + 1) / @playlist.Count</span>
+        </div>
+    }
+
+    <!-- Standalone mute toggle: always visible (not hover-gated like the full
+         controls bar below), for unattended public displays where nobody
+         hovers a mouse — browsers block unmuted autoplay without a user
+         gesture, so this is the one-time tap that unlocks sound. -->
+    @if (ShowMuteToggle && !ShowControls)
+    {
+        <button class="mute-toggle-standalone" @onclick="ToggleMute" title="@(Muted ? "Enable sound" : "Mute")">
+            <QIcon Name="@(Muted ? "volume-mute-fill" : "volume-up-fill")" />
+        </button>
+    }
+
+    <!-- Controls (optional, for preview mode) -->
+    @if (ShowControls)
+    {
+        <div class="player-controls">
+            <button class="control-btn" @onclick="PreviousItem" disabled="@(playlist.Count <= 1)">
+                <QIcon Name="skip-start-fill" />
+            </button>
+            <button class="control-btn play-pause" @onclick="TogglePlayPause">
+                <QIcon Name="@(isPlaying ? "pause-fill" : "play-fill")" />
+            </button>
+            <button class="control-btn" @onclick="NextItem" disabled="@(playlist.Count <= 1)">
+                <QIcon Name="skip-end-fill" />
+            </button>
+            <button class="control-btn" @onclick="ToggleMute">
+                <QIcon Name="@(Muted ? "volume-mute-fill" : "volume-up-fill")" />
+            </button>
+            <button class="control-btn" @onclick="ToggleFullscreen">
+                <QIcon Name="@(IsFullscreen ? "fullscreen-exit" : "fullscreen")" />
+            </button>
+        </div>
+    }
+
+    <!-- Now Playing Info -->
+    @if (ShowNowPlaying && currentItem != null)
+    {
+        <div class="now-playing">
+            <span class="now-playing-label">Now Playing</span>
+            <span class="now-playing-title">@currentItem.Name</span>
+        </div>
+    }
+</div>
+
+<style>
+    .playlist-player {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+    }
+
+    .playlist-player.fullscreen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 9999;
+    }
+
+    .player-content {
+        position: relative;
+        width: 100%;
+        height: 100%;
+    }
+
+    .content-layer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        transition: opacity 0.8s ease-in-out;
+    }
+
+    .content-layer.visible {
+        opacity: 1;
+        z-index: 2;
+    }
+
+    .content-layer.hidden {
+        opacity: 0;
+        z-index: 1;
+    }
+
+    .player-content.transitioning .content-layer {
+        transition: opacity 0.5s ease-in-out;
+    }
+
+    /* Progress Bar */
+    .player-progress {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+        z-index: 10;
+    }
+
+    .progress-bar {
+        flex: 1;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: var(--qm-primary);
+        transition: width 0.1s linear;
+    }
+
+    .progress-info {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+        min-width: 50px;
+        text-align: right;
+    }
+
+    /* Controls */
+    .player-controls {
+        position: absolute;
+        bottom: 60px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 24px;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(10px);
+        border-radius: var(--qm-radius-full);
+        z-index: 10;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .playlist-player:hover .player-controls {
+        opacity: 1;
+    }
+
+    .mute-toggle-standalone {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(0, 0, 0, 0.5);
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        transition: all 0.2s ease;
+    }
+
+    .mute-toggle-standalone:hover {
+        background: var(--qm-primary);
+    }
+
+    .mute-toggle-standalone .q-icon {
+        font-size: 20px;
+    }
+
+    .control-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+    }
+
+    .control-btn:hover:not(:disabled) {
+        background: var(--qm-primary);
+        color: #000;
+    }
+
+    .control-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .control-btn .q-icon {
+        font-size: 24px;
+    }
+
+    .control-btn.play-pause {
+        width: 56px;
+        height: 56px;
+        background: var(--qm-primary);
+        color: #000;
+    }
+
+    .control-btn.play-pause .q-icon {
+        font-size: 32px;
+    }
+
+    .control-btn.play-pause:hover {
+        transform: scale(1.1);
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.5);
+    }
+
+    /* Now Playing */
+    .now-playing {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        padding: 12px 20px;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(10px);
+        border-radius: var(--qm-radius-lg);
+        z-index: 10;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .playlist-player:hover .now-playing {
+        opacity: 1;
+    }
+
+    .now-playing-label {
+        display: block;
+        font-size: 11px;
+        color: var(--qm-primary);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 4px;
+    }
+
+    .now-playing-title {
+        display: block;
+        font-size: 14px;
+        color: white;
+        font-weight: 500;
+    }
+
+    /* Full screen specific */
+    .playlist-player.fullscreen .player-controls {
+        bottom: 100px;
+    }
+
+    .playlist-player.fullscreen .now-playing {
+        top: 40px;
+        left: 40px;
+    }
+</style>
+
+@code {
+    [Parameter] public List<PlaylistItemModel> Playlist { get; set; } = new();
+    [Parameter] public bool AutoAdvance { get; set; } = true;
+    [Parameter] public int DefaultDurationSeconds { get; set; } = 10; // For images
+    [Parameter] public bool ShowControls { get; set; } = false;
+    [Parameter] public bool ShowProgress { get; set; } = true;
+    [Parameter] public bool ShowNowPlaying { get; set; } = false;
+    [Parameter] public bool ShowMuteToggle { get; set; } = false;
+    [Parameter] public bool Muted { get; set; } = false;
+    [Parameter] public EventCallback<bool> MutedChanged { get; set; }
+    [Parameter] public bool IsFullscreen { get; set; } = false;
+    [Parameter] public EventCallback<PlaylistItemModel> OnItemChanged { get; set; }
+    [Parameter] public EventCallback OnPlaylistCompleted { get; set; }
+
+    private List<PlaylistItemModel> playlist = new();
+    private PlaylistItemModel? currentItem;
+    private PlaylistItemModel? nextItem;
+    private int currentIndex = 0;
+    private bool isPlaying = true;
+    private bool showCurrent = true;
+    private bool preloadNext = true;
+    private bool isTransitioning = false;
+    private double progressPercent = 0;
+
+    private System.Threading.Timer? advanceTimer;
+    private System.Threading.Timer? progressTimer;
+    private DateTime itemStartTime;
+    private int currentItemDuration;
+
+    protected override void OnParametersSet()
+    {
+        if (Playlist != null && !playlist.SequenceEqual(Playlist))
+        {
+            playlist = Playlist.ToList();
+            if (playlist.Any())
+            {
+                currentIndex = 0;
+                LoadCurrentItem();
+            }
+        }
+    }
+
+    private void LoadCurrentItem()
+    {
+        if (currentIndex >= 0 && currentIndex < playlist.Count)
+        {
+            currentItem = playlist[currentIndex];
+            currentItemDuration = currentItem.DurationSeconds ?? GetDefaultDuration(currentItem.ContentType);
+            itemStartTime = DateTime.Now;
+
+            // Preload next item
+            var nextIndex = (currentIndex + 1) % playlist.Count;
+            nextItem = playlist.Count > 1 ? playlist[nextIndex] : null;
+
+            // Notify item changed
+            OnItemChanged.InvokeAsync(currentItem);
+
+            // Start advance timer only for content that doesn't fire media end events
+            // Videos and audio will advance via OnMediaEnded callback
+            if (AutoAdvance && isPlaying && UsesTimerBasedAdvance(currentItem.ContentType))
+            {
+                StartAdvanceTimer();
+            }
+            else
+            {
+                // Cancel any existing timer for video/audio content
+                advanceTimer?.Dispose();
+            }
+
+            // Progress timer always runs for visual feedback
+            if (currentItemDuration > 0)
+            {
+                StartProgressTimer();
+            }
+            else
+            {
+                // For video/audio, we don't know duration upfront
+                progressPercent = 0;
+                progressTimer?.Dispose();
+            }
+        }
+    }
+
+    private int GetDefaultDuration(ContentType type)
+    {
+        return type switch
+        {
+            ContentType.Image => DefaultDurationSeconds,
+            ContentType.Text => DefaultDurationSeconds,
+            ContentType.Html => DefaultDurationSeconds,
+            ContentType.Pdf => DefaultDurationSeconds * 2, // PDFs need more time
+            ContentType.PowerPoint => DefaultDurationSeconds * 3, // Presentations need more time
+            _ => 0 // Videos/audio use media end detection, no timer needed
+        };
+    }
+
+    private bool UsesTimerBasedAdvance(ContentType type)
+    {
+        // Content types that don't fire media end events need timer-based advancement
+        return type == ContentType.Image ||
+               type == ContentType.Text ||
+               type == ContentType.Html ||
+               type == ContentType.Pdf ||
+               type == ContentType.PowerPoint;
+    }
+
+    private void HandleMediaEnded()
+    {
+        // Media (video/audio) ended naturally - advance to next
+        if (isPlaying && AutoAdvance && !isTransitioning)
+        {
+            AdvanceToNext();
+        }
+    }
+
+    private void StartAdvanceTimer()
+    {
+        advanceTimer?.Dispose();
+        advanceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(() =>
+            {
+                if (isPlaying)
+                {
+                    AdvanceToNext();
+                }
+            });
+        }, null, currentItemDuration * 1000, Timeout.Infinite);
+    }
+
+    private void StartProgressTimer()
+    {
+        progressTimer?.Dispose();
+        progressTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(() =>
+            {
+                var elapsed = (DateTime.Now - itemStartTime).TotalSeconds;
+                progressPercent = Math.Min(100, (elapsed / currentItemDuration) * 100);
+                StateHasChanged();
+            });
+        }, null, 0, 100);
+    }
+
+    private void AdvanceToNext()
+    {
+        if (playlist.Count <= 1) return;
+
+        isTransitioning = true;
+        StateHasChanged();
+
+        // Swap to next content
+        showCurrent = false;
+        StateHasChanged();
+
+        // After transition completes, update indices
+        Task.Delay(500).ContinueWith(async _ =>
+        {
+            await InvokeAsync(() =>
+            {
+                currentIndex = (currentIndex + 1) % playlist.Count;
+
+                if (currentIndex == 0 && !AutoAdvance)
+                {
+                    OnPlaylistCompleted.InvokeAsync();
+                }
+
+                showCurrent = true;
+                isTransitioning = false;
+                LoadCurrentItem();
+            });
+        });
+    }
+
+    private void NextItem()
+    {
+        AdvanceToNext();
+    }
+
+    private void PreviousItem()
+    {
+        if (playlist.Count <= 1) return;
+
+        currentIndex = currentIndex == 0 ? playlist.Count - 1 : currentIndex - 1;
+        LoadCurrentItem();
+    }
+
+    private void TogglePlayPause()
+    {
+        isPlaying = !isPlaying;
+
+        if (isPlaying)
+        {
+            StartAdvanceTimer();
+            StartProgressTimer();
+        }
+        else
+        {
+            advanceTimer?.Dispose();
+            progressTimer?.Dispose();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ToggleMute()
+    {
+        Muted = !Muted;
+        await MutedChanged.InvokeAsync(Muted);
+        StateHasChanged();
+    }
+
+    private async Task ToggleFullscreen()
+    {
+        IsFullscreen = !IsFullscreen;
+
+        if (IsFullscreen)
+        {
+            await JS.InvokeVoidAsync("eval", "document.documentElement.requestFullscreen?.()");
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("eval", "document.exitFullscreen?.()");
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        advanceTimer?.Dispose();
+        progressTimer?.Dispose();
+    }
+
+    public class PlaylistItemModel
+    {
+        public Guid Id { get; set; }
+        public Guid MediaContentId { get; set; }
+        public string Name { get; set; } = "";
+        public string FileUrl { get; set; } = "";
+        public ContentType ContentType { get; set; }
+        public int? DurationSeconds { get; set; }
+        public int Order { get; set; }
+        public Guid? CampaignId { get; set; }
+        public bool CampaignActive { get; set; }
+    }
+}

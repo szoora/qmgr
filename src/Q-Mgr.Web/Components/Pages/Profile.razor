@@ -1,0 +1,817 @@
+@page "/profile"
+@inject IAuthService AuthService
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@inject IToastService NotificationService
+@inject JsonSerializerOptions JsonOptions
+@using System.Text.Json
+
+<PageTitle>My Profile - Q-Mgr</PageTitle>
+
+<div class="profile-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>My Profile</h1>
+            <p class="subtitle">View and manage your account information</p>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+        </div>
+    }
+    else if (profile == null)
+    {
+        <div class="not-found">
+            <i class="bi bi-person-x"></i>
+            <p>Unable to load user information</p>
+            <QButton Text="Go to Dashboard" Icon="speedometer2" OnClick="@(() => NavigationManager.NavigateTo("/"))" />
+        </div>
+    }
+    else
+    {
+        <div class="profile-container">
+            <!-- Profile Card -->
+            <div class="profile-card">
+                <div class="profile-header">
+                    <div class="avatar-large">
+                        <span>@GetInitials(profile.FullName ?? profile.Username)</span>
+                    </div>
+                    <div class="profile-info">
+                        <h2>@(profile.FullName ?? profile.Username)</h2>
+                        <span class="role-badge @GetRoleClass(profile.Role)">@profile.Role</span>
+                    </div>
+                    <button class="btn-edit" @onclick="OpenEditModal" title="Edit Profile">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                </div>
+
+                <div class="profile-details">
+                    <div class="detail-item">
+                        <div class="detail-icon">
+                            <i class="bi bi-person"></i>
+                        </div>
+                        <div class="detail-content">
+                            <label>Username</label>
+                            <span>@profile.Username</span>
+                        </div>
+                    </div>
+
+                    <div class="detail-item">
+                        <div class="detail-icon">
+                            <i class="bi bi-envelope"></i>
+                        </div>
+                        <div class="detail-content">
+                            <label>Email</label>
+                            <span>@(string.IsNullOrEmpty(profile.Email) ? "Not set" : profile.Email)</span>
+                        </div>
+                    </div>
+
+                    <div class="detail-item">
+                        <div class="detail-icon">
+                            <i class="bi bi-telephone"></i>
+                        </div>
+                        <div class="detail-content">
+                            <label>Phone</label>
+                            <span>@(string.IsNullOrEmpty(profile.Phone) ? "Not set" : profile.Phone)</span>
+                        </div>
+                    </div>
+
+                    <div class="detail-item">
+                        <div class="detail-icon">
+                            <i class="bi bi-shield-check"></i>
+                        </div>
+                        <div class="detail-content">
+                            <label>Role</label>
+                            <span>@profile.Role</span>
+                        </div>
+                    </div>
+
+                    @if (profile.AssignedBranchName != null)
+                    {
+                        <div class="detail-item">
+                            <div class="detail-icon">
+                                <i class="bi bi-building"></i>
+                            </div>
+                            <div class="detail-content">
+                                <label>Assigned Branch</label>
+                                <span>@profile.AssignedBranchName</span>
+                            </div>
+                        </div>
+                    }
+
+                    @if (profile.EmployeeNumber != null)
+                    {
+                        <div class="detail-item">
+                            <div class="detail-icon">
+                                <i class="bi bi-person-badge"></i>
+                            </div>
+                            <div class="detail-content">
+                                <label>Employee Number</label>
+                                <span>@profile.EmployeeNumber</span>
+                            </div>
+                        </div>
+                    }
+
+                    <div class="detail-item">
+                        <div class="detail-icon">
+                            <i class="bi bi-calendar-check"></i>
+                        </div>
+                        <div class="detail-content">
+                            <label>Member Since</label>
+                            <span>@profile.CreatedAt.ToString("MMMM dd, yyyy")</span>
+                        </div>
+                    </div>
+
+                    @if (profile.LastLogin.HasValue)
+                    {
+                        <div class="detail-item">
+                            <div class="detail-icon">
+                                <i class="bi bi-clock-history"></i>
+                            </div>
+                            <div class="detail-content">
+                                <label>Last Login</label>
+                                <span>@profile.LastLogin.Value.ToString("MMM dd, yyyy HH:mm")</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Actions Card -->
+            <div class="actions-card">
+                <h3>Account Actions</h3>
+                <div class="actions-list">
+                    <button class="action-item" @onclick="OpenEditModal">
+                        <i class="bi bi-pencil-square"></i>
+                        <span>Edit Profile</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <button class="action-item" @onclick="OpenPasswordModal">
+                        <i class="bi bi-key"></i>
+                        <span>Change Password</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <hr />
+                    <a href="/admin/settings" class="action-item">
+                        <i class="bi bi-gear"></i>
+                        <span>System Settings</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                    <button class="action-item logout" @onclick="Logout">
+                        <i class="bi bi-box-arrow-right"></i>
+                        <span>Logout</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Edit Profile Modal -->
+<QModal @bind-Visible="showEditModal" Title="Edit Profile" Size="md">
+    <ChildContent>
+        <div class="form-group mb-3">
+            <label class="form-label">First Name</label>
+            <input type="text" class="form-control" @bind="editModel.FirstName" placeholder="Enter first name" />
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label">Last Name</label>
+            <input type="text" class="form-control" @bind="editModel.LastName" placeholder="Enter last name" />
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-control" @bind="editModel.Email" placeholder="Enter email" />
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label">Phone</label>
+            <input type="tel" class="form-control" @bind="editModel.Phone" placeholder="Enter phone number" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@CloseEditModal" />
+        <QButton Text="Save Changes" Icon="check-lg" Variant="primary" OnClick="@SaveProfile" Disabled="@isSaving" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<!-- Change Password Modal -->
+<QModal @bind-Visible="showPasswordModal" Title="Change Password" Size="md">
+    <ChildContent>
+        <div class="form-group mb-3">
+            <label class="form-label">Current Password</label>
+            <input type="password" class="form-control" @bind="passwordModel.CurrentPassword" placeholder="Enter current password" />
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label">New Password</label>
+            <input type="password" class="form-control" @bind="passwordModel.NewPassword" placeholder="Enter new password" />
+            <small class="text-muted">Minimum 6 characters</small>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label">Confirm New Password</label>
+            <input type="password" class="form-control" @bind="passwordModel.ConfirmPassword" placeholder="Confirm new password" />
+        </div>
+        @if (!string.IsNullOrEmpty(passwordError))
+        {
+            <div class="alert alert-danger py-2">
+                <i class="bi bi-exclamation-circle me-2"></i>@passwordError
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@ClosePasswordModal" />
+        <QButton Text="Change Password" Icon="key-fill" Variant="primary" OnClick="@ChangePassword" Disabled="@isChangingPassword" Loading="@isChangingPassword" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .profile-page {
+        padding: 0;
+    }
+
+    .profile-container {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 24px;
+        max-width: 1000px;
+    }
+
+    .profile-card,
+    .actions-card {
+        background: var(--qm-bg-card, #1e1e2d);
+        border: 1px solid var(--qm-border, #2d2d3a);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .profile-header {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid var(--qm-border, #2d2d3a);
+        margin-bottom: 24px;
+        position: relative;
+    }
+
+    .avatar-large {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: var(--qm-gradient-primary, #8c2f52);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        font-weight: 700;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .profile-info {
+        flex: 1;
+    }
+
+    .profile-info h2 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--qm-text-primary, #fff);
+    }
+
+    .btn-edit {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: var(--qm-radius-lg);
+        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
+        color: var(--qm-text-muted, #a0a0a0);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-edit:hover {
+        background: var(--qm-primary-light);
+        border-color: var(--qm-primary, #8c2f52);
+        color: var(--qm-primary, #8c2f52);
+    }
+
+    .role-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .role-badge.admin,
+    .role-badge.superadmin {
+        background: rgba(139, 92, 246, 0.2);
+        color: #a78bfa;
+    }
+
+    .role-badge.manager {
+        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
+        color: var(--qm-info);
+    }
+
+    .role-badge.staff {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .role-badge.viewer {
+        background: color-mix(in srgb, var(--qm-text-secondary) 15%, transparent);
+        color: var(--qm-text-secondary);
+    }
+
+    .profile-details {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .detail-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px;
+        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .detail-icon {
+        width: 40px;
+        height: 40px;
+        background: var(--qm-primary-light);
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .detail-icon i {
+        font-size: 18px;
+        color: var(--qm-primary, #8c2f52);
+    }
+
+    .detail-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .detail-content label {
+        font-size: 12px;
+        color: var(--qm-text-muted, #a0a0a0);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .detail-content span {
+        font-size: 15px;
+        color: var(--qm-text-primary, #fff);
+    }
+
+    /* Actions Card */
+    .actions-card {
+        height: fit-content;
+        position: sticky;
+        top: 24px;
+    }
+
+    .actions-card h3 {
+        margin: 0 0 16px;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary, #fff);
+    }
+
+    .actions-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .actions-list hr {
+        border: none;
+        border-top: 1px solid var(--qm-border, #2d2d3a);
+        margin: 8px 0;
+    }
+
+    .action-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
+        border: 1px solid transparent;
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-primary, #fff);
+        text-decoration: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        width: 100%;
+        text-align: left;
+        font-size: 14px;
+    }
+
+    .action-item:hover {
+        background: var(--qm-primary-light);
+        border-color: color-mix(in srgb, var(--qm-primary) 30%, transparent);
+    }
+
+    .action-item i:first-child {
+        font-size: 18px;
+        color: var(--qm-text-muted, #a0a0a0);
+    }
+
+    .action-item span {
+        flex: 1;
+    }
+
+    .action-item i:last-child {
+        font-size: 14px;
+        color: var(--qm-text-muted, #a0a0a0);
+    }
+
+    .action-item.logout:hover {
+        background: color-mix(in srgb, var(--qm-danger) 10%, transparent);
+        border-color: color-mix(in srgb, var(--qm-danger) 30%, transparent);
+    }
+
+    .action-item.logout i:first-child {
+        color: var(--qm-danger, #ef4444);
+    }
+
+    /* Not Found State */
+    .not-found {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .not-found i {
+        font-size: 64px;
+        color: var(--qm-text-muted, #a0a0a0);
+        margin-bottom: 16px;
+    }
+
+    .not-found p {
+        color: var(--qm-text-muted, #a0a0a0);
+        margin-bottom: 24px;
+    }
+
+    /* Modal Styling */
+    .modal-content {
+        background: var(--qm-bg-card, #1e1e2d);
+        border: 1px solid var(--qm-border, #2d2d3a);
+        color: var(--qm-text-primary, #fff);
+    }
+
+    .modal-header {
+        border-bottom-color: var(--qm-border, #2d2d3a);
+    }
+
+    .modal-footer {
+        border-top-color: var(--qm-border, #2d2d3a);
+    }
+
+    .form-label {
+        color: var(--qm-text-primary, #fff);
+        font-weight: 500;
+    }
+
+    .form-control {
+        background: var(--qm-bg-elevated, #252536);
+        border-color: var(--qm-border, #2d2d3a);
+        color: var(--qm-text-primary, #fff);
+    }
+
+    .form-control:focus {
+        background: var(--qm-bg-elevated, #252536);
+        border-color: var(--qm-primary, #8c2f52);
+        color: var(--qm-text-primary, #fff);
+        box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--qm-primary) 25%, transparent);
+    }
+
+    .form-control::placeholder {
+        color: var(--qm-text-muted, #6b7280);
+    }
+
+    .btn-close {
+        filter: invert(1);
+    }
+
+    /* Responsive */
+    @@media (max-width: 768px) {
+        .profile-container {
+            grid-template-columns: 1fr;
+        }
+
+        .profile-header {
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .btn-edit {
+            position: static;
+            margin-top: 16px;
+        }
+
+        .actions-card {
+            position: static;
+        }
+    }
+</style>
+
+@code {
+    private ProfileDto? profile;
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool isChangingPassword = false;
+
+    // Edit Profile
+    private bool showEditModal = false;
+    private EditProfileModel editModel = new();
+
+    // Change Password
+    private bool showPasswordModal = false;
+    private ChangePasswordModel passwordModel = new();
+    private string passwordError = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProfile();
+    }
+
+    private async Task LoadProfile()
+    {
+        isLoading = true;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            if (user != null)
+            {
+                // Load full profile from API
+                var response = await Http.GetAsync($"api/v1/profile?userId={user.Id}");
+                if (response.IsSuccessStatusCode)
+                {
+                    profile = await response.Content.ReadFromJsonAsync<ProfileDto>(JsonOptions);
+                }
+                else
+                {
+                    // Fallback to basic user info
+                    profile = new ProfileDto
+                    {
+                        Id = user.Id,
+                        Username = user.Username,
+                        Email = user.Email,
+                        FullName = user.FullName ?? "",
+                        Role = user.RoleName
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load profile: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetInitials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "U";
+
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2)
+            return $"{parts[0][0]}{parts[1][0]}".ToUpper();
+
+        return name.Substring(0, Math.Min(2, name.Length)).ToUpper();
+    }
+
+    private string GetRoleClass(string role)
+    {
+        return role?.ToLower() switch
+        {
+            "admin" => "admin",
+            "superadmin" => "superadmin",
+            "manager" => "manager",
+            "staff" => "staff",
+            _ => "viewer"
+        };
+    }
+
+    // Edit Profile
+    private void OpenEditModal()
+    {
+        if (profile == null) return;
+
+        editModel = new EditProfileModel
+        {
+            FirstName = profile.FirstName,
+            LastName = profile.LastName,
+            Email = profile.Email,
+            Phone = profile.Phone
+        };
+        showEditModal = true;
+    }
+
+    private void CloseEditModal()
+    {
+        showEditModal = false;
+    }
+
+    private async Task SaveProfile()
+    {
+        if (profile == null) return;
+
+        isSaving = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"api/v1/profile?userId={profile.Id}", new
+            {
+                FirstName = editModel.FirstName,
+                LastName = editModel.LastName,
+                Email = editModel.Email,
+                Phone = editModel.Phone
+            }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                profile = await response.Content.ReadFromJsonAsync<ProfileDto>(JsonOptions);
+                showEditModal = false;
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Profile updated successfully");
+
+                // Update local storage with new info
+                await UpdateLocalUserInfo();
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update profile");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task UpdateLocalUserInfo()
+    {
+        if (profile == null) return;
+
+        // Re-fetch current user and update local storage
+        // The AuthService stores user info in local storage
+        // For now, we'll just reload the profile
+        await LoadProfile();
+    }
+
+    // Change Password
+    private void OpenPasswordModal()
+    {
+        passwordModel = new ChangePasswordModel();
+        passwordError = "";
+        showPasswordModal = true;
+    }
+
+    private void ClosePasswordModal()
+    {
+        showPasswordModal = false;
+        passwordError = "";
+    }
+
+    private async Task ChangePassword()
+    {
+        if (profile == null) return;
+
+        passwordError = "";
+
+        // Client-side validation
+        if (string.IsNullOrWhiteSpace(passwordModel.CurrentPassword))
+        {
+            passwordError = "Current password is required";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(passwordModel.NewPassword))
+        {
+            passwordError = "New password is required";
+            return;
+        }
+
+        if (passwordModel.NewPassword.Length < 6)
+        {
+            passwordError = "New password must be at least 6 characters";
+            return;
+        }
+
+        if (passwordModel.NewPassword != passwordModel.ConfirmPassword)
+        {
+            passwordError = "Passwords do not match";
+            return;
+        }
+
+        isChangingPassword = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync($"api/v1/profile/password?userId={profile.Id}", new
+            {
+                CurrentPassword = passwordModel.CurrentPassword,
+                NewPassword = passwordModel.NewPassword,
+                ConfirmPassword = passwordModel.ConfirmPassword
+            }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                showPasswordModal = false;
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Password changed successfully");
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                try
+                {
+                    var problemDetails = JsonSerializer.Deserialize<ProblemDetails>(errorContent, JsonOptions);
+                    passwordError = problemDetails?.Detail ?? "Failed to change password";
+                }
+                catch
+                {
+                    passwordError = "Failed to change password";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            passwordError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isChangingPassword = false;
+        }
+    }
+
+    private async Task Logout()
+    {
+        await AuthService.LogoutAsync();
+        NavigationManager.NavigateTo("/login", forceLoad: true);
+    }
+
+    // Models
+    private class EditProfileModel
+    {
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public string? Email { get; set; }
+        public string? Phone { get; set; }
+    }
+
+    private class ChangePasswordModel
+    {
+        public string CurrentPassword { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+        public string ConfirmPassword { get; set; } = "";
+    }
+
+    private record ProfileDto
+    {
+        public Guid Id { get; init; }
+        public string Username { get; init; } = "";
+        public string Email { get; init; } = "";
+        public string? FirstName { get; init; }
+        public string? LastName { get; init; }
+        public string FullName { get; init; } = "";
+        public string? Phone { get; init; }
+        public string? EmployeeNumber { get; init; }
+        public string Role { get; init; } = "";
+        public Guid? AssignedBranchId { get; init; }
+        public string? AssignedBranchName { get; init; }
+        public DateTime? LastLogin { get; init; }
+        public DateTime CreatedAt { get; init; }
+    }
+
+    private record ProblemDetails
+    {
+        public string? Title { get; init; }
+        public string? Detail { get; init; }
+        public int? Status { get; init; }
+    }
+}

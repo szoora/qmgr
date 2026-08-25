@@ -1,0 +1,948 @@
+@page "/platform/tenants"
+@using System.Text.Json
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Tenant Management - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="building-fill" Size="32" /> Tenant Management</h1>
+        <p class="page-subtitle">Manage all organizations on the platform</p>
+    </div>
+</div>
+
+<div class="admin-content">
+    <!-- Filters -->
+    <QCard Class="mb-4">
+        <div class="filters">
+            <QInput TValue="string" @bind-Value="searchQuery" Placeholder="Search tenants..." Icon="search"
+                    @bind-Value:after="@(() => LoadTenants())" />
+            <QSelect TValue="string" TItem="string" @bind-Value="statusFilter" Items="@statusOptions"
+                     Placeholder="All Statuses" @bind-Value:after="@(() => LoadTenants())" />
+            <QSelect TValue="string" TItem="string" @bind-Value="tierFilter" Items="@tierOptions"
+                     Placeholder="All Tiers" @bind-Value:after="@(() => LoadTenants())" />
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <QSpinner Size="lg" />
+            <span>Loading tenants...</span>
+        </div>
+    }
+    else if (hasError)
+    {
+        <QCard>
+            <div class="error-state">
+                <QIcon Name="exclamation-triangle-fill" Size="48" />
+                <h4>Failed to Load Tenants</h4>
+                <p>@errorMessage</p>
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadTenants" />
+            </div>
+        </QCard>
+    }
+    else
+    {
+        <!-- Tenants Table -->
+        <QCard Title="@($"Tenants ({pagedResult.TotalCount})")" Icon="list-ul">
+            @if (pagedResult.Items.Any())
+            {
+                <div class="table-responsive">
+                    <table class="tenants-table">
+                        <thead>
+                            <tr>
+                                <th>Organization</th>
+                                <th>Status</th>
+                                <th>Tier</th>
+                                <th>Created</th>
+                                <th>Trial Ends</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var tenant in pagedResult.Items)
+                            {
+                                <tr class="@(selectedTenant?.Id == tenant.Id ? "selected" : "")">
+                                    <td>
+                                        <div class="tenant-info">
+                                            <div class="tenant-name">@tenant.Name</div>
+                                            <div class="tenant-slug">@tenant.Slug</div>
+                                            @if (!string.IsNullOrEmpty(tenant.ContactEmail))
+                                            {
+                                                <div class="tenant-email">@tenant.ContactEmail</div>
+                                            }
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <QBadge Text="@tenant.Status.ToString()" Variant="@GetStatusVariant(tenant.Status)" />
+                                    </td>
+                                    <td>
+                                        <QBadge Text="@tenant.Tier.ToString()" Variant="secondary" />
+                                    </td>
+                                    <td>
+                                        <div class="date-cell">@tenant.CreatedAt.ToString("MMM d, yyyy")</div>
+                                    </td>
+                                    <td>
+                                        @if (tenant.TrialEndsAt.HasValue)
+                                        {
+                                            var isExpired = tenant.TrialEndsAt.Value < DateTime.UtcNow;
+                                            <div class="date-cell @(isExpired ? "expired" : "")">
+                                                @tenant.TrialEndsAt.Value.ToString("MMM d, yyyy")
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted">N/A</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <QButton Icon="eye-fill" Variant="ghost" Size="sm"
+                                                     OnClick="@(() => ViewTenant(tenant.Id))" Title="View Details" />
+                                            <QButton Icon="pencil-fill" Variant="ghost" Size="sm"
+                                                     OnClick="@(() => ShowTierDialog(tenant))" Title="Change Tier" />
+                                            @if (tenant.Status == TenantStatus.Active || tenant.Status == TenantStatus.Trialing)
+                                            {
+                                                <QButton Icon="pause-circle-fill" Variant="ghost" Size="sm"
+                                                         OnClick="@(() => ShowSuspendDialog(tenant))" Title="Suspend"
+                                                         Class="btn-warning" />
+                                            }
+                                            else if (tenant.Status == TenantStatus.Suspended)
+                                            {
+                                                <QButton Icon="play-circle-fill" Variant="ghost" Size="sm"
+                                                         OnClick="@(() => ReactivateTenant(tenant))" Title="Reactivate"
+                                                         Class="btn-success" />
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination">
+                    <QButton Text="Previous" Icon="chevron-left" Variant="ghost" Size="sm"
+                             OnClick="@PreviousPage" Disabled="@(currentPage <= 1)" />
+                    <span class="page-info">Page @currentPage of @pagedResult.TotalPages</span>
+                    <QButton Text="Next" Icon="chevron-right" Variant="ghost" Size="sm"
+                             OnClick="@NextPage" Disabled="@(currentPage >= pagedResult.TotalPages)" />
+                </div>
+            }
+            else
+            {
+                <div class="empty-state">
+                    <QIcon Name="building-fill" Size="64" />
+                    <h4>No Tenants Found</h4>
+                    <p>No tenants match your filters.</p>
+                </div>
+            }
+        </QCard>
+    }
+</div>
+
+<!-- Tenant Details Modal -->
+<QModal @bind-Visible="showDetailsModal" Title="Tenant Details" Size="lg">
+    <ChildContent>
+        @if (tenantDetails != null)
+        {
+            <div class="details-grid">
+                <div class="detail-section">
+                    <h4>Organization Info</h4>
+                    <div class="detail-item">
+                        <label>Name:</label>
+                        <span>@tenantDetails.Name</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Slug:</label>
+                        <span>@tenantDetails.Slug</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Brand Name:</label>
+                        <span>@(tenantDetails.BrandName ?? "N/A")</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Status:</label>
+                        <QBadge Text="@tenantDetails.Status.ToString()" Variant="@GetStatusVariant(tenantDetails.Status)" />
+                    </div>
+                    <div class="detail-item">
+                        <label>Tier:</label>
+                        <QBadge Text="@tenantDetails.Tier.ToString()" Variant="secondary" />
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <h4>Contact Info</h4>
+                    <div class="detail-item">
+                        <label>Email:</label>
+                        <span>@(tenantDetails.ContactEmail ?? "N/A")</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Phone:</label>
+                        <span>@(tenantDetails.ContactPhone ?? "N/A")</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Billing Email:</label>
+                        <span>@(tenantDetails.BillingEmail ?? "N/A")</span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <h4>Usage Statistics</h4>
+                    <div class="detail-item">
+                        <label>Branches:</label>
+                        <span>@tenantDetails.BranchCount / @tenantDetails.Usage?.MaxBranches</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Users:</label>
+                        <span>@tenantDetails.UserCount</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Tokens (this month):</label>
+                        <span>@tenantDetails.Usage?.TokensCreated.ToString("N0") / @tenantDetails.Usage?.MaxTokens.ToString("N0")</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>API Calls (this month):</label>
+                        <span>@tenantDetails.Usage?.ApiCalls.ToString("N0") / @tenantDetails.Usage?.MaxApiCalls.ToString("N0")</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Storage:</label>
+                        <span>@tenantDetails.Usage?.StorageUsedMb.ToString("N0") MB / @tenantDetails.Usage?.MaxStorageMb.ToString("N0") MB</span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <h4>Storage Quota Override</h4>
+                    <p class="section-hint">
+                        Content should mostly live on external platforms (YouTube, Vimeo, Google Drive,
+                        TikTok) that this app links to rather than hosts — direct uploads are capped per
+                        plan (@tenantDetails.Usage?.MaxStorageMb.ToString("N0") MB by default). Set an
+                        override here only for a tenant that genuinely needs more local storage room.
+                    </p>
+                    <div class="detail-item">
+                        <label>Override (MB):</label>
+                        <div class="storage-quota-editor">
+                            <input type="number" min="0" class="form-control" style="max-width:140px;"
+                                   @bind="storageQuotaInput" placeholder="Plan default" />
+                            <QButton Text="Save" Icon="check-lg" Variant="primary" Size="sm"
+                                     Disabled="@isSavingStorageQuota" OnClick="@(() => SaveStorageQuota(tenantDetails.Id))" />
+                            @if (tenantDetails.Usage?.StorageQuotaOverrideMb != null)
+                            {
+                                <QButton Text="Clear" Icon="x-lg" Variant="ghost" Size="sm"
+                                         Disabled="@isSavingStorageQuota" OnClick="@(() => ClearStorageQuota(tenantDetails.Id))" />
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                @if (tenantDetails.Subscription != null)
+                {
+                    <div class="detail-section">
+                        <h4>Subscription</h4>
+                        <div class="detail-item">
+                            <label>Plan:</label>
+                            <span>@tenantDetails.Subscription.PlanName</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Status:</label>
+                            <QBadge Text="@tenantDetails.Subscription.Status.ToString()" Variant="primary" />
+                        </div>
+                        <div class="detail-item">
+                            <label>Billing Cycle:</label>
+                            <span>@tenantDetails.Subscription.BillingCycle</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Current Period Ends:</label>
+                            <span>@tenantDetails.Subscription.CurrentPeriodEnd.ToString("MMM d, yyyy")</span>
+                        </div>
+                    </div>
+                }
+
+                <div class="detail-section">
+                    <h4>Actions</h4>
+                    <div class="action-buttons-vertical">
+                        <QButton Text="Change Tier" Icon="arrow-up-circle-fill" Variant="primary"
+                                 OnClick="@(() => { showDetailsModal = false; ShowTierDialog(MapToSummary(tenantDetails)); })" />
+                        @if (tenantDetails.TrialEndsAt.HasValue)
+                        {
+                            <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="secondary"
+                                     OnClick="@(() => ShowExtendTrialDialog(tenantDetails.Id))" />
+                        }
+                        @if (tenantDetails.Status == TenantStatus.Active || tenantDetails.Status == TenantStatus.Trialing)
+                        {
+                            <QButton Text="Suspend Tenant" Icon="pause-circle-fill" Variant="warning"
+                                     OnClick="@(() => { showDetailsModal = false; ShowSuspendDialog(MapToSummary(tenantDetails)); })" />
+                        }
+                        else if (tenantDetails.Status == TenantStatus.Suspended)
+                        {
+                            <QButton Text="Reactivate Tenant" Icon="play-circle-fill" Variant="success"
+                                     OnClick="@(async () => { showDetailsModal = false; await ReactivateTenant(MapToSummary(tenantDetails)); })" />
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showDetailsModal = false)" />
+    </FooterContent>
+</QModal>
+
+<!-- Suspend Modal -->
+<QModal @bind-Visible="showSuspendModal" Title="Suspend Tenant" Size="md">
+    <ChildContent>
+        @if (selectedTenant != null)
+        {
+            <p>Are you sure you want to suspend <strong>@selectedTenant.Name</strong>?</p>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="suspendReason" Label="Reason for suspension *"
+                        Type="textarea" Rows="3" Placeholder="Enter the reason..." />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showSuspendModal = false)" />
+        <QButton Text="Suspend" Icon="pause-circle-fill" Variant="danger" OnClick="@ConfirmSuspend" Loading="@isSubmitting" />
+    </FooterContent>
+</QModal>
+
+<!-- Change Tier Modal -->
+<QModal @bind-Visible="showTierModal" Title="Change Tenant Tier" Size="md">
+    <ChildContent>
+        @if (selectedTenant != null)
+        {
+            <p>Change tier for <strong>@selectedTenant.Name</strong></p>
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="selectedTier"
+                         Items="@tierOptions" Label="New Tier *" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showTierModal = false)" />
+        <QButton Text="Update Tier" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@ConfirmTierChange" Loading="@isSubmitting" />
+    </FooterContent>
+</QModal>
+
+<!-- Extend Trial Modal -->
+<QModal @bind-Visible="showExtendTrialModal" Title="Extend Trial Period" Size="md">
+    <ChildContent>
+        <p>Extend trial period for the selected tenant</p>
+        <div class="form-group">
+            <QInput TValue="int" @bind-Value="extendTrialDays" Label="Extend by (days) *"
+                    Type="number" Placeholder="14" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showExtendTrialModal = false)" />
+        <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="primary" OnClick="@ConfirmExtendTrial" Loading="@isSubmitting" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .page-header {
+        margin-bottom: 32px;
+    }
+
+    .page-header h1 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 8px;
+        font-size: 32px;
+        color: var(--qm-text-primary);
+    }
+
+    .page-subtitle {
+        color: var(--qm-text-muted);
+        margin: 0;
+        font-size: 16px;
+    }
+
+    .filters {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 16px;
+    }
+
+    @@media (max-width: 968px) {
+        .filters {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .loading-state, .error-state, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-header h3 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+    .tenants-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .tenants-table th {
+        text-align: left;
+        padding: 12px;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-muted);
+        font-weight: 600;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-bottom: 2px solid var(--qm-border);
+    }
+
+    .tenants-table td {
+        padding: 16px 12px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .tenants-table tr:hover {
+        background: var(--qm-bg-elevated);
+    }
+
+    .tenants-table tr.selected {
+        background: color-mix(in srgb, var(--qm-primary) 10%, transparent);
+    }
+
+    .tenant-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tenant-name {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .tenant-slug {
+        font-size: 13px;
+        color: var(--qm-primary);
+        font-family: monospace;
+    }
+
+    .tenant-email {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .date-cell {
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .date-cell.expired {
+        color: var(--qm-danger);
+        font-weight: 600;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 4px;
+    }
+
+    .btn-warning {
+        color: var(--qm-warning, #f59e0b);
+    }
+
+    .btn-success {
+        color: var(--qm-success);
+    }
+
+    .pagination {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .page-info {
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .details-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 24px;
+    }
+
+    .detail-section h4 {
+        margin: 0 0 16px;
+        color: var(--qm-text-primary);
+        font-size: 16px;
+        border-bottom: 1px solid var(--qm-border);
+        padding-bottom: 8px;
+    }
+
+    .detail-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        gap: 12px;
+    }
+
+    .section-hint {
+        margin: 0 0 12px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .storage-quota-editor {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .detail-item label {
+        font-weight: 500;
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .detail-item span {
+        color: var(--qm-text-primary);
+        font-size: 14px;
+    }
+
+    .action-buttons-vertical {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .text-muted {
+        color: var(--qm-text-muted);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool hasError = false;
+    private string errorMessage = "";
+    private bool isSubmitting = false;
+
+    private string searchQuery = "";
+    private string statusFilter = "";
+    private string tierFilter = "";
+    private int currentPage = 1;
+    private int pageSize = 20;
+
+    private PagedResult<TenantSummary> pagedResult = new();
+    private TenantSummary? selectedTenant;
+    private TenantDetails? tenantDetails;
+    private int? storageQuotaInput;
+    private bool isSavingStorageQuota = false;
+
+    private bool showDetailsModal = false;
+    private bool showSuspendModal = false;
+    private bool showTierModal = false;
+    private bool showExtendTrialModal = false;
+
+    private string suspendReason = "";
+    private string selectedTier = "";
+    private int extendTrialDays = 14;
+    private Guid extendTrialTenantId;
+
+    private List<string> statusOptions = new() { "", "Active", "Trialing", "Suspended", "Canceled" };
+    private List<string> tierOptions = new() { "", "Free", "Starter", "Professional", "Enterprise" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadTenants();
+    }
+
+    private async Task LoadTenants()
+    {
+        isLoading = true;
+        hasError = false;
+
+        try
+        {
+            var queryParams = new List<string>
+            {
+                $"page={currentPage}",
+                $"pageSize={pageSize}"
+            };
+
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+                queryParams.Add($"search={Uri.EscapeDataString(searchQuery)}");
+            if (!string.IsNullOrWhiteSpace(statusFilter))
+                queryParams.Add($"status={statusFilter}");
+            if (!string.IsNullOrWhiteSpace(tierFilter))
+                queryParams.Add($"tier={tierFilter}");
+
+            var url = $"api/v1/admin/tenants?{string.Join("&", queryParams)}";
+            pagedResult = await Http.GetFromJsonAsync<PagedResult<TenantSummary>>(url, JsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ViewTenant(Guid id)
+    {
+        try
+        {
+            tenantDetails = await Http.GetFromJsonAsync<TenantDetails>($"api/v1/admin/tenants/{id}", JsonOptions);
+            storageQuotaInput = tenantDetails?.Usage?.StorageQuotaOverrideMb;
+            showDetailsModal = true;
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load tenant details: {ex.Message}");
+        }
+    }
+
+    private async Task SaveStorageQuota(Guid tenantId)
+    {
+        isSavingStorageQuota = true;
+        try
+        {
+            var response = await Http.PatchAsJsonAsync($"api/v1/admin/tenants/{tenantId}/storage-quota",
+                new { maxStorageMb = storageQuotaInput }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "Storage quota updated successfully");
+                await ViewTenant(tenantId);
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update storage quota ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update storage quota: {ex.Message}");
+        }
+        finally
+        {
+            isSavingStorageQuota = false;
+        }
+    }
+
+    private Task ClearStorageQuota(Guid tenantId)
+    {
+        storageQuotaInput = null;
+        return SaveStorageQuota(tenantId);
+    }
+
+    private void ShowSuspendDialog(TenantSummary tenant)
+    {
+        selectedTenant = tenant;
+        suspendReason = "";
+        showSuspendModal = true;
+    }
+
+    private async Task ConfirmSuspend()
+    {
+        if (selectedTenant == null || string.IsNullOrWhiteSpace(suspendReason))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Reason is required");
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/admin/tenants/{selectedTenant.Id}/suspend",
+                new { Reason = suspendReason }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Tenant suspended");
+                showSuspendModal = false;
+                await LoadTenants();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task ReactivateTenant(TenantSummary tenant)
+    {
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/admin/tenants/{tenant.Id}/reactivate", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Tenant reactivated");
+                await LoadTenants();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+    }
+
+    private void ShowTierDialog(TenantSummary tenant)
+    {
+        selectedTenant = tenant;
+        selectedTier = tenant.Tier.ToString();
+        showTierModal = true;
+    }
+
+    private async Task ConfirmTierChange()
+    {
+        if (selectedTenant == null || string.IsNullOrWhiteSpace(selectedTier))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please select a tier");
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PatchAsJsonAsync($"api/v1/admin/tenants/{selectedTenant.Id}/tier",
+                new { Tier = selectedTier }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Tier updated");
+                showTierModal = false;
+                await LoadTenants();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private void ShowExtendTrialDialog(Guid tenantId)
+    {
+        extendTrialTenantId = tenantId;
+        extendTrialDays = 14;
+        showDetailsModal = false;
+        showExtendTrialModal = true;
+    }
+
+    private async Task ConfirmExtendTrial()
+    {
+        if (extendTrialDays <= 0)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Days must be greater than 0");
+            return;
+        }
+
+        isSubmitting = true;
+        try
+        {
+            var response = await Http.PostAsJsonAsync($"api/v1/admin/tenants/{extendTrialTenantId}/extend-trial",
+                new { Days = extendTrialDays }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", $"Trial extended by {extendTrialDays} days");
+                showExtendTrialModal = false;
+                await LoadTenants();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadTenants();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < pagedResult.TotalPages)
+        {
+            currentPage++;
+            await LoadTenants();
+        }
+    }
+
+    private string GetStatusVariant(TenantStatus status) => status switch
+    {
+        TenantStatus.Active => "success",
+        TenantStatus.Trialing => "info",
+        TenantStatus.Suspended => "warning",
+        TenantStatus.Canceled => "danger",
+        _ => "secondary"
+    };
+
+    private TenantSummary MapToSummary(TenantDetails details) => new()
+    {
+        Id = details.Id,
+        Name = details.Name,
+        Slug = details.Slug,
+        Status = details.Status,
+        Tier = details.Tier,
+        ContactEmail = details.ContactEmail,
+        CreatedAt = details.CreatedAt,
+        TrialEndsAt = details.TrialEndsAt,
+        OnboardingCompleted = details.OnboardingCompleted
+    };
+
+    private enum TenantStatus { Active, Trialing, Suspended, Canceled }
+    private enum TenantTier { Free, Starter, Professional, Enterprise }
+    private enum SubscriptionStatus { Active, Canceled, PastDue, Trialing, Incomplete }
+    private enum BillingCycle { Monthly, Annual }
+
+    private record PagedResult<T>
+    {
+        public List<T> Items { get; init; } = new();
+        public int TotalCount { get; init; }
+        public int Page { get; init; }
+        public int PageSize { get; init; }
+        public int TotalPages { get; init; }
+    }
+
+    private record TenantSummary
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string Slug { get; init; } = "";
+        public TenantStatus Status { get; init; }
+        public TenantTier Tier { get; init; }
+        public string? ContactEmail { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public DateTime? TrialEndsAt { get; init; }
+        public bool OnboardingCompleted { get; init; }
+    }
+
+    private record TenantDetails : TenantSummary
+    {
+        public string? BrandName { get; init; }
+        public string? ContactPhone { get; init; }
+        public string? BillingEmail { get; init; }
+        public string? BillingPhone { get; init; }
+        public string PreferredCurrency { get; init; } = "USD";
+        public string? CustomDomain { get; init; }
+        public string? StripeCustomerId { get; init; }
+        public DateTime? VerifiedAt { get; init; }
+        public int OnboardingStep { get; init; }
+        public int BranchCount { get; init; }
+        public int UserCount { get; init; }
+        public SubscriptionSummary? Subscription { get; init; }
+        public UsageSummary? Usage { get; init; }
+    }
+
+    private record SubscriptionSummary
+    {
+        public Guid Id { get; init; }
+        public string PlanName { get; init; } = "";
+        public SubscriptionStatus Status { get; init; }
+        public BillingCycle BillingCycle { get; init; }
+        public DateTime CurrentPeriodEnd { get; init; }
+    }
+
+    private record UsageSummary
+    {
+        public int TokensCreated { get; init; }
+        public int ApiCalls { get; init; }
+        public int ActiveUsers { get; init; }
+        public int ActiveBranches { get; init; }
+        public int MaxTokens { get; init; }
+        public int MaxApiCalls { get; init; }
+        public int MaxUsers { get; init; }
+        public int MaxBranches { get; init; }
+        public long StorageUsedMb { get; init; }
+        public int MaxStorageMb { get; init; }
+        public int? StorageQuotaOverrideMb { get; init; }
+    }
+}

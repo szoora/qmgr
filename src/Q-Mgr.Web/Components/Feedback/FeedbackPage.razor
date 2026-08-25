@@ -1,0 +1,948 @@
+@page "/feedback/{FeedbackCode}"
+@layout KioskLayout
+@using System.Text.Json
+@using QMgr.Domain.Enums
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject NavigationManager Navigation
+
+<PageTitle>Give Feedback - Q-Mgr</PageTitle>
+
+<div class="feedback-page">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <div class="loading-spinner">
+                <QSpinner Size="lg" />
+            </div>
+            <p>Loading feedback form...</p>
+        </div>
+    }
+    else if (error != null)
+    {
+        <div class="error-state">
+            <div class="error-icon">
+                <QIcon Name="exclamation-circle-fill" Size="xl" />
+            </div>
+            <h2>@error</h2>
+            <p>@errorDetail</p>
+            <button class="action-btn" @onclick="GoHome">
+                <QIcon Name="house-fill" />
+                <span>Return Home</span>
+            </button>
+        </div>
+    }
+    else if (alreadySubmitted)
+    {
+        <div class="already-submitted-state">
+            <div class="submitted-icon">
+                <QIcon Name="check-circle-fill" Size="xl" />
+            </div>
+            <h2>Feedback Already Received</h2>
+            <p>Thank you! You've already submitted feedback for this service.</p>
+            <div class="previous-rating">
+                <span>Your rating:</span>
+                <div class="stars-display">
+                    @for (int i = 1; i <= 5; i++)
+                    {
+                        <QIcon Name="@(existingRating >= i ? "star-fill" : "star")" Class="@(existingRating >= i ? "filled" : "")" />
+                    }
+                </div>
+            </div>
+            <button class="action-btn" @onclick="GoHome">
+                <QIcon Name="house-fill" />
+                <span>Return Home</span>
+            </button>
+        </div>
+    }
+    else if (submitted)
+    {
+        <div class="success-state">
+            <div class="success-animation">
+                <div class="success-checkmark">
+                    <QIcon Name="check-circle-fill" Size="xl" />
+                </div>
+            </div>
+            <h2>Thank You!</h2>
+            <p>Your feedback has been submitted successfully.</p>
+            <p class="thank-you-detail">We truly appreciate you taking the time to share your experience. Your feedback helps us serve you better.</p>
+            <button class="action-btn" @onclick="GoHome">
+                <QIcon Name="house-fill" />
+                <span>Done</span>
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="feedback-form">
+            <div class="feedback-header">
+                <div class="logo">
+                    <QIcon Name="chat-heart-fill" />
+                </div>
+                <h1>Share Your Feedback</h1>
+                <p>We'd love to hear about your experience</p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(tokenDisplayNumber))
+            {
+                <div class="service-info">
+                    <div class="info-item">
+                        <QIcon Name="ticket-perforated-fill" />
+                        <div>
+                            <span class="label">Ticket</span>
+                            <span class="value">@tokenDisplayNumber</span>
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(serviceTypeName))
+                    {
+                        <div class="info-item">
+                            <QIcon Name="grid-fill" />
+                            <div>
+                                <span class="label">Service</span>
+                                <span class="value">@serviceTypeName</span>
+                            </div>
+                        </div>
+                    }
+                    @if (serviceDate.HasValue)
+                    {
+                        <div class="info-item">
+                            <QIcon Name="calendar3-fill" />
+                            <div>
+                                <span class="label">Date</span>
+                                <span class="value">@serviceDate.Value.ToString("MMMM dd, yyyy")</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="rating-section">
+                <h3>How would you rate your experience?</h3>
+                <div class="star-rating">
+                    @for (int i = 1; i <= 5; i++)
+                    {
+                        var rating = i;
+                        <button class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
+                                @onclick="@(() => feedbackRating = rating)"
+                                @onmouseenter="@(() => hoverRating = rating)"
+                                @onmouseleave="@(() => hoverRating = 0)">
+                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" />
+                        </button>
+                    }
+                </div>
+                <div class="rating-label">
+                    @GetRatingLabel()
+                </div>
+            </div>
+
+            <div class="category-section">
+                <h3>What area would you like to comment on?</h3>
+                <div class="category-chips">
+                    @foreach (var cat in feedbackCategories)
+                    {
+                        <button class="category-chip @(selectedCategory == cat.Value ? "selected" : "")"
+                                @onclick="@(() => selectedCategory = cat.Value)">
+                            <QIcon Name="@cat.Icon" />
+                            <span>@cat.Label</span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="comment-section">
+                <h3>Tell us more (optional)</h3>
+                <textarea @bind="feedbackComment"
+                          placeholder="Share any additional thoughts or suggestions..."
+                          rows="4"></textarea>
+            </div>
+
+            <div class="contact-section">
+                <h3>Contact Information (optional)</h3>
+                <p class="contact-hint">Leave your details if you'd like us to follow up</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" @bind="customerName" placeholder="Your name" />
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" @bind="customerEmail" placeholder="your@email.com" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" @bind="customerPhone" placeholder="+1234567890" />
+                </div>
+            </div>
+
+            <div class="submit-section">
+                <button class="submit-btn" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmitting)">
+                    @if (isSubmitting)
+                    {
+                        <QSpinner Size="sm" />
+                        <span>Submitting...</span>
+                    }
+                    else
+                    {
+                        <QIcon Name="send-fill" />
+                        <span>Submit Feedback</span>
+                    }
+                </button>
+            </div>
+
+            <div class="privacy-note">
+                <QIcon Name="lock-fill" />
+                <span>Your feedback is confidential and helps us improve our services.</span>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .feedback-page {
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 20px;
+    }
+
+    .loading-state, .error-state, .already-submitted-state, .success-state {
+        text-align: center;
+        color: white;
+        max-width: 400px;
+    }
+
+    .loading-spinner {
+        margin-bottom: 24px;
+    }
+
+    .loading-state p {
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .error-icon, .submitted-icon {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 24px;
+    }
+
+    .error-icon {
+        background: rgba(239, 68, 68, 0.15);
+        border: 2px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .error-icon .rzi {
+        font-size: 56px;
+        color: #ef4444;
+    }
+
+    .submitted-icon {
+        background: rgba(34, 197, 94, 0.15);
+        border: 2px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .submitted-icon .rzi {
+        font-size: 56px;
+        color: #22c55e;
+    }
+
+    .error-state h2, .already-submitted-state h2, .success-state h2 {
+        margin: 0 0 12px;
+        font-size: 28px;
+    }
+
+    .error-state p, .already-submitted-state p, .success-state p {
+        margin: 0 0 24px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .previous-rating {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px;
+        margin-bottom: 24px;
+    }
+
+    .previous-rating span {
+        display: block;
+        margin-bottom: 12px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .stars-display {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .stars-display .rzi {
+        font-size: 32px;
+        color: rgba(255, 255, 255, 0.2);
+    }
+
+    .stars-display .rzi.filled {
+        color: #f59e0b;
+    }
+
+    .action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 16px 32px;
+        background: #8c2f52;
+        border: none;
+        border-radius: var(--qm-radius-xl);
+        color: #0f0f1a;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .action-btn:hover {
+        transform: scale(1.05);
+        box-shadow: 0 0 30px rgba(140, 47, 82, 0.3);
+    }
+
+    /* Success State */
+    .success-animation {
+        margin-bottom: 24px;
+    }
+
+    .success-checkmark {
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        animation: success-pop 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .success-checkmark .rzi {
+        font-size: 56px;
+        color: white;
+    }
+
+    @@keyframes success-pop {
+        0% { transform: scale(0); opacity: 0; }
+        50% { transform: scale(1.2); }
+        100% { transform: scale(1); opacity: 1; }
+    }
+
+    .thank-you-detail {
+        font-size: 14px !important;
+        max-width: 320px;
+        margin: 0 auto 24px !important;
+    }
+
+    /* Feedback Form */
+    .feedback-form {
+        background: rgba(255, 255, 255, 0.03);
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--qm-radius-xl);
+        padding: 48px;
+        max-width: 600px;
+        width: 100%;
+        color: white;
+        backdrop-filter: blur(20px);
+    }
+
+    .feedback-header {
+        text-align: center;
+        margin-bottom: 36px;
+    }
+
+    .feedback-header .logo {
+        width: 80px;
+        height: 80px;
+        background: #8c2f52;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 20px;
+    }
+
+    .feedback-header .logo .rzi {
+        font-size: 40px;
+        color: #0f0f1a;
+    }
+
+    .feedback-header h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+        font-weight: 700;
+    }
+
+    .feedback-header p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 16px;
+    }
+
+    /* Service Info */
+    .service-info {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: var(--qm-radius-xl);
+        margin-bottom: 32px;
+    }
+
+    .info-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+    }
+
+    .info-item .rzi {
+        font-size: 24px;
+        color: #8c2f52;
+    }
+
+    .info-item .label {
+        display: block;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .info-item .value {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    /* Sections */
+    .rating-section, .category-section, .comment-section, .contact-section {
+        margin-bottom: 32px;
+    }
+
+    .rating-section h3, .category-section h3, .comment-section h3, .contact-section h3 {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0 0 16px;
+        text-align: center;
+    }
+
+    /* Star Rating */
+    .star-rating {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+
+    .star-btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        width: 64px;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .star-btn .rzi {
+        font-size: 36px;
+        color: rgba(255, 255, 255, 0.3);
+        transition: all 0.3s ease;
+    }
+
+    .star-btn:hover, .star-btn.hover {
+        background: rgba(245, 158, 11, 0.1);
+        border-color: rgba(245, 158, 11, 0.3);
+        transform: scale(1.1);
+    }
+
+    .star-btn:hover .rzi, .star-btn.hover .rzi {
+        color: #f59e0b;
+    }
+
+    .star-btn.active {
+        background: rgba(245, 158, 11, 0.15);
+        border-color: #f59e0b;
+    }
+
+    .star-btn.active .rzi {
+        color: #f59e0b;
+        text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
+    }
+
+    .rating-label {
+        text-align: center;
+        font-size: 16px;
+        font-weight: 600;
+        color: #8c2f52;
+        min-height: 24px;
+    }
+
+    /* Categories */
+    .category-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+    }
+
+    .category-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .category-chip .rzi {
+        font-size: 18px;
+    }
+
+    .category-chip:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .category-chip.selected {
+        background: rgba(140, 47, 82, 0.15);
+        border-color: #8c2f52;
+        color: #8c2f52;
+    }
+
+    /* Comment */
+    .comment-section textarea {
+        width: 100%;
+        padding: 16px 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        font-size: 15px;
+        color: white;
+        resize: none;
+        transition: all 0.3s ease;
+        font-family: inherit;
+    }
+
+    .comment-section textarea::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+    }
+
+    .comment-section textarea:focus {
+        outline: none;
+        border-color: #8c2f52;
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Contact Section */
+    .contact-hint {
+        text-align: center;
+        margin: -8px 0 16px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.5);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        margin-bottom: 8px;
+        color: rgba(255, 255, 255, 0.7);
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--qm-radius-xl);
+        font-size: 15px;
+        color: white;
+        transition: all 0.3s ease;
+    }
+
+    .form-group input::placeholder {
+        color: rgba(255, 255, 255, 0.3);
+    }
+
+    .form-group input:focus {
+        outline: none;
+        border-color: #8c2f52;
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Submit */
+    .submit-section {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    .submit-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 20px 48px;
+        background: #8c2f52;
+        border: none;
+        border-radius: var(--qm-radius-xl);
+        color: #0f0f1a;
+        font-size: 18px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 250px;
+    }
+
+    .submit-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .submit-btn:hover:not(:disabled) {
+        transform: scale(1.02);
+        box-shadow: 0 0 40px rgba(140, 47, 82, 0.4);
+    }
+
+    .spinning {
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    /* Privacy Note */
+    .privacy-note {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 12px;
+    }
+
+    .privacy-note .rzi {
+        font-size: 14px;
+    }
+
+    /* Responsive */
+    @@media (max-width: 640px) {
+        .feedback-form {
+            padding: 32px 24px;
+            border-radius: var(--qm-radius-xl);
+        }
+
+        .feedback-header h1 {
+            font-size: 26px;
+        }
+
+        .star-btn {
+            width: 52px;
+            height: 52px;
+        }
+
+        .star-btn .rzi {
+            font-size: 28px;
+        }
+
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 18px 24px;
+        }
+    }
+
+    /* ================================
+       Light Theme Override
+       Admin-selectable per-organization (see BrandingSettings.razor "Display
+       Theme"); applied via [data-theme] on the KioskLayout wrapper. Every
+       color above is a hardcoded dark-mode literal (not a --qm-* token), so
+       each one needs an explicit light counterpart here rather than inheriting
+       automatically from qm-theme.css's own [data-theme="light"] block.
+       ================================ */
+    [data-theme="light"] .feedback-page {
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+    }
+
+    [data-theme="light"] .loading-state,
+    [data-theme="light"] .error-state,
+    [data-theme="light"] .already-submitted-state,
+    [data-theme="light"] .success-state {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .loading-state p,
+    [data-theme="light"] .error-state p,
+    [data-theme="light"] .already-submitted-state p,
+    [data-theme="light"] .success-state p {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .previous-rating {
+        background: rgba(0, 0, 0, 0.03);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="light"] .previous-rating span {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .stars-display .rzi {
+        color: rgba(0, 0, 0, 0.15);
+    }
+
+    [data-theme="light"] .feedback-form {
+        background: rgba(255, 255, 255, 0.7);
+        border: 2px solid rgba(0, 0, 0, 0.08);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .feedback-header p {
+        color: rgba(0, 0, 0, 0.6);
+    }
+
+    [data-theme="light"] .service-info {
+        background: rgba(0, 0, 0, 0.03);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .info-item .label {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .star-btn {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.12);
+    }
+
+    [data-theme="light"] .star-btn .rzi {
+        color: rgba(0, 0, 0, 0.25);
+    }
+
+    [data-theme="light"] .category-chip {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.12);
+        color: rgba(0, 0, 0, 0.65);
+    }
+
+    [data-theme="light"] .category-chip:hover {
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.2);
+    }
+
+    [data-theme="light"] .comment-section textarea,
+    [data-theme="light"] .form-group input {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.12);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .comment-section textarea::placeholder,
+    [data-theme="light"] .form-group input::placeholder {
+        color: rgba(0, 0, 0, 0.35);
+    }
+
+    [data-theme="light"] .comment-section textarea:focus,
+    [data-theme="light"] .form-group input:focus {
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    [data-theme="light"] .contact-hint {
+        color: rgba(0, 0, 0, 0.5);
+    }
+
+    [data-theme="light"] .form-group label {
+        color: rgba(0, 0, 0, 0.7);
+    }
+
+    [data-theme="light"] .privacy-note {
+        color: rgba(0, 0, 0, 0.4);
+    }
+</style>
+
+@code {
+    [Parameter] public string FeedbackCode { get; set; } = string.Empty;
+
+    private bool isLoading = true;
+    private bool isSubmitting = false;
+    private bool submitted = false;
+    private bool alreadySubmitted = false;
+    private string? error;
+    private string? errorDetail;
+
+    private string? tokenDisplayNumber;
+    private string? serviceTypeName;
+    private string? branchName;
+    private DateTime? serviceDate;
+    private int existingRating = 0;
+
+    private int feedbackRating = 0;
+    private int hoverRating = 0;
+    private FeedbackCategory selectedCategory = FeedbackCategory.General;
+    private string? feedbackComment;
+    private string? customerName;
+    private string? customerEmail;
+    private string? customerPhone;
+
+    private readonly List<(FeedbackCategory Value, string Label, string Icon)> feedbackCategories = new()
+    {
+        (FeedbackCategory.General, "General", "chat"),
+        (FeedbackCategory.ServiceQuality, "Service Quality", "star"),
+        (FeedbackCategory.WaitTime, "Wait Time", "clock"),
+        (FeedbackCategory.StaffBehavior, "Staff", "person"),
+        (FeedbackCategory.Facility, "Facility", "building"),
+        (FeedbackCategory.Other, "Other", "three-dots")
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFeedbackInfo();
+    }
+
+    private async Task LoadFeedbackInfo()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/feedback/{FeedbackCode}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                var info = await response.Content.ReadFromJsonAsync<FeedbackInfoResponse>(JsonOptions);
+                if (info != null)
+                {
+                    tokenDisplayNumber = info.TokenDisplayNumber;
+                    serviceTypeName = info.ServiceTypeName;
+                    branchName = info.BranchName;
+                    serviceDate = info.ServiceDate;
+                    alreadySubmitted = info.AlreadySubmitted;
+                    existingRating = info.ExistingRating ?? 0;
+                }
+            }
+            else
+            {
+                error = "Invalid or Expired Link";
+                errorDetail = "This feedback link is no longer valid. It may have expired or already been used.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = "Connection Error";
+            errorDetail = "Unable to connect to the server. Please check your connection and try again.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetRatingLabel()
+    {
+        return feedbackRating switch
+        {
+            1 => "Very Poor",
+            2 => "Poor",
+            3 => "Average",
+            4 => "Good",
+            5 => "Excellent!",
+            _ => "Tap a star to rate"
+        };
+    }
+
+    private async Task SubmitFeedback()
+    {
+        if (feedbackRating == 0) return;
+
+        isSubmitting = true;
+        StateHasChanged();
+
+        try
+        {
+            var request = new
+            {
+                FeedbackCode = FeedbackCode,
+                Rating = feedbackRating,
+                Comment = feedbackComment,
+                Category = selectedCategory,
+                CustomerName = customerName,
+                CustomerPhone = customerPhone,
+                CustomerEmail = customerEmail
+            };
+
+            var response = await Http.PostAsJsonAsync("api/v1/feedback/submit", request, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                submitted = true;
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to submit feedback. Please try again.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"An error occurred: {ex.Message}");
+        }
+        finally
+        {
+            isSubmitting = false;
+            StateHasChanged();
+        }
+    }
+
+    private void GoHome()
+    {
+        Navigation.NavigateTo("/");
+    }
+
+    private record FeedbackInfoResponse
+    {
+        public string FeedbackCode { get; init; } = string.Empty;
+        public string? TokenDisplayNumber { get; init; }
+        public string? ServiceTypeName { get; init; }
+        public string? BranchName { get; init; }
+        public DateTime? ServiceDate { get; init; }
+        public bool AlreadySubmitted { get; init; }
+        public int? ExistingRating { get; init; }
+    }
+}

@@ -1,0 +1,74 @@
+@inherits LayoutComponentBase
+@using System.Text.RegularExpressions
+@using QMgr.Web.Services
+@inject IOrganizationApiService OrganizationApi
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+
+<div class="kiosk-layout" data-theme="@displayTheme" style="@brandingStyle">
+    @Body
+</div>
+
+<ToastHost />
+
+<style>
+    .kiosk-layout {
+        min-height: 100vh;
+        overflow: hidden;
+    }
+</style>
+
+@code {
+    // Falls back to the demo branch only when neither the selected-branch state nor the
+    // page's own URL resolve one (e.g. a bookmarked bare kiosk URL, first run).
+    private static readonly Guid DefaultBranchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private string brandingStyle = string.Empty;
+    private string displayTheme = "dark";
+
+    // Prefers the same BranchStateService the kiosk page itself uses; a @layout component can't
+    // receive its page's [Parameter] route values directly (it wraps *above* Body in the render
+    // tree), so a GUID segment parsed out of the resolved URL is the fallback, not the primary.
+    private async Task<Guid> ResolveBranchIdAsync()
+    {
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+            return BranchState.CurrentBranchId;
+
+        var path = new Uri(Navigation.Uri).AbsolutePath;
+        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Guid.TryParse(segment, out var parsed) && parsed != Guid.Empty)
+                return parsed;
+        }
+        return DefaultBranchId;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var branchId = await ResolveBranchIdAsync();
+        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId);
+
+        // Applies regardless of WhitelabelEnabled — dark/light is a basic display
+        // preference available on every plan, unlike the colors/logo below.
+        displayTheme = branding.DisplayTheme is "light" ? "light" : "dark";
+
+        if (!branding.WhitelabelEnabled)
+            return;
+
+        var overrides = new List<string>();
+        AddIfValidColor(overrides, "--qm-primary", branding.PrimaryColor);
+        AddIfValidColor(overrides, "--qm-secondary", branding.SecondaryColor);
+        AddIfValidColor(overrides, "--qm-accent-orange", branding.AccentColor);
+
+        if (overrides.Count > 0)
+            brandingStyle = string.Join("; ", overrides);
+    }
+
+    private static readonly Regex HexColor = new(@"^#[0-9a-fA-F]{3,8}$", RegexOptions.Compiled);
+
+    private static void AddIfValidColor(List<string> overrides, string cssVar, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && HexColor.IsMatch(value))
+            overrides.Add($"{cssVar}: {value}");
+    }
+}

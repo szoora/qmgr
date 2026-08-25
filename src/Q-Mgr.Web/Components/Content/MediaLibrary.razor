@@ -1,0 +1,2010 @@
+@page "/content/media"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using Microsoft.AspNetCore.Components.Forms
+@inject IContentApiService ContentApi
+@inject IToastService NotificationService
+@inject NavigationManager NavigationManager
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+
+<PageTitle>Media Library - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Media Library</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Media Library") })" />
+    </div>
+</div>
+
+<div class="media-library-page">
+    <!-- Toolbar -->
+    <QCard Class="toolbar-card">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <QInput TValue="string" @bind-Value="@searchTerm" Placeholder="Search media..." IconLeft="search" />
+                <QSelect TValue="ContentType?" TItem="ContentType" @bind-Value="@filterType" Items="@contentTypeValues"
+                         ValueSelector="@(c => (ContentType?)c)" TextSelector="@(c => c.ToString())" Placeholder="All Types" AllowClear="true" />
+            </div>
+            <div class="toolbar-right">
+                @if (canCreate)
+                {
+                    <!-- Add URL is the primary/default action: linking existing content on YouTube,
+                         Vimeo, Google Drive, TikTok, Spotify, or SoundCloud doesn't use any of this
+                         platform's own storage. Upload Media remains available (capped per-file and
+                         subject to the org's storage quota) for content with nowhere else to live. -->
+                    <QButton Text="Add URL" Icon="link-45deg" Variant="primary" OnClick="@ShowAddUrlDialog" />
+                    <QButton Text="Upload Media" Icon="cloud-upload-fill" Variant="secondary" OnClick="@ShowUploadDialog" />
+                }
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading media library...</span>
+        </div>
+    }
+    else if (!mediaItems.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="images" />
+            <h3>No Media Found</h3>
+            <p>Link a video from YouTube, Vimeo, Google Drive, or TikTok, or upload a file directly.</p>
+            @if (canCreate)
+            {
+                <div class="empty-state-actions">
+                    <QButton Text="Add URL" Icon="link-45deg" Variant="primary" OnClick="@ShowAddUrlDialog" />
+                    <QButton Text="Upload Media" Icon="cloud-upload" Variant="secondary" OnClick="@ShowUploadDialog" />
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <!-- Media Grid -->
+        <div class="media-grid">
+            @foreach (var media in FilteredMedia)
+            {
+                <div class="media-card" @onclick="@(() => SelectMedia(media))">
+                    <div class="media-preview">
+                        @if (!string.IsNullOrEmpty(media.ThumbnailUrl))
+                        {
+                            <img src="@media.ThumbnailUrl" alt="@media.Name" />
+                        }
+                        else
+                        {
+                            <div class="media-icon">
+                                <QIcon Name="@GetMediaIconBootstrap(media.ContentType)" />
+                            </div>
+                        }
+                        <div class="media-type-badge">@GetMediaSourceBadge(media)</div>
+                        <div class="play-overlay">
+                            <QIcon Name="@GetPlayIconBootstrap(media.ContentType)" />
+                        </div>
+                    </div>
+                    <div class="media-info">
+                        <h4>@media.Name</h4>
+                        <p>@FormatFileSize(media.FileSizeBytes)</p>
+                        @if (media.DurationSeconds.HasValue)
+                        {
+                            <span class="duration">@FormatDuration(media.DurationSeconds.Value)</span>
+                        }
+                    </div>
+                    <div class="media-actions">
+                        @if (canEdit)
+                        {
+                            <QButton Icon="pencil-fill" Size="sm" Variant="secondary" OnClick="@(async () => await EditMedia(media))" StopPropagation="true" />
+                        }
+                        @if (canDelete)
+                        {
+                            <QButton Icon="trash-fill" Size="sm" Variant="danger" OnClick="@(() => DeleteMedia(media))" StopPropagation="true" />
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- Upload Dialog -->
+<QModal @bind-Visible="showUploadDialog" Title="Upload Media" Size="md">
+    <ChildContent>
+        <div class="upload-area @(isDragging ? "dragging" : "") @(selectedFiles.Any() ? "has-files" : "")"
+             @ondragenter="HandleDragEnter"
+             @ondragleave="HandleDragLeave"
+             @ondragover:preventDefault="true"
+             @ondrop="HandleDrop">
+
+            @if (!selectedFiles.Any())
+            {
+                <div class="upload-prompt">
+                    <QIcon Name="cloud-upload" />
+                    <p>Drag & drop files here or</p>
+                    <!-- Positioned to cover the whole drop zone (see .file-input CSS) so
+                         the browser's native drag-and-drop-onto-file-input behavior does
+                         the actual file reading — HandleDrop above only resets the
+                         "isDragging" highlight, it never reads dropped files itself,
+                         since Blazor's DragEventArgs doesn't expose DataTransfer.files. -->
+                    <InputFile OnChange="HandleFileSelected" multiple accept="image/*,video/*,audio/*,.pdf" class="file-input" id="fileInput" />
+                    <label for="fileInput" class="browse-btn">Browse Files</label>
+                    <span class="file-types">Images, Videos, Audio, PDF (Max 25MB each — link larger files via Add URL instead)</span>
+                </div>
+            }
+            else
+            {
+                <div class="selected-files">
+                    @foreach (var file in selectedFiles)
+                    {
+                        <div class="file-item">
+                            <QIcon Name="@GetFileIconBootstrap(file.ContentType)" />
+                            <div class="file-details">
+                                <span class="file-name">@file.Name</span>
+                                <span class="file-size">@FormatFileSize(file.Size)</span>
+                            </div>
+                            <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => RemoveFile(file))" />
+                        </div>
+                    }
+                    <div class="add-more">
+                        <InputFile OnChange="HandleFileSelected" multiple accept="image/*,video/*,audio/*,.pdf" class="file-input" id="fileInputMore" />
+                        <label for="fileInputMore" class="add-more-btn">
+                            <QIcon Name="plus-lg" /> Add More
+                        </label>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (isUploading)
+        {
+            <div class="upload-progress">
+                <div class="progress" role="progressbar" aria-valuenow="@uploadProgress" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" style="width: @(uploadProgress)%">@uploadProgress%</div>
+                </div>
+                <span>Uploading @currentUploadFile...</span>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CancelUpload" Disabled="@isUploading" />
+        <QButton Text="@GetUploadButtonText()"
+                  Icon="cloud-upload-fill"
+                  Variant="primary"
+                  OnClick="@UploadFiles"
+                  Disabled="@(!selectedFiles.Any() || isUploading)" />
+    </FooterContent>
+</QModal>
+
+<!-- Preview Dialog -->
+<QModal @bind-Visible="showPreviewDialog" Title="@(previewMedia?.Name ?? "Preview")" Size="md">
+    <ChildContent>
+        @if (previewMedia != null)
+        {
+            <div class="preview-body">
+                <QMgr.Web.Components.Shared.MediaPlayer
+                    Url="@previewMedia.FileUrl"
+                    Title="@previewMedia.Name"
+                    ContentType="@previewMedia.ContentType"
+                    AutoPlay="true" />
+            </div>
+            <div class="media-details">
+                <span class="detail-item">
+                    <QIcon Name="grid" />
+                    @previewMedia.ContentType
+                </span>
+                @if (previewMedia.FileSizeBytes.HasValue)
+                {
+                    <span class="detail-item">
+                        <QIcon Name="rulers" />
+                        @FormatFileSize(previewMedia.FileSizeBytes)
+                    </span>
+                }
+                @if (previewMedia.DurationSeconds.HasValue)
+                {
+                    <span class="detail-item">
+                        <QIcon Name="clock" />
+                        @FormatDuration(previewMedia.DurationSeconds.Value)
+                    </span>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (previewMedia != null)
+        {
+            <QButton Text="Open in New Tab" Icon="box-arrow-up-right" Variant="secondary"
+                      OnClick="@(() => OpenInNewTab(previewMedia.FileUrl))" />
+            @if (canEdit)
+            {
+                <QButton Text="Add to Playlist" Icon="plus-circle-fill" Variant="primary"
+                          OnClick="@(() => AddToPlaylist(previewMedia))" />
+            }
+        }
+    </FooterContent>
+</QModal>
+
+<!-- Add to Playlist Dialog -->
+<QModal @bind-Visible="showAddToPlaylistDialog" Title="Add to Playlist" Size="sm">
+    <ChildContent>
+        @if (mediaToAddToPlaylist != null)
+        {
+            <p class="qm-admin-form-hint">Add "@mediaToAddToPlaylist.Name" to:</p>
+
+            @if (!availablePlaylists.Any())
+            {
+                <div class="qm-admin-alert info">
+                    <QIcon Name="info-circle-fill" />
+                    <p>No playlists yet. Create one on the Playlists page first.</p>
+                </div>
+            }
+            else
+            {
+                <QSelect TValue="Guid" TItem="PlaylistDto" @bind-Value="selectedPlaylistId" Items="@availablePlaylists"
+                         TextSelector="@(p => p.Name)" ValueSelector="@(p => p.Id)" />
+
+                @if (availableCampaigns.Any())
+                {
+                    <div class="form-group" style="margin-top: 12px;">
+                        <QSelect TValue="Guid?" TItem="CampaignDto" @bind-Value="selectedCampaignId" Items="@availableCampaigns"
+                                 ValueSelector="@(c => (Guid?)c.Id)" TextSelector="@(c => c.Name)"
+                                 AllowClear="true" Label="Attach to Campaign (optional)" Placeholder="No campaign" />
+                    </div>
+                }
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@(() => showAddToPlaylistDialog = false)" Disabled="@isAddingToPlaylist" />
+        @if (availablePlaylists.Any())
+        {
+            <QButton Text="@(isAddingToPlaylist ? "Adding..." : "Add")" Icon="plus-circle-fill" Variant="primary"
+                      OnClick="@ConfirmAddToPlaylist" Disabled="@(isAddingToPlaylist || selectedPlaylistId == Guid.Empty)" />
+        }
+    </FooterContent>
+</QModal>
+
+<!-- Edit Media Dialog -->
+<QModal @bind-Visible="showEditMediaDialog" Title="Edit Media" Size="sm">
+    <ChildContent>
+        @if (mediaToEdit != null)
+        {
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="editMediaName" Label="Name" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="editMediaDescription" Label="Description" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="editMediaTagsInput" Label="Tags" Placeholder="Comma-separated, e.g. promo, lobby, summer" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@(() => showEditMediaDialog = false)" Disabled="@isSavingMedia" />
+        <QButton Text="@(isSavingMedia ? "Saving..." : "Save")" Icon="check-circle-fill" Variant="primary"
+                  OnClick="@ConfirmEditMedia" Disabled="@(isSavingMedia || string.IsNullOrWhiteSpace(editMediaName))" />
+    </FooterContent>
+</QModal>
+
+<!-- Add URL Dialog -->
+@if (showAddUrlDialog)
+{
+    <div class="dialog-overlay" @onclick="@(() => showAddUrlDialog = false)">
+        <div class="dialog-content add-url-dialog" @onclick:stopPropagation="true">
+            <div class="dialog-header">
+                <h3><i class="bi bi-link-45deg"></i> Add Online Content</h3>
+                <button class="close-btn" @onclick="@(() => showAddUrlDialog = false)">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">URL <span class="required">*</span></label>
+                <div class="url-input-wrapper">
+                    <input type="url" class="form-control @(urlValidationError != null ? "is-invalid" : "")"
+                           @bind="newMedia.FileUrl"
+                           @bind:event="oninput"
+                           @onblur="ValidateAndDetectUrl"
+                           placeholder="Paste YouTube, Vimeo, TikTok, or direct media URL..." />
+                    @if (isValidatingUrl)
+                    {
+                        <div class="url-spinner">
+                            <span class="spinner-border spinner-border-sm"></span>
+                        </div>
+                    }
+                    else if (detectedPlatform != null)
+                    {
+                        <div class="platform-badge @detectedPlatform.ToLower()">
+                            <i class="bi @GetPlatformIcon(detectedPlatform)"></i>
+                            @detectedPlatform
+                        </div>
+                    }
+                </div>
+                @if (urlValidationError != null)
+                {
+                    <div class="invalid-feedback d-block">@urlValidationError</div>
+                }
+            </div>
+
+            @if (showUrlPreview && !string.IsNullOrEmpty(newMedia.FileUrl))
+            {
+                <div class="url-preview">
+                    <div class="preview-header">
+                        <span>Preview</span>
+                        <button class="btn-sm" @onclick="() => showUrlPreview = false">
+                            <i class="bi bi-eye-slash"></i>
+                        </button>
+                    </div>
+                    <div class="preview-content">
+                        @if (detectedPlatform == "YouTube" && !string.IsNullOrEmpty(detectedThumbnail))
+                        {
+                            <img src="@detectedThumbnail" alt="Video thumbnail" />
+                            <div class="play-icon"><i class="bi bi-play-circle-fill"></i></div>
+                        }
+                        else if (detectedPlatform == "Vimeo" && !string.IsNullOrEmpty(detectedThumbnail))
+                        {
+                            <img src="@detectedThumbnail" alt="Video thumbnail" />
+                            <div class="play-icon"><i class="bi bi-play-circle-fill"></i></div>
+                        }
+                        else if (newMedia.ContentType == ContentType.Image)
+                        {
+                            <img src="@newMedia.FileUrl" alt="Image preview" @onerror="HandlePreviewError" />
+                        }
+                        else
+                        {
+                            <div class="preview-placeholder">
+                                <i class="bi @GetContentTypeIcon(newMedia.ContentType)"></i>
+                                <span>@newMedia.ContentType content</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="form-row">
+                <div class="form-group flex-grow-1">
+                    <label class="form-label">Name <span class="required">*</span></label>
+                    <input type="text" class="form-control" @bind="newMedia.Name" placeholder="Enter display name" />
+                </div>
+                <div class="form-group" style="width: 140px;">
+                    <label class="form-label">Type</label>
+                    <select class="form-select" @bind="newMedia.ContentType">
+                        @foreach (var type in contentTypeValues)
+                        {
+                            <option value="@type">@type</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Description <span class="optional">(optional)</span></label>
+                <textarea class="form-control" @bind="newMedia.Description" rows="2" placeholder="Add notes about this content..."></textarea>
+            </div>
+
+            <div class="supported-platforms">
+                <span class="label">Supported:</span>
+                <span class="platform"><i class="bi bi-youtube"></i> YouTube</span>
+                <span class="platform"><i class="bi bi-vimeo"></i> Vimeo</span>
+                <span class="platform"><i class="bi bi-tiktok"></i> TikTok</span>
+                <span class="platform"><i class="bi bi-google"></i> Google Drive</span>
+                <span class="platform"><i class="bi bi-spotify"></i> Spotify</span>
+                <span class="platform"><i class="bi bi-soundwave"></i> SoundCloud</span>
+                <span class="platform"><i class="bi bi-link-45deg"></i> Direct URLs</span>
+            </div>
+
+            <div class="dialog-actions">
+                <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@(() => showAddUrlDialog = false)" />
+                <QButton Text="Add to Library" Icon="plus-lg" Variant="primary" Disabled="@(!CanAddMedia)" OnClick="AddMediaFromUrl" />
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Delete Confirmation Dialog -->
+<ConfirmDialog
+    IsVisible="@showDeleteConfirm"
+    Title="Delete Media"
+    Message="@deleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleDeleteConfirm" />
+
+<style>
+    .media-library-page {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .toolbar-card {
+        padding: 16px 24px;
+    }
+
+    .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .toolbar-left, .toolbar-right {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+    }
+
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 80px 20px;
+        text-align: center;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+        margin-bottom: 16px;
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 24px;
+        color: var(--qm-text-secondary);
+    }
+
+    .empty-state-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .media-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 20px;
+    }
+
+    .media-card {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .media-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .media-preview {
+        position: relative;
+        height: 140px;
+        background: var(--qm-bg-card-hover);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .media-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .media-icon .rzi {
+        font-size: 48px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Overlay badge on top of an arbitrary thumbnail image - stays a dark
+       translucent scrim regardless of theme so it stays legible over any image. */
+    .media-type-badge {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        padding: 4px 8px;
+        background: rgba(0,0,0,0.6);
+        color: white;
+        border-radius: var(--qm-radius-sm);
+        font-size: 11px;
+        text-transform: uppercase;
+    }
+
+    .media-info {
+        padding: 12px 16px;
+    }
+
+    .media-info h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .media-info p {
+        margin: 0;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .media-info .duration {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 2px 6px;
+        background: var(--qm-bg-card-hover);
+        border-radius: var(--qm-radius-sm);
+        font-size: 11px;
+    }
+
+    .media-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 8px 12px;
+        border-top: 1px solid var(--qm-bg-card-hover);
+    }
+
+    /* Modal backdrop scrim - conventionally stays a dark overlay in both
+       light and dark mode, not theme-dependent. */
+    .dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .dialog-content {
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        width: 90%;
+        max-width: 500px;
+    }
+
+    .dialog-content h3 {
+        margin: 0 0 20px;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group .rz-label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 24px;
+    }
+
+    /* Upload Dialog Styles */
+    .upload-dialog {
+        max-width: 600px;
+    }
+
+    .upload-area {
+        position: relative;
+        border: 2px dashed var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 40px 20px;
+        text-align: center;
+        transition: all 0.3s ease;
+        background: var(--qm-bg-elevated);
+        min-height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .upload-area.dragging {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .upload-area.has-files {
+        padding: 20px;
+        align-items: flex-start;
+    }
+
+    .upload-prompt {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .upload-prompt .rzi {
+        font-size: 64px;
+        color: var(--qm-primary);
+        opacity: 0.7;
+    }
+
+    .upload-prompt p {
+        margin: 0;
+        color: var(--qm-text-secondary);
+    }
+
+    /* Covers the whole .upload-area invisibly (rather than display:none) so
+       it's the actual native drop target for drag-and-drop — a display:none
+       input can never receive a drop event. The visible "Browse Files"
+       label still works via its `for` attribute regardless. */
+    .file-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+        z-index: 1;
+    }
+
+    /* Keep the "Add More" input's compact inline behavior — it isn't the
+       primary drop target, only the initial empty-state one is. */
+    .add-more .file-input {
+        position: static;
+        width: auto;
+        height: auto;
+        display: none;
+    }
+
+    .browse-btn {
+        padding: 12px 28px;
+        background: var(--qm-gradient-primary);
+        color: white;
+        border-radius: var(--qm-radius-lg);
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .browse-btn:hover {
+        box-shadow: var(--qm-shadow-neon);
+        transform: translateY(-2px);
+    }
+
+    .file-types {
+        font-size: 12px;
+        color: var(--qm-text-muted);
+        margin-top: 8px;
+    }
+
+    .selected-files {
+        width: 100%;
+    }
+
+    .file-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 10px;
+        border: 1px solid var(--qm-border);
+    }
+
+    .file-item .rzi {
+        font-size: 28px;
+        color: var(--qm-primary);
+    }
+
+    .file-details {
+        flex: 1;
+        text-align: left;
+    }
+
+    .file-name {
+        display: block;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 280px;
+    }
+
+    .file-size {
+        display: block;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .add-more {
+        text-align: center;
+        margin-top: 12px;
+    }
+
+    .add-more-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 20px;
+        background: var(--qm-bg-card);
+        border: 1px dashed var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .add-more-btn:hover {
+        border-color: var(--qm-primary);
+        color: var(--qm-primary);
+    }
+
+    .upload-progress {
+        margin-top: 16px;
+        text-align: center;
+    }
+
+    .upload-progress span {
+        display: block;
+        margin-top: 8px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    /* Preview Dialog Styles */
+    .preview-dialog {
+        max-width: 900px;
+        width: 95%;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .preview-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+        margin-bottom: 16px;
+    }
+
+    .preview-header h3 {
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        padding-right: 16px;
+    }
+
+    .close-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: none;
+        background: var(--qm-bg-elevated);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+        flex-shrink: 0;
+    }
+
+    .close-btn:hover {
+        background: var(--qm-primary);
+    }
+
+    .close-btn:hover .rzi {
+        color: white;
+    }
+
+    .close-btn .rzi {
+        font-size: 20px;
+        color: var(--qm-text-secondary);
+    }
+
+    .preview-body {
+        flex: 1;
+        overflow: hidden;
+        border-radius: var(--qm-radius-xl);
+        min-height: 300px;
+    }
+
+    .preview-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 16px;
+        margin-top: 16px;
+        border-top: 1px solid var(--qm-border);
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .media-details {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .detail-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+
+    .detail-item .rzi {
+        font-size: 16px;
+        color: var(--qm-primary);
+    }
+
+    .preview-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    /* Media card play button overlay - dark scrim over an arbitrary thumbnail
+       image, stays literal regardless of theme for the same reason as
+       .media-type-badge above. */
+    .media-preview .play-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .media-card:hover .play-overlay {
+        opacity: 1;
+    }
+
+    .play-overlay .rzi {
+        font-size: 48px;
+        color: white;
+        filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+    }
+
+    /* Add URL Dialog Enhanced Styles */
+    .add-url-dialog {
+        max-width: 560px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .dialog-header h3 {
+        margin: 0;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .dialog-header h3 i {
+        color: var(--qm-primary);
+    }
+
+    .dialog-header .close-btn {
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-muted);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .dialog-header .close-btn:hover {
+        background: color-mix(in srgb, var(--qm-danger) 20%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .add-url-dialog .form-label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+        font-size: 13px;
+    }
+
+    .add-url-dialog .required {
+        color: var(--qm-danger);
+    }
+
+    .add-url-dialog .optional {
+        color: var(--qm-text-muted);
+        font-weight: 400;
+    }
+
+    .add-url-dialog .form-control,
+    .add-url-dialog .form-select {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+        border-radius: var(--qm-radius-lg);
+        padding: 10px 14px;
+        font-size: 14px;
+        width: 100%;
+    }
+
+    .add-url-dialog .form-control:focus,
+    .add-url-dialog .form-select:focus {
+        border-color: var(--qm-primary);
+        box-shadow: 0 0 0 3px var(--qm-primary-light);
+        outline: none;
+    }
+
+    .add-url-dialog .form-control::placeholder {
+        color: var(--qm-text-muted);
+    }
+
+    .url-input-wrapper {
+        position: relative;
+    }
+
+    .url-input-wrapper .form-control {
+        padding-right: 120px;
+    }
+
+    .url-spinner {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--qm-primary);
+    }
+
+    .platform-badge {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        padding: 4px 10px;
+        border-radius: var(--qm-radius-md);
+        font-size: 11px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    /* Platform badges below use each service's real brand color (YouTube red,
+       Vimeo blue, Google blue, Spotify green, SoundCloud orange) as a source
+       identifier, not an app status color - intentionally left literal.
+       .direct uses Q-Mgr's own brand blue, so it's tokenized above instead. */
+    .platform-badge.youtube {
+        background: rgba(255, 0, 0, 0.15);
+        color: #ff4444;
+    }
+
+    .platform-badge.vimeo {
+        background: rgba(26, 183, 234, 0.15);
+        color: #1ab7ea;
+    }
+
+    .platform-badge.tiktok {
+        background: rgba(254, 44, 85, 0.15);
+        color: #fe2c55;
+    }
+
+    .platform-badge.google {
+        background: rgba(66, 133, 244, 0.15);
+        color: #4285f4;
+    }
+
+    .platform-badge.spotify {
+        background: rgba(30, 215, 96, 0.15);
+        color: #1ed760;
+    }
+
+    .platform-badge.soundcloud {
+        background: rgba(255, 85, 0, 0.15);
+        color: #ff5500;
+    }
+
+    .platform-badge.direct {
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+    }
+
+    .url-preview {
+        margin: 16px 0;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+    }
+
+    .url-preview .preview-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 12px;
+        background: var(--qm-bg-elevated);
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .url-preview .preview-header .btn-sm {
+        background: none;
+        border: none;
+        color: var(--qm-text-muted);
+        cursor: pointer;
+        padding: 4px;
+    }
+
+    /* Video/thumbnail letterbox canvas - stays black in both themes, matching
+       the standard video-player convention rather than following the page theme. */
+    .url-preview .preview-content {
+        position: relative;
+        background: #000;
+        aspect-ratio: 16/9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .url-preview .preview-content img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .url-preview .play-icon {
+        position: absolute;
+        font-size: 48px;
+        color: rgba(255,255,255,0.9);
+        text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+
+    .url-preview .preview-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-text-muted);
+    }
+
+    .url-preview .preview-placeholder i {
+        font-size: 48px;
+        opacity: 0.5;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .supported-platforms {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding: 12px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        margin-bottom: 20px;
+        font-size: 11px;
+    }
+
+    .supported-platforms .label {
+        color: var(--qm-text-muted);
+        margin-right: 4px;
+    }
+
+    .supported-platforms .platform {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 8px;
+        background: var(--qm-bg-card-hover);
+        border-radius: var(--qm-radius-sm);
+        color: var(--qm-text-secondary);
+    }
+
+    .add-url-dialog .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding-top: 16px;
+        border-top: 1px solid var(--qm-border);
+        margin-top: 0;
+    }
+
+    .add-url-dialog .btn {
+        padding: 10px 20px;
+        border-radius: var(--qm-radius-lg);
+        font-weight: 500;
+        font-size: 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .add-url-dialog .btn-secondary {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+    }
+
+    .add-url-dialog .btn-secondary:hover {
+        background: var(--qm-bg-card-hover);
+    }
+
+    .add-url-dialog .btn-primary {
+        background: var(--qm-gradient-primary);
+        border: none;
+        color: white;
+    }
+
+    .add-url-dialog .btn-primary:hover:not(:disabled) {
+        box-shadow: 0 4px 20px var(--qm-primary-glow);
+        transform: translateY(-1px);
+    }
+
+    .add-url-dialog .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>
+
+@code {
+    private List<MediaContentDto> mediaItems = new();
+    private bool isLoading = true;
+    private string searchTerm = "";
+    private ContentType? filterType;
+    private bool showAddUrlDialog = false;
+    private bool showUploadDialog = false;
+    private bool showPreviewDialog = false;
+    private MediaContentDto? previewMedia;
+    private NewMediaModel newMedia = new();
+
+    // URL validation and detection
+    private bool isValidatingUrl = false;
+    private string? urlValidationError;
+    private string? detectedPlatform;
+    private string? detectedThumbnail;
+    private bool showUrlPreview = false;
+    private bool CanAddMedia => !string.IsNullOrWhiteSpace(newMedia.Name) &&
+                                 !string.IsNullOrWhiteSpace(newMedia.FileUrl) &&
+                                 urlValidationError == null;
+
+    // Upload related fields
+    private List<SelectedFile> selectedFiles = new();
+    private bool isDragging = false;
+    private bool isUploading = false;
+    private double uploadProgress = 0;
+    private string currentUploadFile = "";
+    // Deliberately well under the default 100MB tenant storage quota (enforced server-side in
+    // ContentController.MaxUploadSizeBytes, which this must match) so a single upload can't
+    // consume most/all of it — pushes larger media toward linking an external platform
+    // (YouTube, Vimeo, Google Drive, TikTok) instead. HubOptions.MaximumReceiveMessageSize in
+    // Program.cs (200MB) is just the SignalR circuit's outer ceiling, unrelated to this business cap.
+    private const long MaxFileSize = 25 * 1024 * 1024;
+
+    private Guid organizationId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+
+    private List<string> contentTypes = new() { "Image", "Video", "Audio", "Text", "Html", "Pdf" };
+    private List<ContentType> contentTypeValues = Enum.GetValues<ContentType>().ToList();
+
+    // Delete confirmation state
+    private bool showDeleteConfirm = false;
+    private string deleteConfirmMessage = "";
+    private MediaContentDto? mediaToDelete;
+
+    // Add to playlist state
+    private bool showAddToPlaylistDialog = false;
+    private bool isAddingToPlaylist = false;
+    private MediaContentDto? mediaToAddToPlaylist;
+    private List<PlaylistDto> availablePlaylists = new();
+    private Guid selectedPlaylistId = Guid.Empty;
+    private List<CampaignDto> availableCampaigns = new();
+    private Guid? selectedCampaignId;
+
+    // Edit media state
+    private bool showEditMediaDialog = false;
+    private bool isSavingMedia = false;
+    private MediaContentDto? mediaToEdit;
+    private string editMediaName = "";
+    private string editMediaDescription = "";
+    private string editMediaTagsInput = "";
+
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+
+    private IEnumerable<MediaContentDto> FilteredMedia => mediaItems
+        .Where(m => string.IsNullOrEmpty(searchTerm) || m.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+        .Where(m => !filterType.HasValue || m.ContentType == filterType.Value);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        var currentUser = await AuthService.GetCurrentUserAsync();
+        if (currentUser != null && currentUser.OrganizationId != Guid.Empty)
+        {
+            organizationId = currentUser.OrganizationId;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+
+        await LoadMedia();
+    }
+
+    private async Task LoadMedia()
+    {
+        isLoading = true;
+        mediaItems = await ContentApi.GetMediaContentsAsync(organizationId);
+        isLoading = false;
+    }
+
+    private void ShowUploadDialog()
+    {
+        selectedFiles.Clear();
+        uploadProgress = 0;
+        showUploadDialog = true;
+    }
+
+    private void HandleDragEnter() => isDragging = true;
+    private void HandleDragLeave() => isDragging = false;
+    private void HandleDrop() => isDragging = false;
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        // Read each file's bytes into memory right here, while the InputFile element
+        // that raised this event is still mounted. Once selectedFiles becomes non-empty
+        // the UI swaps to the "Add More" InputFile (a different element/id) and the one
+        // that produced this IBrowserFile is removed from the DOM — its JS-side file
+        // reference (_blazorFilesById) goes with it, so deferring the read to when
+        // "Upload" is clicked later fails with "Cannot read properties of null
+        // (reading '_blazorFilesById')". Buffering now, before that swap happens,
+        // avoids depending on the IBrowserFile staying valid at all.
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            if (file.Size > MaxFileSize)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "File Too Large", $"{file.Name} exceeds the 25MB upload limit. Try linking it instead via Add URL (YouTube, Vimeo, Google Drive, TikTok).");
+                continue;
+            }
+
+            if (selectedFiles.Any(f => f.Name == file.Name))
+                continue;
+
+            try
+            {
+                using var buffer = new MemoryStream();
+                await using (var browserStream = file.OpenReadStream(MaxFileSize))
+                {
+                    await browserStream.CopyToAsync(buffer);
+                }
+
+                selectedFiles.Add(new SelectedFile
+                {
+                    Name = file.Name,
+                    Size = file.Size,
+                    ContentType = file.ContentType,
+                    Data = buffer.ToArray()
+                });
+            }
+            catch (Exception ex)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Read Failed", $"Failed to read {file.Name}: {ex.Message}");
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void RemoveFile(SelectedFile file)
+    {
+        selectedFiles.Remove(file);
+    }
+
+    private void CancelUpload()
+    {
+        if (!isUploading)
+        {
+            showUploadDialog = false;
+            selectedFiles.Clear();
+        }
+    }
+
+    private async Task UploadFiles()
+    {
+        if (!selectedFiles.Any()) return;
+
+        isUploading = true;
+        uploadProgress = 0;
+        var totalFiles = selectedFiles.Count;
+        var uploadedCount = 0;
+
+        try
+        {
+            foreach (var file in selectedFiles.ToList())
+            {
+                currentUploadFile = file.Name;
+
+                try
+                {
+                    // file.Data was already buffered in HandleFileSelected, while the
+                    // originating InputFile element was still mounted — see the comment
+                    // there. Wrapping it in a fresh MemoryStream here is fully replayable,
+                    // so it's also safe against HttpClient re-reading the request content
+                    // on retry/redirect.
+                    using var buffer = new MemoryStream(file.Data);
+
+                    var result = await ContentApi.UploadMediaContentAsync(
+                        organizationId, buffer, file.Name, file.ContentType, Path.GetFileNameWithoutExtension(file.Name));
+
+                    if (result == null)
+                        throw new InvalidOperationException("Upload failed.");
+
+                    uploadedCount++;
+                }
+                catch (Exception ex)
+                {
+                    NotificationService.Notify(ToastSeverity.Error, "Upload Failed", $"Failed to upload {file.Name}: {ex.Message}");
+                }
+
+                uploadProgress = (uploadedCount / (double)totalFiles) * 100;
+                StateHasChanged();
+            }
+
+            if (uploadedCount > 0)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Upload Complete", $"Successfully uploaded {uploadedCount} file(s).");
+                showUploadDialog = false;
+                selectedFiles.Clear();
+                await LoadMedia();
+            }
+        }
+        finally
+        {
+            isUploading = false;
+            uploadProgress = 0;
+        }
+    }
+
+
+    private string GetFileIcon(string mimeType)
+    {
+        if (string.IsNullOrEmpty(mimeType)) return "insert_drive_file";
+
+        if (mimeType.StartsWith("image/")) return "image";
+        if (mimeType.StartsWith("video/")) return "videocam";
+        if (mimeType.StartsWith("audio/")) return "audiotrack";
+        if (mimeType == "application/pdf") return "picture_as_pdf";
+
+        return "insert_drive_file";
+    }
+
+    private string GetUploadButtonText()
+    {
+        return selectedFiles.Count > 0 ? $"Upload ({selectedFiles.Count})" : "Upload";
+    }
+
+    private void ShowAddUrlDialog()
+    {
+        newMedia = new NewMediaModel();
+        urlValidationError = null;
+        detectedPlatform = null;
+        detectedThumbnail = null;
+        showUrlPreview = false;
+        showAddUrlDialog = true;
+    }
+
+    private async Task ValidateAndDetectUrl()
+    {
+        var url = newMedia.FileUrl?.Trim();
+
+        if (string.IsNullOrEmpty(url))
+        {
+            urlValidationError = null;
+            detectedPlatform = null;
+            detectedThumbnail = null;
+            showUrlPreview = false;
+            return;
+        }
+
+        // Basic URL validation
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != "http" && uri.Scheme != "https"))
+        {
+            urlValidationError = "Please enter a valid URL starting with http:// or https://";
+            detectedPlatform = null;
+            detectedThumbnail = null;
+            showUrlPreview = false;
+            return;
+        }
+
+        urlValidationError = null;
+        isValidatingUrl = true;
+        StateHasChanged();
+
+        try
+        {
+            // Detect platform and fetch metadata
+            var urlLower = url.ToLower();
+
+            if (urlLower.Contains("youtube.com") || urlLower.Contains("youtu.be"))
+            {
+                detectedPlatform = "YouTube";
+                newMedia.ContentType = ContentType.Video;
+                detectedThumbnail = GetYouTubeThumbnail(url);
+                showUrlPreview = true;
+
+                // Auto-generate name from video ID (or channel ID, for a channel's
+                // "currently live" link, which has no fixed video ID) if empty
+                if (string.IsNullOrEmpty(newMedia.Name))
+                {
+                    var channelId = ExtractYouTubeLiveChannelId(url);
+                    newMedia.Name = !string.IsNullOrEmpty(channelId)
+                        ? $"YouTube Live (channel {channelId})"
+                        : $"YouTube Video ({ExtractYouTubeVideoId(url)})";
+                }
+            }
+            else if (urlLower.Contains("vimeo.com"))
+            {
+                detectedPlatform = "Vimeo";
+                newMedia.ContentType = ContentType.Video;
+                showUrlPreview = true;
+
+                var videoId = ExtractVimeoVideoId(url);
+                if (string.IsNullOrEmpty(newMedia.Name))
+                    newMedia.Name = $"Vimeo Video ({videoId})";
+
+                // Vimeo thumbnails require API call - use placeholder
+                detectedThumbnail = null;
+            }
+            else if (urlLower.Contains("tiktok.com"))
+            {
+                detectedPlatform = "TikTok";
+                newMedia.ContentType = ContentType.Video;
+                showUrlPreview = true;
+
+                var videoId = ExtractTikTokVideoId(url);
+                if (string.IsNullOrEmpty(newMedia.Name))
+                    newMedia.Name = !string.IsNullOrEmpty(videoId) ? $"TikTok Video ({videoId})" : "TikTok Video";
+
+                // TikTok thumbnails require the oEmbed API - use placeholder
+                detectedThumbnail = null;
+            }
+            else if (urlLower.Contains("drive.google.com") || urlLower.Contains("docs.google.com"))
+            {
+                detectedPlatform = "Google";
+                if (urlLower.Contains("presentation"))
+                    newMedia.ContentType = ContentType.PowerPoint;
+                else
+                    newMedia.ContentType = ContentType.Video;
+                showUrlPreview = true;
+            }
+            else if (urlLower.Contains("spotify.com"))
+            {
+                detectedPlatform = "Spotify";
+                newMedia.ContentType = ContentType.Audio;
+                showUrlPreview = true;
+            }
+            else if (urlLower.Contains("soundcloud.com"))
+            {
+                detectedPlatform = "SoundCloud";
+                newMedia.ContentType = ContentType.Audio;
+                showUrlPreview = true;
+            }
+            else
+            {
+                // Direct URL - detect by extension
+                detectedPlatform = "Direct";
+                var ext = GetUrlExtension(url);
+
+                if (new[] { ".mp4", ".webm", ".ogg", ".mov", ".avi", ".mkv" }.Contains(ext))
+                {
+                    newMedia.ContentType = ContentType.Video;
+                    showUrlPreview = true;
+                }
+                else if (new[] { ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a" }.Contains(ext))
+                {
+                    newMedia.ContentType = ContentType.Audio;
+                    showUrlPreview = true;
+                }
+                else if (new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp" }.Contains(ext))
+                {
+                    newMedia.ContentType = ContentType.Image;
+                    showUrlPreview = true;
+                }
+                else if (ext == ".pdf")
+                {
+                    newMedia.ContentType = ContentType.Pdf;
+                    showUrlPreview = true;
+                }
+                else if (new[] { ".ppt", ".pptx", ".odp" }.Contains(ext))
+                {
+                    newMedia.ContentType = ContentType.PowerPoint;
+                    showUrlPreview = true;
+                }
+
+                // Auto-generate name from filename if empty
+                if (string.IsNullOrEmpty(newMedia.Name))
+                {
+                    var filename = Path.GetFileNameWithoutExtension(uri.LocalPath);
+                    if (!string.IsNullOrEmpty(filename))
+                        newMedia.Name = filename;
+                }
+            }
+        }
+        finally
+        {
+            isValidatingUrl = false;
+            StateHasChanged();
+        }
+    }
+
+    private string? GetYouTubeThumbnail(string url)
+    {
+        var videoId = ExtractYouTubeVideoId(url);
+        if (!string.IsNullOrEmpty(videoId))
+        {
+            // Try high quality first, then medium
+            return $"https://img.youtube.com/vi/{videoId}/hqdefault.jpg";
+        }
+        return null;
+    }
+
+    private string ExtractYouTubeVideoId(string url)
+    {
+        // Handle youtu.be/VIDEO_ID format
+        if (url.Contains("youtu.be/"))
+        {
+            var start = url.IndexOf("youtu.be/") + 9;
+            var end = url.IndexOf('?', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/live/VIDEO_ID format (YouTube's live-event permalink)
+        if (url.Contains("/live/"))
+        {
+            var start = url.IndexOf("/live/") + 6;
+            var end = url.IndexOfAny(new[] { '?', '/' }, start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/watch?v=VIDEO_ID format
+        if (url.Contains("v="))
+        {
+            var start = url.IndexOf("v=") + 2;
+            var end = url.IndexOf('&', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        // Handle youtube.com/embed/VIDEO_ID format
+        if (url.Contains("/embed/"))
+        {
+            var start = url.IndexOf("/embed/") + 7;
+            var end = url.IndexOf('?', start);
+            return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+        }
+
+        return "";
+    }
+
+    private string ExtractYouTubeLiveChannelId(string url)
+    {
+        // youtube.com/channel/UCxxxxxxxx/live — a channel's "currently live" link,
+        // no fixed video ID. Matches the same helper in MediaPlayer.razor, which is
+        // what actually resolves this into a playable embed via YouTube's dedicated
+        // live_stream embed target.
+        const string marker = "/channel/";
+        var idx = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0 || !url.TrimEnd('/').EndsWith("/live", StringComparison.OrdinalIgnoreCase))
+            return "";
+
+        var start = idx + marker.Length;
+        var end = url.IndexOfAny(new[] { '?', '/' }, start);
+        return end > 0 ? url.Substring(start, end - start) : url.Substring(start);
+    }
+
+    private string ExtractVimeoVideoId(string url)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"vimeo\.com/(\d+)");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private string ExtractTikTokVideoId(string url)
+    {
+        // tiktok.com/@username/video/VIDEO_ID — matches the same helper in MediaPlayer.razor.
+        // Short vm.tiktok.com/xxxxx redirect links aren't resolvable client-side.
+        var match = System.Text.RegularExpressions.Regex.Match(url, @"/video/(\d+)");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private string GetUrlExtension(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            var path = uri.AbsolutePath;
+            var lastDot = path.LastIndexOf('.');
+            if (lastDot > 0)
+                return path.Substring(lastDot).ToLower();
+        }
+        catch { }
+        return "";
+    }
+
+    private string GetPlatformIcon(string? platform) => platform switch
+    {
+        "YouTube" => "bi-youtube",
+        "Vimeo" => "bi-vimeo",
+        "TikTok" => "bi-tiktok",
+        "Google" => "bi-google",
+        "Spotify" => "bi-spotify",
+        "SoundCloud" => "bi-soundwave",
+        "Direct" => "bi-link-45deg",
+        _ => "bi-globe"
+    };
+
+    private string GetContentTypeIcon(ContentType type) => type switch
+    {
+        ContentType.Video => "bi-camera-video",
+        ContentType.Audio => "bi-music-note-beamed",
+        ContentType.Image => "bi-image",
+        ContentType.Pdf => "bi-file-pdf",
+        ContentType.PowerPoint => "bi-file-slides",
+        ContentType.Html => "bi-code-slash",
+        ContentType.Text => "bi-file-text",
+        _ => "bi-file-earmark"
+    };
+
+    private void HandlePreviewError()
+    {
+        // Image failed to load - hide preview
+        showUrlPreview = false;
+        StateHasChanged();
+    }
+
+    private async Task AddMediaFromUrl()
+    {
+        if (string.IsNullOrEmpty(newMedia.Name) || string.IsNullOrEmpty(newMedia.FileUrl))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Name and URL are required.");
+            return;
+        }
+
+        // Determine thumbnail URL
+        string? thumbnailUrl = null;
+        if (newMedia.ContentType == ContentType.Image)
+        {
+            thumbnailUrl = newMedia.FileUrl;
+        }
+        else if (!string.IsNullOrEmpty(detectedThumbnail))
+        {
+            thumbnailUrl = detectedThumbnail;
+        }
+
+        var request = new CreateMediaContentRequest
+        {
+            Name = newMedia.Name,
+            Description = newMedia.Description,
+            ContentType = newMedia.ContentType,
+            StorageType = StorageType.Url,
+            FileUrl = newMedia.FileUrl,
+            ThumbnailUrl = thumbnailUrl
+        };
+
+        var result = await ContentApi.CreateMediaContentAsync(organizationId, request);
+        if (result != null)
+        {
+            var platformText = detectedPlatform != null ? $" from {detectedPlatform}" : "";
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"Media added{platformText} successfully.");
+            showAddUrlDialog = false;
+
+            // Reset detection state
+            detectedPlatform = null;
+            detectedThumbnail = null;
+            showUrlPreview = false;
+
+            await LoadMedia();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to add media.");
+        }
+    }
+
+    private void SelectMedia(MediaContentDto media)
+    {
+        previewMedia = media;
+        showPreviewDialog = true;
+    }
+
+    private void OpenInNewTab(string? url)
+    {
+        if (!string.IsNullOrEmpty(url))
+        {
+            NavigationManager.NavigateTo(url, true);
+        }
+    }
+
+    private async Task AddToPlaylist(MediaContentDto media)
+    {
+        mediaToAddToPlaylist = media;
+        showPreviewDialog = false;
+        availablePlaylists = await ContentApi.GetPlaylistsAsync(organizationId);
+        selectedPlaylistId = availablePlaylists.FirstOrDefault()?.Id ?? Guid.Empty;
+        availableCampaigns = await ContentApi.GetCampaignsAsync(organizationId);
+        selectedCampaignId = null;
+        showAddToPlaylistDialog = true;
+    }
+
+    private async Task ConfirmAddToPlaylist()
+    {
+        if (mediaToAddToPlaylist == null || selectedPlaylistId == Guid.Empty)
+            return;
+
+        isAddingToPlaylist = true;
+        try
+        {
+            var result = await ContentApi.AddPlaylistItemAsync(selectedPlaylistId, new AddPlaylistItemRequest
+            {
+                MediaContentId = mediaToAddToPlaylist.Id,
+                CampaignId = selectedCampaignId
+            });
+
+            if (result != null)
+            {
+                var playlistName = availablePlaylists.FirstOrDefault(p => p.Id == selectedPlaylistId)?.Name ?? "playlist";
+                NotificationService.Notify(ToastSeverity.Success, "Added", $"{mediaToAddToPlaylist.Name} added to {playlistName}.");
+                showAddToPlaylistDialog = false;
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to add media to playlist.");
+            }
+        }
+        finally
+        {
+            isAddingToPlaylist = false;
+        }
+    }
+
+    private Task EditMedia(MediaContentDto media)
+    {
+        mediaToEdit = media;
+        editMediaName = media.Name;
+        editMediaDescription = media.Description ?? "";
+        editMediaTagsInput = media.Tags != null ? string.Join(", ", media.Tags) : "";
+        showEditMediaDialog = true;
+        return Task.CompletedTask;
+    }
+
+    private async Task ConfirmEditMedia()
+    {
+        if (mediaToEdit == null || string.IsNullOrWhiteSpace(editMediaName))
+            return;
+
+        isSavingMedia = true;
+        try
+        {
+            var tags = editMediaTagsInput
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToArray();
+
+            var result = await ContentApi.UpdateMediaContentAsync(mediaToEdit.Id, new UpdateMediaContentRequest
+            {
+                Name = editMediaName,
+                Description = string.IsNullOrWhiteSpace(editMediaDescription) ? null : editMediaDescription,
+                Tags = tags.Length > 0 ? tags : null
+            });
+
+            if (result != null)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved", $"{result.Name} updated.");
+                showEditMediaDialog = false;
+                await LoadMedia();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update media.");
+            }
+        }
+        finally
+        {
+            isSavingMedia = false;
+        }
+    }
+
+    private void DeleteMedia(MediaContentDto media)
+    {
+        mediaToDelete = media;
+        deleteConfirmMessage = $"Delete '{media.Name}'?";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+
+        if (confirmed && mediaToDelete != null)
+        {
+            var success = await ContentApi.DeleteMediaContentAsync(mediaToDelete.Id);
+            if (success)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Deleted", "Media deleted successfully.");
+                await LoadMedia();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete media.");
+            }
+        }
+
+        mediaToDelete = null;
+    }
+
+    private string GetMediaIcon(ContentType type) => type switch
+    {
+        ContentType.Image => "image",
+        ContentType.Video => "videocam",
+        ContentType.Audio => "audiotrack",
+        ContentType.Text => "text_fields",
+        ContentType.Html => "code",
+        ContentType.Pdf => "picture_as_pdf",
+        ContentType.PowerPoint => "slideshow",
+        _ => "insert_drive_file"
+    };
+
+    private string GetMediaIconBootstrap(ContentType type) => type switch
+    {
+        ContentType.Image => "image",
+        ContentType.Video => "film",
+        ContentType.Audio => "music-note-beamed",
+        ContentType.Text => "file-text",
+        ContentType.Html => "code-slash",
+        ContentType.Pdf => "file-pdf",
+        ContentType.PowerPoint => "file-slides",
+        _ => "file-earmark"
+    };
+
+    private string GetPlayIcon(ContentType type) => type switch
+    {
+        ContentType.Video => "play_circle",
+        ContentType.Audio => "play_circle",
+        ContentType.Image => "visibility",
+        ContentType.Pdf => "visibility",
+        ContentType.PowerPoint => "slideshow",
+        _ => "visibility"
+    };
+
+    private string GetPlayIconBootstrap(ContentType type) => type switch
+    {
+        ContentType.Video => "play-circle",
+        ContentType.Audio => "play-circle",
+        ContentType.Image => "eye",
+        ContentType.Pdf => "eye",
+        ContentType.PowerPoint => "file-slides",
+        _ => "eye"
+    };
+
+    private string GetFileIconBootstrap(string mimeType)
+    {
+        if (string.IsNullOrEmpty(mimeType)) return "file-earmark";
+
+        if (mimeType.StartsWith("image/")) return "image";
+        if (mimeType.StartsWith("video/")) return "film";
+        if (mimeType.StartsWith("audio/")) return "music-note-beamed";
+        if (mimeType == "application/pdf") return "file-pdf";
+
+        return "file-earmark";
+    }
+
+    private string GetMediaSourceBadge(MediaContentDto media)
+    {
+        var url = media.FileUrl?.ToLower() ?? "";
+
+        if (url.Contains("youtube.com") || url.Contains("youtu.be"))
+            return "YouTube";
+        if (url.Contains("vimeo.com"))
+            return "Vimeo";
+        if (url.Contains("tiktok.com"))
+            return "TikTok";
+        if (url.Contains("drive.google.com") || url.Contains("docs.google.com"))
+            return "Google Drive";
+        if (url.Contains("soundcloud.com"))
+            return "SoundCloud";
+        if (url.Contains("spotify.com"))
+            return "Spotify";
+        if (url.Contains("onedrive") || url.Contains("sharepoint"))
+            return "OneDrive";
+
+        return media.ContentType.ToString();
+    }
+
+    private string FormatFileSize(long? bytes)
+    {
+        if (!bytes.HasValue) return "--";
+        var kb = bytes.Value / 1024.0;
+        if (kb < 1024) return $"{kb:F1} KB";
+        var mb = kb / 1024.0;
+        return $"{mb:F1} MB";
+    }
+
+    private string FormatDuration(int seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.TotalHours >= 1 ? ts.ToString(@"h\:mm\:ss") : ts.ToString(@"m\:ss");
+    }
+
+    private class NewMediaModel
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public ContentType ContentType { get; set; } = ContentType.Image;
+        public string? FileUrl { get; set; }
+    }
+
+    private class SelectedFile
+    {
+        public string Name { get; set; } = "";
+        public long Size { get; set; }
+        public string ContentType { get; set; } = "";
+        public byte[] Data { get; set; } = Array.Empty<byte>();
+    }
+}

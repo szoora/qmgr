@@ -1,0 +1,712 @@
+@page "/admin/branding-settings"
+@inject IOrganizationApiService OrganizationApi
+@inject IToastService NotificationService
+@inject IAuthService AuthService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+
+<PageTitle>Branding Settings - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Branding Settings</h1>
+            <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
+        </div>
+        <div class="header-actions">
+            @if (canEdit)
+            {
+                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || isLoading || !settings.WhiteLabelEntitled)" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+        </div>
+    }
+    else
+    {
+        <QCard Icon="moon-fill" Title="Display Theme" Subtitle="Controls the look of your public customer-display and kiosk screens — available on every plan">
+            <div class="theme-picker">
+                <button type="button" class="theme-option @(displayTheme == "dark" ? "selected" : "")" @onclick='@(() => SetDisplayTheme("dark"))' disabled="@(!canEdit || isSavingTheme)">
+                    <div class="theme-preview theme-preview-dark">
+                        <span class="preview-bar"></span>
+                        <span class="preview-bar short"></span>
+                    </div>
+                    <span>Dark</span>
+                </button>
+                <button type="button" class="theme-option @(displayTheme == "light" ? "selected" : "")" @onclick='@(() => SetDisplayTheme("light"))' disabled="@(!canEdit || isSavingTheme)">
+                    <div class="theme-preview theme-preview-light">
+                        <span class="preview-bar"></span>
+                        <span class="preview-bar short"></span>
+                    </div>
+                    <span>Light</span>
+                </button>
+            </div>
+        </QCard>
+
+        @if (!settings.WhiteLabelEntitled)
+        {
+            <QCard Icon="lock-fill" Title="White-Label Branding" Subtitle="Not available on your current plan">
+                <div class="upgrade-notice">
+                    <p>@(featureUnavailableMessage ?? "Upgrade your plan to customize your logo and colors.")</p>
+                    <QButton Text="View Plans" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/plans"))" />
+                </div>
+            </QCard>
+        }
+        <div class="settings-container">
+            <QCard Icon="toggle-on" Title="Enable White-Label Branding" Subtitle="Turn your custom branding on or off without losing your saved settings">
+                <div class="toggle-group">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.WhitelabelEnabled" disabled="@(!settings.WhiteLabelEntitled)" />
+                    </div>
+                    <div class="toggle-info">
+                        <span class="toggle-label">White-labeling @(settings.WhitelabelEnabled ? "enabled" : "disabled")</span>
+                        <small>When off, kiosk and display screens use the standard Q-Mgr look regardless of the settings below</small>
+                    </div>
+                </div>
+            </QCard>
+
+            <QCard Icon="image-fill" Title="Logo &amp; Favicon" Subtitle="Shown on public kiosk and display screens">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Brand Name</label>
+                        <QInput @bind-Value="@settings.BrandName" Placeholder="Your Company Name" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        <small>Overrides "Q-Mgr" on public screens when set</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Logo URL</label>
+                        <QInput @bind-Value="@settings.LogoUrl" Placeholder="https://your-domain.com/logo.png" Disabled="@(!settings.WhiteLabelEntitled)" />
+                    </div>
+                    <div class="form-group">
+                        <label>Favicon URL</label>
+                        <QInput @bind-Value="@settings.FaviconUrl" Placeholder="https://your-domain.com/favicon.svg" Disabled="@(!settings.WhiteLabelEntitled)" />
+                    </div>
+                </div>
+            </QCard>
+
+            <QCard Icon="stars" Title="Color Palettes" Subtitle="Quick-start palettes for common business types — click one to apply instantly">
+                <div class="palette-grid">
+                    @foreach (var palette in Palettes)
+                    {
+                        var isSelected = settings.PrimaryColor == palette.Primary && settings.SecondaryColor == palette.Secondary && settings.AccentColor == palette.Accent;
+                        <button type="button" class="palette-swatch @(isSelected ? "selected" : "")" disabled="@(!settings.WhiteLabelEntitled || isSaving)" @onclick="@(() => ApplyPalette(palette))">
+                            <div class="palette-colors">
+                                <span class="palette-chip" style="background:@palette.Primary;"></span>
+                                <span class="palette-chip" style="background:@palette.Secondary;"></span>
+                                <span class="palette-chip" style="background:@palette.Accent;"></span>
+                            </div>
+                            <span class="palette-name">@palette.Name</span>
+                            <span class="palette-business-type">@palette.BusinessType</span>
+                        </button>
+                    }
+                </div>
+            </QCard>
+
+            <QCard Icon="palette-fill" Title="Colors" Subtitle="Applied as CSS accent colors on kiosk and display screens">
+                <div class="form-grid color-grid">
+                    <div class="form-group">
+                        <label>Primary Color</label>
+                        <div class="color-input-row">
+                            <input type="color" value="@(settings.PrimaryColor ?? "#8c2f52")" @onchange="@(e => settings.PrimaryColor = (string?)e.Value)" disabled="@(!settings.WhiteLabelEntitled)" />
+                            <QInput @bind-Value="@settings.PrimaryColor" Placeholder="#8c2f52" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Secondary Color</label>
+                        <div class="color-input-row">
+                            <input type="color" value="@(settings.SecondaryColor ?? "#47393f")" @onchange="@(e => settings.SecondaryColor = (string?)e.Value)" disabled="@(!settings.WhiteLabelEntitled)" />
+                            <QInput @bind-Value="@settings.SecondaryColor" Placeholder="#47393f" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Accent Color</label>
+                        <div class="color-input-row">
+                            <input type="color" value="@(settings.AccentColor ?? "#0d9488")" @onchange="@(e => settings.AccentColor = (string?)e.Value)" disabled="@(!settings.WhiteLabelEntitled)" />
+                            <QInput @bind-Value="@settings.AccentColor" Placeholder="#0d9488" Disabled="@(!settings.WhiteLabelEntitled)" />
+                        </div>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(validationError))
+                {
+                    <div class="validation-error">@validationError</div>
+                }
+            </QCard>
+
+            <QCard Icon="megaphone-fill" Title="Display Banner" Subtitle="A scrolling message banner shown on Customer Display and Full-Screen Signage — opt-in, off by default">
+                <div class="toggle-group">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" @bind="banner.Enabled" />
+                    </div>
+                    <div class="toggle-info">
+                        <span class="toggle-label">Banner @(banner.Enabled ? "enabled" : "disabled")</span>
+                        <small>Shown on both /queue/display and /display/signage for this branch</small>
+                    </div>
+                </div>
+
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group">
+                        <label>Position</label>
+                        <div class="banner-radio-row">
+                            <label class="banner-radio"><input type="radio" name="banner-position" checked="@(banner.Position == DisplayBannerPosition.Bottom)" @onchange="@(() => banner.Position = DisplayBannerPosition.Bottom)" /> Bottom</label>
+                            <label class="banner-radio"><input type="radio" name="banner-position" checked="@(banner.Position == DisplayBannerPosition.Top)" @onchange="@(() => banner.Position = DisplayBannerPosition.Top)" /> Top</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Scroll Direction</label>
+                        <div class="banner-radio-row">
+                            <label class="banner-radio"><input type="radio" name="banner-direction" checked="@(banner.Direction == DisplayBannerDirection.RightToLeft)" @onchange="@(() => banner.Direction = DisplayBannerDirection.RightToLeft)" /> Right to left</label>
+                            <label class="banner-radio"><input type="radio" name="banner-direction" checked="@(banner.Direction == DisplayBannerDirection.LeftToRight)" @onchange="@(() => banner.Direction = DisplayBannerDirection.LeftToRight)" /> Left to right</label>
+                        </div>
+                        <small>Use left-to-right for RTL-language message content</small>
+                    </div>
+                </div>
+
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group">
+                        <label>Speed (seconds per loop)</label>
+                        <QInput TValue="int" @bind-Value="banner.SpeedSeconds" Type="number" Min="5" Max="120" />
+                        <small>Lower is faster</small>
+                    </div>
+                </div>
+
+                <div class="form-grid color-grid" style="margin-top:20px;">
+                    <div class="form-group">
+                        <label>Background Color</label>
+                        <div class="color-input-row">
+                            <input type="color" value="@banner.BackgroundColor" @onchange="@(e => banner.BackgroundColor = (string?)e.Value ?? banner.BackgroundColor)" />
+                            <QInput @bind-Value="banner.BackgroundColor" Placeholder="#8c2f52" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Text Color</label>
+                        <div class="color-input-row">
+                            <input type="color" value="@banner.TextColor" @onchange="@(e => banner.TextColor = (string?)e.Value ?? banner.TextColor)" />
+                            <QInput @bind-Value="banner.TextColor" Placeholder="#ffffff" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top:20px;">
+                    <label>Messages</label>
+                    @for (var i = 0; i < banner.Messages.Count; i++)
+                    {
+                        var index = i;
+                        <div class="banner-message-row">
+                            <QInput TValue="string" Value="@banner.Messages[index]" ValueChanged="@(v => banner.Messages[index] = v ?? "")" Placeholder="Message text" />
+                            <QButton Icon="trash-fill" Variant="danger" Size="sm" OnClick="@(() => banner.Messages.RemoveAt(index))" />
+                        </div>
+                    }
+                    <QButton Text="Add Message" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => banner.Messages.Add(""))" />
+                </div>
+
+                <div class="edit-actions" style="margin-top:20px;">
+                    <QButton Text="Save Banner Settings" Icon="check-lg" Variant="primary" OnClick="@SaveBanner" Disabled="@isSavingBanner" />
+                </div>
+            </QCard>
+        </div>
+    }
+</div>
+
+<style>
+    .admin-page {
+        padding: 24px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 32px;
+    }
+
+    .header-content h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .header-content .subtitle {
+        margin: 0;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .loading-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 80px;
+    }
+
+    .settings-container {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .form-group label {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .form-group small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .color-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .color-input-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .color-input-row input[type="color"] {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .edit-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+    }
+
+    .palette-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 14px;
+    }
+
+    .palette-swatch {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 10px;
+        background: var(--qm-surface, transparent);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        transition: var(--qm-transition-fast, all 0.15s ease);
+    }
+
+    .palette-swatch:hover:not(:disabled) {
+        border-color: var(--qm-primary);
+    }
+
+    .palette-swatch.selected {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .palette-swatch:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .palette-colors {
+        display: flex;
+    }
+
+    .palette-chip {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2px solid var(--qm-surface, #fff);
+        box-shadow: 0 0 0 1px var(--qm-border);
+    }
+
+    .palette-chip + .palette-chip {
+        margin-left: -8px;
+    }
+
+    .palette-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .palette-business-type {
+        font-size: 11px;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .banner-radio-row {
+        display: flex;
+        gap: 20px;
+    }
+
+    .banner-radio {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--qm-text-primary);
+        cursor: pointer;
+    }
+
+    .banner-message-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .banner-message-row .q-input-wrapper {
+        flex: 1;
+    }
+
+    .theme-picker {
+        display: flex;
+        gap: 16px;
+    }
+
+    .theme-option {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        background: none;
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        transition: var(--qm-transition-fast, all 0.15s ease);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .theme-option:hover:not(:disabled) {
+        border-color: var(--qm-primary);
+    }
+
+    .theme-option.selected {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .theme-option:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .theme-preview {
+        width: 96px;
+        height: 60px;
+        border-radius: var(--qm-radius-md);
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .theme-preview-dark {
+        background: #141414;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .theme-preview-light {
+        background: #f8fafc;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    .theme-preview .preview-bar {
+        display: block;
+        height: 6px;
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-primary);
+        width: 100%;
+    }
+
+    .theme-preview .preview-bar.short {
+        width: 60%;
+        opacity: 0.5;
+    }
+
+    .toggle-group {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .toggle-info {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .toggle-label {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--qm-text-primary);
+    }
+
+    .toggle-info small {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .upgrade-notice {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .upgrade-notice p {
+        margin: 0;
+        color: var(--qm-text-secondary);
+    }
+
+    .validation-error {
+        margin-top: 16px;
+        padding: 10px 14px;
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        color: var(--qm-danger);
+        border-radius: var(--qm-radius-lg);
+        font-size: 13px;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool isSavingTheme = false;
+    private bool canEdit = false;
+    private string? featureUnavailableMessage;
+    private string? validationError;
+    private Guid organizationId;
+    private string displayTheme = "dark";
+
+    // Matches the same hardcoded default branch used elsewhere on the public
+    // display path (Playlists.razor, CustomerDisplay.razor, SignageDisplay.razor)
+    // until per-tenant branch resolution is wired through the whole app — see
+    // docs/TASK_TRACKER.md.
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private bool isSavingBanner = false;
+    private DisplayBannerSettingsDto banner = new();
+
+    private OrganizationBrandingDto settings = new();
+
+    // Curated palettes for common business types. Hues are loosely inspired by the
+    // Webster template's bundled skin colors (D:\QMGR\Webster\templates\css\skins\)
+    // per the user's explicit request to use it as a starting point, but adapted to
+    // Q-Mgr's own darker/richer contrast pattern (deep primary + tinted-dark
+    // secondary + bright accent) rather than adopting Webster's palettes as-is.
+    private record ColorPalette(string Name, string BusinessType, string Primary, string Secondary, string Accent);
+
+    private static readonly List<ColorPalette> Palettes = new()
+    {
+        new("Signature Wine", "Q-Mgr default", "#8c2f52", "#47393f", "#0d9488"),
+        new("Corporate Navy", "Banking & finance", "#1d3557", "#2b2d3a", "#3fa9f5"),
+        new("Healthcare Teal", "Clinics & hospitals", "#0f766e", "#1e3a3a", "#38bdf8"),
+        new("Government Slate", "Public sector offices", "#475569", "#1e293b", "#0ea5e9"),
+        new("Hospitality Emerald", "Hotels & restaurants", "#15803d", "#1c2e22", "#eab308"),
+        new("Retail Amber", "Retail & shopping", "#c2410c", "#3a2a1e", "#facc15"),
+        new("Beauty Rose", "Salons & spas", "#db2777", "#3f2130", "#f472b6"),
+        new("Tech Violet", "Startups & coworking", "#7c3aed", "#241b3a", "#22d3ee"),
+        new("Legal Charcoal", "Law firms & legal services", "#334155", "#18181b", "#b45309"),
+        new("Automotive Crimson", "Auto & service centers", "#b91c1c", "#2b1414", "#f59e0b"),
+    };
+
+    private async Task ApplyPalette(ColorPalette palette)
+    {
+        settings.PrimaryColor = palette.Primary;
+        settings.SecondaryColor = palette.Secondary;
+        settings.AccentColor = palette.Accent;
+        await SaveSettings();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.SettingsEdit);
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+        {
+            branchId = BranchState.CurrentBranchId;
+        }
+
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user == null || user.OrganizationId == Guid.Empty)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        organizationId = user.OrganizationId;
+
+        await LoadSettings();
+        banner = await OrganizationApi.GetDisplayBannerAsync(branchId);
+    }
+
+    private async Task LoadSettings()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
+            if (result != null)
+            {
+                settings = result;
+                displayTheme = result.DisplayTheme;
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load branding settings: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SetDisplayTheme(string theme)
+    {
+        if (theme == displayTheme || isSavingTheme) return;
+
+        var previous = displayTheme;
+        displayTheme = theme; // optimistic update
+        isSavingTheme = true;
+        try
+        {
+            var response = await OrganizationApi.UpdateDisplayThemeAsync(organizationId, theme);
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved", $"Display theme set to {theme}");
+            }
+            else
+            {
+                displayTheme = previous;
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save display theme ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            displayTheme = previous;
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save display theme: {ex.Message}");
+        }
+        finally
+        {
+            isSavingTheme = false;
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        isSaving = true;
+        validationError = null;
+        try
+        {
+            var response = await OrganizationApi.UpdateOrganizationBrandingAsync(organizationId, settings);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var updated = await response.Content.ReadFromJsonAsync<OrganizationBrandingDto>(JsonOptions);
+                if (updated != null) settings = updated;
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "Branding settings updated successfully");
+                return;
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                // Defensive fallback: GetOrganizationBranding's WhiteLabelEntitled already
+                // gates the UI up front, but FeatureFlagService caches for 5 minutes, so a
+                // plan downgrade could leave stale entitlement in the loaded page until a
+                // save attempt round-trips the real, current check.
+                settings = settings with { WhiteLabelEntitled = false };
+                featureUnavailableMessage = body.TryGetProperty("message", out var msg)
+                    ? msg.GetString()
+                    : "White-label branding is not available on your current plan.";
+                return;
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                validationError = body.TryGetProperty("message", out var msg) ? msg.GetString() : "Invalid branding settings.";
+                return;
+            }
+
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings ({(int)response.StatusCode})");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save settings: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SaveBanner()
+    {
+        isSavingBanner = true;
+        try
+        {
+            var response = await OrganizationApi.UpdateDisplayBannerAsync(branchId, banner);
+            if (response.IsSuccessStatusCode)
+            {
+                var updated = await response.Content.ReadFromJsonAsync<DisplayBannerSettingsDto>(JsonOptions);
+                if (updated != null) banner = updated;
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "Display banner settings updated successfully");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save banner settings ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save banner settings: {ex.Message}");
+        }
+        finally
+        {
+            isSavingBanner = false;
+        }
+    }
+}

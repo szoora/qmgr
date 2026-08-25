@@ -1,0 +1,602 @@
+@page "/admin/api-clients"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>API Clients - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>API Clients</h1>
+            <p class="subtitle">Manage API keys and client applications</p>
+        </div>
+        @if (canCreate)
+        {
+            <QButton Text="Create API Key" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+        </div>
+    }
+    else if (!apiClients.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="key" />
+            <h3>No API Clients</h3>
+            <p>Create one to let an external system authenticate against this API (OAuth2 client-credentials — see POST /api/v1/auth/token).</p>
+            @if (canCreate)
+            {
+                <QButton Text="Create API Key" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="api-clients-grid">
+            @foreach (var client in apiClients)
+            {
+                <div class="client-card @(client.IsActive ? "" : "inactive")">
+                    <div class="client-header">
+                        <div class="client-icon">
+                            <QIcon Name="@GetSystemTypeIcon(client.SystemType)" />
+                        </div>
+                        <div class="client-status">
+                            <span class="status-dot @(client.IsActive ? "active" : "")"></span>
+                            @(client.IsActive ? "Active" : "Inactive")
+                        </div>
+                    </div>
+                    <div class="client-body">
+                        <h4>@client.Name</h4>
+                        <p class="client-description">@client.Description</p>
+                        <div class="client-key">
+                            <label>Client ID</label>
+                            <div class="key-container">
+                                <code>@client.ClientId</code>
+                                <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(client.ClientId))" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="client-stats">
+                        <div class="stat">
+                            <span class="stat-value">@client.RateLimitPerMinute</span>
+                            <span class="stat-label">Requests/min limit</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value">@(client.LastUsedAt.HasValue ? client.LastUsedAt.Value.ToLocalTime().ToString("MMM dd, HH:mm") : "Never")</span>
+                            <span class="stat-label">Last Used</span>
+                        </div>
+                    </div>
+                    <div class="client-footer">
+                        <div class="client-permissions">
+                            @foreach (var scope in client.Scopes.Take(3))
+                            {
+                                <span class="scope-badge">@scope</span>
+                            }
+                            @if (client.Scopes.Count > 3)
+                            {
+                                <span class="scope-badge more">+@(client.Scopes.Count - 3)</span>
+                            }
+                        </div>
+                        <div class="client-actions">
+                            @if (canEdit)
+                            {
+                                <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditClient(client))" />
+                                <QButton Icon="arrow-clockwise" Variant="ghost" Size="sm" OnClick="@(() => RegenerateSecret(client))" Title="Regenerate Secret" />
+                            }
+                            @if (canDelete)
+                            {
+                                <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => DeleteClient(client))" />
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editingClient == null ? "Create API Client" : "Edit API Client")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Name" Label="Client Name *" Placeholder="e.g., Hospital PMS Integration" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Description" Type="textarea" Label="Description" Rows="2" />
+        </div>
+        <div class="form-group">
+            <label>System Type</label>
+            <QSelect TValue="string" TItem="string" @bind-Value="@formData.SystemType" Items="@systemTypes" Placeholder="Custom" AllowClear="true" />
+        </div>
+        <div class="form-group">
+            <label>Scopes / Permissions</label>
+            <div class="scopes-grid">
+                @foreach (var scope in availableScopes)
+                {
+                    <div class="scope-option">
+                        <QCheckbox @bind-Value="@scope.IsSelected" Label="@scope.Name" />
+                        <div class="scope-info">
+                            <span class="scope-desc">@scope.Description</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formData.IsActive" Label="Client is active" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" Disabled="@isSaving" />
+        <QButton Text="@(editingClient == null ? "Create" : "Save")" Icon="@(editingClient == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveClient" Disabled="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<!-- Secret reveal — shown exactly once, right after Create or Regenerate. The plaintext
+     secret is never stored or retrievable again after this; only its BCrypt hash is kept
+     server-side, matching Stripe/GitHub/AWS-style API key UX. -->
+<QModal @bind-Visible="showSecretDialog" Title="Save Your Client Secret" Icon="shield-lock-fill" Size="md" CloseOnBackdropClick="false">
+    <ChildContent>
+        <p class="secret-warning">
+            <QIcon Name="exclamation-triangle-fill" />
+            This is the only time this secret will be shown. Copy it now — it cannot be retrieved again later, only regenerated (which invalidates this one).
+        </p>
+        <div class="form-group">
+            <label>Client Secret</label>
+            <div class="key-container">
+                <code>@revealedSecret</code>
+                <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(revealedSecret))" />
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="I've Copied It" Icon="check-lg" Variant="primary" OnClick="@(() => showSecretDialog = false)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .loading-container {
+        display: flex;
+        justify-content: center;
+        padding: 80px;
+    }
+
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 80px 20px;
+        text-align: center;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .empty-state .q-icon { font-size: 48px; color: var(--qm-text-muted); margin-bottom: 16px; }
+    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .empty-state p { margin: 0 0 24px; color: var(--qm-text-muted); max-width: 400px; }
+
+    .api-clients-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+        gap: 20px;
+    }
+
+    .client-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .client-card:hover { box-shadow: var(--qm-shadow-md); }
+    .client-card.inactive { opacity: 0.6; }
+
+    .client-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+    }
+
+    .client-icon {
+        width: 44px;
+        height: 44px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .client-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--qm-text-muted);
+    }
+
+    .status-dot.active { background: var(--qm-success); }
+
+    .client-body { padding: 16px; }
+    .client-body h4 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .client-description { margin: 0 0 16px; font-size: 13px; color: var(--qm-text-muted); }
+
+    .client-key label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+        margin-bottom: 6px;
+    }
+
+    .key-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--qm-bg-elevated);
+        padding: 8px 12px;
+        border-radius: var(--qm-radius-lg);
+        border: 1px solid var(--qm-border);
+    }
+
+    .key-container code {
+        flex: 1;
+        font-family: var(--qm-font-mono);
+        font-size: 12px;
+        color: var(--qm-primary);
+        word-break: break-all;
+    }
+
+    .secret-warning {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        margin: 0 0 16px;
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        border-radius: var(--qm-radius-lg);
+        font-size: 13px;
+        color: var(--qm-text-primary);
+    }
+
+    .client-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        background: var(--qm-border);
+        margin: 0 16px;
+        border-radius: var(--qm-radius-lg);
+        overflow: hidden;
+    }
+
+    .stat {
+        background: var(--qm-bg-elevated);
+        padding: 12px;
+        text-align: center;
+    }
+
+    .stat-value { display: block; font-size: 18px; font-weight: 600; color: var(--qm-text-primary); }
+    .stat-label { font-size: 11px; color: var(--qm-text-muted); text-transform: uppercase; }
+
+    .client-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        border-top: 1px solid var(--qm-border);
+        margin-top: 16px;
+    }
+
+    .client-permissions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .scope-badge {
+        padding: 4px 8px;
+        border-radius: var(--qm-radius-md);
+        font-size: 10px;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+        font-weight: 500;
+    }
+
+    .scope-badge.more { background: var(--qm-bg-elevated); color: var(--qm-text-muted); }
+
+    .client-actions { display: flex; gap: 4px; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group > label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-secondary);
+    }
+
+    .scopes-grid { display: flex; flex-direction: column; gap: 10px; }
+
+    .scope-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .scope-info { display: flex; flex-direction: column; }
+    .scope-name { font-weight: 500; color: var(--qm-text-primary); }
+    .scope-desc { font-size: 12px; color: var(--qm-text-muted); }
+</style>
+
+@code {
+    private List<ApiClientDto> apiClients = new();
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool showDialog = false;
+    private bool showSecretDialog = false;
+    private string revealedSecret = "";
+    private ApiClientDto? editingClient;
+    private ClientFormData formData = new();
+    private List<ScopeOption> availableScopes = new();
+    private List<string> systemTypes = new() { "hospital_mgmt", "banking", "pharmacy", "custom" };
+    private bool canCreate = false;
+    private bool canEdit = false;
+    private bool canDelete = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.ApiClientsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ApiClientsCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.ApiClientsEdit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ApiClientsDelete);
+
+        availableScopes = new List<ScopeOption>
+        {
+            new() { Name = "queue:read", Description = "View queue status and statistics" },
+            new() { Name = "queue:write", Description = "Manage queue operations" },
+            new() { Name = "token:create", Description = "Create new tokens" },
+            new() { Name = "token:manage", Description = "Call, complete, and transfer tokens" },
+            new() { Name = "counter:read", Description = "View counter information" },
+            new() { Name = "service:read", Description = "View service types" },
+            new() { Name = "stats:read", Description = "Access analytics and reports" }
+        };
+
+        await LoadApiClients();
+    }
+
+    private async Task LoadApiClients()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<ApiClientDto>>("api/v1/api-clients", JsonOptions);
+            apiClients = result ?? new();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load API clients: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetSystemTypeIcon(string? systemType) => systemType switch
+    {
+        "hospital_mgmt" => "hospital",
+        "banking" => "bank",
+        "pharmacy" => "capsule",
+        _ => "key-fill"
+    };
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            NotificationService.Notify(ToastSeverity.Success, "Copied", "Copied to clipboard");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to copy: {ex.Message}");
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingClient = null;
+        formData = new ClientFormData { IsActive = true };
+        foreach (var s in availableScopes) s.IsSelected = false;
+        showDialog = true;
+    }
+
+    private void EditClient(ApiClientDto client)
+    {
+        editingClient = client;
+        formData = new ClientFormData
+        {
+            Name = client.Name,
+            Description = client.Description,
+            SystemType = client.SystemType,
+            IsActive = client.IsActive
+        };
+        foreach (var s in availableScopes)
+            s.IsSelected = client.Scopes.Contains(s.Name);
+        showDialog = true;
+    }
+
+    private async Task SaveClient()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Required", "Client name is required");
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            var selectedScopes = availableScopes.Where(s => s.IsSelected).Select(s => s.Name).ToList();
+
+            if (editingClient == null)
+            {
+                var response = await Http.PostAsJsonAsync("api/v1/api-clients", new CreateApiClientRequest
+                {
+                    Name = formData.Name,
+                    Description = formData.Description,
+                    SystemType = formData.SystemType,
+                    IsActive = formData.IsActive,
+                    Scopes = selectedScopes
+                }, JsonOptions);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var reveal = await response.Content.ReadFromJsonAsync<ApiClientSecretRevealDto>(JsonOptions);
+                    showDialog = false;
+                    await LoadApiClients();
+                    if (reveal != null)
+                    {
+                        revealedSecret = reveal.ClientSecret;
+                        showSecretDialog = true;
+                    }
+                    NotificationService.Notify(ToastSeverity.Success, "Created", "API client created");
+                }
+                else
+                {
+                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to create API client ({(int)response.StatusCode})");
+                }
+            }
+            else
+            {
+                var response = await Http.PutAsJsonAsync($"api/v1/api-clients/{editingClient.Id}", new UpdateApiClientRequest
+                {
+                    Name = formData.Name,
+                    Description = formData.Description,
+                    SystemType = formData.SystemType,
+                    IsActive = formData.IsActive,
+                    Scopes = selectedScopes
+                }, JsonOptions);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    showDialog = false;
+                    await LoadApiClients();
+                    NotificationService.Notify(ToastSeverity.Success, "Saved", "API client updated");
+                }
+                else
+                {
+                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update API client ({(int)response.StatusCode})");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save API client: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task RegenerateSecret(ApiClientDto client)
+    {
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/api-clients/{client.Id}/regenerate-secret", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var reveal = await response.Content.ReadFromJsonAsync<ApiClientSecretRevealDto>(JsonOptions);
+                if (reveal != null)
+                {
+                    revealedSecret = reveal.ClientSecret;
+                    showSecretDialog = true;
+                }
+                NotificationService.Notify(ToastSeverity.Warning, "Secret Regenerated", "The previous secret no longer works. Update your applications.");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to regenerate secret ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to regenerate secret: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteClient(ApiClientDto client)
+    {
+        try
+        {
+            var response = await Http.DeleteAsync($"api/v1/api-clients/{client.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                apiClients.Remove(client);
+                NotificationService.Notify(ToastSeverity.Success, "Deleted", "API client removed");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete API client ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete API client: {ex.Message}");
+        }
+    }
+
+    private class ScopeOption
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public bool IsSelected { get; set; }
+    }
+
+    private class ClientFormData
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string? SystemType { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}

@@ -1,0 +1,266 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TValue
+
+<div class="q-input-wrapper @(HasError ? "q-input-wrapper--error" : "") @(Disabled ? "q-input-wrapper--disabled" : "") @Class">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <label class="q-input__label" for="@inputId">
+            @Label
+            @if (Required)
+            {
+                <span class="q-input__required">*</span>
+            }
+        </label>
+    }
+
+    <div class="q-input__container @(HasFocus ? "q-input__container--focused" : "")">
+        @if (!string.IsNullOrEmpty(IconLeft))
+        {
+            <i class="@GetIconClass(IconLeft) q-input__icon q-input__icon--left"></i>
+        }
+
+        @if (Type == "textarea")
+        {
+            <textarea id="@inputId"
+                      class="q-input q-input--textarea"
+                      placeholder="@Placeholder"
+                      disabled="@Disabled"
+                      readonly="@ReadOnly"
+                      rows="@Rows"
+                      @onfocus="HandleFocus"
+                      @onblur="HandleBlur"
+                      @oninput="HandleInput"
+                      @attributes="AdditionalAttributes">@Value</textarea>
+        }
+        else
+        {
+            <input id="@inputId"
+                   type="@Type"
+                   class="q-input"
+                   value="@Value"
+                   placeholder="@Placeholder"
+                   disabled="@Disabled"
+                   readonly="@ReadOnly"
+                   maxlength="@MaxLength"
+                   min="@Min"
+                   max="@Max"
+                   step="@Step"
+                   @onfocus="HandleFocus"
+                   @onblur="HandleBlur"
+                   @oninput="HandleInput"
+                   @attributes="AdditionalAttributes" />
+        }
+
+        @if (!string.IsNullOrEmpty(IconRight))
+        {
+            <i class="@GetIconClass(IconRight) q-input__icon q-input__icon--right"></i>
+        }
+
+        @if (Type == "password" && ShowPasswordToggle)
+        {
+            <button type="button" class="q-input__toggle" @onclick="TogglePasswordVisibility" tabindex="-1">
+                <i class="bi @(showPassword ? "bi-eye-slash" : "bi-eye")"></i>
+            </button>
+        }
+
+        @if (Clearable && !string.IsNullOrEmpty(Value?.ToString()))
+        {
+            <button type="button" class="q-input__clear" @onclick="Clear" tabindex="-1">
+                <i class="bi bi-x"></i>
+            </button>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(HelperText) && !HasError)
+    {
+        <span class="q-input__helper">@HelperText</span>
+    }
+
+    @if (HasError && !string.IsNullOrEmpty(ErrorMessage))
+    {
+        <span class="q-input__error">@ErrorMessage</span>
+    }
+</div>
+
+@code {
+    private string inputId = $"q-input-{Guid.NewGuid():N}";
+    private bool HasFocus;
+    private bool showPassword;
+
+    /// <summary>
+    /// The current value
+    /// </summary>
+    [Parameter] public TValue? Value { get; set; }
+
+    /// <summary>
+    /// Callback when value changes
+    /// </summary>
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    /// <summary>
+    /// Input label
+    /// </summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>
+    /// Placeholder text
+    /// </summary>
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>
+    /// Input type: text, password, email, number, tel, url, textarea
+    /// </summary>
+    [Parameter] public string Type { get; set; } = "text";
+
+    /// <summary>
+    /// Whether the field is required
+    /// </summary>
+    [Parameter] public bool Required { get; set; }
+
+    /// <summary>
+    /// Whether the input is disabled
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Whether the input is read-only
+    /// </summary>
+    [Parameter] public bool ReadOnly { get; set; }
+
+    /// <summary>
+    /// Maximum length for text input
+    /// </summary>
+    [Parameter] public int? MaxLength { get; set; }
+
+    /// <summary>
+    /// Minimum value for number input
+    /// </summary>
+    [Parameter] public string? Min { get; set; }
+
+    /// <summary>
+    /// Maximum value for number input
+    /// </summary>
+    [Parameter] public string? Max { get; set; }
+
+    /// <summary>
+    /// Step value for number input
+    /// </summary>
+    [Parameter] public string? Step { get; set; }
+
+    /// <summary>
+    /// Number of rows for textarea
+    /// </summary>
+    [Parameter] public int Rows { get; set; } = 3;
+
+    /// <summary>
+    /// Bootstrap icon for left side
+    /// </summary>
+    [Parameter] public string? IconLeft { get; set; }
+
+    /// <summary>
+    /// Bootstrap icon for right side
+    /// </summary>
+    [Parameter] public string? IconRight { get; set; }
+
+    /// <summary>
+    /// Whether to show password toggle button
+    /// </summary>
+    [Parameter] public bool ShowPasswordToggle { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show clear button
+    /// </summary>
+    [Parameter] public bool Clearable { get; set; }
+
+    /// <summary>
+    /// Helper text shown below input
+    /// </summary>
+    [Parameter] public string? HelperText { get; set; }
+
+    /// <summary>
+    /// Whether the input has an error
+    /// </summary>
+    [Parameter] public bool HasError { get; set; }
+
+    /// <summary>
+    /// Error message to display
+    /// </summary>
+    [Parameter] public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    /// <summary>
+    /// Called on focus
+    /// </summary>
+    [Parameter] public EventCallback OnFocus { get; set; }
+
+    /// <summary>
+    /// Called on blur
+    /// </summary>
+    [Parameter] public EventCallback OnBlur { get; set; }
+
+    private string GetIconClass(string icon)
+    {
+        if (string.IsNullOrEmpty(icon)) return "";
+        if (icon.StartsWith("bi-")) return $"bi {icon}";
+        return $"bi bi-{icon}";
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        showPassword = !showPassword;
+        Type = showPassword ? "text" : "password";
+    }
+
+    private async Task HandleFocus()
+    {
+        HasFocus = true;
+        await OnFocus.InvokeAsync();
+    }
+
+    private async Task HandleBlur()
+    {
+        HasFocus = false;
+        await OnBlur.InvokeAsync();
+    }
+
+    private async Task HandleInput(ChangeEventArgs e)
+    {
+        var stringValue = e.Value?.ToString();
+
+        if (typeof(TValue) == typeof(string))
+        {
+            await ValueChanged.InvokeAsync((TValue)(object)(stringValue ?? ""));
+        }
+        else if (typeof(TValue) == typeof(int) && int.TryParse(stringValue, out var intVal))
+        {
+            await ValueChanged.InvokeAsync((TValue)(object)intVal);
+        }
+        else if (typeof(TValue) == typeof(int?) && (string.IsNullOrEmpty(stringValue) || int.TryParse(stringValue, out var nullableIntVal)))
+        {
+            await ValueChanged.InvokeAsync(string.IsNullOrEmpty(stringValue) ? default : (TValue)(object)int.Parse(stringValue));
+        }
+        else if (typeof(TValue) == typeof(decimal) && decimal.TryParse(stringValue, out var decVal))
+        {
+            await ValueChanged.InvokeAsync((TValue)(object)decVal);
+        }
+        else if (typeof(TValue) == typeof(double) && double.TryParse(stringValue, out var dblVal))
+        {
+            await ValueChanged.InvokeAsync((TValue)(object)dblVal);
+        }
+    }
+
+    private async Task Clear()
+    {
+        await ValueChanged.InvokeAsync(default);
+    }
+}

@@ -1,0 +1,534 @@
+@page "/admin/customer-links"
+@using QMgr.Web.Components.Shared
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject NavigationManager NavigationManager
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IJSRuntime JS
+@inject IPermissionService PermissionService
+
+<PageTitle>Customer Links - Q-Mgr</PageTitle>
+
+<div class="customer-links-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1><i class="bi bi-link-45deg"></i> Customer Links</h1>
+            <p class="subtitle">Create and share links for customer-facing features</p>
+        </div>
+    </div>
+
+    <!-- Branch Selector -->
+    <div class="branch-selector-card">
+        <label>Select Branch</label>
+        <select class="form-select" @bind="selectedBranchId" @bind:after="OnBranchChanged">
+            <option value="">-- Select a branch --</option>
+            @foreach (var branch in branches)
+            {
+                <option value="@branch.Id">@branch.Name</option>
+            }
+        </select>
+    </div>
+
+    @if (!string.IsNullOrEmpty(selectedBranchId))
+    {
+        <div class="links-grid">
+            <!-- Kiosk Link Card -->
+            <div class="link-card kiosk">
+                <div class="card-icon">
+                    <i class="bi bi-tablet"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Self-Service Kiosk</h3>
+                    <p>Allow customers to take queue tickets from their own device or a kiosk terminal.</p>
+                    <div class="link-preview">
+                        <code>@GetKioskUrl()</code>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetKioskUrl()))">
+                        <i class="bi bi-eye"></i> Preview
+                    </button>
+                    <button class="btn-share" @onclick="@(() => ShareKiosk())">
+                        <i class="bi bi-share"></i> Share
+                    </button>
+                </div>
+            </div>
+
+            <!-- Feedback Link Card -->
+            <div class="link-card feedback">
+                <div class="card-icon">
+                    <i class="bi bi-chat-heart"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Customer Feedback</h3>
+                    <p>Collect customer feedback and ratings after their service experience.</p>
+                    <div class="link-preview">
+                        <code>@GetFeedbackUrl()</code>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetFeedbackUrl()))">
+                        <i class="bi bi-eye"></i> Preview
+                    </button>
+                    <button class="btn-share" @onclick="@(() => ShareFeedback())">
+                        <i class="bi bi-share"></i> Share
+                    </button>
+                </div>
+            </div>
+
+            <!-- Queue Display Link Card -->
+            <div class="link-card display">
+                <div class="card-icon">
+                    <i class="bi bi-tv"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Queue Display</h3>
+                    <p>Digital signage showing current queue status and called tickets.</p>
+                    <div class="link-preview">
+                        <code>@GetDisplayUrl()</code>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetDisplayUrl()))">
+                        <i class="bi bi-eye"></i> Preview
+                    </button>
+                    <button class="btn-share" @onclick="@(() => ShareDisplay())">
+                        <i class="bi bi-share"></i> Share
+                    </button>
+                </div>
+            </div>
+
+            <!-- Ticket Status Card -->
+            <div class="link-card status">
+                <div class="card-icon">
+                    <i class="bi bi-ticket-detailed"></i>
+                </div>
+                <div class="card-content">
+                    <h3>Ticket Status Check</h3>
+                    <p>Let customers check their ticket status and position in the queue.</p>
+                    <div class="link-preview">
+                        <code>@GetStatusUrl()</code>
+                    </div>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetStatusUrl()))">
+                        <i class="bi bi-eye"></i> Preview
+                    </button>
+                    <button class="btn-share" @onclick="@(() => ShareStatus())">
+                        <i class="bi bi-share"></i> Share
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+            <h3>Quick Actions</h3>
+            <div class="actions-grid">
+                <button class="action-btn" @onclick="DownloadAllQRCodes">
+                    <i class="bi bi-qr-code"></i>
+                    <span>Download All QR Codes</span>
+                </button>
+                <button class="action-btn" @onclick="PrintSignage">
+                    <i class="bi bi-printer"></i>
+                    <span>Print Signage</span>
+                </button>
+                <button class="action-btn" @onclick="CopyAllLinks">
+                    <i class="bi bi-clipboard"></i>
+                    <span>Copy All Links</span>
+                </button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="empty-state">
+            <i class="bi bi-building"></i>
+            <h3>Select a Branch</h3>
+            <p>Choose a branch to generate customer-facing links</p>
+        </div>
+    }
+</div>
+
+<!-- Share Dialog -->
+<ShareDialog @bind-IsVisible="showShareDialog"
+             Url="@shareUrl"
+             Title="@shareTitle"
+             Description="@shareDescription" />
+
+<style>
+    .customer-links-page {
+        max-width: 1200px;
+    }
+
+    .branch-selector-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 20px 24px;
+        margin-bottom: 24px;
+    }
+
+    .branch-selector-card label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--qm-text-muted);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .branch-selector-card .form-select {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+        padding: 12px 16px;
+        border-radius: var(--qm-radius-lg);
+        font-size: 15px;
+        max-width: 400px;
+    }
+
+    .branch-selector-card .form-select:focus {
+        border-color: var(--qm-primary);
+        box-shadow: 0 0 0 3px var(--qm-primary-light);
+    }
+
+    .links-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 20px;
+        margin-bottom: 32px;
+    }
+
+    .link-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+        transition: all 0.3s ease;
+    }
+
+    .link-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 16px;
+        font-size: 24px;
+    }
+
+    .link-card.kiosk .card-icon {
+        background: linear-gradient(135deg, color-mix(in srgb, var(--qm-primary) 20%, transparent), color-mix(in srgb, var(--qm-primary-dark) 20%, transparent));
+        color: var(--qm-primary);
+    }
+
+    .link-card.feedback .card-icon {
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .link-card.display .card-icon {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        color: var(--qm-success);
+    }
+
+    .link-card.status .card-icon {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .card-content h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .card-content p {
+        margin: 0 0 16px;
+        font-size: 14px;
+        color: var(--qm-text-muted);
+        line-height: 1.5;
+    }
+
+    .link-preview {
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-lg);
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        overflow-x: auto;
+    }
+
+    .link-preview code {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        color: var(--qm-primary);
+        white-space: nowrap;
+    }
+
+    .card-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn-preview,
+    .btn-share {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-radius: var(--qm-radius-lg);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .btn-preview {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+    }
+
+    .btn-preview:hover {
+        background: var(--qm-bg-card-hover);
+        border-color: var(--qm-primary);
+    }
+
+    .btn-share {
+        background: var(--qm-gradient-primary);
+        border: none;
+        color: white;
+    }
+
+    .btn-share:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 20px var(--qm-primary-glow);
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        padding: 24px;
+    }
+
+    .quick-actions h3 {
+        margin: 0 0 16px;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .actions-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .action-btn {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 20px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-primary);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .action-btn i {
+        font-size: 18px;
+        color: var(--qm-primary);
+    }
+
+    .action-btn:hover {
+        background: var(--qm-primary-light);
+        border-color: var(--qm-primary);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 80px 20px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .empty-state i {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+        opacity: 0.5;
+        margin-bottom: 16px;
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        font-size: 20px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0;
+        color: var(--qm-text-muted);
+    }
+
+    /* Mobile Responsive */
+    @@media (max-width: 768px) {
+        .links-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .card-actions {
+            flex-direction: column;
+        }
+
+        .actions-grid {
+            flex-direction: column;
+        }
+
+        .action-btn {
+            justify-content: center;
+        }
+
+        .branch-selector-card .form-select {
+            max-width: 100%;
+        }
+    }
+</style>
+
+@code {
+    private List<BranchDto> branches = new();
+    private string selectedBranchId = "";
+    private BranchDto? selectedBranch;
+
+    // Share dialog state
+    private bool showShareDialog = false;
+    private string shareUrl = "";
+    private string shareTitle = "";
+    private string shareDescription = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check permission
+        if (!await PermissionService.HasPermissionAsync(Permissions.SettingsView))
+        {
+            NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadBranches();
+    }
+
+    private async Task LoadBranches()
+    {
+        try
+        {
+            branches = await Http.GetFromJsonAsync<List<BranchDto>>("api/v1/branches?includeInactive=true", JsonOptions) ?? new();
+            if (branches.Any())
+            {
+                selectedBranchId = branches.First().Id.ToString();
+                selectedBranch = branches.First();
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load branches: {ex.Message}");
+        }
+    }
+
+    private void OnBranchChanged()
+    {
+        if (Guid.TryParse(selectedBranchId, out var branchId))
+        {
+            selectedBranch = branches.FirstOrDefault(b => b.Id == branchId);
+        }
+        else
+        {
+            selectedBranch = null;
+        }
+    }
+
+    private string GetBaseUrl()
+    {
+        var uri = new Uri(NavigationManager.BaseUri);
+        return $"{uri.Scheme}://{uri.Authority}";
+    }
+
+    private string GetKioskUrl() => $"{GetBaseUrl()}/kiosk?branch={selectedBranchId}";
+    private string GetFeedbackUrl() => $"{GetBaseUrl()}/feedback?branch={selectedBranchId}";
+    private string GetDisplayUrl() => $"{GetBaseUrl()}/display?branch={selectedBranchId}";
+    private string GetStatusUrl() => $"{GetBaseUrl()}/ticket-status?branch={selectedBranchId}";
+
+    private void PreviewLink(string url)
+    {
+        NavigationManager.NavigateTo(url, true);
+    }
+
+    // Separate share methods to avoid escape character issues in Razor
+    private void ShareKiosk() => ShareLink(GetKioskUrl(), "Self-Service Kiosk", "Join our queue from your phone!");
+    private void ShareFeedback() => ShareLink(GetFeedbackUrl(), "Customer Feedback", "Share your feedback with us!");
+    private void ShareDisplay() => ShareLink(GetDisplayUrl(), "Queue Display", "View live queue status");
+    private void ShareStatus() => ShareLink(GetStatusUrl(), "Check Ticket Status", "Check your queue position");
+
+    private void ShareLink(string url, string title, string description)
+    {
+        shareUrl = url;
+        shareTitle = title;
+        shareDescription = description;
+        showShareDialog = true;
+    }
+
+    private void DownloadAllQRCodes()
+    {
+        NotificationService.Notify(ToastSeverity.Info, "Coming Soon", "Bulk QR code download will be available soon.");
+    }
+
+    private void PrintSignage()
+    {
+        NotificationService.Notify(ToastSeverity.Info, "Coming Soon", "Print signage feature will be available soon.");
+    }
+
+    private async Task CopyAllLinks()
+    {
+        var links = $"Self-Service Kiosk: {GetKioskUrl()}\n" +
+                    $"Customer Feedback: {GetFeedbackUrl()}\n" +
+                    $"Queue Display: {GetDisplayUrl()}\n" +
+                    $"Ticket Status: {GetStatusUrl()}";
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", links);
+            NotificationService.Notify(ToastSeverity.Success, "Copied", "All links copied to clipboard!");
+        }
+        catch
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to copy links");
+        }
+    }
+
+    // DTOs
+    private record BranchDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+}

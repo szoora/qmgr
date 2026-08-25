@@ -1,0 +1,597 @@
+@page "/queue/display"
+@page "/queue/display/{BranchId:guid}"
+@page "/display"
+@page "/display/{BranchId:guid}"
+@layout DisplayLayout
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+@inject IQueueApiService QueueApi
+@inject ISignalRService SignalR
+@implements IDisposable
+
+<div class="customer-display">
+    <!-- Header -->
+    <div class="display-header">
+        <div class="header-left">
+            <div class="logo">
+                <QIcon Name="collection-fill" />
+                <span>Q-Mgr</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="datetime">
+                <span class="date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
+                <span class="time">@currentTime.ToString("HH:mm:ss")</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="display-body">
+        <div class="main-column">
+            <!-- Now Serving Section -->
+            <div class="now-serving-section">
+                <div class="section-header">
+                    <span class="label">NOW SERVING</span>
+                    <span class="live-indicator">
+                        <span class="live-dot"></span>
+                        LIVE
+                    </span>
+                </div>
+
+                @if (currentlyServing.Any())
+                {
+                    <div class="serving-grid">
+                        @foreach (var item in currentlyServing.Take(4))
+                        {
+                            <div class="serving-card @(item.IsNew ? "new-call" : "")">
+                                <div class="token-number">@item.TokenDisplay</div>
+                                <div class="counter-info">
+                                    <QIcon Name="arrow-right" />
+                                    <span>Counter @item.CounterNumber</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="no-serving">
+                        <div class="no-serving-icon">
+                            <QIcon Name="hourglass" />
+                        </div>
+                        <span>Waiting for customers...</span>
+                    </div>
+                }
+            </div>
+
+            <!-- Advertising / Content Zone -->
+            <AdSignagePlayer BranchId="@branchId" CssClass="ad-content-section" />
+        </div>
+
+        <!-- Waiting Section -->
+        <div class="waiting-section">
+            <div class="section-header">
+                <span class="label">WAITING</span>
+                <span class="count">@waitingTokens.Count in queue</span>
+            </div>
+
+            <div class="waiting-list">
+                @foreach (var token in waitingTokens.Take(12))
+                {
+                    <div class="waiting-item">
+                        <span class="token">@token.DisplayNumber</span>
+                        <span class="service">@token.ServiceType?.Name</span>
+                    </div>
+                }
+            </div>
+
+            @if (waitingTokens.Count > 12)
+            {
+                <div class="more-waiting">
+                    +@(waitingTokens.Count - 12) more waiting
+                </div>
+            }
+        </div>
+    </div>
+
+    <DisplayBanner BranchId="@branchId" />
+    <AdBanner BranchId="@branchId" />
+    <!-- Audio Alert (hidden) -->
+    <audio id="callAlert" preload="auto">
+        <source src="/sounds/ding.mp3" type="audio/mpeg" />
+    </audio>
+</div>
+
+<style>
+    .customer-display {
+        /* --qm-primary (#8c2f52) is tuned for light dashboard backgrounds — as text
+           on this always-dark public display it fails WCAG AA contrast for large
+           text. This lighter tint is scoped to this component only. */
+        --display-accent: #d1567f;
+        height: 100vh;
+        background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 100%);
+        color: white;
+        display: flex;
+        flex-direction: column;
+        font-family: 'Montserrat', sans-serif;
+        overflow: hidden;
+    }
+
+    /* Header */
+    .display-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 32px;
+        background: rgba(0, 0, 0, 0.3);
+        border-bottom: 2px solid rgba(140, 47, 82, 0.3);
+    }
+
+    .logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .logo .q-icon {
+        font-size: 22px;
+        color: var(--display-accent);
+    }
+
+    .logo span {
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
+    }
+
+    .datetime {
+        text-align: right;
+    }
+
+    .datetime .date {
+        display: block;
+        font-size: 12px;
+        opacity: 0.7;
+    }
+
+    .datetime .time {
+        display: block;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--display-accent);
+    }
+
+    /* Body */
+    .display-body {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 0;
+        min-height: 0;
+    }
+
+    .main-column {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .ad-content-section {
+        flex: 1;
+        min-height: 420px;
+        background: #000;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .section-header .label {
+        font-size: 24px;
+        font-weight: 600;
+        letter-spacing: 4px;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .live-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: var(--qm-danger);
+        border-radius: var(--qm-radius-full);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 2px;
+    }
+
+    .live-dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+    }
+
+    @@keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.2); }
+    }
+
+    .count {
+        font-size: 16px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* Now Serving Section */
+    .now-serving-section {
+        flex: 0 0 auto;
+        padding: 16px 32px;
+        background: linear-gradient(135deg, rgba(140, 47, 82, 0.1) 0%, transparent 100%);
+    }
+
+    .serving-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 24px;
+    }
+
+    .serving-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%);
+        border-radius: var(--qm-radius-xl);
+        padding: 16px;
+        text-align: center;
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.3s ease;
+    }
+
+    .serving-card.new-call {
+        animation: newCall 1s ease-out;
+        background: linear-gradient(135deg, rgba(22, 163, 74, 0.2) 0%, rgba(22, 163, 74, 0.05) 100%);
+        border-color: rgba(22, 163, 74, 0.5);
+    }
+
+    @@keyframes newCall {
+        0% { transform: scale(1.1); box-shadow: 0 0 60px rgba(22, 163, 74, 0.8); }
+        50% { transform: scale(1.05); box-shadow: 0 0 30px rgba(22, 163, 74, 0.4); }
+        100% { transform: scale(1); box-shadow: none; }
+    }
+
+    .serving-card .token-number {
+        font-size: 56px;
+        font-weight: 700;
+        color: var(--qm-success);
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .serving-card .counter-info {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        font-size: 16px;
+        color: var(--qm-warning);
+    }
+
+    .serving-card .counter-info .q-icon {
+        font-size: 18px;
+        animation: arrowBounce 1s ease-in-out infinite;
+    }
+
+    @@keyframes arrowBounce {
+        0%, 100% { transform: translateX(0); }
+        50% { transform: translateX(10px); }
+    }
+
+    .no-serving {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        height: 96px;
+        color: rgba(255, 255, 255, 0.4);
+    }
+
+    .no-serving-icon {
+        width: 48px;
+        height: 48px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .no-serving-icon .q-icon {
+        font-size: 24px;
+    }
+
+    .no-serving span {
+        font-size: 18px;
+    }
+
+    /* Waiting Section */
+    .waiting-section {
+        padding: 40px;
+        background: rgba(0, 0, 0, 0.2);
+        overflow-y: auto;
+    }
+
+    .waiting-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .waiting-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: var(--qm-radius-xl);
+        border-left: 4px solid var(--qm-primary);
+        transition: all 0.3s ease;
+    }
+
+    .waiting-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .waiting-item .token {
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--display-accent);
+    }
+
+    .waiting-item .service {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .more-waiting {
+        text-align: center;
+        padding: 20px;
+        color: rgba(255, 255, 255, 0.5);
+        font-size: 16px;
+    }
+
+
+    /* Responsive */
+    @@media (max-width: 1200px) {
+        .display-body {
+            grid-template-columns: 1fr;
+        }
+
+        .serving-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .serving-card .token-number {
+            font-size: 48px;
+        }
+    }
+
+    @@media (max-width: 768px) {
+        .serving-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .serving-card .token-number {
+            font-size: 40px;
+        }
+
+        .datetime .time {
+            font-size: 18px;
+        }
+    }
+
+    /* ================================
+       Light Theme Override
+       Admin-selectable per-organization (see BrandingSettings.razor "Display
+       Theme"); applied via [data-theme] on the DisplayLayout wrapper. Every
+       color above is a hardcoded dark-mode literal (not a --qm-* token), so
+       each one needs an explicit light counterpart here rather than inheriting
+       automatically from qm-theme.css's own [data-theme="light"] block.
+       ================================ */
+    [data-theme="light"] .customer-display {
+        --display-accent: #7a2847; /* light-theme wine primary, matches qm-theme.css */
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .display-header {
+        background: rgba(255, 255, 255, 0.7);
+        border-bottom: 2px solid rgba(122, 40, 71, 0.2);
+    }
+
+    [data-theme="light"] .logo span {
+        color: #1e293b;
+    }
+
+    [data-theme="light"] .main-column {
+        border-right: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .section-header .label {
+        color: rgba(0, 0, 0, 0.75);
+    }
+
+    [data-theme="light"] .count {
+        color: rgba(0, 0, 0, 0.55);
+    }
+
+    [data-theme="light"] .serving-card {
+        background: rgba(0, 0, 0, 0.03);
+        border: 2px solid rgba(0, 0, 0, 0.08);
+    }
+
+    [data-theme="light"] .serving-card.new-call {
+        background: linear-gradient(135deg, rgba(22, 163, 74, 0.12) 0%, rgba(22, 163, 74, 0.04) 100%);
+        border-color: rgba(22, 163, 74, 0.4);
+    }
+
+    [data-theme="light"] .no-serving {
+        color: rgba(0, 0, 0, 0.4);
+    }
+
+    [data-theme="light"] .no-serving-icon {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="light"] .waiting-section {
+        background: rgba(0, 0, 0, 0.03);
+    }
+
+    [data-theme="light"] .waiting-item {
+        background: #ffffff;
+    }
+
+    [data-theme="light"] .waiting-item:hover {
+        background: rgba(122, 40, 71, 0.05);
+    }
+
+    [data-theme="light"] .waiting-item .service {
+        color: rgba(0, 0, 0, 0.55);
+    }
+
+    [data-theme="light"] .more-waiting {
+        color: rgba(0, 0, 0, 0.45);
+    }
+</style>
+
+@code {
+    private List<ServingItem> currentlyServing = new();
+    private List<TokenDto> waitingTokens = new();
+    private DateTime currentTime = DateTime.Now;
+    // Falls back to the demo branch only when no {BranchId} route segment is present
+    // (e.g. a bookmarked bare "/display" URL) — see docs/TASK_TRACKER.md.
+    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private System.Threading.Timer? clockTimer;
+
+    [Parameter]
+    public Guid? BranchId { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (BranchId.HasValue && BranchId.Value != Guid.Empty)
+        {
+            branchId = BranchId.Value;
+        }
+
+        await LoadQueueData();
+        await SignalR.ConnectAsync(branchId);
+        SignalR.OnTokenCalled += HandleTokenCalled;
+        SignalR.OnTokenCompleted += HandleTokenCompleted;
+        SignalR.OnQueueUpdated += HandleQueueUpdated;
+
+        // Start clock timer
+        clockTimer = new System.Threading.Timer(_ =>
+        {
+            currentTime = DateTime.Now;
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private async Task LoadQueueData()
+    {
+        var status = await QueueApi.GetQueueStatusAsync(branchId);
+        if (status != null)
+        {
+            // Get currently serving tokens from counters
+            currentlyServing = status.Counters
+                .Where(c => c.Status == "Active" && !string.IsNullOrEmpty(c.CurrentTokenDisplay))
+                .Select(c => new ServingItem
+                {
+                    TokenDisplay = c.CurrentTokenDisplay ?? "",
+                    CounterNumber = c.CounterNumber,
+                    IsNew = false
+                })
+                .ToList();
+        }
+
+        waitingTokens = await QueueApi.GetWaitingTokensAsync(branchId);
+    }
+
+    private void HandleTokenCalled(TokenDto token)
+    {
+        InvokeAsync(async () =>
+        {
+            // Add new call with animation
+            var existingIndex = currentlyServing.FindIndex(s => s.TokenDisplay == token.DisplayNumber);
+            if (existingIndex < 0)
+            {
+                currentlyServing.Insert(0, new ServingItem
+                {
+                    TokenDisplay = token.DisplayNumber,
+                    CounterNumber = token.Counter?.CounterNumber ?? "",
+                    IsNew = true
+                });
+
+                // Keep only last 4
+                if (currentlyServing.Count > 4)
+                {
+                    currentlyServing = currentlyServing.Take(4).ToList();
+                }
+            }
+
+            await LoadQueueData();
+            StateHasChanged();
+
+            // Play sound
+            // JSRuntime.InvokeVoidAsync("playCallAlert");
+
+            // Reset "new" flag after animation
+            await Task.Delay(2000);
+            foreach (var item in currentlyServing)
+            {
+                item.IsNew = false;
+            }
+            StateHasChanged();
+        });
+    }
+
+    private void HandleTokenCompleted(Guid tokenId)
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadQueueData();
+            StateHasChanged();
+        });
+    }
+
+    private void HandleQueueUpdated(QueueStatusDto status)
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadQueueData();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        clockTimer?.Dispose();
+        SignalR.OnTokenCalled -= HandleTokenCalled;
+        SignalR.OnTokenCompleted -= HandleTokenCompleted;
+        SignalR.OnQueueUpdated -= HandleQueueUpdated;
+    }
+
+    private class ServingItem
+    {
+        public string TokenDisplay { get; set; } = "";
+        public string CounterNumber { get; set; } = "";
+        public bool IsNew { get; set; }
+    }
+}

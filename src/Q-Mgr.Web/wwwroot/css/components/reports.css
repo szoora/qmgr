@@ -1,0 +1,924 @@
+/* ============================================
+   Q-Mgr Reports & Analytics CSS
+   Reports Overview, Queue Analytics, Counter Performance, Feedback
+   ============================================ */
+
+/* ==========================================
+   REPORTS OVERVIEW
+   ========================================== */
+
+.qm-reports-overview {
+    padding: 0;
+}
+
+/* Stats Row */
+.qm-reports-stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.qm-reports-stats-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 24px;
+    border-left: 4px solid;
+    transition: all 0.2s ease;
+}
+
+.qm-reports-stats-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.qm-reports-stats-card.primary {
+    border-left-color: var(--qm-primary);
+}
+
+.qm-reports-stats-card.success {
+    border-left-color: #34d399;
+}
+
+.qm-reports-stats-card.warning {
+    border-left-color: var(--qm-warning);
+}
+
+.qm-reports-stats-card.info {
+    border-left-color: #60a5fa;
+}
+
+.qm-reports-stats-card.danger {
+    border-left-color: #f87171;
+}
+
+.qm-reports-stats-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.qm-reports-stats-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.qm-reports-stats-number {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-stats-label {
+    font-size: 14px;
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-stats-icon {
+    font-size: 48px;
+    opacity: 0.3;
+}
+
+.qm-reports-stats-icon .rzi {
+    color: var(--qm-text-muted);
+}
+
+/* Trend Indicator */
+.qm-reports-trend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.qm-reports-trend.up {
+    color: #34d399;
+}
+
+.qm-reports-trend.down {
+    color: #f87171;
+}
+
+.qm-reports-trend.neutral {
+    color: var(--qm-text-muted);
+}
+
+/* ==========================================
+   REPORT CARDS
+   ========================================== */
+
+.qm-reports-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.qm-reports-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 24px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.qm-reports-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    border-color: var(--qm-primary);
+}
+
+.qm-reports-card-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    margin-bottom: 16px;
+    color: white;
+}
+
+/* Brand-coherent tonal set, not a random multi-hue gradient preset —
+   each category gets a purposeful color from our own palette instead of
+   clashing rainbow gradients (indigo/pink/cyan/teal/yellow). */
+.qm-reports-card-icon.queue {
+    background: linear-gradient(135deg, var(--qm-primary) 0%, var(--qm-primary-dark) 100%);
+}
+
+.qm-reports-card-icon.counters {
+    background: linear-gradient(135deg, var(--qm-secondary) 0%, var(--qm-secondary-dark) 100%);
+}
+
+.qm-reports-card-icon.feedback {
+    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+}
+
+.qm-reports-card-icon.services {
+    background: linear-gradient(135deg, var(--qm-success) 0%, #15803d 100%);
+}
+
+.qm-reports-card-icon.customers {
+    background: linear-gradient(135deg, var(--qm-accent-orange) 0%, #b45309 100%);
+}
+
+.qm-reports-card h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-card p {
+    margin: 0 0 16px 0;
+    color: var(--qm-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.qm-reports-link {
+    color: var(--qm-primary);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+}
+
+.qm-reports-link .rzi {
+    font-size: 16px;
+    transition: transform 0.2s;
+}
+
+.qm-reports-card:hover .qm-reports-link .rzi {
+    transform: translateX(4px);
+}
+
+/* ==========================================
+   FILTER CARD
+   ========================================== */
+
+.qm-reports-filter-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.qm-reports-filter-card h4 {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: flex-end;
+}
+
+.qm-reports-filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.qm-reports-filter-item label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--qm-text-secondary);
+}
+
+.qm-reports-filter-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* ==========================================
+   QUEUE ANALYTICS
+   ========================================== */
+
+.qm-reports-analytics-page {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* Charts Section */
+.qm-reports-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+}
+
+.qm-reports-chart-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.qm-reports-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.qm-reports-chart-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-chart-body {
+    min-height: 250px;
+}
+
+/* Peak Hours */
+.qm-reports-peak-hours {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 4px;
+}
+
+.qm-reports-hour-block {
+    text-align: center;
+    padding: 8px 4px;
+    border-radius: 6px;
+    background: var(--qm-bg-elevated);
+    transition: all 0.2s;
+}
+
+.qm-reports-hour-block .hour {
+    display: block;
+    font-size: 11px;
+    color: var(--qm-text-muted);
+    margin-bottom: 4px;
+}
+
+.qm-reports-hour-block .value {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-hour-block.high {
+    background: rgba(239, 68, 68, 0.2);
+}
+
+.qm-reports-hour-block.medium {
+    background: rgba(245, 158, 11, 0.2);
+}
+
+.qm-reports-hour-block.low {
+    background: rgba(16, 185, 129, 0.2);
+}
+
+/* ==========================================
+   COUNTER PERFORMANCE
+   ========================================== */
+
+.qm-reports-performance-page {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.qm-reports-counters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.qm-reports-counter-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.2s ease;
+}
+
+.qm-reports-counter-card:hover {
+    border-color: var(--qm-primary);
+}
+
+.qm-reports-counter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.qm-reports-counter-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.qm-reports-counter-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--qm-gradient-primary);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qm-reports-counter-icon .rzi {
+    font-size: 20px;
+    color: white;
+}
+
+.qm-reports-counter-name h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-counter-name span {
+    display: block;
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-counter-status {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.qm-reports-counter-status.active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+}
+
+.qm-reports-counter-status.idle {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--qm-warning);
+}
+
+.qm-reports-counter-status.offline {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.qm-reports-counter-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.qm-reports-counter-stat {
+    background: var(--qm-bg-elevated);
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.qm-reports-counter-stat .value {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-counter-stat .label {
+    display: block;
+    font-size: 11px;
+    color: var(--qm-text-muted);
+    margin-top: 2px;
+}
+
+/* Efficiency Bar */
+.qm-reports-efficiency-bar {
+    margin-top: 16px;
+}
+
+.qm-reports-efficiency-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.qm-reports-efficiency-label span:first-child {
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-efficiency-label span:last-child {
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-efficiency-track {
+    height: 8px;
+    background: var(--qm-bg-elevated);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.qm-reports-efficiency-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.qm-reports-efficiency-fill.high {
+    background: linear-gradient(90deg, #34d399, #10b981);
+}
+
+.qm-reports-efficiency-fill.medium {
+    background: linear-gradient(90deg, var(--qm-warning), var(--qm-warning));
+}
+
+.qm-reports-efficiency-fill.low {
+    background: linear-gradient(90deg, #f87171, #ef4444);
+}
+
+/* ==========================================
+   CUSTOMER FEEDBACK
+   ========================================== */
+
+.qm-reports-feedback-page {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* Satisfaction Score Card */
+.qm-reports-satisfaction-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+}
+
+.qm-reports-satisfaction-score {
+    font-size: 72px;
+    font-weight: 700;
+    background: var(--qm-gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.qm-reports-satisfaction-label {
+    font-size: 16px;
+    color: var(--qm-text-muted);
+    margin-bottom: 16px;
+}
+
+.qm-reports-satisfaction-stars {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+.qm-reports-star {
+    font-size: 32px;
+    color: var(--qm-border);
+}
+
+.qm-reports-star.filled {
+    color: var(--qm-warning);
+}
+
+.qm-reports-star.half {
+    background: linear-gradient(90deg, var(--qm-warning) 50%, var(--qm-border) 50%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Rating Distribution */
+.qm-reports-rating-distribution {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qm-reports-rating-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.qm-reports-rating-label {
+    width: 60px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+}
+
+.qm-reports-rating-bar {
+    flex: 1;
+    height: 12px;
+    background: var(--qm-bg-elevated);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.qm-reports-rating-fill {
+    height: 100%;
+    background: var(--qm-gradient-primary);
+    border-radius: 6px;
+    transition: width 0.5s ease;
+}
+
+.qm-reports-rating-count {
+    width: 50px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--qm-text-primary);
+}
+
+/* Feedback List */
+.qm-reports-feedback-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qm-reports-feedback-item {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    padding: 16px 20px;
+}
+
+.qm-reports-feedback-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.qm-reports-feedback-user {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.qm-reports-feedback-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--qm-gradient-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: white;
+}
+
+.qm-reports-feedback-user-info h5 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-feedback-user-info span {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-feedback-rating {
+    display: flex;
+    gap: 2px;
+}
+
+.qm-reports-feedback-rating .star {
+    font-size: 14px;
+    color: var(--qm-border);
+}
+
+.qm-reports-feedback-rating .star.filled {
+    color: var(--qm-warning);
+}
+
+.qm-reports-feedback-content {
+    font-size: 14px;
+    color: var(--qm-text-secondary);
+    line-height: 1.6;
+}
+
+.qm-reports-feedback-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--qm-border);
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-feedback-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ==========================================
+   DATA TABLE
+   ========================================== */
+
+.qm-reports-table-card {
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.qm-reports-table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--qm-border);
+}
+
+.qm-reports-table-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+}
+
+.qm-reports-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.qm-reports-table th {
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--qm-text-muted);
+    background: var(--qm-bg-elevated);
+    border-bottom: 1px solid var(--qm-border);
+}
+
+.qm-reports-table td {
+    padding: 14px 16px;
+    font-size: 14px;
+    color: var(--qm-text-primary);
+    border-bottom: 1px solid var(--qm-border);
+}
+
+.qm-reports-table tr:last-child td {
+    border-bottom: none;
+}
+
+.qm-reports-table tr:hover td {
+    background: rgba(140, 47, 82, 0.03);
+}
+
+/* ==========================================
+   EXPORT OPTIONS
+   ========================================== */
+
+.qm-reports-export-bar {
+    display: flex;
+    gap: 10px;
+    padding: 16px;
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: 12px;
+}
+
+.qm-reports-export-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    border-radius: 8px;
+    color: var(--qm-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qm-reports-export-btn:hover {
+    border-color: var(--qm-primary);
+    background: var(--qm-primary-light);
+}
+
+.qm-reports-export-btn i,
+.qm-reports-export-btn .rzi {
+    font-size: 16px;
+    color: var(--qm-primary);
+}
+
+/* ==========================================
+   DATE RANGE PICKER
+   ========================================== */
+
+.qm-reports-date-range {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    border-radius: 10px;
+}
+
+.qm-reports-date-range label {
+    font-size: 13px;
+    color: var(--qm-text-muted);
+}
+
+.qm-reports-date-range-separator {
+    color: var(--qm-text-muted);
+}
+
+/* ==========================================
+   RESPONSIVE STYLES
+   ========================================== */
+
+@media (max-width: 992px) {
+    .qm-reports-stats-row {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .qm-reports-charts-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-reports-peak-hours {
+        grid-template-columns: repeat(6, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .qm-reports-stats-row {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-reports-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-reports-filter-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .qm-reports-filter-item {
+        width: 100%;
+    }
+
+    .qm-reports-filter-actions {
+        flex-direction: column;
+    }
+
+    .qm-reports-filter-actions button {
+        width: 100%;
+    }
+
+    .qm-reports-counters-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-reports-peak-hours {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    .qm-reports-table-card {
+        overflow-x: auto;
+    }
+
+    .qm-reports-table {
+        min-width: 600px;
+    }
+
+    .qm-reports-export-bar {
+        flex-wrap: wrap;
+    }
+
+    .qm-reports-export-btn {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+    }
+
+    .qm-reports-satisfaction-score {
+        font-size: 56px;
+    }
+
+    .qm-reports-star {
+        font-size: 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    .qm-reports-stats-card {
+        padding: 16px;
+    }
+
+    .qm-reports-stats-number {
+        font-size: 24px;
+    }
+
+    .qm-reports-stats-icon {
+        font-size: 36px;
+    }
+
+    .qm-reports-card {
+        padding: 16px;
+    }
+
+    .qm-reports-card-icon {
+        width: 48px;
+        height: 48px;
+        font-size: 24px;
+    }
+
+    .qm-reports-card h3 {
+        font-size: 16px;
+    }
+
+    .qm-reports-counter-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .qm-reports-feedback-header {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .qm-reports-satisfaction-score {
+        font-size: 48px;
+    }
+
+    .qm-reports-satisfaction-stars {
+        gap: 4px;
+    }
+
+    .qm-reports-star {
+        font-size: 20px;
+    }
+}

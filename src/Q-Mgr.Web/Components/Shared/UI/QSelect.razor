@@ -1,0 +1,321 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TValue
+@typeparam TItem
+@inject IJSRuntime JS
+
+<div class="q-select-wrapper @(HasError ? "q-select-wrapper--error" : "") @(Disabled ? "q-select-wrapper--disabled" : "") @Class">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <label class="q-select__label" for="@selectId">
+            @Label
+            @if (Required)
+            {
+                <span class="q-select__required">*</span>
+            }
+        </label>
+    }
+
+    <div class="q-select__container @(isOpen ? "q-select__container--open" : "") @(HasFocus ? "q-select__container--focused" : "")">
+        <button type="button"
+                id="@selectId"
+                @ref="triggerRef"
+                class="q-select"
+                disabled="@Disabled"
+                @onclick="ToggleDropdown"
+                @onfocus="() => HasFocus = true"
+                @onblur="HandleBlur">
+            @if (!string.IsNullOrEmpty(IconLeft))
+            {
+                <i class="@GetIconClass(IconLeft) q-select__icon"></i>
+            }
+            <span class="q-select__value @(GetDisplayText() == null ? "q-select__value--placeholder" : "")">
+                @(GetDisplayText() ?? Placeholder ?? "Select...")
+            </span>
+            <i class="bi bi-chevron-down q-select__chevron"></i>
+        </button>
+
+        @if (isOpen)
+        {
+            <div class="q-select__dropdown" style="@dropdownStyle">
+                @if (Items != null && Items.Count() > SearchThreshold)
+                {
+                    <div class="q-select__search">
+                        <i class="bi bi-search q-select__search-icon"></i>
+                        <input @ref="searchInputRef"
+                               type="text"
+                               class="q-select__search-input"
+                               placeholder="Search..."
+                               value="@searchQuery"
+                               @oninput="@(e => searchQuery = e.Value?.ToString() ?? "")" />
+                    </div>
+                }
+                @if (AllowClear && Value != null && !Value.Equals(default(TValue)))
+                {
+                    <div class="q-select__option q-select__option--clear" @onclick="Clear">
+                        <i class="bi bi-x"></i> Clear selection
+                    </div>
+                }
+                @if (FilteredItems.Any())
+                {
+                    @foreach (var item in FilteredItems)
+                    {
+                        var itemValue = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+                        var isSelected = Value != null && Value.Equals(itemValue);
+
+                        <div class="q-select__option @(isSelected ? "q-select__option--selected" : "")"
+                             @onclick="() => SelectItem(item)">
+                            @if (ItemTemplate != null)
+                            {
+                                @ItemTemplate(item)
+                            }
+                            else
+                            {
+                                @(TextSelector != null ? TextSelector(item) : item?.ToString())
+                            }
+                            @if (isSelected)
+                            {
+                                <i class="bi bi-check q-select__check"></i>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="q-select__empty">@(Items == null || !Items.Any() ? "No options available" : "No matches found")</div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(HelperText) && !HasError)
+    {
+        <span class="q-select__helper">@HelperText</span>
+    }
+
+    @if (HasError && !string.IsNullOrEmpty(ErrorMessage))
+    {
+        <span class="q-select__error">@ErrorMessage</span>
+    }
+</div>
+
+@code {
+    private string selectId = $"q-select-{Guid.NewGuid():N}";
+    private bool isOpen;
+    private bool HasFocus;
+    private ElementReference triggerRef;
+    private ElementReference searchInputRef;
+    private string? dropdownStyle;
+    private string searchQuery = "";
+    private bool shouldFocusSearch;
+
+    /// <summary>
+    /// Below this many items, the search box adds clutter without helping (e.g. a
+    /// 2-option landscape/portrait picker) — above it, search becomes genuinely
+    /// useful (long lists like timezones, roles, branches).
+    /// </summary>
+    private const int SearchThreshold = 6;
+
+    private IEnumerable<TItem> FilteredItems
+    {
+        get
+        {
+            if (Items == null) return Enumerable.Empty<TItem>();
+            if (string.IsNullOrWhiteSpace(searchQuery) || Items.Count() <= SearchThreshold) return Items;
+
+            return Items.Where(item =>
+            {
+                var text = TextSelector != null ? TextSelector(item) : item?.ToString();
+                return text != null && text.Contains(searchQuery, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+    }
+
+    /// <summary>
+    /// Currently selected value
+    /// </summary>
+    [Parameter] public TValue? Value { get; set; }
+
+    /// <summary>
+    /// Callback when value changes
+    /// </summary>
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    /// <summary>
+    /// Items to display in dropdown
+    /// </summary>
+    [Parameter] public IEnumerable<TItem>? Items { get; set; }
+
+    /// <summary>
+    /// Function to extract value from item
+    /// </summary>
+    [Parameter] public Func<TItem, TValue>? ValueSelector { get; set; }
+
+    /// <summary>
+    /// Function to extract display text from item
+    /// </summary>
+    [Parameter] public Func<TItem, string>? TextSelector { get; set; }
+
+    /// <summary>
+    /// Custom template for rendering items
+    /// </summary>
+    [Parameter] public RenderFragment<TItem>? ItemTemplate { get; set; }
+
+    /// <summary>
+    /// Label text
+    /// </summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>
+    /// Placeholder text
+    /// </summary>
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>
+    /// Whether the field is required
+    /// </summary>
+    [Parameter] public bool Required { get; set; }
+
+    /// <summary>
+    /// Whether the select is disabled
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Whether to allow clearing the selection
+    /// </summary>
+    [Parameter] public bool AllowClear { get; set; }
+
+    /// <summary>
+    /// Icon to display on the left
+    /// </summary>
+    [Parameter] public string? IconLeft { get; set; }
+
+    /// <summary>
+    /// Helper text shown below select
+    /// </summary>
+    [Parameter] public string? HelperText { get; set; }
+
+    /// <summary>
+    /// Whether the select has an error
+    /// </summary>
+    [Parameter] public bool HasError { get; set; }
+
+    /// <summary>
+    /// Error message to display
+    /// </summary>
+    [Parameter] public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    private string GetIconClass(string icon)
+    {
+        if (string.IsNullOrEmpty(icon)) return "";
+        if (icon.StartsWith("bi-")) return $"bi {icon}";
+        return $"bi bi-{icon}";
+    }
+
+    private string? GetDisplayText()
+    {
+        // Deliberately does NOT treat "Value equals default(TValue)" as "nothing
+        // selected" — for non-nullable value types (enums, structs) the default
+        // is often a real, legitimate option (e.g. DisplayType.CustomerDisplay = 0),
+        // not an empty sentinel. Only a genuine null (reference types, Nullable<T>
+        // with no value) means "nothing selected"; for everything else, whether a
+        // real selection exists is determined below by whether it matches an item.
+        if (Value == null || Items == null)
+            return null;
+
+        var selectedItem = Items.FirstOrDefault(item =>
+        {
+            var itemValue = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+            return Value.Equals(itemValue);
+        });
+
+        if (selectedItem == null) return null;
+
+        return TextSelector != null ? TextSelector(selectedItem) : selectedItem.ToString();
+    }
+
+    private async Task ToggleDropdown()
+    {
+        if (Disabled)
+            return;
+
+        isOpen = !isOpen;
+        searchQuery = "";
+
+        if (isOpen)
+        {
+            // The dropdown panel is rendered position:fixed at coordinates computed from the
+            // trigger's real screen position, rather than position:absolute within this
+            // component's own DOM subtree — otherwise any ancestor with non-visible overflow
+            // (e.g. QModal's scrollable body) clips the panel instead of letting it float above
+            // the rest of the page, cutting the option list down to a sliver.
+            try
+            {
+                var position = await JS.InvokeAsync<DropdownPosition?>("qSelectInterop.getDropdownPosition", triggerRef);
+                if (position != null)
+                {
+                    dropdownStyle = position.Top.HasValue
+                        ? $"position: fixed; left: {position.Left}px; width: {position.Width}px; top: {position.Top}px;"
+                        : $"position: fixed; left: {position.Left}px; width: {position.Width}px; bottom: {position.Bottom}px;";
+                }
+            }
+            catch (JSException)
+            {
+                dropdownStyle = null;
+            }
+
+            shouldFocusSearch = Items != null && Items.Count() > SearchThreshold;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (shouldFocusSearch)
+        {
+            shouldFocusSearch = false;
+            try { await searchInputRef.FocusAsync(); } catch (JSException) { }
+        }
+    }
+
+    private record DropdownPosition
+    {
+        public double Left { get; init; }
+        public double Width { get; init; }
+        public double? Top { get; init; }
+        public double? Bottom { get; init; }
+    }
+
+    private void HandleBlur()
+    {
+        HasFocus = false;
+        // Delay closing to allow click on dropdown item
+        _ = Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                isOpen = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private async Task SelectItem(TItem item)
+    {
+        var value = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+        isOpen = false;
+    }
+
+    private async Task Clear()
+    {
+        Value = default;
+        await ValueChanged.InvokeAsync(default);
+        isOpen = false;
+    }
+}

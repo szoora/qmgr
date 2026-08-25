@@ -1,0 +1,723 @@
+@page "/platform/system-health"
+@using System.Text.Json
+@using System.Timers
+@using QMgr.Web.Services
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>System Health - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="heart-pulse-fill" Size="32" /> System Health</h1>
+        <p class="page-subtitle">Monitor system performance, resources, and service status</p>
+    </div>
+    <div class="header-actions">
+        <QButton Text="Refresh" Icon="arrow-clockwise" Variant="ghost" OnClick="@LoadData" />
+        <div class="auto-refresh-toggle">
+            <QCheckbox @bind-Value="autoRefresh" Label="Auto-refresh (30s)" />
+        </div>
+    </div>
+</div>
+
+<div class="admin-content">
+    @if (isLoading && !hasData)
+    {
+        <div class="loading-state">
+            <QSpinner Size="lg" />
+            <span>Loading system health...</span>
+        </div>
+    }
+    else if (hasError)
+    {
+        <QCard>
+            <div class="error-state">
+                <QIcon Name="exclamation-triangle-fill" Size="48" />
+                <h4>Failed to Load System Health</h4>
+                <p>@errorMessage</p>
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
+            </div>
+        </QCard>
+    }
+    else
+    {
+        <!-- Overall System Status -->
+        <QCard Class="mb-4">
+            <div class="system-status @systemHealth.OverallStatus.ToLower()">
+                <div class="status-icon">
+                    <QIcon Name="@GetStatusIcon(systemHealth.OverallStatus)" Size="48" />
+                </div>
+                <div class="status-content">
+                    <h2>System Status: @systemHealth.OverallStatus</h2>
+                    <div class="status-details">
+                        <div class="detail-item">
+                            <QIcon Name="clock-fill" />
+                            <span>Uptime: @systemHealth.Uptime</span>
+                        </div>
+                        <div class="detail-item">
+                            <QIcon Name="info-circle-fill" />
+                            <span>Version: @systemHealth.Version</span>
+                        </div>
+                        <div class="detail-item">
+                            <QIcon Name="server" />
+                            <span>Environment: @systemHealth.Environment</span>
+                        </div>
+                        <div class="detail-item">
+                            <QIcon Name="calendar-fill" />
+                            <span>Last checked: @systemHealth.Timestamp.ToString("HH:mm:ss")</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </QCard>
+
+        <!-- Service Health Cards -->
+        <div class="services-grid">
+            @foreach (var service in services)
+            {
+                <QCard Class="@($"service-card {service.Status.ToLower()}")">
+                    <div class="service-header">
+                        <div class="service-icon">
+                            <QIcon Name="@GetServiceIcon(service.ServiceName)" Size="24" />
+                        </div>
+                        <QBadge Text="@service.Status" Variant="@GetStatusBadgeVariant(service.Status)" />
+                    </div>
+                    <div class="service-content">
+                        <h4>@service.ServiceName</h4>
+                        <div class="service-metrics">
+                            <div class="metric">
+                                <span class="metric-label">Response Time</span>
+                                <span class="metric-value">@service.ResponseTimeMs ms</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Last Checked</span>
+                                <span class="metric-value">@FormatTime(service.LastChecked)</span>
+                            </div>
+                        </div>
+                    </div>
+                </QCard>
+            }
+        </div>
+
+        <!-- Database Health -->
+        <QCard Class="mb-4" Title="Database Health" Icon="database-fill">
+            <HeaderActions>
+                <QBadge Text="@databaseHealth.Status" Variant="@GetStatusBadgeVariant(databaseHealth.Status)" />
+            </HeaderActions>
+            <ChildContent>
+            <div class="database-grid">
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="lightning-fill" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Response Time</div>
+                        <div class="db-metric-value">@databaseHealth.ResponseTimeMs ms</div>
+                    </div>
+                </div>
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="link" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Connection</div>
+                        <div class="db-metric-value">@(databaseHealth.CanConnect ? "Connected" : "Disconnected")</div>
+                    </div>
+                </div>
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="building-fill" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Organizations</div>
+                        <div class="db-metric-value">@databaseHealth.TotalOrganizations.ToString("N0")</div>
+                    </div>
+                </div>
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="people-fill" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Users</div>
+                        <div class="db-metric-value">@databaseHealth.TotalUsers.ToString("N0")</div>
+                    </div>
+                </div>
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="ticket-fill" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Tokens</div>
+                        <div class="db-metric-value">@databaseHealth.TotalTokens.ToString("N0")</div>
+                    </div>
+                </div>
+                <div class="db-metric">
+                    <div class="db-metric-icon">
+                        <QIcon Name="server" Size="24" />
+                    </div>
+                    <div class="db-metric-content">
+                        <div class="db-metric-label">Provider</div>
+                        <div class="db-metric-value">@databaseHealth.DatabaseProvider</div>
+                    </div>
+                </div>
+            </div>
+            </ChildContent>
+        </QCard>
+
+        <!-- Performance Metrics -->
+        <QCard Title="Performance Metrics" Icon="speedometer">
+            <div class="performance-grid">
+                <div class="perf-card">
+                    <div class="perf-icon memory">
+                        <QIcon Name="memory" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">Memory Usage</div>
+                        <div class="perf-value">@performance.MemoryUsedMb MB</div>
+                        <div class="perf-sublabel">GC: @performance.GcMemoryMb MB</div>
+                    </div>
+                </div>
+
+                <div class="perf-card">
+                    <div class="perf-icon cpu">
+                        <QIcon Name="cpu-fill" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">CPU Time</div>
+                        <div class="perf-value">@FormatCpuTime(performance.CpuTimeSeconds)</div>
+                        <div class="perf-sublabel">Total processor time</div>
+                    </div>
+                </div>
+
+                <div class="perf-card">
+                    <div class="perf-icon threads">
+                        <QIcon Name="diagram-3-fill" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">Threads</div>
+                        <div class="perf-value">@performance.ThreadCount</div>
+                        <div class="perf-sublabel">Active threads</div>
+                    </div>
+                </div>
+
+                <div class="perf-card">
+                    <div class="perf-icon uptime">
+                        <QIcon Name="clock-history" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">Uptime</div>
+                        <div class="perf-value">@performance.Uptime</div>
+                        <div class="perf-sublabel">System uptime</div>
+                    </div>
+                </div>
+
+                <div class="perf-card">
+                    <div class="perf-icon availability">
+                        <QIcon Name="check-circle-fill" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">Availability</div>
+                        <div class="perf-value">@performance.Availability.ToString("N2")%</div>
+                        <div class="perf-sublabel">System availability</div>
+                    </div>
+                </div>
+
+                <div class="perf-card">
+                    <div class="perf-icon errors">
+                        <QIcon Name="exclamation-triangle-fill" Size="32" />
+                    </div>
+                    <div class="perf-content">
+                        <div class="perf-label">Error Rate</div>
+                        <div class="perf-value">@performance.ErrorRate.ToString("N2")%</div>
+                        <div class="perf-sublabel">Recent error rate</div>
+                    </div>
+                </div>
+            </div>
+        </QCard>
+    }
+</div>
+
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 32px;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+
+    .page-header h1 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 8px;
+        font-size: 32px;
+        color: var(--qm-text-primary);
+    }
+
+    .page-subtitle {
+        color: var(--qm-text-muted);
+        margin: 0;
+        font-size: 16px;
+    }
+
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .auto-refresh-toggle {
+        display: flex;
+        align-items: center;
+    }
+
+    .loading-state, .error-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--qm-text-muted);
+    }
+
+    .system-status {
+        display: flex;
+        gap: 24px;
+        align-items: center;
+        padding: 24px;
+        border-radius: var(--qm-radius-xl);
+        border: 2px solid;
+    }
+
+    .system-status.healthy {
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        border-color: var(--qm-success);
+    }
+
+    .system-status.warning {
+        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
+        border-color: var(--qm-warning);
+    }
+
+    .system-status.critical {
+        background: color-mix(in srgb, var(--qm-danger) 15%, transparent);
+        border-color: var(--qm-danger);
+    }
+
+    .status-icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: var(--qm-bg-elevated);
+    }
+
+    .system-status.healthy .status-icon {
+        color: var(--qm-success);
+    }
+
+    .system-status.warning .status-icon {
+        color: var(--qm-warning);
+    }
+
+    .system-status.critical .status-icon {
+        color: var(--qm-danger);
+    }
+
+    .status-content {
+        flex: 1;
+    }
+
+    .status-content h2 {
+        margin: 0 0 16px;
+        color: var(--qm-text-primary);
+        font-size: 24px;
+    }
+
+    .status-details {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+    }
+
+    .detail-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .services-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    .service-card {
+        border-left: 4px solid;
+    }
+
+    .service-card.healthy {
+        border-left-color: var(--qm-success);
+    }
+
+    .service-card.warning {
+        border-left-color: var(--qm-warning);
+    }
+
+    .service-card.critical, .service-card.unknown {
+        border-left-color: var(--qm-danger);
+    }
+
+    .service-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .service-icon {
+        width: 48px;
+        height: 48px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    .service-content h4 {
+        margin: 0 0 12px;
+        color: var(--qm-text-primary);
+        font-size: 16px;
+    }
+
+    .service-metrics {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+    }
+
+    .metric-label {
+        color: var(--qm-text-muted);
+    }
+
+    .metric-value {
+        color: var(--qm-text-primary);
+        font-weight: 600;
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .card-header h3 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+    }
+
+    .database-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 20px;
+    }
+
+    .db-metric {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .db-metric-icon {
+        width: 48px;
+        height: 48px;
+        background: var(--qm-gradient-primary);
+        border-radius: var(--qm-radius-lg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .db-metric-label {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin-bottom: 4px;
+    }
+
+    .db-metric-value {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .performance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 20px;
+    }
+
+    .perf-card {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        padding: 20px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .perf-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: var(--qm-radius-xl);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        flex-shrink: 0;
+    }
+
+    .perf-icon.memory {
+        background: var(--qm-gradient-primary);
+    }
+
+    .perf-icon.cpu {
+        background: linear-gradient(135deg, #47393f, #2e242a);
+    }
+
+    .perf-icon.threads {
+        background: linear-gradient(135deg, #0d9488, #0f766e);
+    }
+
+    .perf-icon.uptime {
+        background: linear-gradient(135deg, #16a34a, #15803d);
+    }
+
+    .perf-icon.availability {
+        background: linear-gradient(135deg, #d97706, #b45309);
+    }
+
+    .perf-icon.errors {
+        background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+    }
+
+    .perf-label {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin-bottom: 4px;
+    }
+
+    .perf-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+        margin-bottom: 4px;
+    }
+
+    .perf-sublabel {
+        font-size: 11px;
+        color: var(--qm-text-muted);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool hasError = false;
+    private bool hasData = false;
+    private string errorMessage = "";
+    private bool autoRefresh = true;
+
+    private Timer? refreshTimer;
+
+    private SystemHealthDto systemHealth = new();
+    private DatabaseHealthDto databaseHealth = new();
+    private List<ServiceHealthDto> services = new();
+    private PerformanceMetricsDto performance = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadData();
+        SetupAutoRefresh();
+    }
+
+    private void SetupAutoRefresh()
+    {
+        refreshTimer = new Timer(30000); // 30 seconds
+        refreshTimer.Elapsed += async (sender, e) =>
+        {
+            if (autoRefresh)
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+                });
+            }
+        };
+        refreshTimer.Start();
+    }
+
+    private async Task LoadData()
+    {
+        if (!hasData)
+            isLoading = true;
+
+        hasError = false;
+
+        try
+        {
+            var systemTask = Http.GetFromJsonAsync<SystemHealthDto>("api/v1/health/system", JsonOptions);
+            var databaseTask = Http.GetFromJsonAsync<DatabaseHealthDto>("api/v1/health/database", JsonOptions);
+            var servicesTask = Http.GetFromJsonAsync<List<ServiceHealthDto>>("api/v1/health/services", JsonOptions);
+            var performanceTask = Http.GetFromJsonAsync<PerformanceMetricsDto>("api/v1/health/performance", JsonOptions);
+
+            await Task.WhenAll(systemTask, databaseTask, servicesTask, performanceTask);
+
+            systemHealth = await systemTask ?? new();
+            databaseHealth = await databaseTask ?? new();
+            services = await servicesTask ?? new();
+            performance = await performanceTask ?? new();
+
+            hasData = true;
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetStatusIcon(string status) => status.ToLower() switch
+    {
+        "healthy" => "check-circle-fill",
+        "warning" => "exclamation-triangle-fill",
+        "critical" => "x-circle-fill",
+        _ => "question-circle-fill"
+    };
+
+    private string GetServiceIcon(string serviceName) => serviceName.ToLower() switch
+    {
+        var s when s.Contains("database") => "database",
+        var s when s.Contains("hangfire") || s.Contains("job") => "clock",
+        var s when s.Contains("signalr") || s.Contains("hub") => "broadcast",
+        var s when s.Contains("stripe") || s.Contains("payment") => "credit-card",
+        _ => "gear"
+    };
+
+    private string GetStatusBadgeVariant(string status) => status.ToLower() switch
+    {
+        "healthy" => "success",
+        "warning" => "warning",
+        "critical" => "danger",
+        _ => "secondary"
+    };
+
+    private string FormatTime(DateTime timestamp)
+    {
+        var timeSpan = DateTime.UtcNow - timestamp;
+
+        if (timeSpan.TotalSeconds < 60)
+            return "Just now";
+        if (timeSpan.TotalMinutes < 60)
+            return $"{(int)timeSpan.TotalMinutes}m ago";
+
+        return timestamp.ToString("HH:mm:ss");
+    }
+
+    private string FormatCpuTime(long seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Stop();
+        refreshTimer?.Dispose();
+    }
+
+    private record SystemHealthDto
+    {
+        public string OverallStatus { get; init; } = "Unknown";
+        public DateTime Timestamp { get; init; }
+        public string Uptime { get; init; } = "";
+        public string Version { get; init; } = "";
+        public string DatabaseStatus { get; init; } = "";
+        public string CacheStatus { get; init; } = "";
+        public string QueueStatus { get; init; } = "";
+        public string Environment { get; init; } = "";
+    }
+
+    private record DatabaseHealthDto
+    {
+        public string Status { get; init; } = "Unknown";
+        public bool CanConnect { get; init; }
+        public long ResponseTimeMs { get; init; }
+        public int TotalOrganizations { get; init; }
+        public int TotalUsers { get; init; }
+        public int TotalTokens { get; init; }
+        public string DatabaseProvider { get; init; } = "";
+        public DateTime? LastBackup { get; init; }
+    }
+
+    private record ServiceHealthDto
+    {
+        public string ServiceName { get; init; } = "";
+        public string Status { get; init; } = "Unknown";
+        public long ResponseTimeMs { get; init; }
+        public DateTime LastChecked { get; init; }
+    }
+
+    private record PerformanceMetricsDto
+    {
+        public long MemoryUsedMb { get; init; }
+        public long GcMemoryMb { get; init; }
+        public int ThreadCount { get; init; }
+        public long CpuTimeSeconds { get; init; }
+        public string Uptime { get; init; } = "";
+        public decimal RequestsPerSecond { get; init; }
+        public decimal AverageResponseTimeMs { get; init; }
+        public decimal ErrorRate { get; init; }
+        public decimal Availability { get; init; }
+    }
+}

@@ -1,0 +1,317 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TValue
+@typeparam TItem
+
+<div class="q-select-wrapper @(HasError ? "q-select-wrapper--error" : "") @(Disabled ? "q-select-wrapper--disabled" : "") @Class">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <label class="q-select__label" for="@selectId">
+            @Label
+            @if (Required)
+            {
+                <span class="q-select__required">*</span>
+            }
+        </label>
+    }
+
+    <div class="q-select__container q-multiselect__container @(isOpen ? "q-select__container--open" : "") @(HasFocus ? "q-select__container--focused" : "")">
+        <button type="button"
+                id="@selectId"
+                class="q-select q-multiselect"
+                disabled="@Disabled"
+                @onclick="ToggleDropdown"
+                @onclick:stopPropagation="true"
+                @onfocus="() => HasFocus = true"
+                @onblur="HandleBlur">
+            @if (!string.IsNullOrEmpty(IconLeft))
+            {
+                <i class="@GetIconClass(IconLeft) q-select__icon"></i>
+            }
+
+            @if (SelectedValues?.Any() == true && ShowChips)
+            {
+                <div class="q-multiselect__chips">
+                    @foreach (var val in SelectedValues.Take(MaxChipsVisible))
+                    {
+                        var item = GetItemByValue(val);
+                        if (item != null)
+                        {
+                            <span class="q-multiselect__chip">
+                                @(TextSelector != null ? TextSelector(item) : item.ToString())
+                                <i class="bi bi-x q-multiselect__chip-remove" @onclick="() => RemoveItem(val)" @onclick:stopPropagation="true"></i>
+                            </span>
+                        }
+                    }
+                    @if (SelectedValues.Count() > MaxChipsVisible)
+                    {
+                        <span class="q-multiselect__chip q-multiselect__chip--more">
+                            +@(SelectedValues.Count() - MaxChipsVisible) more
+                        </span>
+                    }
+                </div>
+            }
+            else if (SelectedValues?.Any() == true && !ShowChips)
+            {
+                <span class="q-select__value">@SelectedValues.Count() selected</span>
+            }
+            else
+            {
+                <span class="q-select__value q-select__value--placeholder">@(Placeholder ?? "Select...")</span>
+            }
+
+            <i class="bi bi-chevron-down q-select__chevron"></i>
+        </button>
+
+        @if (isOpen)
+        {
+            <div class="q-select__dropdown q-multiselect__dropdown">
+                @if (AllowFilter)
+                {
+                    <div class="q-multiselect__filter">
+                        <input type="text"
+                               class="q-multiselect__filter-input"
+                               placeholder="Search..."
+                               @bind="filterText"
+                               @bind:event="oninput"
+                               @onclick:stopPropagation="true" />
+                    </div>
+                }
+
+                @if (AllowClear && SelectedValues?.Any() == true)
+                {
+                    <div class="q-select__option q-select__option--clear" @onclick="ClearAll" @onclick:stopPropagation="true">
+                        <i class="bi bi-x"></i> Clear all
+                    </div>
+                }
+
+                <div class="q-multiselect__options">
+                    @if (FilteredItems != null && FilteredItems.Any())
+                    {
+                        @foreach (var item in FilteredItems)
+                        {
+                            var itemValue = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+                            var isSelected = SelectedValues?.Contains(itemValue) == true;
+
+                            <div class="q-select__option @(isSelected ? "q-select__option--selected" : "")"
+                                 @onclick="() => ToggleItem(item)" @onclick:stopPropagation="true">
+                                <span class="q-multiselect__checkbox @(isSelected ? "q-multiselect__checkbox--checked" : "")">
+                                    @if (isSelected)
+                                    {
+                                        <i class="bi bi-check"></i>
+                                    }
+                                </span>
+                                @if (ItemTemplate != null)
+                                {
+                                    @ItemTemplate(item)
+                                }
+                                else
+                                {
+                                    @(TextSelector != null ? TextSelector(item) : item?.ToString())
+                                }
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="q-select__empty">No options available</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(HelperText) && !HasError)
+    {
+        <span class="q-select__helper">@HelperText</span>
+    }
+
+    @if (HasError && !string.IsNullOrEmpty(ErrorMessage))
+    {
+        <span class="q-select__error">@ErrorMessage</span>
+    }
+</div>
+
+@code {
+    private string selectId = $"q-multiselect-{Guid.NewGuid():N}";
+    private bool isOpen;
+    private bool HasFocus;
+    private string filterText = "";
+
+    /// <summary>
+    /// Currently selected values
+    /// </summary>
+    [Parameter] public IEnumerable<TValue>? SelectedValues { get; set; }
+
+    /// <summary>
+    /// Callback when selected values change
+    /// </summary>
+    [Parameter] public EventCallback<IEnumerable<TValue>> SelectedValuesChanged { get; set; }
+
+    /// <summary>
+    /// Items to display in dropdown
+    /// </summary>
+    [Parameter] public IEnumerable<TItem>? Items { get; set; }
+
+    /// <summary>
+    /// Function to extract value from item
+    /// </summary>
+    [Parameter] public Func<TItem, TValue>? ValueSelector { get; set; }
+
+    /// <summary>
+    /// Function to extract display text from item
+    /// </summary>
+    [Parameter] public Func<TItem, string>? TextSelector { get; set; }
+
+    /// <summary>
+    /// Custom template for rendering items
+    /// </summary>
+    [Parameter] public RenderFragment<TItem>? ItemTemplate { get; set; }
+
+    /// <summary>
+    /// Label text
+    /// </summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>
+    /// Placeholder text
+    /// </summary>
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>
+    /// Whether the field is required
+    /// </summary>
+    [Parameter] public bool Required { get; set; }
+
+    /// <summary>
+    /// Whether the select is disabled
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Whether to allow clearing the selection
+    /// </summary>
+    [Parameter] public bool AllowClear { get; set; } = true;
+
+    /// <summary>
+    /// Whether to allow filtering items
+    /// </summary>
+    [Parameter] public bool AllowFilter { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show selected items as chips
+    /// </summary>
+    [Parameter] public bool ShowChips { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of chips to show before showing "+X more"
+    /// </summary>
+    [Parameter] public int MaxChipsVisible { get; set; } = 3;
+
+    /// <summary>
+    /// Icon to display on the left
+    /// </summary>
+    [Parameter] public string? IconLeft { get; set; }
+
+    /// <summary>
+    /// Helper text shown below select
+    /// </summary>
+    [Parameter] public string? HelperText { get; set; }
+
+    /// <summary>
+    /// Whether the select has an error
+    /// </summary>
+    [Parameter] public bool HasError { get; set; }
+
+    /// <summary>
+    /// Error message to display
+    /// </summary>
+    [Parameter] public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    private IEnumerable<TItem>? FilteredItems => string.IsNullOrEmpty(filterText)
+        ? Items
+        : Items?.Where(item =>
+        {
+            var text = TextSelector != null ? TextSelector(item) : item?.ToString();
+            return text?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
+        });
+
+    private string GetIconClass(string icon)
+    {
+        if (string.IsNullOrEmpty(icon)) return "";
+        if (icon.StartsWith("bi-")) return $"bi {icon}";
+        return $"bi bi-{icon}";
+    }
+
+    private TItem? GetItemByValue(TValue value)
+    {
+        if (Items == null) return default;
+        return Items.FirstOrDefault(item =>
+        {
+            var itemValue = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+            return value?.Equals(itemValue) == true;
+        });
+    }
+
+    private void ToggleDropdown()
+    {
+        if (!Disabled)
+        {
+            isOpen = !isOpen;
+            if (!isOpen)
+            {
+                filterText = "";
+            }
+        }
+    }
+
+    private void HandleBlur()
+    {
+        HasFocus = false;
+        // Delay closing to allow click on dropdown item
+        _ = Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                isOpen = false;
+                filterText = "";
+                StateHasChanged();
+            });
+        });
+    }
+
+    private async Task ToggleItem(TItem item)
+    {
+        var value = ValueSelector != null ? ValueSelector(item) : (TValue)(object)item!;
+        var currentValues = SelectedValues?.ToList() ?? new List<TValue>();
+
+        if (currentValues.Contains(value))
+        {
+            currentValues.Remove(value);
+        }
+        else
+        {
+            currentValues.Add(value);
+        }
+
+        await SelectedValuesChanged.InvokeAsync(currentValues);
+    }
+
+    private async Task RemoveItem(TValue value)
+    {
+        var currentValues = SelectedValues?.ToList() ?? new List<TValue>();
+        currentValues.Remove(value);
+        await SelectedValuesChanged.InvokeAsync(currentValues);
+    }
+
+    private async Task ClearAll()
+    {
+        await SelectedValuesChanged.InvokeAsync(Enumerable.Empty<TValue>());
+        isOpen = false;
+        filterText = "";
+    }
+}

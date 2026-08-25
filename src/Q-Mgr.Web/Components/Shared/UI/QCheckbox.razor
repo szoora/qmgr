@@ -1,0 +1,77 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+<label class="q-checkbox @(Disabled ? "q-checkbox--disabled" : "") @(Value ? "q-checkbox--checked" : "") @Class">
+    <input type="checkbox"
+           class="q-checkbox__input"
+           checked="@Value"
+           disabled="@Disabled"
+           @onchange="HandleChange"
+           @attributes="AdditionalAttributes" />
+    <span class="q-checkbox__box">
+        @if (Value)
+        {
+            <i class="bi bi-check q-checkbox__icon"></i>
+        }
+    </span>
+    @if (!string.IsNullOrEmpty(Label) || ChildContent != null)
+    {
+        <span class="q-checkbox__label">
+            @if (ChildContent != null)
+            {
+                @ChildContent
+            }
+            else
+            {
+                @Label
+            }
+        </span>
+    }
+</label>
+
+@code {
+    /// <summary>
+    /// Whether the checkbox is checked
+    /// </summary>
+    [Parameter] public bool Value { get; set; }
+
+    /// <summary>
+    /// Callback when checked state changes
+    /// </summary>
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+
+    /// <summary>
+    /// Label text
+    /// </summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>
+    /// Whether the checkbox is disabled
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Custom label content
+    /// </summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Additional HTML attributes
+    /// </summary>
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task HandleChange(ChangeEventArgs e)
+    {
+        if (!Disabled)
+        {
+            var newValue = (bool)(e.Value ?? false);
+            Value = newValue;
+            await ValueChanged.InvokeAsync(newValue);
+        }
+    }
+}
