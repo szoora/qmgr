@@ -13,13 +13,22 @@ public class TenantStatusMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<TenantStatusMiddleware> _logger;
 
-    // Endpoints that should always be accessible regardless of tenant status
+    // Endpoints that should always be accessible regardless of tenant status.
+    // "/api/v1/health" (HealthController, polled continuously by the Web app's
+    // ConnectionMonitorService) was missing here — only the unrelated bare "/health" (ASP.NET's
+    // built-in health check endpoint) was listed, matching neither. UsageLimitMiddleware already
+    // allows both. Without it, a suspended tenant's every health poll 403'd, which
+    // ConnectionMonitorService read as "server unreachable" rather than "account suspended" and
+    // retried forever — the whole app got stuck on an infinite "Reconnecting... Attempt 3 of 3"
+    // overlay instead of ever surfacing the real ACCOUNT_SUSPENDED reason. Found live by
+    // suspending a test tenant and watching the UI hang.
     private static readonly HashSet<string> AlwaysAllowedEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
         "/api/v1/billing",
         "/api/v1/register",
+        "/api/v1/health",
         "/health",
         "/swagger",
         "/scalar"
