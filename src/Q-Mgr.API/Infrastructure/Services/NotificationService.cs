@@ -351,6 +351,7 @@ public class NotificationService : INotificationService
         NotificationType.QueueUpdate => "bi-people",
         NotificationType.SystemAlert => "bi-exclamation-triangle",
         NotificationType.CounterAlert => "bi-display",
+        NotificationType.VisitorArrived => "bi-person-check",
         _ => "bi-info-circle"
     };
 

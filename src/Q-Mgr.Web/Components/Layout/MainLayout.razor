@@ -151,6 +151,17 @@ else
                     </li>
                 }
 
+                <!-- Visitor Management -->
+                @if (canViewVisitors)
+                {
+                    <li class="nav-item">
+                        <a href="admin/visitors" class="nav-link @(IsActive("/admin/visitors") ? "active" : "")">
+                            <i class="bi bi-person-badge"></i>
+                            <span>Visitor Management</span>
+                        </a>
+                    </li>
+                }
+
                 <!-- Digital Signage -->
                 @if (canViewContent)
                 {
@@ -428,6 +439,7 @@ else
     private bool canViewNotifications = false;
     private bool canViewApiClients = false;
     private bool canViewFeedback = false;
+    private bool canViewVisitors = false;
     private bool canViewBilling = false;
     private bool canViewPlatformAdmin = false;
     private bool tokensInitialized = false;
@@ -644,6 +656,7 @@ else
         canViewNotifications = await PermissionService.HasPermissionAsync(Permissions.NotificationsView);
         canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
+        canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
         canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
         canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
     }

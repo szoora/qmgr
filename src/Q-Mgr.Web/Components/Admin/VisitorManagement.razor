@@ -1,0 +1,406 @@
+@page "/admin/visitors"
+@using System.Text.Json
+@inject IVisitorApiService VisitorApi
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Visitor Management - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Visitor Management</h1>
+            <p class="subtitle">Check in visitors, notify hosts, and keep a record of who's on site</p>
+        </div>
+        <div class="header-actions">
+            <PermissionGuard Permission="visitors.checkin">
+                <QButton Text="Pre-Register" Icon="calendar-plus" Variant="secondary" OnClick="@OpenPreRegisterModal" />
+                <QButton Text="Check In Visitor" Icon="person-plus-fill" Variant="primary" OnClick="@OpenCheckInModal" />
+            </PermissionGuard>
+        </div>
+    </div>
+
+    @if (summary != null)
+    {
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="card-icon onsite"><QIcon Name="person-check-fill" /></div>
+                <div class="card-content">
+                    <span class="card-value">@summary.CurrentlyOnSite</span>
+                    <span class="card-label">Currently On Site</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon total"><QIcon Name="people-fill" /></div>
+                <div class="card-content">
+                    <span class="card-value">@summary.TotalToday</span>
+                    <span class="card-label">Total Today</span>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon upcoming"><QIcon Name="calendar-event" /></div>
+                <div class="card-content">
+                    <span class="card-value">@summary.PreRegisteredUpcoming</span>
+                    <span class="card-label">Pre-Registered</span>
+                </div>
+            </div>
+            <div class="summary-card @(summary.WatchlistedOnSite > 0 ? "alert" : "")">
+                <div class="card-icon watchlist"><QIcon Name="shield-exclamation" /></div>
+                <div class="card-content">
+                    <span class="card-value">@summary.WatchlistedOnSite</span>
+                    <span class="card-label">Watchlisted On Site</span>
+                </div>
+            </div>
+        </div>
+    }
+
+    <div class="filter-bar">
+        @foreach (var tab in filterTabs)
+        {
+            <button class="filter-tab @(activeFilter == tab.Key ? "active" : "")" @onclick="@(() => ApplyFilter(tab.Key))">
+                @tab.Value
+            </button>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading visitors...</span>
+        </div>
+    }
+    else if (!visitors.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="person-badge" />
+            <h3>No Visitors</h3>
+            <p>Visitors will appear here once checked in or pre-registered</p>
+        </div>
+    }
+    else
+    {
+        <div class="visitor-list">
+            @foreach (var visitor in visitors)
+            {
+                <div class="visitor-card @(visitor.IsWatchlisted ? "watchlisted" : "") status-@visitor.Status.ToString().ToLower()">
+                    <div class="visitor-main">
+                        <div class="visitor-identity">
+                            <span class="badge-code">@visitor.BadgeCode</span>
+                            <span class="visitor-name">
+                                @visitor.FullName
+                                @if (visitor.IsWatchlisted)
+                                {
+                                    <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                }
+                            </span>
+                            @if (!string.IsNullOrEmpty(visitor.Company))
+                            {
+                                <span class="visitor-company">@visitor.Company</span>
+                            }
+                        </div>
+                        <span class="status-badge">@visitor.Status</span>
+                    </div>
+
+                    <div class="visitor-details">
+                        <span class="detail-item"><QIcon Name="briefcase-fill" /> @visitor.Purpose</span>
+                        @if (!string.IsNullOrEmpty(visitor.HostName))
+                        {
+                            <span class="detail-item"><QIcon Name="person-fill" /> Host: @visitor.HostName</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.Phone))
+                        {
+                            <span class="detail-item"><QIcon Name="telephone-fill" /> @visitor.Phone</span>
+                        }
+                        @if (visitor.ScheduledAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="calendar-event" /> Scheduled @visitor.ScheduledAt.Value.ToString("MMM dd, HH:mm")</span>
+                        }
+                        @if (visitor.CheckedInAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="box-arrow-in-right" /> In: @visitor.CheckedInAt.Value.ToString("HH:mm")</span>
+                        }
+                        @if (visitor.CheckedOutAt.HasValue)
+                        {
+                            <span class="detail-item"><QIcon Name="box-arrow-right" /> Out: @visitor.CheckedOutAt.Value.ToString("HH:mm")</span>
+                        }
+                    </div>
+
+                    <div class="visitor-actions">
+                        @if (visitor.Status == VisitorStatus.PreRegistered)
+                        {
+                            <PermissionGuard Permission="visitors.checkin">
+                                <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => CheckInExisting(visitor))" />
+                            </PermissionGuard>
+                        }
+                        @if (visitor.Status == VisitorStatus.CheckedIn)
+                        {
+                            <PermissionGuard Permission="visitors.checkout">
+                                <QButton Text="Check Out" Icon="box-arrow-right" Size="sm" Variant="secondary" OnClick="@(() => CheckOut(visitor))" />
+                            </PermissionGuard>
+                        }
+                        <PermissionGuard Permission="visitors.manage">
+                            <QButton Text="@(visitor.IsWatchlisted ? "Unflag" : "Flag")" Icon="shield-exclamation" Size="sm" Variant="ghost" OnClick="@(() => ToggleWatchlist(visitor))" />
+                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => DeleteVisitor(visitor))" />
+                        </PermissionGuard>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showCheckInModal" Title="Check In Visitor" Size="md">
+    <ChildContent>
+        <div class="form-grid">
+            <label>Full Name *<input @bind="checkInModel.FullName" placeholder="Jane Doe" /></label>
+            <label>Company<input @bind="checkInModel.Company" placeholder="Acme Inc." /></label>
+            <label>Phone<input @bind="checkInModel.Phone" placeholder="+1 555 0100" /></label>
+            <label>Email<input @bind="checkInModel.Email" placeholder="jane@acme.com" /></label>
+            <label>ID Number<input @bind="checkInModel.IdNumber" placeholder="Passport / National ID" /></label>
+            <label>Purpose of Visit *<input @bind="checkInModel.Purpose" placeholder="Meeting, delivery, interview..." /></label>
+            <label>Host Name<input @bind="checkInModel.HostName" placeholder="Who are they visiting?" /></label>
+            <label class="full-width">Notes<textarea @bind="checkInModel.Notes" rows="2"></textarea></label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCheckInModal = false)" />
+        <QButton Text="Check In" Icon="person-plus-fill" Variant="primary" OnClick="@SubmitCheckIn"
+                 Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose))" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showPreRegisterModal" Title="Pre-Register Visitor" Size="md">
+    <ChildContent>
+        <div class="form-grid">
+            <label>Full Name *<input @bind="preRegisterModel.FullName" placeholder="Jane Doe" /></label>
+            <label>Company<input @bind="preRegisterModel.Company" placeholder="Acme Inc." /></label>
+            <label>Phone<input @bind="preRegisterModel.Phone" placeholder="+1 555 0100" /></label>
+            <label>Email<input @bind="preRegisterModel.Email" placeholder="jane@acme.com" /></label>
+            <label>Scheduled Time<input type="datetime-local" @bind="scheduledAtLocal" /></label>
+            <label>Purpose of Visit *<input @bind="preRegisterModel.Purpose" placeholder="Meeting, delivery, interview..." /></label>
+            <label>Host Name<input @bind="preRegisterModel.HostName" placeholder="Who are they visiting?" /></label>
+            <label class="full-width">Notes<textarea @bind="preRegisterModel.Notes" rows="2"></textarea></label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showPreRegisterModal = false)" />
+        <QButton Text="Pre-Register" Icon="calendar-plus" Variant="primary" OnClick="@SubmitPreRegister"
+                 Disabled="@(string.IsNullOrWhiteSpace(preRegisterModel.FullName) || string.IsNullOrWhiteSpace(preRegisterModel.Purpose))" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .header-actions { display: flex; gap: 12px; }
+
+    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .summary-card { display: flex; align-items: center; gap: 14px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 18px; }
+    .summary-card.alert { border-color: var(--qm-danger, #d9534f); }
+    .card-icon { width: 44px; height: 44px; border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
+    .card-icon.watchlist { background: rgba(217, 83, 79, 0.12); color: var(--qm-danger, #d9534f); }
+    .card-content { display: flex; flex-direction: column; }
+    .card-value { font-size: 24px; font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
+    .card-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
+
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .filter-tab { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--qm-border); background: var(--qm-bg-card); color: var(--qm-text-muted); font-size: 13px; cursor: pointer; }
+    .filter-tab.active { background: var(--qm-primary); border-color: var(--qm-primary); color: #fff; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+
+    .visitor-list { display: flex; flex-direction: column; gap: 12px; }
+    .visitor-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
+    .visitor-card.watchlisted { border-left-color: var(--qm-danger, #d9534f); }
+    .visitor-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .visitor-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: 4px; }
+    .visitor-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .watchlist-flag { color: var(--qm-danger, #d9534f); }
+    .visitor-company { color: var(--qm-text-muted); font-size: 13px; }
+    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .status-checkedin .status-badge { background: rgba(63, 125, 88, 0.15); color: #3f7d58; }
+    .status-preregistered .status-badge { background: rgba(169, 120, 31, 0.15); color: #a9781f; }
+
+    .visitor-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--qm-text-muted); }
+    .detail-item { display: inline-flex; align-items: center; gap: 5px; }
+
+    .visitor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label.full-width { grid-column: 1 / -1; }
+    .form-grid input, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+</style>
+
+@code {
+    private List<VisitorDto> allVisitors = new();
+    private List<VisitorDto> visitors = new();
+    private VisitorSummaryDto? summary;
+    private bool isLoading = true;
+    private Guid branchId;
+    private string activeFilter = "all";
+
+    private readonly Dictionary<string, string> filterTabs = new()
+    {
+        ["all"] = "All Today",
+        ["onsite"] = "On Site",
+        ["upcoming"] = "Pre-Registered",
+        ["watchlist"] = "Watchlisted",
+    };
+
+    private CheckInVisitorRequest checkInModel = new();
+    private PreRegisterVisitorRequest preRegisterModel = new();
+    private DateTime? scheduledAtLocal;
+    private bool showCheckInModal;
+    private bool showPreRegisterModal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        allVisitors = await VisitorApi.GetVisitorsAsync(branchId);
+        summary = await VisitorApi.GetSummaryAsync(branchId);
+        ApplyFilter(activeFilter);
+
+        isLoading = false;
+    }
+
+    private void ApplyFilter(string filter)
+    {
+        activeFilter = filter;
+        visitors = filter switch
+        {
+            "onsite" => allVisitors.Where(v => v.Status == VisitorStatus.CheckedIn).ToList(),
+            "upcoming" => allVisitors.Where(v => v.Status == VisitorStatus.PreRegistered).ToList(),
+            "watchlist" => allVisitors.Where(v => v.IsWatchlisted).ToList(),
+            _ => allVisitors,
+        };
+        StateHasChanged();
+    }
+
+    private void OpenCheckInModal()
+    {
+        checkInModel = new CheckInVisitorRequest();
+        showCheckInModal = true;
+    }
+
+    private void OpenPreRegisterModal()
+    {
+        preRegisterModel = new PreRegisterVisitorRequest();
+        scheduledAtLocal = DateTime.Now.AddMinutes(30);
+        showPreRegisterModal = true;
+    }
+
+    private async Task SubmitCheckIn()
+    {
+        var result = await VisitorApi.CheckInAsync(branchId, checkInModel);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in — badge {result.BadgeCode}");
+            showCheckInModal = false;
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check in visitor");
+        }
+    }
+
+    private async Task SubmitPreRegister()
+    {
+        var request = preRegisterModel with { ScheduledAt = scheduledAtLocal?.ToUniversalTime() };
+        var result = await VisitorApi.PreRegisterAsync(branchId, request);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} pre-registered — badge {result.BadgeCode}");
+            showPreRegisterModal = false;
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to pre-register visitor");
+        }
+    }
+
+    private async Task CheckInExisting(VisitorDto visitor)
+    {
+        var result = await VisitorApi.CheckInExistingAsync(branchId, visitor.Id);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in");
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check in visitor");
+        }
+    }
+
+    private async Task CheckOut(VisitorDto visitor)
+    {
+        var result = await VisitorApi.CheckOutAsync(branchId, visitor.Id);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked out");
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check out visitor");
+        }
+    }
+
+    private async Task ToggleWatchlist(VisitorDto visitor)
+    {
+        var result = await VisitorApi.SetWatchlistAsync(branchId, visitor.Id, !visitor.IsWatchlisted,
+            !visitor.IsWatchlisted ? "Manually flagged by staff" : null);
+        if (result != null)
+        {
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to update watchlist");
+        }
+    }
+
+    private async Task DeleteVisitor(VisitorDto visitor)
+    {
+        if (await VisitorApi.DeleteVisitorAsync(branchId, visitor.Id))
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Visitor record deleted");
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete visitor");
+        }
+    }
+}

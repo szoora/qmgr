@@ -63,6 +63,12 @@ public static class Permissions
     public const string FeedbackRespond = "feedback.respond";
     public const string FeedbackAnalytics = "feedback.analytics";
 
+    // Visitor Management
+    public const string VisitorsView = "visitors.view";
+    public const string VisitorsCheckIn = "visitors.checkin";
+    public const string VisitorsCheckOut = "visitors.checkout";
+    public const string VisitorsManage = "visitors.manage"; // Edit details, delete, watchlist flag
+
     // Settings
     public const string SettingsView = "settings.view";
     public const string SettingsEdit = "settings.edit";
@@ -158,6 +164,12 @@ public static class Permissions
         new("feedback.respond", "Respond to Feedback", "Reply to customer feedback", "Feedback", 2),
         new("feedback.analytics", "Feedback Analytics", "View feedback analytics", "Feedback", 3),
 
+        // Visitor Management
+        new("visitors.view", "View Visitors", "View visitor log and details", "Visitor Management", 1),
+        new("visitors.checkin", "Check In Visitors", "Pre-register and check in visitors", "Visitor Management", 2),
+        new("visitors.checkout", "Check Out Visitors", "Check out visitors", "Visitor Management", 3),
+        new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4),
+
         // Settings
         new("settings.view", "View Settings", "View organization settings", "Settings", 1),
         new("settings.edit", "Edit Settings", "Modify organization settings", "Settings", 2),
@@ -237,6 +249,7 @@ public static class Permissions
                 ReportsView, ReportsExport,
                 ContentView, ContentCreate, ContentEdit, ContentDelete,
                 FeedbackView, FeedbackRespond, FeedbackAnalytics,
+                VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
                 SettingsView,
                 NotificationsView,
             }
@@ -256,6 +269,7 @@ public static class Permissions
                 TokensView, TokensCreate,
                 ReportsView,
                 FeedbackView,
+                VisitorsView, VisitorsCheckIn, VisitorsCheckOut,
             }
         ),
 

@@ -75,6 +75,7 @@ public enum NotificationType
     QueueUpdate,        // General queue status update
     SystemAlert,        // System alerts (for operators/admins)
     CounterAlert,       // Counter-specific alerts
+    VisitorArrived,     // A visitor has checked in for a host
     Custom              // Custom notifications
 }
 

@@ -10,6 +10,7 @@ using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Entities.Organization;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Entities.Queue;
+using QMgr.Domain.Entities.Visitor;
 
 namespace QMgr.Infrastructure.Data;
 
@@ -43,6 +44,7 @@ public class QMgrDbContext : DbContext
     public DbSet<Token> Tokens => Set<Token>();
     public DbSet<TokenHistory> TokenHistories => Set<TokenHistory>();
     public DbSet<Feedback> Feedbacks => Set<Feedback>();
+    public DbSet<Visitor> Visitors => Set<Visitor>();
 
     #endregion
 

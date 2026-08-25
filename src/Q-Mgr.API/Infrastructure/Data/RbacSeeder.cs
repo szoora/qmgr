@@ -137,6 +137,14 @@ public class RbacSeeder
         // ============================================
         // API CLIENTS (Integrations)
         // ============================================
+        // ============================================
+        // VISITOR MANAGEMENT
+        // ============================================
+        new("visitors.view", "View Visitors", "View visitor log and details", "Visitor Management", 1, true),
+        new("visitors.checkin", "Check In Visitors", "Pre-register and check in visitors", "Visitor Management", 2, true),
+        new("visitors.checkout", "Check Out Visitors", "Check out visitors", "Visitor Management", 3, true),
+        new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4, true),
+
         new("api-clients.view", "View API Clients", "View API client configurations", "API Clients", 1, true),
         new("api-clients.create", "Create API Clients", "Create new API client credentials", "API Clients", 2, true),
         new("api-clients.edit", "Edit API Clients", "Edit API client settings", "API Clients", 3, true),
@@ -246,6 +254,8 @@ public class RbacSeeder
                 "content.view", "content.create", "content.edit", "content.delete",
                 // Feedback (full)
                 "feedback.view", "feedback.respond", "feedback.analytics",
+                // Visitor Management (full)
+                "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
                 // Settings (view only)
                 "settings.view",
                 // Notifications (view only)
@@ -277,6 +287,8 @@ public class RbacSeeder
                 "reports.view",
                 // Feedback (view only)
                 "feedback.view",
+                // Visitor Management (front-desk operations)
+                "visitors.view", "visitors.checkin", "visitors.checkout",
             }
         ),
 

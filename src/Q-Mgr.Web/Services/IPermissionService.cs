@@ -205,6 +205,12 @@ public static class Permissions
     public const string FeedbackRespond = "feedback.respond";
     public const string FeedbackAnalytics = "feedback.analytics";
 
+    // Visitor Management
+    public const string VisitorsView = "visitors.view";
+    public const string VisitorsCheckIn = "visitors.checkin";
+    public const string VisitorsCheckOut = "visitors.checkout";
+    public const string VisitorsManage = "visitors.manage";
+
     // Settings
     public const string SettingsView = "settings.view";
     public const string SettingsEdit = "settings.edit";
