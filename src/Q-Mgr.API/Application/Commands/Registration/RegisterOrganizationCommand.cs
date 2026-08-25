@@ -74,14 +74,26 @@ public record RegisterOrganizationResult
     /// <summary>Whether email verification is required</summary>
     public bool RequiresEmailVerification { get; init; }
 
-    public static RegisterOrganizationResult Succeeded(Guid orgId, Guid userId, string slug) => new()
+    /// <summary>
+    /// Whether the verification email actually went out (IEmailSender.SendAsync's real result) —
+    /// distinct from RequiresEmailVerification, which is just "this account needs verifying"
+    /// regardless of whether the email attempt succeeded. False whenever platform SMTP isn't
+    /// configured or the send throws; the account still exists and can be verified via a resend,
+    /// but the client needs to know not to claim "check your email" when nothing was sent.
+    /// </summary>
+    public bool EmailSent { get; init; }
+
+    public static RegisterOrganizationResult Succeeded(Guid orgId, Guid userId, string slug, bool emailSent) => new()
     {
         Success = true,
         OrganizationId = orgId,
         UserId = userId,
         Slug = slug,
         RequiresEmailVerification = true,
-        Message = "Registration successful! Please check your email to verify your account."
+        EmailSent = emailSent,
+        Message = emailSent
+            ? "Registration successful! Please check your email to verify your account."
+            : "Registration successful! We couldn't send a verification email right now — you can request one to be resent below."
     };
 
     public static RegisterOrganizationResult Failed(string errorCode, string message) => new()

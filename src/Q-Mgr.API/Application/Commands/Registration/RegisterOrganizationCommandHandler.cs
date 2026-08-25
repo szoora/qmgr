@@ -1,6 +1,7 @@
 using Mediator;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
+using QMgr.Domain.Entities.Platform;
 
 namespace QMgr.Application.Commands.Registration;
 
@@ -11,15 +12,18 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
 {
     private readonly ITenantProvisioningService _provisioningService;
     private readonly IEmailSender _emailSender;
+    private readonly IPlatformSettingsService _platformSettingsService;
     private readonly ILogger<RegisterOrganizationCommandHandler> _logger;
 
     public RegisterOrganizationCommandHandler(
         ITenantProvisioningService provisioningService,
         IEmailSender emailSender,
+        IPlatformSettingsService platformSettingsService,
         ILogger<RegisterOrganizationCommandHandler> logger)
     {
         _provisioningService = provisioningService;
         _emailSender = emailSender;
+        _platformSettingsService = platformSettingsService;
         _logger = logger;
     }
 
@@ -68,7 +72,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             }
 
             // Send verification email
-            await SendVerificationEmailAsync(
+            var emailSent = await SendVerificationEmailAsync(
                 request.Email,
                 request.FirstName,
                 provisionResult.OrganizationId,
@@ -84,7 +88,8 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             return RegisterOrganizationResult.Succeeded(
                 provisionResult.OrganizationId,
                 provisionResult.AdminUserId,
-                provisionResult.Slug);
+                provisionResult.Slug,
+                emailSent);
         }
         catch (Exception ex)
         {
@@ -180,7 +185,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
         return System.Text.RegularExpressions.Regex.IsMatch(slug, @"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$");
     }
 
-    private async Task SendVerificationEmailAsync(
+    private async Task<bool> SendVerificationEmailAsync(
         string email,
         string firstName,
         Guid organizationId,
@@ -190,8 +195,14 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
     {
         try
         {
-            // Build verification URL
-            var verificationUrl = $"https://qmgr.app/verify?org={organizationId}&token={verificationToken}";
+            // Build verification URL from the configured platform base URL rather than a
+            // hardcoded "qmgr.app" literal, so this actually points somewhere real in any
+            // environment other than that exact production domain (this was previously
+            // hardcoded and never caught because dev SMTP is unconfigured, so the email — and
+            // therefore this URL — never actually got sent/seen).
+            var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+            var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+            var verificationUrl = $"{baseUrl}/verify?org={organizationId}&token={verificationToken}";
 
             var subject = "Verify your Q-Mgr account";
             var htmlBody = $@"
@@ -226,7 +237,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
 </body>
 </html>";
 
-            await _emailSender.SendAsync(
+            return await _emailSender.SendAsync(
                 email,
                 subject,
                 htmlBody,
@@ -236,6 +247,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
         {
             _logger.LogError(ex, "Failed to send verification email to {Email}", email);
             // Don't fail registration if email fails - they can request a new one
+            return false;
         }
     }
 }

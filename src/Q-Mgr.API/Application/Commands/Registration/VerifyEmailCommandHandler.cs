@@ -1,6 +1,7 @@
 using Mediator;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
+using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using QMgr.Domain.Interfaces;
 
@@ -86,17 +87,20 @@ public class ResendVerificationCommandHandler : IRequestHandler<ResendVerificati
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITenantProvisioningService _provisioningService;
     private readonly IEmailSender _emailSender;
+    private readonly IPlatformSettingsService _platformSettingsService;
     private readonly ILogger<ResendVerificationCommandHandler> _logger;
 
     public ResendVerificationCommandHandler(
         IUnitOfWork unitOfWork,
         ITenantProvisioningService provisioningService,
         IEmailSender emailSender,
+        IPlatformSettingsService platformSettingsService,
         ILogger<ResendVerificationCommandHandler> logger)
     {
         _unitOfWork = unitOfWork;
         _provisioningService = provisioningService;
         _emailSender = emailSender;
+        _platformSettingsService = platformSettingsService;
         _logger = logger;
     }
 
@@ -153,7 +157,9 @@ public class ResendVerificationCommandHandler : IRequestHandler<ResendVerificati
         string token,
         CancellationToken cancellationToken)
     {
-        var verificationUrl = $"https://qmgr.app/verify?org={organization.Id}&token={token}";
+        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+        var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+        var verificationUrl = $"{baseUrl}/verify?org={organization.Id}&token={token}";
 
         var subject = "Verify your Q-Mgr account";
         var htmlBody = $@"

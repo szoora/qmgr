@@ -67,12 +67,33 @@
                     <div class="success-icon">&#10003;</div>
                     <h3>Registration Successful!</h3>
                     <p>Your organization <strong>@formData.OrganizationName</strong> has been created.</p>
-                    @if (requiresVerification)
+                    @if (requiresVerification && emailSent)
                     {
                         <p class="verification-note">
                             A verification email has been sent to <strong>@formData.Email</strong>.
                             Please check your inbox and verify your email to activate your account.
                         </p>
+                    }
+                    else if (requiresVerification && !emailSent)
+                    {
+                        <p class="verification-note verification-warning">
+                            Your account was created, but we couldn't send a verification email to
+                            <strong>@formData.Email</strong> right now.
+                        </p>
+                        @if (resendComplete)
+                        {
+                            <p class="verification-note">
+                                A new verification email is on its way — please check your inbox in a few minutes.
+                            </p>
+                        }
+                        else
+                        {
+                            <div class="success-actions">
+                                <button class="btn btn-secondary" @onclick="ResendVerificationEmail" disabled="@isResending">
+                                    @(isResending ? "Sending..." : "Resend Verification Email")
+                                </button>
+                            </div>
+                        }
                     }
                     <div class="success-actions">
                         <button class="btn btn-primary" @onclick="GoToLogin">
@@ -836,6 +857,12 @@
         font-size: 0.9rem;
     }
 
+    .verification-note.verification-warning {
+        background: rgba(239, 68, 68, 0.15);
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+    }
+
     .success-actions {
         margin-top: 2rem;
     }
@@ -910,6 +937,9 @@
     private string passwordStrengthText = "";
     private bool registrationSuccess = false;
     private bool requiresVerification = false;
+    private bool emailSent = false;
+    private bool isResending = false;
+    private bool resendComplete = false;
     private System.Timers.Timer? slugCheckTimer;
     private int trialDays = 14; // Overwritten by the real platform setting below; this is only the fallback if that fetch fails.
 
@@ -1134,6 +1164,7 @@
                 var result = await response.Content.ReadFromJsonAsync<RegisterResponse>();
                 registrationSuccess = true;
                 requiresVerification = result?.RequiresEmailVerification ?? false;
+                emailSent = result?.EmailSent ?? false;
             }
             else
             {
@@ -1155,6 +1186,28 @@
     private void GoToLogin()
     {
         Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    private async Task ResendVerificationEmail()
+    {
+        isResending = true;
+        try
+        {
+            await Http.PostAsJsonAsync("api/v1/register/resend-verification", new { email = formData.Email });
+            // The endpoint always reports success regardless of whether a matching account
+            // exists (deliberate — avoids leaking which emails are registered), so this can't
+            // reflect whether SMTP is actually configured; it can only confirm the request was
+            // sent, which is still useful feedback after a first attempt silently failed.
+            resendComplete = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Resend verification error");
+        }
+        finally
+        {
+            isResending = false;
+        }
     }
 
     public void Dispose()
@@ -1193,6 +1246,7 @@
         public string? Slug { get; init; }
         public string? Message { get; init; }
         public bool RequiresEmailVerification { get; init; }
+        public bool EmailSent { get; init; }
     }
 
     private record ErrorResponse

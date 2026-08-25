@@ -45,6 +45,18 @@
                 </div>
             }
 
+            @if (Verified == true)
+            {
+                <div class="alert alert-success animate-in">
+                    <div class="alert-icon">
+                        <QIcon Name="check-circle-fill" />
+                    </div>
+                    <div class="alert-content">
+                        <p>Email verified! You can now sign in.</p>
+                    </div>
+                </div>
+            }
+
             <EditForm Model="@emailModel" OnValidSubmit="@HandleEmailSubmit" FormName="EmailLoginForm">
                 <DataAnnotationsValidator />
 
@@ -651,6 +663,9 @@
 @code {
     [SupplyParameterFromQuery]
     private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    private bool? Verified { get; set; }
 
     private enum LoginStep
     {
