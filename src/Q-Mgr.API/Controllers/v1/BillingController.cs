@@ -74,10 +74,13 @@ public class BillingController : ControllerBase
 
         if (subscription == null)
         {
+            var trialInfo = await _billingService.GetOrganizationTrialInfoAsync(OrganizationId);
             return Ok(new
             {
                 hasSubscription = false,
-                message = "No active subscription"
+                message = "No active subscription",
+                status = trialInfo?.Status.ToString(),
+                trialEndsAt = trialInfo?.TrialEndsAt
             });
         }
 
@@ -193,7 +196,15 @@ public class BillingController : ControllerBase
     {
         var subscription = await _billingService.GetSubscriptionWithPlanAsync(OrganizationId);
         if (subscription == null)
-            return Ok(new { hasSubscription = false });
+        {
+            var trialInfo = await _billingService.GetOrganizationTrialInfoAsync(OrganizationId);
+            return Ok(new
+            {
+                hasSubscription = false,
+                status = trialInfo?.Status.ToString(),
+                trialEndsAt = trialInfo?.TrialEndsAt
+            });
+        }
 
         return Ok(new SubscriptionDto
         {

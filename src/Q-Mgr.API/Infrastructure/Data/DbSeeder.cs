@@ -282,21 +282,100 @@ public class DbSeeder
     {
         var tierPlans = new Dictionary<TenantTier, TierPlanDefaults>
         {
+            [TenantTier.Free] = new(
+                Name: "Free", Code: "free", ShowAds: true, DedicatedSchema: false,
+                MaxBranches: 1, MaxDisplays: 1, MaxUsersPerBranch: 3, MaxCountersPerBranch: 2,
+                MaxTokensPerMonth: 500, MaxApiCallsPerMonth: 1_000, MaxStorageMb: 100,
+                MonthlyPriceUsd: 0, AnnualPriceUsd: 0, MonthlyPriceUgx: 0, AnnualPriceUgx: 0,
+                Description: "For trying Q-Mgr out with a single branch.", Badge: null, SortOrder: 0),
             [TenantTier.Starter] = new(
                 Name: "Starter", Code: "starter", ShowAds: true, DedicatedSchema: false,
                 MaxBranches: 3, MaxDisplays: 2, MaxUsersPerBranch: 5, MaxCountersPerBranch: 5,
-                MaxTokensPerMonth: 5_000, MaxApiCallsPerMonth: 10_000, MaxStorageMb: 1_000),
+                MaxTokensPerMonth: 5_000, MaxApiCallsPerMonth: 10_000, MaxStorageMb: 1_000,
+                MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 110_000m, AnnualPriceUgx: 1_100_000m,
+                Description: "For a single growing business with a few branches.", Badge: null, SortOrder: 1),
             [TenantTier.Professional] = new(
                 Name: "Professional", Code: "professional", ShowAds: false, DedicatedSchema: false,
                 MaxBranches: 10, MaxDisplays: 5, MaxUsersPerBranch: 15, MaxCountersPerBranch: 15,
-                MaxTokensPerMonth: 50_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 10_000),
+                MaxTokensPerMonth: 50_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 10_000,
+                MonthlyPriceUsd: 79m, AnnualPriceUsd: 790m, MonthlyPriceUgx: 300_000m, AnnualPriceUgx: 3_000_000m,
+                Description: "For multi-branch operations that need analytics and SMS.", Badge: "Most Popular", SortOrder: 2),
             [TenantTier.Enterprise] = new(
                 Name: "Enterprise", Code: "enterprise", ShowAds: false, DedicatedSchema: true,
                 MaxBranches: 50, MaxDisplays: 25, MaxUsersPerBranch: 100, MaxCountersPerBranch: 100,
-                MaxTokensPerMonth: 500_000, MaxApiCallsPerMonth: 1_000_000, MaxStorageMb: 100_000),
+                MaxTokensPerMonth: 500_000, MaxApiCallsPerMonth: 1_000_000, MaxStorageMb: 100_000,
+                MonthlyPriceUsd: 199m, AnnualPriceUsd: 1_990m, MonthlyPriceUgx: 750_000m, AnnualPriceUgx: 7_500_000m,
+                Description: "For large, multi-region deployments needing a dedicated schema.", Badge: null, SortOrder: 3),
         };
 
         var changed = false;
+
+        // Ensure the full plan catalog (Free/Starter/Professional/Enterprise) always exists, (Free/Starter/Professional/Enterprise) always exists,
+        // independent of whether any organization currently sits on that tier. Previously the
+        // only place a SubscriptionPlan row was created was inside the per-org loop below, which
+        // only runs for orgs already on a paid tier — so a plan a customer had never been put on
+        // (e.g. Starter, if every seeded org happened to be Free or Enterprise) would never exist
+        // at all, and GET api/v1/billing/plans (the public "Available Plans" list every trialing
+        // customer sees to pick a plan) silently showed only whichever plans happened to have
+        // been created as that side effect. Caught live: a fresh trial org saw exactly one
+        // plan card ("Enterprise") on the upgrade page.
+        foreach (var (tier, defaults) in tierPlans)
+        {
+            var existing = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == defaults.Code);
+            if (existing == null)
+            {
+                _context.SubscriptionPlans.Add(new SubscriptionPlan
+                {
+                    Id = Guid.NewGuid(),
+                    Name = defaults.Name,
+                    Code = defaults.Code,
+                    Description = defaults.Description,
+                    Tier = tier,
+                    ShowAds = defaults.ShowAds,
+                    RequiresDedicatedSchema = defaults.DedicatedSchema,
+                    IsPublic = true,
+                    SortOrder = defaults.SortOrder,
+                    Badge = defaults.Badge,
+                    MonthlyPriceUsd = defaults.MonthlyPriceUsd,
+                    AnnualPriceUsd = defaults.AnnualPriceUsd,
+                    MonthlyPriceUgx = defaults.MonthlyPriceUgx,
+                    AnnualPriceUgx = defaults.AnnualPriceUgx,
+                    MaxBranches = defaults.MaxBranches,
+                    MaxDisplays = defaults.MaxDisplays,
+                    MaxUsersPerBranch = defaults.MaxUsersPerBranch,
+                    MaxCountersPerBranch = defaults.MaxCountersPerBranch,
+                    MaxTokensPerMonth = defaults.MaxTokensPerMonth,
+                    MaxApiCallsPerMonth = defaults.MaxApiCallsPerMonth,
+                    MaxStorageMb = defaults.MaxStorageMb,
+                    Features = BuildFeaturesJson(tier),
+                    CreatedAt = DateTime.UtcNow
+                });
+                changed = true;
+                _logger.LogInformation("Seeded {Tier} subscription plan into the public catalog", tier);
+            }
+            else if (existing.MonthlyPriceUsd == 0 && defaults.MonthlyPriceUsd > 0)
+            {
+                // Backfills pricing on a plan row that was created before this method set prices
+                // (e.g. the Enterprise row auto-created by the per-org loop below, pre-fix).
+                existing.Description ??= defaults.Description;
+                existing.Badge ??= defaults.Badge;
+                existing.SortOrder = defaults.SortOrder;
+                existing.MonthlyPriceUsd = defaults.MonthlyPriceUsd;
+                existing.AnnualPriceUsd = defaults.AnnualPriceUsd;
+                existing.MonthlyPriceUgx = defaults.MonthlyPriceUgx;
+                existing.AnnualPriceUgx = defaults.AnnualPriceUgx;
+                changed = true;
+                _logger.LogInformation("Backfilled pricing on the existing {Tier} subscription plan", tier);
+            }
+        }
+
+        // Flush now — the sync/per-org queries below hit the database directly (FirstOrDefaultAsync
+        // over a DbSet issues real SQL), so a plan added above but not yet saved would be invisible
+        // to them and get re-created as a duplicate row with the same Code.
+        if (changed)
+        {
+            await _context.SaveChangesAsync();
+        }
 
         // Sync numeric limits + Features on every plan this method manages (matched by Code) to
         // the tier-appropriate values above — independent of the per-org loop below, since that
@@ -357,35 +436,13 @@ public class DbSeeder
             if (hasActiveSubscription)
                 continue;
 
+            // The plan-catalog step above guarantees a row for every tier in tierPlans already
+            // exists (and is saved) by this point.
             var plan = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == planInfo.Code);
             if (plan == null)
             {
-                plan = new SubscriptionPlan
-                {
-                    Id = Guid.NewGuid(),
-                    Name = planInfo.Name,
-                    Code = planInfo.Code,
-                    Tier = org.Tier,
-                    ShowAds = planInfo.ShowAds,
-                    RequiresDedicatedSchema = planInfo.DedicatedSchema,
-                    IsPublic = true,
-                    SortOrder = (int)org.Tier,
-                    MaxBranches = planInfo.MaxBranches,
-                    MaxDisplays = planInfo.MaxDisplays,
-                    MaxUsersPerBranch = planInfo.MaxUsersPerBranch,
-                    MaxCountersPerBranch = planInfo.MaxCountersPerBranch,
-                    MaxTokensPerMonth = planInfo.MaxTokensPerMonth,
-                    MaxApiCallsPerMonth = planInfo.MaxApiCallsPerMonth,
-                    MaxStorageMb = planInfo.MaxStorageMb,
-                    // BillingService's UsageLimitMiddleware gate reads capabilities from this
-                    // JSON blob (not from FeatureFlagService's own tier switch), so it must be
-                    // populated here or every plan this method creates silently has zero API
-                    // access etc. regardless of tier — discovered live via a 403 on this
-                    // exact seeded Enterprise plan.
-                    Features = BuildFeaturesJson(org.Tier),
-                    CreatedAt = DateTime.UtcNow
-                };
-                _context.SubscriptionPlans.Add(plan);
+                _logger.LogWarning("No SubscriptionPlan found for code {Code} — skipping subscription seed for {OrgName}", planInfo.Code, org.Name);
+                continue;
             }
 
             _context.Subscriptions.Add(new Subscription
@@ -615,5 +672,7 @@ public class DbSeeder
     private record TierPlanDefaults(
         string Name, string Code, bool ShowAds, bool DedicatedSchema,
         int MaxBranches, int MaxDisplays, int MaxUsersPerBranch, int MaxCountersPerBranch,
-        int MaxTokensPerMonth, int MaxApiCallsPerMonth, int MaxStorageMb);
+        int MaxTokensPerMonth, int MaxApiCallsPerMonth, int MaxStorageMb,
+        decimal MonthlyPriceUsd, decimal AnnualPriceUsd, decimal MonthlyPriceUgx, decimal AnnualPriceUgx,
+        string? Description, string? Badge, int SortOrder);
 }

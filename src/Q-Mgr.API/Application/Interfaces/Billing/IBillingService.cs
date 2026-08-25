@@ -94,6 +94,15 @@ public interface IBillingService
     /// </summary>
     Task<SubscriptionWithPlan?> GetSubscriptionWithPlanAsync(Guid organizationId);
 
+    /// <summary>
+    /// Get an organization's trial/status info directly from the Organization record. Needed
+    /// because trial state (Status, TrialEndsAt) lives on Organization, not Subscription — a
+    /// trialing org that hasn't picked a paid plan yet has no Subscription row at all, so
+    /// callers that only look at GetSubscriptionWithPlanAsync have no way to tell "trialing
+    /// with N days left" apart from "no org found".
+    /// </summary>
+    Task<OrganizationTrialInfo?> GetOrganizationTrialInfoAsync(Guid organizationId);
+
     #endregion
 
     #region Invoices
@@ -230,6 +239,14 @@ public record SubscriptionWithPlan(
     Subscription Subscription,
     SubscriptionPlan Plan,
     EffectiveLimits Limits);
+
+/// <summary>
+/// An organization's trial/status info, sourced from Organization rather than Subscription —
+/// valid even before any Subscription row exists (e.g. during the free trial).
+/// </summary>
+public record OrganizationTrialInfo(
+    TenantStatus Status,
+    DateTime? TrialEndsAt);
 
 /// <summary>
 /// Result of limit check

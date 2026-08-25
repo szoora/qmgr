@@ -489,6 +489,19 @@ public class BillingService : IBillingService
         return new SubscriptionWithPlan(subscription, subscription.Plan, limits);
     }
 
+    public async Task<OrganizationTrialInfo?> GetOrganizationTrialInfoAsync(Guid organizationId)
+    {
+        var organization = await _dbContext.Organizations
+            .AsNoTracking()
+            .Where(o => o.Id == organizationId)
+            .Select(o => new { o.Status, o.TrialEndsAt })
+            .FirstOrDefaultAsync();
+
+        if (organization == null) return null;
+
+        return new OrganizationTrialInfo(organization.Status, organization.TrialEndsAt);
+    }
+
     #endregion
 
     #region Invoices
