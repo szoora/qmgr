@@ -1,0 +1,9 @@
+@inherits LayoutComponentBase
+
+@* Deliberately makes zero API calls (unlike KioskLayout, which fetches branch branding in its
+   own OnInitializedAsync) — for pages reachable by an authenticated-but-gated user (e.g.
+   AccountStatus.razor), any authenticated call KioskLayout made on their behalf would itself hit
+   the same tenant-status 403 and re-trigger TenantStatusMessageHandler's redirect mid-render,
+   corrupting the very page meant to explain the gate. A system status page doesn't need
+   per-tenant branding anyway. *@
+@Body

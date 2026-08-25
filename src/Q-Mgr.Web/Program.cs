@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Blazored.LocalStorage;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using QMgr.Web.Components;
@@ -118,7 +119,17 @@ builder.Services.AddScoped(sp =>
         InnerHandler = innerHandler
     };
 
-    return new HttpClient(authHandler)
+    // Outermost: sees the final response after any 401-triggered refresh/retry inside
+    // AuthenticationMessageHandler has already happened, so a 403 here is a real tenant-status
+    // or permission decision, not a stale-token artifact.
+    var tenantStatusHandler = new TenantStatusMessageHandler(
+        sp.GetRequiredService<NavigationManager>(),
+        sp.GetRequiredService<ILogger<TenantStatusMessageHandler>>())
+    {
+        InnerHandler = authHandler
+    };
+
+    return new HttpClient(tenantStatusHandler)
     {
         BaseAddress = new Uri(builder.Configuration["ApiBaseUrl"] ?? "https://localhost:5001")
     };
