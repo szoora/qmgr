@@ -127,7 +127,7 @@ public class NotificationService : INotificationService
 
     #region Email
 
-    public async Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
+    public async Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.EmailEnabled)
@@ -161,18 +161,21 @@ public class NotificationService : INotificationService
             };
             mailMessage.To.Add(email);
 
-            if (attachment != null)
+            if (attachments != null)
             {
-                var attachmentStream = await _mediaStorageService.DownloadAsync(attachment.FilePath, cancellationToken);
-                if (attachmentStream != null)
+                foreach (var attachment in attachments)
                 {
-                    // Ownership passes to Attachment/MailMessage from here — the `using var
-                    // mailMessage` above disposes it along with everything else on the way out.
-                    mailMessage.Attachments.Add(new Attachment(attachmentStream, attachment.FileName, attachment.MimeType));
-                }
-                else
-                {
-                    _logger.LogWarning("Attachment {FilePath} could not be read; sending {Email} without it", attachment.FilePath, email);
+                    var attachmentStream = await _mediaStorageService.DownloadAsync(attachment.FilePath, cancellationToken);
+                    if (attachmentStream != null)
+                    {
+                        // Ownership passes to Attachment/MailMessage from here — the `using var
+                        // mailMessage` above disposes it along with everything else on the way out.
+                        mailMessage.Attachments.Add(new Attachment(attachmentStream, attachment.FileName, attachment.MimeType));
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Attachment {FilePath} could not be read; sending {Email} without it", attachment.FilePath, email);
+                    }
                 }
             }
 
@@ -191,7 +194,7 @@ public class NotificationService : INotificationService
 
     #region Telegram
 
-    public async Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
+    public async Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.TelegramEnabled)
@@ -210,38 +213,32 @@ public class NotificationService : INotificationService
         {
             var client = _httpClientFactory.CreateClient("TelegramApi");
 
-            // Telegram fetches attachment.Url itself server-side rather than receiving bytes —
-            // sendPhoto renders inline for images, sendDocument covers everything else (PDFs,
-            // etc.); plain sendMessage stays the path when there's nothing attached.
-            string endpoint;
-            object request;
-            if (attachment == null)
+            if (attachments == null || attachments.Count == 0)
             {
-                endpoint = "sendMessage";
-                request = new { chat_id = chatId, text = message };
-            }
-            else if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-            {
-                endpoint = "sendPhoto";
-                request = new { chat_id = chatId, photo = attachment.Url, caption = message };
-            }
-            else
-            {
-                endpoint = "sendDocument";
-                request = new { chat_id = chatId, document = attachment.Url, caption = message };
+                return await TelegramSendMessageAsync(client, settings.TelegramBotToken, chatId, message, cancellationToken);
             }
 
-            var response = await client.PostAsJsonAsync($"bot{settings.TelegramBotToken}/{endpoint}", request, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
+            if (attachments.Count == 1)
             {
-                _logger.LogInformation("Telegram message sent successfully to chat {ChatId}", chatId);
-                return true;
+                // The one-attachment case carries the text as the attachment's own caption —
+                // one API call, same as before this method supported more than one attachment.
+                return await TelegramSendAttachmentAsync(client, settings.TelegramBotToken, chatId, attachments[0], message, cancellationToken);
             }
 
-            var error = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("Telegram send failed: {StatusCode} - {Error}", response.StatusCode, error);
-            return false;
+            // More than one: Telegram has no single call that sends several arbitrary
+            // attachments with one shared caption, so the text goes out on its own first, and
+            // the primary result is whether THAT succeeded — a later attachment failing is
+            // logged but doesn't flip it, since the recipient already has the core message.
+            var textSent = await TelegramSendMessageAsync(client, settings.TelegramBotToken, chatId, message, cancellationToken);
+            foreach (var attachment in attachments)
+            {
+                var attachmentSent = await TelegramSendAttachmentAsync(client, settings.TelegramBotToken, chatId, attachment, caption: null, cancellationToken);
+                if (!attachmentSent)
+                {
+                    _logger.LogWarning("Telegram attachment {FileName} failed to send to chat {ChatId} (text already sent)", attachment.FileName, chatId);
+                }
+            }
+            return textSent;
         }
         catch (Exception ex)
         {
@@ -250,11 +247,51 @@ public class NotificationService : INotificationService
         }
     }
 
+    private async Task<bool> TelegramSendMessageAsync(HttpClient client, string botToken, string chatId, string text, CancellationToken cancellationToken)
+    {
+        var request = new { chat_id = chatId, text };
+        var response = await client.PostAsJsonAsync($"bot{botToken}/sendMessage", request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation("Telegram message sent successfully to chat {ChatId}", chatId);
+            return true;
+        }
+
+        var error = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogWarning("Telegram send failed: {StatusCode} - {Error}", response.StatusCode, error);
+        return false;
+    }
+
+    /// <summary>
+    /// Sends one attachment via sendPhoto (image/* mime types) or sendDocument (everything
+    /// else) — Telegram fetches attachment.Url itself server-side rather than receiving bytes.
+    /// caption may be null (used when the text already went out as its own message).
+    /// </summary>
+    private async Task<bool> TelegramSendAttachmentAsync(HttpClient client, string botToken, string chatId, NotificationAttachment attachment, string? caption, CancellationToken cancellationToken)
+    {
+        var isImage = attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+        var endpoint = isImage ? "sendPhoto" : "sendDocument";
+        object request = isImage
+            ? new { chat_id = chatId, photo = attachment.Url, caption }
+            : new { chat_id = chatId, document = attachment.Url, caption };
+
+        var response = await client.PostAsJsonAsync($"bot{botToken}/{endpoint}", request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation("Telegram attachment {FileName} sent successfully to chat {ChatId}", attachment.FileName, chatId);
+            return true;
+        }
+
+        var error = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogWarning("Telegram attachment send failed: {StatusCode} - {Error}", response.StatusCode, error);
+        return false;
+    }
+
     #endregion
 
     #region WhatsApp
 
-    public async Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
+    public async Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.WhatsAppEnabled)
@@ -277,57 +314,92 @@ public class NotificationService : INotificationService
             // WhatsApp Cloud API requires E.164 digits with no leading '+' in the "to" field.
             var normalizedNumber = new string(NormalizePhoneNumber(phoneNumber).Where(char.IsDigit).ToArray());
 
-            // Cloud API fetches attachment.Url itself via its "link" field (same fetch-from-URL
-            // model as Telegram above) — image renders inline, document covers everything else.
-            object request;
-            if (attachment == null)
+            if (attachments == null || attachments.Count == 0)
             {
-                request = new
-                {
-                    messaging_product = "whatsapp",
-                    to = normalizedNumber,
-                    type = "text",
-                    text = new { body = message }
-                };
-            }
-            else if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-            {
-                request = new
-                {
-                    messaging_product = "whatsapp",
-                    to = normalizedNumber,
-                    type = "image",
-                    image = new { link = attachment.Url, caption = message }
-                };
-            }
-            else
-            {
-                request = new
-                {
-                    messaging_product = "whatsapp",
-                    to = normalizedNumber,
-                    type = "document",
-                    document = new { link = attachment.Url, filename = attachment.FileName, caption = message }
-                };
+                return await WhatsAppSendTextAsync(client, settings.WhatsAppPhoneNumberId, normalizedNumber, phoneNumber, message, cancellationToken);
             }
 
-            var response = await client.PostAsJsonAsync($"{settings.WhatsAppPhoneNumberId}/messages", request, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
+            if (attachments.Count == 1)
             {
-                _logger.LogInformation("WhatsApp message sent successfully to {PhoneNumber}", phoneNumber);
-                return true;
+                // One attachment carries the text as its own caption — a single API call, same
+                // as before this method supported more than one attachment.
+                return await WhatsAppSendAttachmentAsync(client, settings.WhatsAppPhoneNumberId, normalizedNumber, phoneNumber, attachments[0], message, cancellationToken);
             }
 
-            var error = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("WhatsApp send failed: {StatusCode} - {Error}", response.StatusCode, error);
-            return false;
+            // More than one: no single Cloud API call sends several arbitrary attachments with
+            // one shared caption, so the text goes out as its own message first, and the primary
+            // result is whether THAT succeeded — a later attachment failing is logged but
+            // doesn't flip it, since the recipient already has the core message.
+            var textSent = await WhatsAppSendTextAsync(client, settings.WhatsAppPhoneNumberId, normalizedNumber, phoneNumber, message, cancellationToken);
+            foreach (var attachment in attachments)
+            {
+                var attachmentSent = await WhatsAppSendAttachmentAsync(client, settings.WhatsAppPhoneNumberId, normalizedNumber, phoneNumber, attachment, caption: null, cancellationToken);
+                if (!attachmentSent)
+                {
+                    _logger.LogWarning("WhatsApp attachment {FileName} failed to send to {PhoneNumber} (text already sent)", attachment.FileName, phoneNumber);
+                }
+            }
+            return textSent;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send WhatsApp message to {PhoneNumber}", phoneNumber);
             return false;
         }
+    }
+
+    private async Task<bool> WhatsAppSendTextAsync(HttpClient client, string phoneNumberId, string normalizedNumber, string phoneNumberForLogging, string body, CancellationToken cancellationToken)
+    {
+        var request = new
+        {
+            messaging_product = "whatsapp",
+            to = normalizedNumber,
+            type = "text",
+            text = new { body }
+        };
+        return await WhatsAppPostAsync(client, phoneNumberId, phoneNumberForLogging, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends one attachment via type: image (image/* mime types) or type: document (everything
+    /// else) — Cloud API fetches attachment.Url itself via its "link" field, same fetch-from-URL
+    /// model as Telegram. caption may be null (used when the text already went out as its own
+    /// message).
+    /// </summary>
+    private async Task<bool> WhatsAppSendAttachmentAsync(HttpClient client, string phoneNumberId, string normalizedNumber, string phoneNumberForLogging, NotificationAttachment attachment, string? caption, CancellationToken cancellationToken)
+    {
+        var isImage = attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+        object request = isImage
+            ? new
+            {
+                messaging_product = "whatsapp",
+                to = normalizedNumber,
+                type = "image",
+                image = new { link = attachment.Url, caption }
+            }
+            : new
+            {
+                messaging_product = "whatsapp",
+                to = normalizedNumber,
+                type = "document",
+                document = new { link = attachment.Url, filename = attachment.FileName, caption }
+            };
+
+        return await WhatsAppPostAsync(client, phoneNumberId, phoneNumberForLogging, request, cancellationToken);
+    }
+
+    private async Task<bool> WhatsAppPostAsync(HttpClient client, string phoneNumberId, string phoneNumberForLogging, object request, CancellationToken cancellationToken)
+    {
+        var response = await client.PostAsJsonAsync($"{phoneNumberId}/messages", request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            _logger.LogInformation("WhatsApp message sent successfully to {PhoneNumber}", phoneNumberForLogging);
+            return true;
+        }
+
+        var error = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogWarning("WhatsApp send failed: {StatusCode} - {Error}", response.StatusCode, error);
+        return false;
     }
 
     #endregion
