@@ -41,6 +41,10 @@ public record BroadcastDto
     public int SentCount { get; init; }
     public int FailedCount { get; init; }
     public DateTime CreatedAt { get; init; }
+    public string? AttachmentUrl { get; init; }
+    public string? AttachmentFileName { get; init; }
+    public string? AttachmentMimeType { get; init; }
+    public long? AttachmentFileSizeBytes { get; init; }
 }
 
 public record CreateBroadcastRequest

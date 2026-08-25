@@ -75,6 +75,24 @@
                             </div>
                         </div>
                         <p class="broadcast-preview">@(b.Subject != null ? $"{b.Subject} — " : "")@Truncate(b.MessageBody, 120)</p>
+                        @if (!string.IsNullOrEmpty(b.AttachmentFileName))
+                        {
+                            <div class="broadcast-attachment">
+                                <QIcon Name="paperclip" />
+                                <span>@b.AttachmentFileName</span>
+                                <span class="attachment-size">(@FormatFileSize(b.AttachmentFileSizeBytes))</span>
+                                @if (b.Channel == BroadcastChannel.Sms)
+                                {
+                                    <span class="attachment-sms-note">— sent as a link, SMS can't carry files</span>
+                                }
+                                @if (b.Status == BroadcastStatus.Draft)
+                                {
+                                    <button class="attachment-remove" title="Remove attachment" @onclick="@(() => RemoveAttachment(b))">
+                                        <QIcon Name="x-circle-fill" />
+                                    </button>
+                                }
+                            </div>
+                        }
                         <div class="broadcast-stats">
                             @if (b.Status is BroadcastStatus.Sending or BroadcastStatus.Sent)
                             {
@@ -158,12 +176,32 @@
             }
             <label class="full-width">Message *<textarea @bind="broadcastModel.MessageBody" rows="5" placeholder="Your message..."></textarea></label>
             <label class="full-width">Audience tag filter (optional)<input @bind="broadcastModel.AudienceTagFilter" placeholder="e.g. vip — leave blank for everyone not opted out" /></label>
+            <label class="full-width">
+                Attachment (optional)
+                <InputFile OnChange="OnAttachmentSelected" accept="image/*,video/*,audio/*,.pdf" />
+                @if (selectedAttachmentFile != null)
+                {
+                    <span class="attachment-selected">
+                        <QIcon Name="paperclip" /> @selectedAttachmentFile.Name (@FormatFileSize(selectedAttachmentFile.Size))
+                        <button type="button" class="attachment-remove" @onclick="@(() => selectedAttachmentFile = null)"><QIcon Name="x-circle-fill" /></button>
+                    </span>
+                }
+                @if (attachmentError != null)
+                {
+                    <span class="attachment-error">@attachmentError</span>
+                }
+                @if (broadcastModel.Channel == BroadcastChannel.Sms && selectedAttachmentFile != null)
+                {
+                    <span class="attachment-sms-note">SMS can't carry files — recipients get a link to it instead.</span>
+                }
+                <span class="field-hint">Images, video, audio, or PDF, up to 25MB.</span>
+            </label>
         </div>
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showBroadcastModal = false)" />
         <QButton Text="Save as Draft" Icon="save" Variant="primary" OnClick="@SubmitBroadcast"
-                 Disabled="@(string.IsNullOrWhiteSpace(broadcastModel.Name) || string.IsNullOrWhiteSpace(broadcastModel.MessageBody))" />
+                 Disabled="@(string.IsNullOrWhiteSpace(broadcastModel.Name) || string.IsNullOrWhiteSpace(broadcastModel.MessageBody) || isSavingBroadcast)" />
     </FooterContent>
 </QModal>
 
@@ -223,6 +261,16 @@
     .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
     .form-grid input, .form-grid select, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+
+    .field-hint { font-size: 11px; color: var(--qm-text-muted); opacity: 0.8; }
+    .attachment-selected { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-primary); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); padding: 4px 8px; width: fit-content; }
+    .attachment-error { color: #ac3b33; font-size: 12px; }
+    .attachment-sms-note { color: #a9781f; font-size: 12px; }
+    .attachment-remove { background: none; border: none; padding: 0; cursor: pointer; color: var(--qm-text-muted); display: inline-flex; align-items: center; }
+    .attachment-remove:hover { color: #ac3b33; }
+
+    .broadcast-attachment { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-text-muted); margin: 0 0 8px; }
+    .broadcast-attachment .attachment-size { opacity: 0.7; }
 </style>
 
 @code {
@@ -236,6 +284,13 @@
     private CreateContactRequest contactModel = new();
     private bool showBroadcastModal;
     private bool showContactModal;
+    private IBrowserFile? selectedAttachmentFile;
+    private string? attachmentError;
+    private bool isSavingBroadcast;
+
+    // Mirrors BroadcastsController.MaxAttachmentSizeBytes — a client-side check so a too-large
+    // file is rejected immediately instead of after uploading most of it.
+    private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
 
     protected override async Task OnInitializedAsync()
     {
@@ -266,7 +321,21 @@
     private void OpenNewBroadcastModal()
     {
         broadcastModel = new CreateBroadcastRequest { Channel = BroadcastChannel.Email };
+        selectedAttachmentFile = null;
+        attachmentError = null;
         showBroadcastModal = true;
+    }
+
+    private void OnAttachmentSelected(InputFileChangeEventArgs e)
+    {
+        attachmentError = null;
+        if (e.File.Size > MaxAttachmentSizeBytes)
+        {
+            attachmentError = $"{e.File.Name} is too large — the limit is {MaxAttachmentSizeBytes / 1024 / 1024}MB.";
+            selectedAttachmentFile = null;
+            return;
+        }
+        selectedAttachmentFile = e.File;
     }
 
     private void OpenNewContactModal()
@@ -277,17 +346,71 @@
 
     private async Task SubmitBroadcast()
     {
-        var result = await MarketingApi.CreateBroadcastAsync(broadcastModel);
-        if (result != null)
+        isSavingBroadcast = true;
+        try
         {
+            var result = await MarketingApi.CreateBroadcastAsync(broadcastModel);
+            if (result == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create broadcast");
+                return;
+            }
+
+            if (selectedAttachmentFile != null)
+            {
+                try
+                {
+                    await using var stream = selectedAttachmentFile.OpenReadStream(MaxAttachmentSizeBytes);
+                    await MarketingApi.UploadBroadcastAttachmentAsync(result.Id, stream, selectedAttachmentFile.Name, selectedAttachmentFile.ContentType);
+                }
+                catch (Exception ex)
+                {
+                    // The broadcast itself was created successfully — only the attachment failed.
+                    // Leave it as a draft with no attachment rather than losing the whole thing;
+                    // the user can retry attaching from the broadcast list.
+                    NotificationService.Notify(ToastSeverity.Warning, "Broadcast saved, but attachment failed", ex.Message);
+                    showBroadcastModal = false;
+                    await LoadBroadcasts();
+                    return;
+                }
+            }
+
             NotificationService.Notify(ToastSeverity.Success, "Success", "Broadcast saved as draft");
             showBroadcastModal = false;
             await LoadBroadcasts();
         }
+        finally
+        {
+            isSavingBroadcast = false;
+        }
+    }
+
+    private async Task RemoveAttachment(BroadcastDto b)
+    {
+        var result = await MarketingApi.DeleteBroadcastAttachmentAsync(b.Id);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Attachment removed");
+            await LoadBroadcasts();
+        }
         else
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create broadcast");
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to remove attachment");
         }
+    }
+
+    private static string FormatFileSize(long? bytes)
+    {
+        if (bytes is null or 0) return "0 B";
+        string[] units = { "B", "KB", "MB", "GB" };
+        double size = bytes.Value;
+        var unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex++;
+        }
+        return $"{size:0.#} {units[unitIndex]}";
     }
 
     private async Task SubmitContact()

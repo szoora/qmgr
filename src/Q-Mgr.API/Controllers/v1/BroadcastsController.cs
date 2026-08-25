@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Marketing;
@@ -19,11 +20,27 @@ public class BroadcastsController : ControllerBase
 {
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
+    private readonly IMediaStorageService _mediaStorage;
+    private readonly ILogger<BroadcastsController> _logger;
 
-    public BroadcastsController(QMgrDbContext context, ITenantContextAccessor tenantAccessor)
+    // Same 25MB ceiling ContentController's media upload uses — see that endpoint's comment for
+    // why (well under the plan storage quota, pushes larger files toward external links instead).
+    // Broadcast attachments have no such external-link alternative, but the individual channels
+    // impose their own, often stricter caps anyway (WhatsApp images: 5MB, Telegram photos:
+    // 10MB) — this is a shared upper bound, not a promise every channel will accept anything
+    // up to it.
+    private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
+
+    public BroadcastsController(
+        QMgrDbContext context,
+        ITenantContextAccessor tenantAccessor,
+        IMediaStorageService mediaStorage,
+        ILogger<BroadcastsController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
+        _mediaStorage = mediaStorage;
+        _logger = logger;
     }
 
     private static BroadcastDto MapToDto(Broadcast b) => new()
@@ -41,7 +58,11 @@ public class BroadcastsController : ControllerBase
         TotalRecipients = b.TotalRecipients,
         SentCount = b.SentCount,
         FailedCount = b.FailedCount,
-        CreatedAt = b.CreatedAt
+        CreatedAt = b.CreatedAt,
+        AttachmentUrl = b.AttachmentUrl,
+        AttachmentFileName = b.AttachmentFileName,
+        AttachmentMimeType = b.AttachmentMimeType,
+        AttachmentFileSizeBytes = b.AttachmentFileSizeBytes
     };
 
     [HttpGet]
@@ -115,6 +136,108 @@ public class BroadcastsController : ControllerBase
         await _context.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetBroadcast), new { broadcastId = broadcast.Id }, MapToDto(broadcast));
+    }
+
+    /// <summary>
+    /// Attaches a file to a Draft broadcast (multipart/form-data), replacing any previous
+    /// attachment. Restricted to Draft — once scheduled, BroadcastSendJob may already be reading
+    /// the broadcast, so changing the attachment out from under it isn't safe. SMS has no
+    /// attachment concept: BroadcastSendJob appends AttachmentUrl as plain text to the SMS body
+    /// instead when one is present, so this endpoint doesn't reject SMS-channel broadcasts —
+    /// there's just a different, degraded outcome for them.
+    /// </summary>
+    [HttpPost("{broadcastId:guid}/attachment")]
+    [RequirePermission(Permissions.MarketingManage)]
+    [RequestSizeLimit(MaxAttachmentSizeBytes)]
+    [ProducesResponseType(typeof(BroadcastDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UploadAttachment(Guid broadcastId, IFormFile file)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved)
+            return Unauthorized();
+
+        var broadcast = await _context.Broadcasts
+            .FirstOrDefaultAsync(b => b.Id == broadcastId && b.OrganizationId == tenantContext.OrganizationId);
+        if (broadcast == null) return NotFound();
+
+        if (broadcast.Status != BroadcastStatus.Draft)
+            return BadRequest(new ProblemDetails { Title = "An attachment can only be added to a Draft broadcast", Status = StatusCodes.Status400BadRequest });
+
+        if (file == null || file.Length == 0)
+            return BadRequest(new ProblemDetails { Title = "No file was provided.", Status = StatusCodes.Status400BadRequest });
+
+        if (file.Length > MaxAttachmentSizeBytes)
+            return BadRequest(new ProblemDetails { Title = $"File exceeds the {MaxAttachmentSizeBytes / 1024 / 1024}MB size limit.", Status = StatusCodes.Status400BadRequest });
+
+        // Mirrors ContentController's own media-upload allowlist — the mime types Telegram's
+        // sendPhoto/sendDocument and WhatsApp's image/document message types actually accept.
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var mimeType = file.ContentType ?? "";
+        var isAllowed = mimeType.StartsWith("image/") || mimeType.StartsWith("video/") ||
+                         mimeType.StartsWith("audio/") || mimeType == "application/pdf" || extension == ".pdf";
+        if (!isAllowed)
+            return BadRequest(new ProblemDetails { Title = $"File type '{(string.IsNullOrEmpty(mimeType) ? extension : mimeType)}' is not allowed.", Status = StatusCodes.Status400BadRequest });
+
+        await using var uploadStream = file.OpenReadStream();
+        var uploadResult = await _mediaStorage.UploadAsync(uploadStream, file.FileName, mimeType);
+        if (!uploadResult.Success)
+        {
+            _logger.LogError("Attachment upload failed for broadcast {BroadcastId}, file {FileName}: {Error}", broadcastId, file.FileName, uploadResult.ErrorMessage);
+            return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Failed to store the uploaded file." });
+        }
+
+        // Replacing an existing attachment — best-effort cleanup of the old file, doesn't block
+        // the response on it.
+        if (!string.IsNullOrEmpty(broadcast.AttachmentFilePath))
+        {
+            _ = _mediaStorage.DeleteAsync(broadcast.AttachmentFilePath);
+        }
+
+        broadcast.AttachmentFilePath = uploadResult.FilePath;
+        broadcast.AttachmentUrl = uploadResult.FileUrl;
+        broadcast.AttachmentFileName = file.FileName;
+        broadcast.AttachmentMimeType = mimeType;
+        broadcast.AttachmentFileSizeBytes = file.Length;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Attached {FileName} ({SizeBytes} bytes) to broadcast {BroadcastId}", file.FileName, file.Length, broadcastId);
+
+        return Ok(MapToDto(broadcast));
+    }
+
+    [HttpDelete("{broadcastId:guid}/attachment")]
+    [RequirePermission(Permissions.MarketingManage)]
+    [ProducesResponseType(typeof(BroadcastDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> DeleteAttachment(Guid broadcastId)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved)
+            return Unauthorized();
+
+        var broadcast = await _context.Broadcasts
+            .FirstOrDefaultAsync(b => b.Id == broadcastId && b.OrganizationId == tenantContext.OrganizationId);
+        if (broadcast == null) return NotFound();
+
+        if (broadcast.Status != BroadcastStatus.Draft)
+            return BadRequest(new ProblemDetails { Title = "An attachment can only be removed from a Draft broadcast", Status = StatusCodes.Status400BadRequest });
+
+        if (!string.IsNullOrEmpty(broadcast.AttachmentFilePath))
+        {
+            await _mediaStorage.DeleteAsync(broadcast.AttachmentFilePath);
+        }
+
+        broadcast.AttachmentFilePath = null;
+        broadcast.AttachmentUrl = null;
+        broadcast.AttachmentFileName = null;
+        broadcast.AttachmentMimeType = null;
+        broadcast.AttachmentFileSizeBytes = null;
+        await _context.SaveChangesAsync();
+
+        return Ok(MapToDto(broadcast));
     }
 
     /// <summary>

@@ -11,12 +11,29 @@ public interface INotificationService
     // without it, callers processing more than one organization (e.g. billing jobs) would silently
     // send using an arbitrary organization's credentials (see NotificationService for detail).
     Task<bool> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
-    Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// attachment is optional — SMTP is the only channel here with no per-recipient size ceiling
+    /// of its own beyond the mail server's, so it's the one channel that actually attaches the
+    /// file bytes (via IMediaStorageService.DownloadAsync(attachment.FilePath)) rather than a link.
+    /// </summary>
+    Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
     Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default);
 
-    /// <summary>chatId is the recipient's numeric Telegram chat ID (Contact.TelegramChatId), not a phone number — see NotificationSettings.TelegramBotToken doc comment for why.</summary>
-    Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, CancellationToken cancellationToken = default);
-    Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// chatId is the recipient's numeric Telegram chat ID (Contact.TelegramChatId), not a phone
+    /// number — see NotificationSettings.TelegramBotToken doc comment for why. When attachment is
+    /// set, sends via Bot API sendPhoto (image/* mime types) or sendDocument (everything else)
+    /// with attachment.Url as the source — Telegram's servers fetch that URL themselves, so it
+    /// must be publicly reachable (true in a real deployment; not from a local dev machine).
+    /// </summary>
+    Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// attachment.Url is passed as WhatsApp Cloud API's "link" field (type: image or document,
+    /// picked the same way as Telegram above) — same public-reachability requirement.
+    /// </summary>
+    Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default);
 
     // In-App notifications
     Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default);
@@ -78,6 +95,15 @@ public interface INotificationHubService
     Task SendToAllAsync(Notification notification);
     Task NotifyUnreadCountAsync(Guid userId, int count);
 }
+
+/// <summary>
+/// A file attached to an outbound notification (currently only broadcasts populate this).
+/// FilePath is the storage-internal path IMediaStorageService uses to read the bytes back
+/// (DownloadAsync) — needed for Email, which attaches actual bytes rather than a link. Url is
+/// the publicly-fetchable address used by Telegram/WhatsApp, which fetch it themselves rather
+/// than receiving bytes directly.
+/// </summary>
+public record NotificationAttachment(string FilePath, string Url, string FileName, string MimeType);
 
 /// <summary>
 /// Request model for creating notifications
