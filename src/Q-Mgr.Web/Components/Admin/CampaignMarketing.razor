@@ -98,6 +98,22 @@
                                 }
                             </div>
                         }
+                        @if (b.Status == BroadcastStatus.Draft && b.Attachments.Count < MaxAttachmentsPerBroadcast)
+                        {
+                            <label class="attachment-add-label @(addingAttachmentToBroadcastId == b.Id ? "busy" : "")">
+                                @if (addingAttachmentToBroadcastId == b.Id)
+                                {
+                                    <QSpinner Size="sm" />
+                                    <span>Adding...</span>
+                                }
+                                else
+                                {
+                                    <QIcon Name="paperclip" />
+                                    <span>Add attachment (@(MaxAttachmentsPerBroadcast - b.Attachments.Count) left)</span>
+                                }
+                                <InputFile OnChange="@(e => OnAddAttachment(b, e))" accept="image/*,video/*,audio/*,.pdf" multiple class="attachment-add-input" disabled="@(addingAttachmentToBroadcastId != null)" />
+                            </label>
+                        }
                         <div class="broadcast-stats">
                             @if (b.Status is BroadcastStatus.Sending or BroadcastStatus.Sent)
                             {
@@ -283,6 +299,12 @@
     .broadcast-attachments { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
     .broadcast-attachment { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-text-muted); }
     .broadcast-attachment .attachment-size { opacity: 0.7; }
+
+    .attachment-add-label { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-primary); cursor: pointer; width: fit-content; margin-top: 2px; }
+    .attachment-add-label:hover { text-decoration: underline; }
+    .attachment-add-label.busy { color: var(--qm-text-muted); cursor: default; }
+    .attachment-add-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .attachment-add-input:disabled { cursor: default; }
 </style>
 
 @code {
@@ -299,6 +321,7 @@
     private List<IBrowserFile> selectedAttachmentFiles = new();
     private string? attachmentError;
     private bool isSavingBroadcast;
+    private Guid? addingAttachmentToBroadcastId;
 
     // Mirrors BroadcastsController.MaxAttachmentSizeBytes/MaxAttachmentsPerBroadcast — client-side
     // checks so a too-large or too-numerous selection is rejected immediately instead of after
@@ -425,6 +448,52 @@
         else
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to remove attachment");
+        }
+    }
+
+    // Attaching more files to an *already-created* Draft broadcast — separate from the file
+    // picker in the New Broadcast modal above, which only covers attachments added at creation
+    // time. Without this, a broadcast could never gain attachments beyond whatever was selected
+    // during that one initial save.
+    private async Task OnAddAttachment(BroadcastDto b, InputFileChangeEventArgs e)
+    {
+        var remaining = MaxAttachmentsPerBroadcast - b.Attachments.Count;
+        var files = e.GetMultipleFiles(remaining + 1).ToList();
+
+        if (files.Count > remaining)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Only {remaining} more attachment{(remaining == 1 ? "" : "s")} can be added (limit {MaxAttachmentsPerBroadcast} per broadcast).");
+            return;
+        }
+
+        var oversized = files.Where(f => f.Size > MaxAttachmentSizeBytes).ToList();
+        if (oversized.Any())
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"{string.Join(", ", oversized.Select(f => f.Name))} — over the {MaxAttachmentSizeBytes / 1024 / 1024}MB limit.");
+            return;
+        }
+
+        addingAttachmentToBroadcastId = b.Id;
+        try
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    await using var stream = file.OpenReadStream(MaxAttachmentSizeBytes);
+                    await MarketingApi.UploadBroadcastAttachmentAsync(b.Id, stream, file.Name, file.ContentType);
+                }
+                catch (Exception ex)
+                {
+                    NotificationService.Notify(ToastSeverity.Warning, $"{file.Name} failed to attach", ex.Message);
+                    break;
+                }
+            }
+            await LoadBroadcasts();
+        }
+        finally
+        {
+            addingAttachmentToBroadcastId = null;
         }
     }
 
