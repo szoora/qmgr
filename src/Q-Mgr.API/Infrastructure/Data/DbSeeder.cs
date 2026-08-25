@@ -430,10 +430,18 @@ public class DbSeeder
             if (!tierPlans.TryGetValue(org.Tier, out var planInfo))
                 continue;
 
-            var hasActiveSubscription = await _context.Subscriptions.AnyAsync(s =>
-                s.OrganizationId == org.Id &&
-                (s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.Trialing));
-            if (hasActiveSubscription)
+            // Deliberately "any subscription row at all", NOT "any Active/Trialing row" — this
+            // loop's job is to backfill a subscription for an org that has never had one (e.g.
+            // legacy/migrated data), not to paper over one that's PastDue/Suspended/Cancelled/
+            // Expired for a real reason. The previous, narrower check re-created a brand new
+            // decade-long Active subscription for ANY paid-tier org lacking an Active/Trialing
+            // row, on every single API restart — including one that had just been correctly
+            // suspended for a failed payment, silently undoing the suspension and reactivating
+            // the org for free the next time the process restarted. Found live: suspended a test
+            // org to simulate a failed payment, restarted the API for an unrelated fix, and found
+            // a second brand-new Active Subscription row had appeared for it.
+            var hasAnySubscription = await _context.Subscriptions.AnyAsync(s => s.OrganizationId == org.Id);
+            if (hasAnySubscription)
                 continue;
 
             // The plan-catalog step above guarantees a row for every tier in tierPlans already
