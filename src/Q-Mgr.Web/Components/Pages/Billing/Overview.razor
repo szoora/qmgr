@@ -34,7 +34,9 @@
         <span class="loading-text">Loading billing information...</span>
     </div>
 }
-else if (billingInfo != null)
+else
+{
+@if (billingInfo != null)
 {
     <!-- Subscription Status Card -->
     <div class="billing-grid">
@@ -181,6 +183,52 @@ else if (billingInfo != null)
             </div>
         </div>
     </div>
+}
+else
+{
+    <!-- No plan selected yet — the common state for a trialing org that hasn't subscribed -->
+    <div class="billing-grid">
+        <QCard Class="subscription-card trial-status-card" Title="Current Plan" Icon="star-fill">
+            <HeaderActions>
+                <span class="plan-badge @(IsTrialExpired ? "status-expired" : "status-trial")">
+                    @(organizationStatus ?? "Trialing")
+                </span>
+            </HeaderActions>
+            <ChildContent>
+                <h2 class="trial-headline">
+                    @if (trialEndsAt.HasValue && !IsTrialExpired)
+                    {
+                        <text>@TrialDaysRemaining day@(TrialDaysRemaining == 1 ? "" : "s") left in your free trial</text>
+                    }
+                    else if (IsTrialExpired)
+                    {
+                        <text>Your free trial has ended</text>
+                    }
+                    else
+                    {
+                        <text>No active plan</text>
+                    }
+                </h2>
+                <p class="text-muted">
+                    @if (IsTrialExpired)
+                    {
+                        <text>Choose a plan to keep using Q-Mgr — your data is safe and waiting.</text>
+                    }
+                    else
+                    {
+                        <text>Pick a plan any time before @trialEndsAt?.ToString("MMMM dd, yyyy") to keep uninterrupted access.</text>
+                    }
+                </p>
+                <div class="card-actions">
+                    <QButton Text="Choose a Plan"
+                             Icon="arrow-up-circle-fill"
+                             Variant="primary"
+                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
+                </div>
+            </ChildContent>
+        </QCard>
+    </div>
+}
 
     <!-- Recent Invoices -->
     <div class="recent-invoices">
@@ -288,6 +336,23 @@ else if (billingInfo != null)
 }
 
 <style>
+    .plan-badge.status-trial {
+        background: color-mix(in srgb, var(--qm-warning) 20%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .plan-badge.status-expired {
+        background: color-mix(in srgb, var(--qm-danger) 20%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .trial-status-card .trial-headline {
+        margin: 8px 0;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
     .billing-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -654,6 +719,26 @@ else if (billingInfo != null)
     private List<InvoiceDto> recentInvoices = new();
     private List<InvoiceDto> unpaidInvoices = new();
     private List<PaymentMethodDto> paymentMethods = new();
+    private string? organizationStatus;
+    private DateTime? trialEndsAt;
+
+    private bool IsTrialExpired => trialEndsAt.HasValue && trialEndsAt.Value <= DateTime.UtcNow;
+    private int TrialDaysRemaining => trialEndsAt.HasValue
+        ? Math.Max(0, (int)Math.Ceiling((trialEndsAt.Value - DateTime.UtcNow).TotalDays))
+        : 0;
+
+    /// <summary>
+    /// Mirrors the { hasSubscription: false, status, trialEndsAt } shape GET
+    /// api/v1/billing/overview returns when the org has no Subscription row — the normal state
+    /// for every trialing org that hasn't picked a plan yet. HasSubscription is null (absent
+    /// from the JSON) for the normal case, explicitly false only for this one.
+    /// </summary>
+    private record OverviewProbeDto
+    {
+        public bool? HasSubscription { get; init; }
+        public string? Status { get; init; }
+        public DateTime? TrialEndsAt { get; init; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -673,11 +758,26 @@ else if (billingInfo != null)
 
         try
         {
-            // Load billing overview
+            // Load billing overview. See OverviewProbeDto: this endpoint returns a differently-
+            // shaped { hasSubscription: false, ... } body when the org has no Subscription row
+            // (every trialing org that hasn't picked a plan) — deserializing that straight into
+            // BillingOverview used to silently succeed with all-default/zero values (System.Text.Json
+            // ignores unknown properties and defaults missing ones), rendering a fake "Current
+            // Plan: $0.00/month, Status: (blank)" card instead of an honest trial banner.
             var response = await Http.GetAsync("api/v1/billing/overview");
             if (response.IsSuccessStatusCode)
             {
-                billingInfo = await response.Content.ReadFromJsonAsync<BillingOverview>(JsonOptions);
+                var raw = await response.Content.ReadAsStringAsync();
+                var probe = JsonSerializer.Deserialize<OverviewProbeDto>(raw, JsonOptions);
+                if (probe?.HasSubscription == false)
+                {
+                    organizationStatus = probe.Status;
+                    trialEndsAt = probe.TrialEndsAt;
+                }
+                else
+                {
+                    billingInfo = JsonSerializer.Deserialize<BillingOverview>(raw, JsonOptions);
+                }
             }
 
             // Load recent invoices

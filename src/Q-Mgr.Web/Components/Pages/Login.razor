@@ -60,8 +60,7 @@
                                    @bind-Value="emailModel.Email"
                                    placeholder="you@company.com or username"
                                    autocomplete="username"
-                                   disabled="@isLoading"
-                                   @onkeydown="@HandleKeyDown" />
+                                   disabled="@isLoading" />
                         @if (!string.IsNullOrEmpty(emailModel.Email))
                         {
                             <button type="button" class="input-clear" @onclick="@(() => emailModel.Email = string.Empty)" tabindex="-1">
@@ -146,8 +145,7 @@
                                    @bind-Value="passwordModel.Password"
                                    placeholder="Enter your password"
                                    autocomplete="current-password"
-                                   disabled="@isLoading"
-                                   @onkeydown="@HandleKeyDown" />
+                                   disabled="@isLoading" />
                         <button type="button" class="input-toggle" @onclick="@(() => showPassword = !showPassword)" tabindex="-1">
                             <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
                         </button>
@@ -842,17 +840,6 @@
         if (parts.Length == 0) return "?";
         var name = parts[0];
         return name.Length >= 2 ? name.Substring(0, 2).ToUpper() : name.ToUpper();
-    }
-
-    private async Task HandleKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter" && !isLoading)
-        {
-            if (currentStep == LoginStep.Email)
-                await HandleEmailSubmit();
-            else
-                await HandlePasswordSubmit();
-        }
     }
 
     private class EmailModel

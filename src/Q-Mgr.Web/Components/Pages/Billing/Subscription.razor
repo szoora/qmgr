@@ -28,47 +28,87 @@
         <span class="loading-text">Loading subscription details...</span>
     </div>
 }
-else if (currentPlan != null)
+else
 {
-    <!-- Current Plan Card -->
-    <div class="current-plan-card">
-        <div class="plan-header">
-            <div>
-                <span class="plan-badge @GetPlanClass(currentPlan.PlanCode)">@currentPlan.PlanName</span>
-                <h2>Your Current Plan</h2>
-            </div>
-            <div class="plan-price">
-                <span class="currency">@currentPlan.Currency</span>
-                <span class="amount">@currentPlan.MonthlyPrice.ToString("N2")</span>
-                <span class="period">/month</span>
-            </div>
-        </div>
-        <div class="plan-features">
-            @foreach (var feature in currentPlan.Features)
-            {
-                <div class="feature-item">
-                    <QIcon Name="check-circle-fill" />
-                    <span>@feature</span>
+    @if (currentPlan != null)
+    {
+        <!-- Current Plan Card -->
+        <div class="current-plan-card">
+            <div class="plan-header">
+                <div>
+                    <span class="plan-badge @GetPlanClass(currentPlan.PlanCode)">@currentPlan.PlanName</span>
+                    <h2>Your Current Plan</h2>
                 </div>
-            }
+                <div class="plan-price">
+                    <span class="currency">@currentPlan.Currency</span>
+                    <span class="amount">@currentPlan.MonthlyPrice.ToString("N2")</span>
+                    <span class="period">/month</span>
+                </div>
+            </div>
+            <div class="plan-features">
+                @foreach (var feature in currentPlan.Features)
+                {
+                    <div class="feature-item">
+                        <QIcon Name="check-circle-fill" />
+                        <span>@feature</span>
+                    </div>
+                }
+            </div>
+            <div class="plan-actions">
+                @if (currentPlan.PlanCode != "enterprise")
+                {
+                    <QButton Text="Upgrade Plan"
+                             Icon="arrow-up-circle-fill"
+                             Variant="primary"
+                             OnClick="@(() => showUpgradeDialog = true)" />
+                }
+                @if (currentPlan.PlanCode != "free")
+                {
+                    <QButton Text="Cancel Subscription"
+                             Icon="x-circle-fill"
+                             Variant="outline-danger"
+                             OnClick="@(() => showCancelDialog = true)" />
+                }
+            </div>
         </div>
-        <div class="plan-actions">
-            @if (currentPlan.PlanCode != "enterprise")
-            {
-                <QButton Text="Upgrade Plan"
-                         Icon="arrow-up-circle-fill"
-                         Variant="primary"
-                         OnClick="@(() => showUpgradeDialog = true)" />
-            }
-            @if (currentPlan.PlanCode != "free")
-            {
-                <QButton Text="Cancel Subscription"
-                         Icon="x-circle-fill"
-                         Variant="outline-danger"
-                         OnClick="@(() => showCancelDialog = true)" />
-            }
+    }
+    else
+    {
+        <!-- No plan selected yet — the common state for a trialing org that hasn't subscribed -->
+        <div class="current-plan-card trial-banner">
+            <div class="plan-header">
+                <div>
+                    <span class="plan-badge @(IsTrialExpired ? "status-expired" : "status-trial")">
+                        @(organizationStatus ?? "Trialing")
+                    </span>
+                    <h2>
+                        @if (trialEndsAt.HasValue && !IsTrialExpired)
+                        {
+                            <text>@TrialDaysRemaining day@(TrialDaysRemaining == 1 ? "" : "s") left in your free trial</text>
+                        }
+                        else if (IsTrialExpired)
+                        {
+                            <text>Your free trial has ended</text>
+                        }
+                        else
+                        {
+                            <text>No active plan</text>
+                        }
+                    </h2>
+                </div>
+            </div>
+            <p class="text-muted">
+                @if (IsTrialExpired)
+                {
+                    <text>Choose a plan below to keep using Q-Mgr — your data is safe and waiting.</text>
+                }
+                else
+                {
+                    <text>Pick a plan any time before your trial ends on @trialEndsAt?.ToString("MMMM dd, yyyy") to keep uninterrupted access.</text>
+                }
+            </p>
         </div>
-    </div>
+    }
 
     <!-- Available Plans -->
     <div class="plans-section">
@@ -76,7 +116,7 @@ else if (currentPlan != null)
         <div class="plans-grid">
             @foreach (var plan in availablePlans)
             {
-                <div class="plan-card @(plan.PlanCode == currentPlan.PlanCode ? "current" : "") @(plan.IsPopular ? "popular" : "")">
+                <div class="plan-card @(plan.PlanCode == currentPlan?.PlanCode ? "current" : "") @(plan.IsPopular ? "popular" : "")">
                     @if (plan.IsPopular)
                     {
                         <div class="popular-badge">Most Popular</div>
@@ -100,13 +140,13 @@ else if (currentPlan != null)
                         }
                     </div>
                     <div class="plan-card-footer">
-                        @if (plan.PlanCode == currentPlan.PlanCode)
+                        @if (currentPlan != null && plan.PlanCode == currentPlan.PlanCode)
                         {
                             <QButton Text="Current Plan" Icon="check-circle-fill" Variant="secondary" Disabled="true" />
                         }
-                        else if (IsUpgrade(plan.PlanCode))
+                        else if (currentPlan == null || IsUpgrade(plan.PlanCode))
                         {
-                            <QButton Text="Upgrade" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => SelectPlan(plan))" />
+                            <QButton Text="@(currentPlan == null ? "Choose Plan" : "Upgrade")" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => SelectPlan(plan))" />
                         }
                         else
                         {
@@ -235,6 +275,20 @@ else if (currentPlan != null)
         text-transform: uppercase;
         background: var(--qm-primary-light);
         color: var(--qm-primary);
+    }
+
+    .plan-badge.status-trial {
+        background: color-mix(in srgb, var(--qm-warning) 20%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .plan-badge.status-expired {
+        background: color-mix(in srgb, var(--qm-danger) 20%, transparent);
+        color: var(--qm-danger);
+    }
+
+    .trial-banner .plan-header {
+        margin-bottom: 8px;
     }
 
     .plan-price {
@@ -490,6 +544,13 @@ else if (currentPlan != null)
     private SubscriptionPlan? selectedPlan;
     private List<SubscriptionPlan> availablePlans = new();
     private List<BillingEvent> billingHistory = new();
+    private string? organizationStatus;
+    private DateTime? trialEndsAt;
+
+    private bool IsTrialExpired => trialEndsAt.HasValue && trialEndsAt.Value <= DateTime.UtcNow;
+    private int TrialDaysRemaining => trialEndsAt.HasValue
+        ? Math.Max(0, (int)Math.Ceiling((trialEndsAt.Value - DateTime.UtcNow).TotalDays))
+        : 0;
 
     protected override async Task OnInitializedAsync()
     {
@@ -512,29 +573,45 @@ else if (currentPlan != null)
             // Load current subscription. SubscriptionDto (api/v1/billing/subscription) only has
             // PlanCode/PlanName — no pricing/description/features — so also fetch that plan's
             // full PlanDto by code to get the rest.
+            // The endpoint returns a *different* shape — { hasSubscription: false, status,
+            // trialEndsAt } — when the org has no Subscription row yet, which is the normal
+            // state for every trialing org that hasn't picked a plan. Probe for that first;
+            // deserializing it straight into SubscriptionApiDto used to leave PlanCode null,
+            // which then built a request to plans/{null} that 500'd and left this whole page
+            // blank (the "no subscription" branch below never even ran).
             var response = await Http.GetAsync("api/v1/billing/subscription");
             if (response.IsSuccessStatusCode)
             {
-                var subscriptionDto = await response.Content.ReadFromJsonAsync<SubscriptionApiDto>(JsonOptions);
-                if (subscriptionDto != null)
+                var raw = await response.Content.ReadAsStringAsync();
+                var probe = JsonSerializer.Deserialize<SubscriptionProbeDto>(raw, JsonOptions);
+                if (probe?.HasSubscription == false)
                 {
-                    PlanApiDto? currentPlanDetails = null;
-                    var planResponse = await Http.GetAsync($"api/v1/billing/plans/{subscriptionDto.PlanCode}");
-                    if (planResponse.IsSuccessStatusCode)
+                    organizationStatus = probe.Status;
+                    trialEndsAt = probe.TrialEndsAt;
+                }
+                else
+                {
+                    var subscriptionDto = JsonSerializer.Deserialize<SubscriptionApiDto>(raw, JsonOptions);
+                    if (subscriptionDto != null)
                     {
-                        currentPlanDetails = await planResponse.Content.ReadFromJsonAsync<PlanApiDto>(JsonOptions);
-                    }
+                        PlanApiDto? currentPlanDetails = null;
+                        var planResponse = await Http.GetAsync($"api/v1/billing/plans/{subscriptionDto.PlanCode}");
+                        if (planResponse.IsSuccessStatusCode)
+                        {
+                            currentPlanDetails = await planResponse.Content.ReadFromJsonAsync<PlanApiDto>(JsonOptions);
+                        }
 
-                    currentPlan = new SubscriptionPlan
-                    {
-                        PlanCode = subscriptionDto.PlanCode,
-                        PlanName = subscriptionDto.PlanName,
-                        Description = currentPlanDetails?.Description ?? "",
-                        MonthlyPrice = currentPlanDetails?.MonthlyPriceUsd ?? 0,
-                        Currency = "USD",
-                        Features = ParseFeatureNames(currentPlanDetails?.Features),
-                        NextBillingDate = subscriptionDto.CurrentPeriodEnd
-                    };
+                        currentPlan = new SubscriptionPlan
+                        {
+                            PlanCode = subscriptionDto.PlanCode,
+                            PlanName = subscriptionDto.PlanName,
+                            Description = currentPlanDetails?.Description ?? "",
+                            MonthlyPrice = currentPlanDetails?.MonthlyPriceUsd ?? 0,
+                            Currency = "USD",
+                            Features = ParseFeatureNames(currentPlanDetails?.Features),
+                            NextBillingDate = subscriptionDto.CurrentPeriodEnd
+                        };
+                    }
                 }
             }
 
@@ -706,6 +783,18 @@ else if (currentPlan != null)
         public string PlanCode { get; init; } = "";
         public string PlanName { get; init; } = "";
         public DateTime CurrentPeriodEnd { get; init; }
+    }
+
+    /// <summary>
+    /// Mirrors the { hasSubscription: false, status, trialEndsAt } shape GET
+    /// api/v1/billing/subscription returns when the org has no Subscription row — HasSubscription
+    /// is null (absent from the JSON) for the normal case, and explicitly false only for this one.
+    /// </summary>
+    private record SubscriptionProbeDto
+    {
+        public bool? HasSubscription { get; init; }
+        public string? Status { get; init; }
+        public DateTime? TrialEndsAt { get; init; }
     }
 
     /// <summary>
