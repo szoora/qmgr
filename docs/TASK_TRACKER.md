@@ -6,6 +6,74 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-08-25, after Phase 56)
+
+Read this section first. Full detail is in the Phase 56 entry immediately below; the Phase 55
+handover after it is still accurate for everything from 2026-08-21 and earlier.
+
+### Phase 56, in one paragraph: comprehensive integration-hub/production-readiness assessment, then a full implementation pass
+Triggered by "perform a comprehensive analysis... identify and fix any feature, functional and
+UI/UX gaps, bugs and race conditions... confirm production readiness," followed by "apply all
+fixes and implement all your recommendations." Assessment found the core queue platform solid but
+the specific pitch — a third-party integration hub plus mass SMS/email/Telegram/WhatsApp
+campaigns — was largely unbuilt: adapter classes existed but were wired to nothing, "Campaigns"
+meant digital-signage scheduling not outreach, Visitor Management was a zero-file gap. Also found
+and fixed 3 real security/race bugs live (TokensController cross-tenant IDOR on
+Get/Update/Cancel, 2 dead token endpoints returning 500) — see git log for detail, this file is
+the durable summary. Mid-session, an uncoordinated second session had concurrent write access to
+this repo and made real parallel edits (the queue race-condition fixes, notification-cache fix,
+Print/DisplayBanner IDOR fix all originated there); each was independently verified by reading the
+resulting code, a clean build, and live testing before being trusted. **Git was adopted this
+session** (local-only, no remote) as the safety net that incident argued for — see `git log` for
+full history from here forward instead of this file's prose.
+
+Then, on explicit "apply all fixes / implement all recommendations":
+- **Fixed the hardcoded demo-branch GUID across 14 files** (not just the public display —
+  10 admin content/settings pages too). Admin pages now use the existing (already well-built)
+  `IBranchStateService`; public display/kiosk routes resolve branch from an optional URL segment.
+- **Built Visitor Management from zero**: `Visitor` entity, tenant-scoped controller (pre-register,
+  check-in, check-out, watchlist, host notifications), race-safe badge numbering
+  (`pg_advisory_xact_lock`, same pattern as token numbers), admin UI at `/admin/visitors`.
+- **Built real campaign marketing**: `Contact`/`Broadcast`/`BroadcastRecipient` entities, a
+  Hangfire job (`BroadcastSendJob`) sending over the real SMTP/SMS/Telegram/WhatsApp transports
+  with a mandatory per-contact unsubscribe link on every message (there was previously zero
+  opt-out mechanism anywhere in the codebase — a hard compliance blocker), public unauthenticated
+  unsubscribe endpoint + page. Admin UI at `/admin/marketing`.
+- **Found and fixed the integration hub's actual root cause**: `PermissionAuthorizationHandler`
+  (behind every `[RequirePermission]` check) only ever looked for a user-ID claim, so an
+  API-key-authenticated request — which `ApiKeyAuthenticationMiddleware` correctly sets up with
+  `org_id`/`scope` claims — was silently denied by every real endpoint regardless of its
+  configured scopes. `ApiClient.Scopes` (`queue:write` etc.) was pure decoration with no code path
+  reading it. Fixed by mapping scope claims to permission codes for API-key requests. This, not
+  any adapter wiring, was why "the hub doesn't work."
+- **Real Telegram Bot API + WhatsApp Cloud API senders** added alongside the existing SMS/email
+  transports (same disabled-until-configured, fails-clean pattern). Found and fixed a third
+  independent copy of the NotificationSettings shape while wiring this through
+  (`NotificationsController`'s own DTO + two hand-mapped copies) — the SSoT-drift pattern this
+  file already flags as recurring, see the CLAUDE.md note on it.
+- **Packaged the 3 third-party adapters as a real SDK**: moved
+  `HospitalManagementAdapter`/`BankingSystemAdapter`/`PharmacySystemAdapter`/`QueueIntegrationClient`
+  out of the API project into a new standalone `Q-Mgr.IntegrationSdk` class library (zero reference
+  back to the API) — they were never actually consumed by the API itself, their whole purpose is
+  to be embedded in an *external* system, so living inside the undistributable API project was
+  itself part of why the hub read as unwired.
+- **Wrote `docs/API_INTEGRATION_GUIDE.md`** and generated a Postman collection
+  (`postman/Q-Mgr-API.postman_collection.json`, 208 requests / 29 folders, regeneratable via
+  `scripts/convert-postman.ps1` against the live OpenAPI spec) documenting the whole
+  external-integration story: API-key auth, the scope-to-permission table, a worked hospital
+  check-in example, and known limitations (see below).
+
+**Known limitations / good next-session candidates**: `ApiClient.RateLimitPerMinute` is shown in
+the admin UI but not enforced anywhere — every key is subject only to the global IP rate limit,
+not a per-client one. No inbound webhook receiver — a partner can push data in via the token API
+but Q-Mgr can't call back out to them on events yet (outbound webhooks exist, inbound don't).
+Visitor Management and Marketing have no API-key scopes wired up (JWT/staff-only for now). None of
+today's new modules (Visitor Management, Marketing, the auth fix) have automated test coverage —
+only live manual verification against a running instance; that's the highest-leverage next step if
+another session picks this up.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-08-21, after Phase 55)
 
 Read this section first — it's a consolidated index, not a new phase. Full detail for
