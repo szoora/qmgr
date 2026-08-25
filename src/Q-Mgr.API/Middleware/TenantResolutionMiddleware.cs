@@ -61,6 +61,35 @@ public class TenantResolutionMiddleware
 
             if (org != null)
             {
+                // CORRECTNESS: TenantStatusMiddleware used to only gate on whatever Status this
+                // row already had, and the only thing that ever advanced a Trialing org to
+                // Suspended was BillingJobs.CheckExpiringTrialsAsync — a daily job at 9 AM UTC.
+                // That left up to ~18 hours of free access past the real trial end before
+                // anything actually gated the tenant. This org row is already re-read fresh on
+                // every request (no caching to fight here), so self-heal it right here instead:
+                // if the trial has genuinely ended and there's still no subscription, flip the
+                // status now and use the corrected value for this same request's gating decision.
+                // The nightly job still runs — it's what sends the "trial expired" email, which
+                // this real-time path deliberately does not duplicate on every request.
+                var effectiveStatus = org.Status;
+                if (org.Status == TenantStatus.Trialing &&
+                    org.TrialEndsAt.HasValue &&
+                    org.TrialEndsAt.Value <= DateTime.UtcNow &&
+                    !org.SubscriptionId.HasValue)
+                {
+                    var updated = await dbContext.Organizations
+                        .Where(o => o.Id == org.Id && o.Status == TenantStatus.Trialing)
+                        .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, TenantStatus.Suspended));
+
+                    if (updated > 0)
+                    {
+                        effectiveStatus = TenantStatus.Suspended;
+                        _logger.LogInformation(
+                            "Trial expired for organization {OrganizationId} — gated in real time instead of waiting for the nightly job",
+                            org.Id);
+                    }
+                }
+
                 var branchIdClaim = context.User.FindFirst("branch_id")?.Value;
                 Guid? branchId = null;
                 if (!string.IsNullOrEmpty(branchIdClaim) && Guid.TryParse(branchIdClaim, out var bid))
@@ -75,7 +104,7 @@ public class TenantResolutionMiddleware
                     org.Id,
                     org.Slug,
                     org.Tier,
-                    org.Status,
+                    effectiveStatus,
                     org.SchemaName,
                     branchId,
                     userId,

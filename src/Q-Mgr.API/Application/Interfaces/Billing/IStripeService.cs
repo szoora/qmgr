@@ -134,7 +134,13 @@ public record CheckoutSessionResult(
 public record WebhookProcessResult(
     bool Success,
     string EventType,
-    string? ErrorMessage = null);
+    string? ErrorMessage = null,
+    string? StripeSubscriptionId = null,
+    string? StripeCustomerId = null,
+    string? StripeInvoiceId = null,
+    decimal? AmountPaid = null,
+    string? Currency = null,
+    string? FailureMessage = null);
 
 /// <summary>
 /// Payment method information

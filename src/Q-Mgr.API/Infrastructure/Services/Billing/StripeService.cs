@@ -281,7 +281,34 @@ public class StripeService : IStripeService
 
             _logger.LogInformation("Processing Stripe webhook event: {EventType}", stripeEvent.Type);
 
-            // Events are processed by the BillingService based on the return value
+            // PREVIOUSLY: this returned bare (Success, EventType) with a comment claiming "events
+            // are processed by the BillingService based on the return value" — but nothing ever
+            // read anything from this result except EventType for a log line.
+            // BillingController.StripeWebhook's own comment admitted it: "Handle specific events
+            // — this would typically be handled by a separate service or background job — for
+            // now, just acknowledge receipt." A real payment success or failure did nothing:
+            // no subscription reactivation, no organization un-suspension, no payment/invoice
+            // records. Extracting the actual subscription/customer/invoice/amount here is what
+            // lets the controller act on it for real — see BillingController.StripeWebhook.
+            if (stripeEvent.Type is "invoice.payment_succeeded" or "invoice.payment_failed")
+            {
+                var invoice = stripeEvent.Data.Object as Invoice;
+                var subscriptionId = invoice?.Parent?.SubscriptionDetails?.SubscriptionId;
+                var failureMessage = stripeEvent.Type == "invoice.payment_failed"
+                    ? "Stripe reported the invoice payment attempt failed"
+                    : null;
+
+                return new WebhookProcessResult(
+                    true,
+                    stripeEvent.Type,
+                    StripeSubscriptionId: subscriptionId,
+                    StripeCustomerId: invoice?.CustomerId,
+                    StripeInvoiceId: invoice?.Id,
+                    AmountPaid: invoice != null ? invoice.AmountPaid / 100m : null,
+                    Currency: invoice?.Currency,
+                    FailureMessage: failureMessage);
+            }
+
             return new WebhookProcessResult(true, stripeEvent.Type);
         }
         catch (StripeException ex)

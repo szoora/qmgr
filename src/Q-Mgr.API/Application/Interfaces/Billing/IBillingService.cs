@@ -46,6 +46,12 @@ public interface IBillingService
     Task<Subscription?> GetSubscriptionAsync(Guid organizationId);
 
     /// <summary>
+    /// Look up a subscription by its Stripe subscription ID — the identifier a Stripe webhook
+    /// payload carries, as opposed to our own local Guid.
+    /// </summary>
+    Task<Subscription?> GetSubscriptionByStripeIdAsync(string stripeSubscriptionId);
+
+    /// <summary>
     /// Change subscription plan (upgrade/downgrade)
     /// </summary>
     Task<SubscriptionResult> ChangePlanAsync(
@@ -75,6 +81,13 @@ public interface IBillingService
     /// Handle subscription payment failure
     /// </summary>
     Task HandlePaymentFailureAsync(Guid subscriptionId, string? errorMessage = null);
+
+    /// <summary>
+    /// Handle a successful subscription payment (e.g. a Stripe invoice.payment_succeeded
+    /// webhook) — records the payment, marks the matching invoice paid if one exists, and
+    /// reactivates the subscription/organization if either had been suspended for non-payment.
+    /// </summary>
+    Task HandlePaymentSuccessAsync(Guid subscriptionId, decimal amount, string currency, string? externalReference = null);
 
     /// <summary>
     /// Get subscription with plan details

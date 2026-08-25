@@ -1,4 +1,5 @@
 @page "/register"
+@layout KioskLayout
 @using System.Text.Json
 @using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Authorization
@@ -41,7 +42,7 @@
                     </div>
                 </div>
 
-                <p class="trial-note">Start your 14-day free trial. No credit card required.</p>
+                <p class="trial-note">Start your @trialDays-day free trial. No credit card required.</p>
             </div>
         </div>
 
@@ -895,15 +896,28 @@
     private bool registrationSuccess = false;
     private bool requiresVerification = false;
     private System.Timers.Timer? slugCheckTimer;
+    private int trialDays = 14; // Overwritten by the real platform setting below; this is only the fallback if that fetch fails.
 
     private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         slugCheckTimer = new System.Timers.Timer(500);
         slugCheckTimer.Elapsed += async (sender, e) => await CheckSlugAvailability();
         slugCheckTimer.AutoReset = false;
+
+        try
+        {
+            var response = await Http.GetFromJsonAsync<TrialInfoResponse>("api/v1/register/trial-info");
+            if (response != null) trialDays = response.TrialDays;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to fetch live trial length, showing the fallback value instead");
+        }
     }
+
+    private record TrialInfoResponse(int TrialDays);
 
     private void OnOrganizationNameChanged(ChangeEventArgs e)
     {

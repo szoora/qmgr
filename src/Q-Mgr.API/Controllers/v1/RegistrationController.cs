@@ -16,16 +16,34 @@ public class RegistrationController : ControllerBase
 {
     private readonly IMediator _mediator;
     private readonly ITenantProvisioningService _provisioningService;
+    private readonly IPlatformSettingsService _platformSettingsService;
     private readonly ILogger<RegistrationController> _logger;
 
     public RegistrationController(
         IMediator mediator,
         ITenantProvisioningService provisioningService,
+        IPlatformSettingsService platformSettingsService,
         ILogger<RegistrationController> logger)
     {
         _mediator = mediator;
         _provisioningService = provisioningService;
+        _platformSettingsService = platformSettingsService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Real trial length, for the registration page's own marketing copy to render instead of a
+    /// hardcoded number — that copy previously said "14-day free trial" regardless of what
+    /// PlatformSettings.SaaS.TrialDays actually was, which is exactly the kind of drift that
+    /// happens when the same fact is asserted in two places (see CLAUDE.md's SSoT note).
+    /// </summary>
+    [HttpGet("trial-info")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetTrialInfo()
+    {
+        var saas = await _platformSettingsService.GetSettingsAsync<QMgr.Domain.Entities.Platform.SaasSettings>("SaaS");
+        return Ok(new { trialDays = saas?.TrialDays ?? 14 });
     }
 
     /// <summary>

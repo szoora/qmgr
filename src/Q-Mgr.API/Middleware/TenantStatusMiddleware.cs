@@ -105,14 +105,14 @@ public class TenantStatusMiddleware
                 break;
         }
 
-        // Check if trial has expired
+        // Trial-expiry gating itself now happens in TenantResolutionMiddleware, which runs
+        // before this middleware and self-heals an expired Trialing row to Suspended on the
+        // same request that discovers it — see that class for why. By the time execution reaches
+        // here, `status` already reflects that correction, so a still-Trialing status at this
+        // point genuinely means the trial has not ended yet.
         if (status == TenantStatus.Trialing)
         {
-            // Add trial info to response headers
             context.Response.Headers.Append("X-Trial-Status", "active");
-
-            // Note: Trial expiration check should be handled by a background job
-            // that updates the tenant status when trial expires
         }
 
         await _next(context);

@@ -192,6 +192,12 @@ public class BillingService : IBillingService
                                        s.Status == SubscriptionStatus.PastDue));
     }
 
+    public async Task<Subscription?> GetSubscriptionByStripeIdAsync(string stripeSubscriptionId)
+    {
+        return await _dbContext.Subscriptions
+            .FirstOrDefaultAsync(s => s.StripeSubscriptionId == stripeSubscriptionId);
+    }
+
     public async Task<SubscriptionResult> ChangePlanAsync(
         Guid subscriptionId,
         string newPlanCode,
@@ -421,6 +427,51 @@ public class BillingService : IBillingService
         _logger.LogWarning(
             "Payment failed for subscription {SubscriptionId}: {Error}",
             subscriptionId, errorMessage);
+    }
+
+    public async Task HandlePaymentSuccessAsync(Guid subscriptionId, decimal amount, string currency, string? externalReference = null)
+    {
+        var subscription = await _dbContext.Subscriptions
+            .Include(s => s.Organization)
+            .FirstOrDefaultAsync(s => s.Id == subscriptionId);
+
+        if (subscription == null) return;
+
+        // The open/unpaid invoice for this subscription's current period, if one exists —
+        // RecordPaymentAsync marks it Paid when an invoiceId is passed. A webhook-driven payment
+        // doesn't always have one pre-generated (e.g. a first-time card save covering an
+        // out-of-band charge), so this is best-effort, not a hard requirement.
+        var openInvoice = await _dbContext.Invoices
+            .Where(i => i.SubscriptionId == subscriptionId && i.Status == InvoiceStatus.Open)
+            .OrderByDescending(i => i.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        await RecordPaymentAsync(
+            subscription.OrganizationId,
+            amount,
+            currency,
+            PaymentMethod.Card,
+            subscriptionId,
+            openInvoice?.Id,
+            externalReference);
+
+        // Reactivate — this is what was previously entirely missing: neither the webhook path
+        // nor CollectPaymentAsync ever un-suspended an organization or reset a PastDue
+        // subscription back to Active on a successful payment.
+        subscription.Status = SubscriptionStatus.Active;
+        subscription.UpdatedAt = DateTime.UtcNow;
+
+        if (subscription.Organization != null &&
+            subscription.Organization.Status is TenantStatus.Suspended or TenantStatus.Trialing)
+        {
+            subscription.Organization.Status = TenantStatus.Active;
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Payment succeeded for subscription {SubscriptionId}: {Amount} {Currency} — subscription and organization reactivated",
+            subscriptionId, amount, currency);
     }
 
     public async Task<SubscriptionWithPlan?> GetSubscriptionWithPlanAsync(Guid organizationId)

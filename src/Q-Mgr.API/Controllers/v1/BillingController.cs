@@ -771,9 +771,31 @@ public class BillingController : ControllerBase
 
         _logger.LogInformation("Processed Stripe webhook: {EventType}", result.EventType);
 
-        // Handle specific events
-        // This would typically be handled by a separate service or background job
-        // For now, just acknowledge receipt
+        // PREVIOUSLY a no-op — see StripeService.HandleWebhookAsync's comment for what that
+        // actually meant in practice (a real payment succeeding or failing changed nothing).
+        if (result.EventType is "invoice.payment_succeeded" or "invoice.payment_failed" &&
+            !string.IsNullOrEmpty(result.StripeSubscriptionId))
+        {
+            var subscription = await _billingService.GetSubscriptionByStripeIdAsync(result.StripeSubscriptionId);
+            if (subscription == null)
+            {
+                _logger.LogWarning(
+                    "Stripe webhook {EventType} referenced unknown subscription {StripeSubscriptionId}",
+                    result.EventType, result.StripeSubscriptionId);
+            }
+            else if (result.EventType == "invoice.payment_succeeded")
+            {
+                await _billingService.HandlePaymentSuccessAsync(
+                    subscription.Id,
+                    result.AmountPaid ?? 0,
+                    result.Currency ?? "usd",
+                    result.StripeInvoiceId);
+            }
+            else
+            {
+                await _billingService.HandlePaymentFailureAsync(subscription.Id, result.FailureMessage);
+            }
+        }
 
         return Ok();
     }
