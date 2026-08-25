@@ -16,6 +16,18 @@ public class Broadcast : BaseEntity
     // Comma-separated tag filter — empty/null means "all contacts not opted out".
     public string? AudienceTagFilter { get; set; }
 
+    // Optional file attachment, uploaded separately via POST .../broadcasts/{id}/attachment
+    // (see BroadcastsController) and stored through the same IMediaStorageService Digital
+    // Signage media uploads already use. AttachmentFilePath is the storage-internal path
+    // (IMediaStorageService.DownloadAsync/DeleteAsync); AttachmentUrl is the publicly-fetchable
+    // address Telegram/WhatsApp fetch directly. SMS has no attachment concept — BroadcastSendJob
+    // appends AttachmentUrl as plain text to the SMS body instead when one is present.
+    public string? AttachmentFilePath { get; set; }
+    public string? AttachmentUrl { get; set; }
+    public string? AttachmentFileName { get; set; }
+    public string? AttachmentMimeType { get; set; }
+    public long? AttachmentFileSizeBytes { get; set; }
+
     public BroadcastStatus Status { get; set; } = BroadcastStatus.Draft;
     public DateTime? ScheduledAt { get; set; }
     public DateTime? SendStartedAt { get; set; }

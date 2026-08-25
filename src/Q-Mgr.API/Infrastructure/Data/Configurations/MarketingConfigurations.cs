@@ -50,6 +50,10 @@ public class BroadcastConfiguration : IEntityTypeConfiguration<Broadcast>
         builder.Property(b => b.AudienceTagFilter).HasMaxLength(500);
         builder.Property(b => b.Status).HasConversion<string>().HasMaxLength(20);
         builder.Property(b => b.Channel).HasConversion<string>().HasMaxLength(20);
+        builder.Property(b => b.AttachmentFilePath).HasMaxLength(1000);
+        builder.Property(b => b.AttachmentUrl).HasMaxLength(1000);
+        builder.Property(b => b.AttachmentFileName).HasMaxLength(255);
+        builder.Property(b => b.AttachmentMimeType).HasMaxLength(255);
 
         builder.HasIndex(b => new { b.OrganizationId, b.Status })
             .HasDatabaseName("idx_broadcasts_org_status");

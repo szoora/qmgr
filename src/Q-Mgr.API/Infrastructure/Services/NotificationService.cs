@@ -19,6 +19,7 @@ public class NotificationService : INotificationService
     private readonly QMgrDbContext _context;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly INotificationHubService _hubService;
+    private readonly IMediaStorageService _mediaStorageService;
     private readonly ILogger<NotificationService> _logger;
     // Keyed by OrganizationId — a single cached field previously returned whatever organization's
     // settings were fetched first for the lifetime of this (scoped) instance, meaning every other
@@ -31,11 +32,13 @@ public class NotificationService : INotificationService
         QMgrDbContext context,
         IHttpClientFactory httpClientFactory,
         INotificationHubService hubService,
+        IMediaStorageService mediaStorageService,
         ILogger<NotificationService> logger)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
         _hubService = hubService;
+        _mediaStorageService = mediaStorageService;
         _logger = logger;
     }
 
@@ -124,7 +127,7 @@ public class NotificationService : INotificationService
 
     #region Email
 
-    public async Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, CancellationToken cancellationToken = default)
+    public async Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.EmailEnabled)
@@ -149,7 +152,7 @@ public class NotificationService : INotificationService
                     : null
             };
 
-            var mailMessage = new MailMessage
+            using var mailMessage = new MailMessage
             {
                 From = new MailAddress(settings.EmailFromAddress, settings.EmailFromName ?? "Q-Mgr"),
                 Subject = subject,
@@ -157,6 +160,21 @@ public class NotificationService : INotificationService
                 IsBodyHtml = isHtml
             };
             mailMessage.To.Add(email);
+
+            if (attachment != null)
+            {
+                var attachmentStream = await _mediaStorageService.DownloadAsync(attachment.FilePath, cancellationToken);
+                if (attachmentStream != null)
+                {
+                    // Ownership passes to Attachment/MailMessage from here — the `using var
+                    // mailMessage` above disposes it along with everything else on the way out.
+                    mailMessage.Attachments.Add(new Attachment(attachmentStream, attachment.FileName, attachment.MimeType));
+                }
+                else
+                {
+                    _logger.LogWarning("Attachment {FilePath} could not be read; sending {Email} without it", attachment.FilePath, email);
+                }
+            }
 
             await smtpClient.SendMailAsync(mailMessage, cancellationToken);
             _logger.LogInformation("Email sent successfully to {Email}", email);
@@ -173,7 +191,7 @@ public class NotificationService : INotificationService
 
     #region Telegram
 
-    public async Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, CancellationToken cancellationToken = default)
+    public async Task<bool> SendTelegramAsync(Guid organizationId, string chatId, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.TelegramEnabled)
@@ -191,9 +209,29 @@ public class NotificationService : INotificationService
         try
         {
             var client = _httpClientFactory.CreateClient("TelegramApi");
-            var request = new { chat_id = chatId, text = message };
 
-            var response = await client.PostAsJsonAsync($"bot{settings.TelegramBotToken}/sendMessage", request, cancellationToken);
+            // Telegram fetches attachment.Url itself server-side rather than receiving bytes —
+            // sendPhoto renders inline for images, sendDocument covers everything else (PDFs,
+            // etc.); plain sendMessage stays the path when there's nothing attached.
+            string endpoint;
+            object request;
+            if (attachment == null)
+            {
+                endpoint = "sendMessage";
+                request = new { chat_id = chatId, text = message };
+            }
+            else if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                endpoint = "sendPhoto";
+                request = new { chat_id = chatId, photo = attachment.Url, caption = message };
+            }
+            else
+            {
+                endpoint = "sendDocument";
+                request = new { chat_id = chatId, document = attachment.Url, caption = message };
+            }
+
+            var response = await client.PostAsJsonAsync($"bot{settings.TelegramBotToken}/{endpoint}", request, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -216,7 +254,7 @@ public class NotificationService : INotificationService
 
     #region WhatsApp
 
-    public async Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default)
+    public async Task<bool> SendWhatsAppAsync(Guid organizationId, string phoneNumber, string message, NotificationAttachment? attachment = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.WhatsAppEnabled)
@@ -239,13 +277,39 @@ public class NotificationService : INotificationService
             // WhatsApp Cloud API requires E.164 digits with no leading '+' in the "to" field.
             var normalizedNumber = new string(NormalizePhoneNumber(phoneNumber).Where(char.IsDigit).ToArray());
 
-            var request = new
+            // Cloud API fetches attachment.Url itself via its "link" field (same fetch-from-URL
+            // model as Telegram above) — image renders inline, document covers everything else.
+            object request;
+            if (attachment == null)
             {
-                messaging_product = "whatsapp",
-                to = normalizedNumber,
-                type = "text",
-                text = new { body = message }
-            };
+                request = new
+                {
+                    messaging_product = "whatsapp",
+                    to = normalizedNumber,
+                    type = "text",
+                    text = new { body = message }
+                };
+            }
+            else if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                request = new
+                {
+                    messaging_product = "whatsapp",
+                    to = normalizedNumber,
+                    type = "image",
+                    image = new { link = attachment.Url, caption = message }
+                };
+            }
+            else
+            {
+                request = new
+                {
+                    messaging_product = "whatsapp",
+                    to = normalizedNumber,
+                    type = "document",
+                    document = new { link = attachment.Url, filename = attachment.FileName, caption = message }
+                };
+            }
 
             var response = await client.PostAsJsonAsync($"{settings.WhatsAppPhoneNumberId}/messages", request, cancellationToken);
 
@@ -331,7 +395,7 @@ public class NotificationService : INotificationService
         if (request.Channels.HasFlag(NotificationChannel.Email) && !string.IsNullOrEmpty(request.Email))
         {
             var emailSubject = request.EmailSubject ?? request.Title;
-            var emailSent = await SendEmailAsync(request.OrganizationId, request.Email, emailSubject, request.Message, true, cancellationToken);
+            var emailSent = await SendEmailAsync(request.OrganizationId, request.Email, emailSubject, request.Message, true, cancellationToken: cancellationToken);
             notification.EmailSent = emailSent;
             notification.EmailSentAt = emailSent ? DateTime.UtcNow : null;
             notification.DeliveredVia |= NotificationChannel.Email;

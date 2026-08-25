@@ -45,6 +45,12 @@ public class BroadcastSendJob
             : $"{message}\n\nReply STOP or visit {unsubscribeUrl} to unsubscribe.";
     }
 
+    /// <summary>SMS has no attachment concept — this is its stand-in: the file's public URL as a plain link.</summary>
+    private static string AppendAttachmentLink(string message, NotificationAttachment? attachment)
+    {
+        return attachment == null ? message : $"{message}\n\n{attachment.FileName}: {attachment.Url}";
+    }
+
     [AutomaticRetry(Attempts = 1)]
     public async Task ProcessAsync()
     {
@@ -99,6 +105,11 @@ public class BroadcastSendJob
             .Where(r => r.BroadcastId == broadcastId && r.Status == RecipientStatus.Pending)
             .ToListAsync();
 
+        // Same attachment for every recipient — built once rather than per-iteration.
+        var attachment = !string.IsNullOrEmpty(broadcast.AttachmentFilePath) && !string.IsNullOrEmpty(broadcast.AttachmentUrl)
+            ? new NotificationAttachment(broadcast.AttachmentFilePath, broadcast.AttachmentUrl, broadcast.AttachmentFileName ?? "attachment", broadcast.AttachmentMimeType ?? "application/octet-stream")
+            : null;
+
         foreach (var recipient in pending)
         {
             if (recipient.Contact == null) continue;
@@ -123,22 +134,27 @@ public class BroadcastSendJob
                             recipient.Contact.Email!,
                             broadcast.Subject ?? broadcast.Name,
                             AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
-                            isHtml: false),
+                            isHtml: false,
+                            attachment: attachment),
+                    // SMS has no attachment concept — the link is the closest equivalent, appended
+                    // to the message text itself rather than dropped silently.
                     BroadcastChannel.Sms when !string.IsNullOrWhiteSpace(recipient.Contact.Phone) =>
                         await _notificationService.SendSmsAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.Phone!,
-                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
+                            AppendAttachmentLink(AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false), attachment)),
                     BroadcastChannel.Telegram when !string.IsNullOrWhiteSpace(recipient.Contact.TelegramChatId) =>
                         await _notificationService.SendTelegramAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.TelegramChatId!,
-                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
+                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
+                            attachment: attachment),
                     BroadcastChannel.WhatsApp when !string.IsNullOrWhiteSpace(recipient.Contact.Phone) =>
                         await _notificationService.SendWhatsAppAsync(
                             broadcast.OrganizationId,
                             recipient.Contact.Phone!,
-                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false)),
+                            AppendUnsubscribeFooter(broadcast.MessageBody, recipient.Contact.OptOutToken, isHtml: false),
+                            attachment: attachment),
                     _ => false
                 };
                 if (!sent) error = "No usable contact address for this channel, or the transport is disabled/unconfigured";
