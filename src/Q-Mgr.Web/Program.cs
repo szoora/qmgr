@@ -59,6 +59,7 @@ builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>();
 builder.Services.AddScoped<IQueueApiService, QueueApiService>();
 builder.Services.AddScoped<IVisitorApiService, VisitorApiService>();
+builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
 builder.Services.AddScoped<ISpotifyApiService, SpotifyApiService>();
 builder.Services.AddScoped<IOrganizationApiService, OrganizationApiService>();

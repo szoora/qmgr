@@ -1,0 +1,77 @@
+@page "/unsubscribe/{Token:guid}"
+@layout KioskLayout
+@inject HttpClient Http
+
+<PageTitle>Unsubscribe - Q-Mgr</PageTitle>
+
+<div class="unsubscribe-page">
+    <div class="unsubscribe-card">
+        <div class="logo">
+            <QIcon Name="@(done ? "check-circle-fill" : "envelope-slash")" />
+        </div>
+
+        @if (isLoading)
+        {
+            <QSpinner Size="lg" />
+            <p>Processing your request...</p>
+        }
+        else if (done)
+        {
+            <h1>You're unsubscribed</h1>
+            <p>You won't receive any more marketing messages from this sender.</p>
+        }
+        else
+        {
+            <h1>Unable to process</h1>
+            <p>This unsubscribe link is invalid or has expired. If you keep receiving messages you didn't ask for, please contact the sender directly.</p>
+        }
+    </div>
+</div>
+
+<style>
+    .unsubscribe-page {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+    }
+
+    .unsubscribe-card {
+        max-width: 420px;
+        text-align: center;
+        background: var(--qm-bg-card, #fff);
+        border: 1px solid var(--qm-border, #e2e2e2);
+        border-radius: var(--qm-radius-lg, 12px);
+        padding: 40px 32px;
+    }
+
+    .logo { font-size: 48px; color: var(--qm-primary); margin-bottom: 16px; }
+    h1 { font-size: 22px; margin: 0 0 10px; color: var(--qm-text-primary); }
+    p { color: var(--qm-text-muted); margin: 0; }
+</style>
+
+@code {
+    [Parameter]
+    public Guid Token { get; set; }
+
+    private bool isLoading = true;
+    private bool done;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/marketing/unsubscribe/{Token}", null);
+            done = response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            done = false;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

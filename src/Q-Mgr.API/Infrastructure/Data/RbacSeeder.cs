@@ -145,6 +145,13 @@ public class RbacSeeder
         new("visitors.checkout", "Check Out Visitors", "Check out visitors", "Visitor Management", 3, true),
         new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4, true),
 
+        // ============================================
+        // MARKETING (contacts + broadcast campaigns)
+        // ============================================
+        new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1, true),
+        new("marketing.manage", "Manage Marketing", "Manage contacts and create broadcast drafts", "Marketing", 2, true),
+        new("marketing.send", "Send Broadcasts", "Schedule or send broadcast campaigns", "Marketing", 3, true),
+
         new("api-clients.view", "View API Clients", "View API client configurations", "API Clients", 1, true),
         new("api-clients.create", "Create API Clients", "Create new API client credentials", "API Clients", 2, true),
         new("api-clients.edit", "Edit API Clients", "Edit API client settings", "API Clients", 3, true),
@@ -256,6 +263,8 @@ public class RbacSeeder
                 "feedback.view", "feedback.respond", "feedback.analytics",
                 // Visitor Management (full)
                 "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
+                // Marketing (full)
+                "marketing.view", "marketing.manage", "marketing.send",
                 // Settings (view only)
                 "settings.view",
                 // Notifications (view only)

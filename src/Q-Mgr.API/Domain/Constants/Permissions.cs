@@ -69,6 +69,11 @@ public static class Permissions
     public const string VisitorsCheckOut = "visitors.checkout";
     public const string VisitorsManage = "visitors.manage"; // Edit details, delete, watchlist flag
 
+    // Marketing (contacts + broadcast campaigns)
+    public const string MarketingView = "marketing.view";
+    public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
+    public const string MarketingSend = "marketing.send"; // Schedule/send a broadcast
+
     // Settings
     public const string SettingsView = "settings.view";
     public const string SettingsEdit = "settings.edit";
@@ -170,6 +175,11 @@ public static class Permissions
         new("visitors.checkout", "Check Out Visitors", "Check out visitors", "Visitor Management", 3),
         new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4),
 
+        // Marketing
+        new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
+        new("marketing.manage", "Manage Marketing", "Manage contacts and create broadcast drafts", "Marketing", 2),
+        new("marketing.send", "Send Broadcasts", "Schedule or send broadcast campaigns", "Marketing", 3),
+
         // Settings
         new("settings.view", "View Settings", "View organization settings", "Settings", 1),
         new("settings.edit", "Edit Settings", "Modify organization settings", "Settings", 2),
@@ -250,6 +260,7 @@ public static class Permissions
                 ContentView, ContentCreate, ContentEdit, ContentDelete,
                 FeedbackView, FeedbackRespond, FeedbackAnalytics,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
+                MarketingView, MarketingManage, MarketingSend,
                 SettingsView,
                 NotificationsView,
             }

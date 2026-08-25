@@ -211,6 +211,11 @@ public static class Permissions
     public const string VisitorsCheckOut = "visitors.checkout";
     public const string VisitorsManage = "visitors.manage";
 
+    // Marketing
+    public const string MarketingView = "marketing.view";
+    public const string MarketingManage = "marketing.manage";
+    public const string MarketingSend = "marketing.send";
+
     // Settings
     public const string SettingsView = "settings.view";
     public const string SettingsEdit = "settings.edit";

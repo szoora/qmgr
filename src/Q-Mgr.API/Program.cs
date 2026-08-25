@@ -271,5 +271,6 @@ app.MapHangfireDashboard("/hangfire", new DashboardOptions
 BillingJobsRegistration.RegisterRecurringJobs();
 RateLimitJobsRegistration.RegisterRecurringJobs();
 WebhookJobsRegistration.RegisterRecurringJobs();
+BroadcastJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

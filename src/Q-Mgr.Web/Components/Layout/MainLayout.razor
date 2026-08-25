@@ -162,6 +162,17 @@ else
                     </li>
                 }
 
+                <!-- Campaign Marketing -->
+                @if (canViewMarketing)
+                {
+                    <li class="nav-item">
+                        <a href="admin/marketing" class="nav-link @(IsActive("/admin/marketing") ? "active" : "")">
+                            <i class="bi bi-megaphone-fill"></i>
+                            <span>Campaign Marketing</span>
+                        </a>
+                    </li>
+                }
+
                 <!-- Digital Signage -->
                 @if (canViewContent)
                 {
@@ -440,6 +451,7 @@ else
     private bool canViewApiClients = false;
     private bool canViewFeedback = false;
     private bool canViewVisitors = false;
+    private bool canViewMarketing = false;
     private bool canViewBilling = false;
     private bool canViewPlatformAdmin = false;
     private bool tokensInitialized = false;
@@ -657,6 +669,7 @@ else
         canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
+        canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
         canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
         canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
     }

@@ -9,6 +9,7 @@ using QMgr.Domain.Entities.Integration;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Entities.Organization;
 using QMgr.Domain.Entities.Platform;
+using QMgr.Domain.Entities.Marketing;
 using QMgr.Domain.Entities.Queue;
 using QMgr.Domain.Entities.Visitor;
 
@@ -45,6 +46,14 @@ public class QMgrDbContext : DbContext
     public DbSet<TokenHistory> TokenHistories => Set<TokenHistory>();
     public DbSet<Feedback> Feedbacks => Set<Feedback>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
+
+    #endregion
+
+    #region Marketing
+
+    public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<Broadcast> Broadcasts => Set<Broadcast>();
+    public DbSet<BroadcastRecipient> BroadcastRecipients => Set<BroadcastRecipient>();
 
     #endregion
 

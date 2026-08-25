@@ -1,0 +1,347 @@
+@page "/admin/marketing"
+@inject IMarketingApiService MarketingApi
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Campaign Marketing - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Campaign Marketing</h1>
+            <p class="subtitle">Broadcast email and SMS campaigns to your contacts — every message includes a working unsubscribe link</p>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <button class="tab @(activeTab == "broadcasts" ? "active" : "")" @onclick='@(() => activeTab = "broadcasts")'>
+            <QIcon Name="send-fill" /> Broadcasts
+        </button>
+        <button class="tab @(activeTab == "contacts" ? "active" : "")" @onclick='@(() => activeTab = "contacts")'>
+            <QIcon Name="person-lines-fill" /> Contacts (@contacts.Count(c => !c.OptedOut) subscribed)
+        </button>
+    </div>
+
+    @if (activeTab == "broadcasts")
+    {
+        <div class="section-actions">
+            <PermissionGuard Permission="marketing.manage">
+                <QButton Text="New Broadcast" Icon="plus-lg" Variant="primary" OnClick="@OpenNewBroadcastModal" />
+            </PermissionGuard>
+        </div>
+
+        @if (isLoadingBroadcasts)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /></div>
+        }
+        else if (!broadcasts.Any())
+        {
+            <div class="empty-state">
+                <QIcon Name="send" />
+                <h3>No Broadcasts Yet</h3>
+                <p>Create a broadcast to message your contacts by email or SMS</p>
+            </div>
+        }
+        else
+        {
+            <div class="broadcast-list">
+                @foreach (var b in broadcasts)
+                {
+                    <div class="broadcast-card status-@b.Status.ToString().ToLower()">
+                        <div class="broadcast-main">
+                            <div class="broadcast-identity">
+                                <QIcon Name="@(b.Channel == BroadcastChannel.Email ? "envelope-fill" : "chat-dots-fill")" />
+                                <span class="broadcast-name">@b.Name</span>
+                                <span class="status-badge">@b.Status</span>
+                            </div>
+                            <div class="broadcast-actions">
+                                @if (b.Status == BroadcastStatus.Draft)
+                                {
+                                    <PermissionGuard Permission="marketing.send">
+                                        <QButton Text="Send Now" Icon="send-fill" Size="sm" Variant="primary" OnClick="@(() => SendNow(b))" />
+                                    </PermissionGuard>
+                                }
+                                @if (b.Status == BroadcastStatus.Scheduled)
+                                {
+                                    <PermissionGuard Permission="marketing.send">
+                                        <QButton Text="Cancel" Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => CancelBroadcast(b))" />
+                                    </PermissionGuard>
+                                }
+                            </div>
+                        </div>
+                        <p class="broadcast-preview">@(b.Subject != null ? $"{b.Subject} — " : "")@Truncate(b.MessageBody, 120)</p>
+                        <div class="broadcast-stats">
+                            @if (b.Status is BroadcastStatus.Sending or BroadcastStatus.Sent)
+                            {
+                                <span class="stat"><QIcon Name="people-fill" /> @b.TotalRecipients recipients</span>
+                                <span class="stat good"><QIcon Name="check-circle-fill" /> @b.SentCount sent</span>
+                                @if (b.FailedCount > 0)
+                                {
+                                    <span class="stat bad"><QIcon Name="exclamation-circle-fill" /> @b.FailedCount failed</span>
+                                }
+                            }
+                            @if (b.ScheduledAt.HasValue && b.Status == BroadcastStatus.Scheduled)
+                            {
+                                <span class="stat"><QIcon Name="clock-fill" /> Scheduled @b.ScheduledAt.Value.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+    else
+    {
+        <div class="section-actions">
+            <PermissionGuard Permission="marketing.manage">
+                <QButton Text="Add Contact" Icon="person-plus-fill" Variant="primary" OnClick="@OpenNewContactModal" />
+            </PermissionGuard>
+        </div>
+
+        @if (isLoadingContacts)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /></div>
+        }
+        else if (!contacts.Any())
+        {
+            <div class="empty-state">
+                <QIcon Name="person-lines-fill" />
+                <h3>No Contacts Yet</h3>
+                <p>Add contacts to build your broadcast audience</p>
+            </div>
+        }
+        else
+        {
+            <div class="contact-list">
+                @foreach (var c in contacts)
+                {
+                    <div class="contact-row @(c.OptedOut ? "opted-out" : "")">
+                        <span class="contact-name">@c.FullName</span>
+                        <span class="contact-detail">@c.Email</span>
+                        <span class="contact-detail">@c.Phone</span>
+                        <span class="contact-detail">@c.Tags</span>
+                        @if (c.OptedOut)
+                        {
+                            <span class="status-badge">Opted Out</span>
+                        }
+                        <PermissionGuard Permission="marketing.manage">
+                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => DeleteContact(c))" />
+                        </PermissionGuard>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showBroadcastModal" Title="New Broadcast" Size="md">
+    <ChildContent>
+        <div class="form-grid">
+            <label>Name *<input @bind="broadcastModel.Name" placeholder="August newsletter" /></label>
+            <label>Channel *
+                <select @bind="broadcastModel.Channel">
+                    <option value="@BroadcastChannel.Email">Email</option>
+                    <option value="@BroadcastChannel.Sms">SMS</option>
+                </select>
+            </label>
+            @if (broadcastModel.Channel == BroadcastChannel.Email)
+            {
+                <label class="full-width">Subject *<input @bind="broadcastModel.Subject" placeholder="What's new this month" /></label>
+            }
+            <label class="full-width">Message *<textarea @bind="broadcastModel.MessageBody" rows="5" placeholder="Your message..."></textarea></label>
+            <label class="full-width">Audience tag filter (optional)<input @bind="broadcastModel.AudienceTagFilter" placeholder="e.g. vip — leave blank for everyone not opted out" /></label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showBroadcastModal = false)" />
+        <QButton Text="Save as Draft" Icon="save" Variant="primary" OnClick="@SubmitBroadcast"
+                 Disabled="@(string.IsNullOrWhiteSpace(broadcastModel.Name) || string.IsNullOrWhiteSpace(broadcastModel.MessageBody))" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showContactModal" Title="Add Contact" Size="sm">
+    <ChildContent>
+        <div class="form-grid">
+            <label class="full-width">Full Name *<input @bind="contactModel.FullName" placeholder="Jane Doe" /></label>
+            <label>Email<input @bind="contactModel.Email" placeholder="jane@example.com" /></label>
+            <label>Phone<input @bind="contactModel.Phone" placeholder="+1 555 0100" /></label>
+            <label class="full-width">Tags<input @bind="contactModel.Tags" placeholder="vip, newsletter" /></label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showContactModal = false)" />
+        <QButton Text="Add Contact" Icon="person-plus-fill" Variant="primary" OnClick="@SubmitContact"
+                 Disabled="@(string.IsNullOrWhiteSpace(contactModel.FullName) || (string.IsNullOrWhiteSpace(contactModel.Phone) && string.IsNullOrWhiteSpace(contactModel.Email)))" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { margin-bottom: 20px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); margin-bottom: 20px; }
+    .tab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border: none; background: none; color: var(--qm-text-muted); font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); font-weight: 600; }
+
+    .section-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+
+    .broadcast-list { display: flex; flex-direction: column; gap: 12px; }
+    .broadcast-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
+    .broadcast-card.status-sent { border-left-color: #3f7d58; }
+    .broadcast-card.status-scheduled { border-left-color: #a9781f; }
+    .broadcast-card.status-failed { border-left-color: #ac3b33; }
+    .broadcast-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .broadcast-identity { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--qm-text-primary); }
+    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .broadcast-preview { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0; }
+    .broadcast-stats { display: flex; gap: 16px; font-size: 13px; color: var(--qm-text-muted); }
+    .stat { display: inline-flex; align-items: center; gap: 5px; }
+    .stat.good { color: #3f7d58; }
+    .stat.bad { color: #ac3b33; }
+
+    .contact-list { display: flex; flex-direction: column; gap: 1px; background: var(--qm-border); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); overflow: hidden; }
+    .contact-row { display: flex; align-items: center; gap: 16px; background: var(--qm-bg-card); padding: 10px 16px; }
+    .contact-row.opted-out { opacity: 0.6; }
+    .contact-name { font-weight: 600; min-width: 160px; color: var(--qm-text-primary); }
+    .contact-detail { color: var(--qm-text-muted); font-size: 13px; flex: 1; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label.full-width { grid-column: 1 / -1; }
+    .form-grid input, .form-grid select, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+</style>
+
+@code {
+    private string activeTab = "broadcasts";
+    private List<BroadcastDto> broadcasts = new();
+    private List<ContactDto> contacts = new();
+    private bool isLoadingBroadcasts = true;
+    private bool isLoadingContacts = true;
+
+    private CreateBroadcastRequest broadcastModel = new();
+    private CreateContactRequest contactModel = new();
+    private bool showBroadcastModal;
+    private bool showContactModal;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.MarketingView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await LoadBroadcasts();
+        await LoadContacts();
+    }
+
+    private async Task LoadBroadcasts()
+    {
+        isLoadingBroadcasts = true;
+        broadcasts = await MarketingApi.GetBroadcastsAsync();
+        isLoadingBroadcasts = false;
+    }
+
+    private async Task LoadContacts()
+    {
+        isLoadingContacts = true;
+        contacts = await MarketingApi.GetContactsAsync();
+        isLoadingContacts = false;
+    }
+
+    private void OpenNewBroadcastModal()
+    {
+        broadcastModel = new CreateBroadcastRequest { Channel = BroadcastChannel.Email };
+        showBroadcastModal = true;
+    }
+
+    private void OpenNewContactModal()
+    {
+        contactModel = new CreateContactRequest();
+        showContactModal = true;
+    }
+
+    private async Task SubmitBroadcast()
+    {
+        var result = await MarketingApi.CreateBroadcastAsync(broadcastModel);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Broadcast saved as draft");
+            showBroadcastModal = false;
+            await LoadBroadcasts();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to create broadcast");
+        }
+    }
+
+    private async Task SubmitContact()
+    {
+        var result = await MarketingApi.CreateContactAsync(contactModel);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} added");
+            showContactModal = false;
+            await LoadContacts();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to add contact");
+        }
+    }
+
+    private async Task SendNow(BroadcastDto b)
+    {
+        var result = await MarketingApi.ScheduleBroadcastAsync(b.Id, null);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Broadcast queued — sends within about a minute");
+            await LoadBroadcasts();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to schedule broadcast");
+        }
+    }
+
+    private async Task CancelBroadcast(BroadcastDto b)
+    {
+        var result = await MarketingApi.CancelBroadcastAsync(b.Id);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Broadcast cancelled");
+            await LoadBroadcasts();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to cancel broadcast");
+        }
+    }
+
+    private async Task DeleteContact(ContactDto c)
+    {
+        if (await MarketingApi.DeleteContactAsync(c.Id))
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Contact deleted");
+            await LoadContacts();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete contact");
+        }
+    }
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "...";
+}
