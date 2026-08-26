@@ -69,6 +69,10 @@ public static class Permissions
     public const string VisitorsCheckOut = "visitors.checkout";
     public const string VisitorsManage = "visitors.manage"; // Edit details, delete, watchlist flag
 
+    // Student Rosters (visiting-day pre-registration: Student -> authorized Guardian(s))
+    public const string StudentsView = "students.view";
+    public const string StudentsManage = "students.manage"; // Create/edit/delete students & guardians, bulk import
+
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
@@ -175,6 +179,10 @@ public static class Permissions
         new("visitors.checkout", "Check Out Visitors", "Check out visitors", "Visitor Management", 3),
         new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4),
 
+        // Student Rosters
+        new("students.view", "View Student Rosters", "View students and their authorized guardians", "Student Rosters", 1),
+        new("students.manage", "Manage Student Rosters", "Create/edit/delete students and guardians, bulk import a roster", "Student Rosters", 2),
+
         // Marketing
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
         new("marketing.manage", "Manage Marketing", "Manage contacts and create broadcast drafts", "Marketing", 2),
@@ -260,6 +268,7 @@ public static class Permissions
                 ContentView, ContentCreate, ContentEdit, ContentDelete,
                 FeedbackView, FeedbackRespond, FeedbackAnalytics,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
+                StudentsView, StudentsManage,
                 MarketingView, MarketingManage, MarketingSend,
                 SettingsView,
                 NotificationsView,
@@ -281,6 +290,7 @@ public static class Permissions
                 ReportsView,
                 FeedbackView,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut,
+                StudentsView,
             }
         ),
 

@@ -25,6 +25,8 @@ public record VisitorDto
     public string? VehiclePlate { get; init; }
     public Guid? HostUserId { get; init; }
     public string HostName { get; init; } = string.Empty;
+    public Guid? StudentId { get; init; }
+    public string? StudentName { get; init; }
 
     public VisitorStatus Status { get; init; }
 
@@ -65,6 +67,11 @@ public record PreRegisterVisitorRequest
     public string? VehiclePlate { get; set; }
     public Guid? HostUserId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    // Set when checking in via the visiting-day roster search — the visitor is visiting this
+    // student specifically, distinct from HostUserId/HostName which point at a staff user.
+    public Guid? StudentId { get; set; }
+
     public DateTime? ScheduledAt { get; set; }
     public string? Notes { get; set; }
 }
@@ -86,6 +93,10 @@ public record CheckInVisitorRequest
     public string? VehiclePlate { get; set; }
     public Guid? HostUserId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    // Set when checking in via the visiting-day roster search — see PreRegisterVisitorRequest.StudentId.
+    public Guid? StudentId { get; set; }
+
     public string? Notes { get; set; }
     public bool ConsentGiven { get; set; }
 }

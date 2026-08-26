@@ -49,6 +49,8 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         ["counter:read"] = new[] { Permissions.CountersView },
         ["service:read"] = new[] { Permissions.ServiceTypesView },
         ["stats:read"] = new[] { Permissions.ReportsView },
+        ["roster:read"] = new[] { Permissions.StudentsView },
+        ["roster:write"] = new[] { Permissions.StudentsManage },
     };
 
     protected override async Task HandleRequirementAsync(
