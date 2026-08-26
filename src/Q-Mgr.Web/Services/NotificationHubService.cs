@@ -20,6 +20,7 @@ public class NotificationClientService : INotificationClientService
     public event Func<NotificationDto, Task>? OnNotificationReceived;
     public event Func<int, Task>? OnUnreadCountUpdated;
     public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
+    public event Func<RosterImportProgressEvent, Task>? OnRosterImportProgressReceived;
     public event Action? ConnectionStateChanged;
 
     public HubConnectionState State => _hubConnection?.State ?? HubConnectionState.Disconnected;
@@ -99,6 +100,16 @@ public class NotificationClientService : INotificationClientService
             if (OnVisitorActivityReceived != null)
             {
                 await OnVisitorActivityReceived.Invoke(activity);
+            }
+        });
+
+        // Handle roster bulk-import progress
+        _hubConnection.On<RosterImportProgressEvent>("RosterImportProgress", async progress =>
+        {
+            _logger.LogDebug("Roster import progress: job {JobId} {Processed}/{Total}", progress.JobId, progress.ProcessedRows, progress.TotalRows);
+            if (OnRosterImportProgressReceived != null)
+            {
+                await OnRosterImportProgressReceived.Invoke(progress);
             }
         });
 

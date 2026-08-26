@@ -371,7 +371,7 @@
     private ApiClientDto? editingClient;
     private ClientFormData formData = new();
     private List<ScopeOption> availableScopes = new();
-    private List<string> systemTypes = new() { "hospital_mgmt", "banking", "pharmacy", "custom" };
+    private List<string> systemTypes = new() { "hospital_mgmt", "banking", "pharmacy", "school_mgmt", "custom" };
     private bool canCreate = false;
     private bool canEdit = false;
     private bool canDelete = false;
@@ -396,7 +396,9 @@
             new() { Name = "token:manage", Description = "Call, complete, and transfer tokens" },
             new() { Name = "counter:read", Description = "View counter information" },
             new() { Name = "service:read", Description = "View service types" },
-            new() { Name = "stats:read", Description = "Access analytics and reports" }
+            new() { Name = "stats:read", Description = "Access analytics and reports" },
+            new() { Name = "roster:read", Description = "View the student/guardian visitor roster" },
+            new() { Name = "roster:write", Description = "Push student/guardian roster updates (e.g. from a School Management Information System)" }
         };
 
         await LoadApiClients();
@@ -425,6 +427,7 @@
         "hospital_mgmt" => "hospital",
         "banking" => "bank",
         "pharmacy" => "capsule",
+        "school_mgmt" => "mortarboard-fill",
         _ => "key-fill"
     };
 
