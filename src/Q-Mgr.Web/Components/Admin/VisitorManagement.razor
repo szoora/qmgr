@@ -206,11 +206,26 @@
         {
             @RenderConsentCheckbox(checkInConsentGiven, v => checkInConsentGiven = v)
         }
+        @if (CardNeedsOverride(checkInSelectedRoster))
+        {
+            <div class="card-override-box">
+                <p><QIcon Name="shield-exclamation" /> This card has already been checked in @checkInSelectedRoster!.CheckInsToday time(s) today. Flag it with a reason to proceed, or ask a Manager/Admin to complete this check-in instead.</p>
+                <label class="full-width">Reason to flag this card *<input @bind="checkInOverrideReason" placeholder="e.g. confirmed with school office — legitimate re-visit" /></label>
+            </div>
+        }
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => CloseCheckInModal())" />
-        <QButton Text="Check In" Icon="person-plus-fill" Variant="primary" OnClick="@SubmitCheckIn"
-                 Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose) || (consentRequired && !checkInConsentGiven))" />
+        @if (CardNeedsOverride(checkInSelectedRoster))
+        {
+            <QButton Text="Flag Card & Check In" Icon="shield-exclamation" Variant="warning" OnClick="@SubmitCheckIn"
+                     Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose) || (consentRequired && !checkInConsentGiven) || string.IsNullOrWhiteSpace(checkInOverrideReason))" />
+        }
+        else
+        {
+            <QButton Text="Check In" Icon="person-plus-fill" Variant="primary" OnClick="@SubmitCheckIn"
+                     Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose) || (consentRequired && !checkInConsentGiven))" />
+        }
     </FooterContent>
 </QModal>
 
@@ -268,7 +283,7 @@
                 {
                     <div class="badge-host">Visiting: @badgeVisitor.HostName</div>
                 }
-                <p class="badge-hint">Scan at the exit to check out automatically.</p>
+                <p class="badge-hint">Scan at the exit to check out automatically — single-use, a photographed or reprinted copy stops working the moment it's scanned once.</p>
             </div>
         }
     </ChildContent>
@@ -290,6 +305,23 @@
             <label class="full-width-label">
                 Consent text
                 <textarea @bind="consentSettingsModel.Text" rows="3" disabled="@(!consentSettingsModel.Required)"></textarea>
+            </label>
+        </div>
+        <div class="settings-section">
+            <h3>Visiting Day</h3>
+            <p class="settings-hint">
+                Controls for the roster (school visiting-day) check-in flow — how many times a
+                guardian's card can be checked in before front-desk staff must flag it (or a
+                Manager/Admin completes it instead), and whether guardians get an SMS confirming
+                their card was used.
+            </p>
+            <label>
+                Flag threshold (check-ins per day)
+                <input type="number" min="1" max="20" @bind="visitingDaySettingsModel.CardCheckInWarningThreshold" />
+            </label>
+            <label class="settings-toggle">
+                <input type="checkbox" @bind="visitingDaySettingsModel.NotifyGuardianOnCheckIn" />
+                <span>Text the guardian to confirm their card was used at check-in</span>
             </label>
         </div>
         <div class="settings-section">
@@ -453,6 +485,10 @@
     .card-usage-flag { font-size: 11px; color: var(--qm-text-muted); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .card-usage-flag.warn { color: #a9781f; background: rgba(169, 120, 31, 0.12); padding: 2px 8px; border-radius: 999px; }
     span.card-usage-flag { flex-shrink: 0; }
+    .card-override-box { margin-top: 12px; padding: 12px; border: 1px solid rgba(169, 120, 31, 0.35); background: rgba(169, 120, 31, 0.08); border-radius: var(--qm-radius-sm); }
+    .card-override-box p { margin: 0 0 8px; font-size: 13px; color: #a9781f; display: flex; align-items: flex-start; gap: 6px; }
+    .card-override-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .card-override-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
 
     .badge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; text-align: center; }
     .badge-qr-container { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
@@ -484,10 +520,21 @@
 
 @code {
     // A guardian's roster card being checked in more than once on visiting day isn't inherently
-    // wrong (morning drop-off + afternoon pick-up is a normal 2), but 2+ is the point past which
-    // it's worth a front-desk glance rather than a silent auto-approve — see CheckInsToday on
-    // StudentGuardianSearchResultDto.
-    private const int CardAbuseWarningThreshold = 2;
+    // wrong (morning drop-off + afternoon pick-up is a normal 2), but past this threshold it's
+    // worth a front-desk glance rather than a silent auto-approve — see CheckInsToday on
+    // StudentGuardianSearchResultDto. Admin-configurable (Visitor Settings); defaults to 2 until
+    // loaded in OnInitializedAsync so early renders never null-ref.
+    private VisitingDaySettingsDto visitingDaySettings = new();
+    private int CardAbuseWarningThreshold => visitingDaySettings.CardCheckInWarningThreshold;
+    private bool isManagerOrAbove;
+
+    // Only the walk-in Check-In modal needs this — Pre-Register never triggers the gate itself
+    // (VisitorsController.PreRegister doesn't check it; the gate fires when the visit actually
+    // starts, i.e. CheckIn or CheckInExisting), so the pre-registration step never needs a reason.
+    private string checkInOverrideReason = "";
+
+    private bool CardNeedsOverride(StudentGuardianSearchResultDto? roster) =>
+        roster != null && roster.CheckInsToday >= CardAbuseWarningThreshold && !roster.GuardianIsWatchlisted && !isManagerOrAbove;
 
     private List<VisitorDto> allVisitors = new();
     private List<VisitorDto> visitors = new();
@@ -550,6 +597,7 @@
     private bool showSettingsModal;
     private VisitorConsentSettingsDto consentSettingsModel = new();
     private VisitorRetentionSettingsDto retentionSettingsModel = new();
+    private VisitingDaySettingsDto visitingDaySettingsModel = new();
     private Guid organizationId;
 
     private bool showPassesModal;
@@ -574,6 +622,9 @@
         var consent = await VisitorApi.GetConsentSettingsAsync(branchId);
         consentRequired = consent.Required;
         consentText = consent.Text;
+
+        isManagerOrAbove = await PermissionService.IsManagerOrAboveAsync();
+        visitingDaySettings = await VisitorApi.GetVisitingDaySettingsAsync(branchId);
 
         await LoadData();
     }
@@ -617,6 +668,7 @@
     {
         await StopPhotoCamera();
         showCheckInModal = false;
+        checkInOverrideReason = "";
     }
 
     private void OpenPreRegisterModal()
@@ -747,7 +799,7 @@
                             Checked in @(selectedRoster.CheckInsToday)x today
                         </span>
                     }
-                    <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => { if (selectedRoster == checkInSelectedRoster) checkInSelectedRoster = null; if (selectedRoster == preRegisterSelectedRoster) preRegisterSelectedRoster = null; })" />
+                    <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => { if (selectedRoster == checkInSelectedRoster) { checkInSelectedRoster = null; checkInOverrideReason = ""; } if (selectedRoster == preRegisterSelectedRoster) preRegisterSelectedRoster = null; })" />
                 </div>
             }
             else if (selected != null)
@@ -848,11 +900,17 @@
     {
         try
         {
+            if (CardNeedsOverride(checkInSelectedRoster))
+            {
+                await VisitorApi.SetProfileWatchlistAsync(branchId, checkInSelectedRoster!.GuardianProfileId, true, checkInOverrideReason);
+            }
+
             checkInModel.ConsentGiven = checkInConsentGiven;
             var result = await VisitorApi.CheckInAsync(branchId, checkInModel);
             NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in — badge {result.BadgeCode}");
             await StopPhotoCamera();
             showCheckInModal = false;
+            checkInOverrideReason = "";
             await LoadData();
             await ShowBadge(result);
         }
@@ -1003,6 +1061,11 @@
         retentionSettingsModel = organizationId != Guid.Empty
             ? await VisitorApi.GetRetentionSettingsAsync(organizationId)
             : new VisitorRetentionSettingsDto();
+        visitingDaySettingsModel = new VisitingDaySettingsDto
+        {
+            CardCheckInWarningThreshold = visitingDaySettings.CardCheckInWarningThreshold,
+            NotifyGuardianOnCheckIn = visitingDaySettings.NotifyGuardianOnCheckIn
+        };
         showSettingsModal = true;
     }
 
@@ -1018,16 +1081,23 @@
             NotificationService.Notify(ToastSeverity.Error, "Error", "Retention period must be between 30 and 3650 days");
             return;
         }
+        if (visitingDaySettingsModel.CardCheckInWarningThreshold < 1)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Card check-in threshold must be at least 1");
+            return;
+        }
 
         var consentResult = await VisitorApi.UpdateConsentSettingsAsync(branchId, consentSettingsModel);
         var retentionResult = organizationId != Guid.Empty
             ? await VisitorApi.UpdateRetentionSettingsAsync(organizationId, retentionSettingsModel)
             : retentionSettingsModel;
+        var visitingDayResult = await VisitorApi.UpdateVisitingDaySettingsAsync(branchId, visitingDaySettingsModel);
 
-        if (consentResult != null && retentionResult != null)
+        if (consentResult != null && retentionResult != null && visitingDayResult != null)
         {
             consentRequired = consentResult.Required;
             consentText = consentResult.Text;
+            visitingDaySettings = visitingDayResult;
             NotificationService.Notify(ToastSeverity.Success, "Success", "Visitor settings saved");
             showSettingsModal = false;
         }

@@ -210,6 +210,10 @@ else
                             {
                                 <li><a href="reports/feedback" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Customer Feedback</a></li>
                             }
+                            @if (canViewVisitors)
+                            {
+                                <li><a href="reports/visitors" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
+                            }
                         </ul>
                     </li>
                 }

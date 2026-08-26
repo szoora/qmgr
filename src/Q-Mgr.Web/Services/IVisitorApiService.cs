@@ -24,6 +24,11 @@ public interface IVisitorApiService
     Task<string?> UploadPhotoAsync(Guid branchId, byte[] jpegBytes);
     Task<VisitorDto?> UpdateVisitorAsync(Guid branchId, Guid visitorId, UpdateVisitorRequest request);
     Task<VisitorDto?> SetWatchlistAsync(Guid branchId, Guid visitorId, bool isWatchlisted, string? reason);
+
+    /// <summary>Flags/unflags a guardian's card by profile id directly — used to flag a card BEFORE
+    /// today's visit row exists yet (the "Flag &amp; Check In" path past the repeat-check-in gate).
+    /// Throws InvalidOperationException with the API's ProblemDetails.Title on failure.</summary>
+    Task SetProfileWatchlistAsync(Guid branchId, Guid profileId, bool isWatchlisted, string reason);
     Task<bool> DeleteVisitorAsync(Guid branchId, Guid visitorId, string reason);
 
     Task<List<VisitorPassDto>> GetPassesAsync(Guid branchId);
@@ -38,6 +43,14 @@ public interface IVisitorApiService
     Task<VisitorRetentionSettingsDto?> UpdateRetentionSettingsAsync(Guid organizationId, VisitorRetentionSettingsDto settings);
 
     Task<List<DeletedVisitorDto>> GetDeletedVisitorsAsync(Guid branchId);
+
+    Task<VisitingDaySettingsDto> GetVisitingDaySettingsAsync(Guid branchId);
+    Task<VisitingDaySettingsDto?> UpdateVisitingDaySettingsAsync(Guid branchId, VisitingDaySettingsDto settings);
+
+    Task<VisitorReportDto?> GetVisitorReportAsync(Guid branchId, DateOnly from, DateOnly to);
+
+    /// <summary>Returns the raw CSV text (or null on failure) for the same range GetVisitorReportAsync summarizes.</summary>
+    Task<string?> ExportVisitorReportCsvAsync(Guid branchId, DateOnly from, DateOnly to);
 }
 
 public class VisitorApiService : IVisitorApiService
@@ -198,6 +211,13 @@ public class VisitorApiService : IVisitorApiService
         }
     }
 
+    public async Task SetProfileWatchlistAsync(Guid branchId, Guid profileId, bool isWatchlisted, string reason)
+    {
+        var request = new SetWatchlistRequest { IsWatchlisted = isWatchlisted, Reason = reason };
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitor-profiles/{profileId}/watchlist", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+    }
+
     public async Task<bool> DeleteVisitorAsync(Guid branchId, Guid visitorId, string reason)
     {
         try
@@ -325,6 +345,64 @@ public class VisitorApiService : IVisitorApiService
         {
             _logger.LogError(ex, "Failed to get deleted visitors for branch {BranchId}", branchId);
             return new();
+        }
+    }
+
+    public async Task<VisitingDaySettingsDto> GetVisitingDaySettingsAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitingDaySettingsDto>($"api/v1/branches/{branchId}/visitors/visiting-day-settings", _jsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get visiting-day settings for branch {BranchId}", branchId);
+            return new();
+        }
+    }
+
+    public async Task<VisitingDaySettingsDto?> UpdateVisitingDaySettingsAsync(Guid branchId, VisitingDaySettingsDto settings)
+    {
+        try
+        {
+            var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitors/visiting-day-settings", settings, _jsonOptions);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<VisitingDaySettingsDto>(_jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update visiting-day settings for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<VisitorReportDto?> GetVisitorReportAsync(Guid branchId, DateOnly from, DateOnly to)
+    {
+        try
+        {
+            var url = $"api/v1/branches/{branchId}/visitors/report?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+            return await _httpClient.GetFromJsonAsync<VisitorReportDto>(url, _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get visitor report for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<string?> ExportVisitorReportCsvAsync(Guid branchId, DateOnly from, DateOnly to)
+    {
+        try
+        {
+            var url = $"api/v1/branches/{branchId}/visitors/report/export?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export visitor report for branch {BranchId}", branchId);
+            return null;
         }
     }
 

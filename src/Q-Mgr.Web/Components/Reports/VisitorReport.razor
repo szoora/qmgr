@@ -1,0 +1,258 @@
+@page "/reports/visitors"
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared.UI
+@inject IVisitorApiService VisitorApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IToastService NotificationService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Visitor Report - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <h1>Visitor Report</h1>
+    <div class="breadcrumb">
+        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Reports", "/reports"), new("Visitors") })" />
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-container"><QSpinner /> <span>Loading report...</span></div>
+}
+else if (report == null)
+{
+    <div class="empty-state"><QIcon Name="exclamation-triangle" /> <span>Couldn't load the visitor report.</span></div>
+}
+else
+{
+    <div class="visitor-report-page">
+        <!-- Date range -->
+        <QCard Class="filter-card">
+            <div class="filter-row">
+                <div class="filter-item">
+                    <label>From<input type="date" @bind="fromDate" /></label>
+                </div>
+                <div class="filter-item">
+                    <label>To<input type="date" @bind="toDate" /></label>
+                </div>
+                <div class="filter-item quick-ranges">
+                    <QButton Text="Today" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(0))" />
+                    <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(6))" />
+                    <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(29))" />
+                </div>
+                <div class="filter-item">
+                    <QButton Text="Apply" Icon="funnel-fill" Variant="primary" OnClick="@LoadReport" />
+                </div>
+                <div class="filter-item">
+                    <QButton Text="@(isExporting ? "Exporting..." : "Export CSV")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@isExporting" />
+                </div>
+            </div>
+        </QCard>
+
+        <!-- Summary Stats -->
+        <div class="stats-grid">
+            <QCard Class="stat-card">
+                <div class="stat-value">@report.TotalVisits</div>
+                <div class="stat-label">Total Visits</div>
+            </QCard>
+            <QCard Class="stat-card">
+                <div class="stat-value">@report.UniqueVisitors</div>
+                <div class="stat-label">Unique Visitors</div>
+            </QCard>
+            <QCard Class="stat-card">
+                <div class="stat-value">@report.RosterCheckIns</div>
+                <div class="stat-label">Visiting-Day Check-Ins</div>
+            </QCard>
+            <QCard Class="stat-card">
+                <div class="stat-value">@(report.AvgDwellMinutes.ToString("F0")) min</div>
+                <div class="stat-label">Avg. Dwell Time</div>
+            </QCard>
+            <QCard Class="stat-card">
+                <div class="stat-value">@(report.ConsentCompliancePercent.ToString("F0"))%</div>
+                <div class="stat-label">Consent Captured</div>
+            </QCard>
+            <QCard Class="@("stat-card" + (report.WatchlistIncidents > 0 ? " warn" : ""))">
+                <div class="stat-value">@report.WatchlistIncidents</div>
+                <div class="stat-label">Watchlist Incidents</div>
+            </QCard>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-row">
+            <QCard Class="chart-card">
+                <h4>Visits by Day</h4>
+                @if (report.VisitsByDay.Any())
+                {
+                    <RadzenChart Style="height: 260px;">
+                        <RadzenLineSeries Data="@visitsByDayChartData" CategoryProperty="Day" ValueProperty="Count" Title="Visits" Smooth="true" />
+                        <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                        <RadzenValueAxis>
+                            <RadzenGridLines Visible="true" />
+                        </RadzenValueAxis>
+                    </RadzenChart>
+                }
+                else
+                {
+                    <p class="chart-empty">No visits in this range.</p>
+                }
+            </QCard>
+
+            <QCard Class="chart-card">
+                <h4>Peak Hours</h4>
+                <RadzenChart Style="height: 260px;">
+                    <RadzenColumnSeries Data="@report.VisitsByHour" CategoryProperty="Hour" ValueProperty="Count" Title="Visits" />
+                    <RadzenCategoryAxis Padding="10" />
+                    <RadzenValueAxis>
+                        <RadzenGridLines Visible="true" />
+                    </RadzenValueAxis>
+                </RadzenChart>
+            </QCard>
+        </div>
+
+        <!-- Tables -->
+        <div class="tables-row">
+            <QCard Class="table-card">
+                <h4>Top Hosts</h4>
+                @if (report.TopHosts.Any())
+                {
+                    <RadzenDataGrid Data="@report.TopHosts" TItem="HostVisitCountDto" AllowSorting="true">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="HostVisitCountDto" Property="HostName" Title="Host" />
+                            <RadzenDataGridColumn TItem="HostVisitCountDto" Property="Count" Title="Visits" TextAlign="TextAlign.Center" Width="100px" />
+                        </Columns>
+                    </RadzenDataGrid>
+                }
+                else
+                {
+                    <p class="chart-empty">No hosted visits in this range.</p>
+                }
+            </QCard>
+
+            <QCard Class="table-card">
+                <h4>Worth a Second Look (3+ visits)</h4>
+                <p class="table-hint">Visitors with 3 or more visits in this range — the report-range equivalent of the live "checked in Nx today" flag.</p>
+                @if (report.FrequentVisitors.Any())
+                {
+                    <RadzenDataGrid Data="@report.FrequentVisitors" TItem="FrequentVisitorDto" AllowSorting="true">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="FullName" Title="Visitor">
+                                <Template Context="item">
+                                    @item.FullName
+                                    @if (item.IsWatchlisted)
+                                    {
+                                        <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                    }
+                                </Template>
+                            </RadzenDataGridColumn>
+                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="Phone" Title="Phone" />
+                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="VisitCount" Title="Visits" TextAlign="TextAlign.Center" Width="100px" />
+                        </Columns>
+                    </RadzenDataGrid>
+                }
+                else
+                {
+                    <p class="chart-empty">No repeat visitors past the threshold in this range.</p>
+                }
+            </QCard>
+        </div>
+    </div>
+}
+
+<style>
+    .visitor-report-page { display: flex; flex-direction: column; gap: 20px; }
+    .loading-container, .empty-state { display: flex; align-items: center; gap: 10px; padding: 60px 20px; color: var(--qm-text-muted); justify-content: center; }
+
+    .filter-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+    .filter-item { display: flex; flex-direction: column; gap: 4px; }
+    .filter-item label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--qm-text-muted); }
+    .filter-item input[type="date"] { padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .quick-ranges { flex-direction: row; gap: 6px; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+    .stat-card { padding: 18px; text-align: center; }
+    .stat-card.warn { border: 1px solid rgba(169, 120, 31, 0.4); }
+    .stat-value { font-size: 28px; font-weight: 700; color: var(--qm-text-primary); }
+    .stat-card.warn .stat-value { color: #a9781f; }
+    .stat-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 4px; }
+
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .tables-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .chart-card, .table-card { padding: 20px; }
+    .chart-card h4, .table-card h4 { margin: 0 0 12px; font-size: 15px; color: var(--qm-text-primary); }
+    .chart-empty, .table-hint { font-size: 13px; color: var(--qm-text-muted); }
+    .table-hint { margin: -6px 0 12px; }
+    .watchlist-flag { color: var(--qm-danger, #d9534f); margin-left: 6px; }
+
+    @@media (max-width: 900px) {
+        .charts-row, .tables-row { grid-template-columns: 1fr; }
+    }
+</style>
+
+@code {
+    private Guid branchId;
+    private bool isLoading = true;
+    private bool isExporting;
+    private VisitorReportDto? report;
+    private DateOnly fromDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-6);
+    private DateOnly toDate = DateOnly.FromDateTime(DateTime.UtcNow);
+
+    // RadzenChart's category axis needs a DateTime to format/order against reliably — DayCountDto
+    // carries a DateOnly (the natural type for "which calendar day"), so this is a thin
+    // charting-only projection, not a second source of truth.
+    private record DayChartPoint(DateTime Day, int Count);
+    private List<DayChartPoint> visitsByDayChartData = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        await LoadReport();
+    }
+
+    private void ApplyQuickRange(int daysBack)
+    {
+        toDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        fromDate = toDate.AddDays(-daysBack);
+        _ = LoadReport();
+    }
+
+    private async Task LoadReport()
+    {
+        isLoading = true;
+        StateHasChanged();
+        report = await VisitorApi.GetVisitorReportAsync(branchId, fromDate, toDate);
+        visitsByDayChartData = report?.VisitsByDay
+            .Select(d => new DayChartPoint(d.Day.ToDateTime(TimeOnly.MinValue), d.Count))
+            .ToList() ?? new();
+        isLoading = false;
+    }
+
+    private async Task ExportCsv()
+    {
+        isExporting = true;
+        try
+        {
+            var csv = await VisitorApi.ExportVisitorReportCsvAsync(branchId, fromDate, toDate);
+            if (csv == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't export the visitor log");
+                return;
+            }
+
+            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"visitor-log-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.csv");
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+}
