@@ -37,8 +37,9 @@
             <input type="checkbox" @bind="includeInactive" @bind:after="LoadStudents" />
             <span>Show inactive</span>
         </label>
-        <QButton Text="Print All Cards" Icon="printer-fill" Variant="secondary" OnClick="@PrintAllStudentCards"
-                 Title="Print Student Visitation Cards for everyone matching the current filter — 8 per A4 sheet" />
+        <QButton Text="@($"Print Selected ({selectedStudentIds.Count})")" Icon="printer-fill" Variant="secondary" OnClick="@PrintAllStudentCards"
+                 Disabled="@(selectedStudentIds.Count == 0)"
+                 Title="Print Student Visitation Cards for the checked students — 8 per A4 sheet" />
     </div>
 
     @if (isLoading)
@@ -57,6 +58,10 @@
     {
         <div class="roster-table">
             <div class="roster-row roster-header">
+                <span class="roster-select">
+                    <input type="checkbox" checked="@AllFilteredSelected" @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
+                           title="Select all matching the current filter" />
+                </span>
                 <span>Student</span>
                 <span>Code</span>
                 <span>Class</span>
@@ -66,6 +71,9 @@
             @foreach (var s in FilteredStudents)
             {
                 <div class="roster-row @(s.IsActive ? "" : "inactive")">
+                    <span class="roster-select">
+                        <input type="checkbox" checked="@selectedStudentIds.Contains(s.Id)" @onchange="@(e => ToggleStudentSelection(s.Id, (bool)(e.Value ?? false)))" />
+                    </span>
                     <span class="roster-name">@s.FullName</span>
                     <span class="roster-code">@(s.StudentCode ?? "—")</span>
                     <span>
@@ -316,7 +324,9 @@
     .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
 
     .roster-table { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; }
-    .roster-row { display: grid; grid-template-columns: 1.5fr 1fr 1fr 2.5fr auto; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 14px; }
+    .roster-row { display: grid; grid-template-columns: auto 1.5fr 1fr 1fr 2.5fr auto; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 14px; }
+    .roster-select { display: flex; align-items: center; }
+    .roster-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
     .roster-row:last-child { border-bottom: none; }
     .roster-header { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .roster-row.inactive { opacity: 0.5; }
@@ -406,6 +416,28 @@
             (s.StudentCode?.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
             (s.ClassName?.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
             s.Guardians.Any(g => g.FullName.Contains(filterQuery, StringComparison.OrdinalIgnoreCase)));
+
+    // Which students to include in the next batch print — persists across filter changes (so
+    // picking a few from class A, then filtering to class B and picking more, combines both) but
+    // "select all" only ever acts on what the current filter shows, same as most bulk-action UIs.
+    private HashSet<Guid> selectedStudentIds = new();
+
+    private bool AllFilteredSelected => FilteredStudents.Any() && FilteredStudents.All(s => selectedStudentIds.Contains(s.Id));
+
+    private void ToggleSelectAll(bool select)
+    {
+        foreach (var s in FilteredStudents)
+        {
+            if (select) selectedStudentIds.Add(s.Id);
+            else selectedStudentIds.Remove(s.Id);
+        }
+    }
+
+    private void ToggleStudentSelection(Guid studentId, bool select)
+    {
+        if (select) selectedStudentIds.Add(studentId);
+        else selectedStudentIds.Remove(studentId);
+    }
 
     // Admin-defined, not auto-derived — a class only gets a color once someone picks one via
     // the Class Colors modal below. Unassigned classes render with UnassignedClassColor instead
@@ -604,17 +636,19 @@
     }
 
     /// <summary>
-    /// Batch-prints Student Visitation Cards for every student currently matching the roster
-    /// filter — 8 per A4 sheet (2 columns x 4 rows of CR80 cards, the standard packing for this
-    /// card size with room for cut margins), spilling onto additional sheets past 8. Respects
-    /// the search filter so staff can print just one class rather than the whole roster.
+    /// Batch-prints Student Visitation Cards for every checked student — 8 per A4 sheet (2
+    /// columns x 4 rows of CR80 cards, the standard packing for this card size with room for cut
+    /// margins), spilling onto additional sheets past 8. Selection is explicit (checkboxes plus
+    /// a filter-scoped "select all") rather than always defaulting to everyone, so staff can
+    /// print the whole roster, a couple of specific students, or one class (filter to it, then
+    /// select all) without those being three different features.
     /// </summary>
     private async Task PrintAllStudentCards()
     {
-        var targets = FilteredStudents.Where(s => s.IsActive).ToList();
+        var targets = students.Where(s => s.IsActive && selectedStudentIds.Contains(s.Id)).ToList();
         if (!targets.Any())
         {
-            NotificationService.Notify(ToastSeverity.Warning, "Nothing to print", "No students match the current filter.");
+            NotificationService.Notify(ToastSeverity.Warning, "Nothing to print", "Select at least one student first.");
             return;
         }
 
