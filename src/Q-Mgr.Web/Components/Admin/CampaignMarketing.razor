@@ -231,7 +231,7 @@
     </FooterContent>
 </QModal>
 
-<QModal @bind-Visible="showContactModal" Title="Add Contact" Size="sm">
+<QModal @bind-Visible="showContactModal" Title="Add Contact" Size="md">
     <ChildContent>
         <div class="form-grid">
             <label class="full-width">Full Name *<input @bind="contactModel.FullName" placeholder="Jane Doe" /></label>
@@ -286,7 +286,7 @@
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input, .form-grid select, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .form-grid input, .form-grid select, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 
     .field-hint { font-size: 11px; color: var(--qm-text-muted); opacity: 0.8; }
     .attachment-selected-list { display: flex; flex-direction: column; gap: 6px; }

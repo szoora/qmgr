@@ -132,4 +132,12 @@ public record StudentGuardianSearchResultDto
     public string? GuardianPhone { get; init; }
     public string? GuardianEmail { get; init; }
     public string Relationship { get; init; } = string.Empty;
+
+    /// <summary>
+    /// How many times this guardian's card has already been checked in today (any student,
+    /// any branch visit) — surfaced at search time so front-desk staff can spot a card being
+    /// reused more than a normal drop-off/pick-up pattern would explain, before completing
+    /// another check-in against it.
+    /// </summary>
+    public int CheckInsToday { get; init; }
 }

@@ -87,7 +87,7 @@
 </div>
 
 @* ---------------- Add / Edit Student ---------------- *@
-<QModal @bind-Visible="showStudentModal" Title="@(editingStudentId.HasValue ? "Edit Student" : "Add Student")" Size="sm">
+<QModal @bind-Visible="showStudentModal" Title="@(editingStudentId.HasValue ? "Edit Student" : "Add Student")" Size="md">
     <ChildContent>
         <div class="form-grid">
             <label class="full-width">Full Name *<input @bind="studentModel.FullName" placeholder="Jane Student" /></label>
@@ -109,7 +109,7 @@
 </QModal>
 
 @* ---------------- Add Guardian ---------------- *@
-<QModal @bind-Visible="showGuardianModal" Title="@($"Add Guardian — {guardianTargetStudent?.FullName}")" Size="sm">
+<QModal @bind-Visible="showGuardianModal" Title="@($"Add Guardian — {guardianTargetStudent?.FullName}")" Size="md">
     <ChildContent>
         <div class="form-grid">
             <label class="full-width">Full Name *<input @bind="guardianModel.FullName" placeholder="Robert Guardian" /></label>
@@ -280,7 +280,7 @@
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
     .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input { padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
+    .form-grid input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
     .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
 

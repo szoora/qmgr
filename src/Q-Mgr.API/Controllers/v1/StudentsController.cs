@@ -134,6 +134,22 @@ public class StudentsController : ControllerBase
             })
             .ToListAsync();
 
+        if (results.Count > 0)
+        {
+            var today = DateTime.UtcNow.Date;
+            var guardianProfileIds = results.Select(r => r.GuardianProfileId).Distinct().ToList();
+            var checkInsToday = await _context.Visitors
+                .Where(v => guardianProfileIds.Contains(v.VisitorProfileId) && v.DeletedAt == null
+                    && v.CheckedInAt != null && v.CheckedInAt.Value.Date == today)
+                .GroupBy(v => v.VisitorProfileId)
+                .Select(g => new { ProfileId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(g => g.ProfileId, g => g.Count);
+
+            results = results
+                .Select(r => r with { CheckInsToday = checkInsToday.GetValueOrDefault(r.GuardianProfileId) })
+                .ToList();
+        }
+
         return Ok(results);
     }
 
