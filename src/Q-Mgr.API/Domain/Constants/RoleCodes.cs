@@ -77,4 +77,25 @@ public static class RoleCodes
     {
         return IsSuperAdmin(roleCode) || IsAdmin(roleCode);
     }
+
+    /// <summary>
+    /// Ordinal rank for tier comparisons (lower = more privileged) — index into <see cref="All"/>,
+    /// which is already declared most-to-least privileged. An unrecognized role ranks below
+    /// Viewer so it never accidentally satisfies an "at least X" check.
+    /// </summary>
+    private static int Rank(string? roleCode)
+    {
+        var index = Array.FindIndex(All, r => string.Equals(r, roleCode, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? All.Length : index;
+    }
+
+    /// <summary>
+    /// Checks if the role is Manager, Admin, or SuperAdmin — the "can approve an exception a
+    /// front-desk Staff/Viewer user can't" tier, e.g. overriding the visiting-day repeat
+    /// check-in gate in VisitorsController.CheckIn without first flagging the card.
+    /// </summary>
+    public static bool IsManagerOrAbove(string? roleCode)
+    {
+        return Rank(roleCode) <= Rank(Manager);
+    }
 }

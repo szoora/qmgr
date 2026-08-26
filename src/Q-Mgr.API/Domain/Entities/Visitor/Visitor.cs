@@ -43,6 +43,13 @@ public class Visitor : BaseEntity
     public DateTime? CheckedInAt { get; set; }
     public DateTime? CheckedOutAt { get; set; }
 
+    // Set the first time this visit's badge QR is successfully scanned. Checked independently of
+    // Status in VisitorPassesController.ScanVisitBadge — Status already blocks a second scan in
+    // the normal case, but this is a defense-in-depth marker that can never be un-set by anything
+    // else touching Status later, so a photographed/shared QR stays dead permanently, not just
+    // "until Status happens to change back."
+    public DateTime? BadgeConsumedAt { get; set; }
+
     public string? Notes { get; set; }
 
     // Set only when the branch requires visitor consent (Branch.Settings, "VisitorConsent" key)
