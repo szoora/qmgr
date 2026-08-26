@@ -22,6 +22,9 @@ public interface IStudentApiService
     Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId);
     Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId);
     Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId);
+
+    Task<ClassColorSettingsDto> GetClassColorsAsync(Guid branchId);
+    Task<ClassColorSettingsDto?> UpdateClassColorsAsync(Guid branchId, ClassColorSettingsDto request);
 }
 
 public class StudentApiService : IStudentApiService
@@ -183,6 +186,35 @@ public class StudentApiService : IStudentApiService
         {
             _logger.LogError(ex, "Failed to get import job entries for job {JobId}", jobId);
             return new();
+        }
+    }
+
+    public async Task<ClassColorSettingsDto> GetClassColorsAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<ClassColorSettingsDto>(
+                $"api/v1/branches/{branchId}/students/class-colors", _jsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get class colors for branch {BranchId}", branchId);
+            return new();
+        }
+    }
+
+    public async Task<ClassColorSettingsDto?> UpdateClassColorsAsync(Guid branchId, ClassColorSettingsDto request)
+    {
+        try
+        {
+            var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/class-colors", request, _jsonOptions);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<ClassColorSettingsDto>(_jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update class colors for branch {BranchId}", branchId);
+            return null;
         }
     }
 }

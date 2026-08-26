@@ -67,6 +67,66 @@ public class StudentsController : ControllerBase
         return Guid.TryParse(raw, out var uid) ? uid : null;
     }
 
+    private const string ClassColorSettingsKey = "ClassColors";
+
+    private static ClassColorSettingsDto ReadClassColorSettings(string? branchSettingsJson)
+    {
+        if (string.IsNullOrEmpty(branchSettingsJson)) return new ClassColorSettingsDto();
+        try
+        {
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(branchSettingsJson);
+            if (root != null && root.TryGetValue(ClassColorSettingsKey, out var element))
+                return JsonSerializer.Deserialize<ClassColorSettingsDto>(element.GetRawText()) ?? new ClassColorSettingsDto();
+        }
+        catch (JsonException) { /* malformed settings blob — treat as not configured */ }
+        return new ClassColorSettingsDto();
+    }
+
+    private static string WriteClassColorSettings(string? branchSettingsJson, ClassColorSettingsDto settings)
+    {
+        var merged = string.IsNullOrEmpty(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(branchSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[ClassColorSettingsKey] = settings;
+        return JsonSerializer.Serialize(merged);
+    }
+
+    /// <summary>
+    /// Admin-defined className-to-color map for the roster table and printed visiting-day
+    /// passes — deliberately not auto-derived (e.g. hashing the name to a palette slot), since
+    /// that would assign colors the admin never actually chose.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/class-colors")]
+    [RequirePermission(Permissions.StudentsView)]
+    [ProducesResponseType(typeof(ClassColorSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetClassColors(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var settingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        return Ok(ReadClassColorSettings(settingsJson));
+    }
+
+    [HttpPut("branches/{branchId:guid}/students/class-colors")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(ClassColorSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateClassColors(Guid branchId, [FromBody] ClassColorSettingsDto request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch == null) return NotFound();
+
+        branch.Settings = WriteClassColorSettings(branch.Settings, request);
+        branch.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(request);
+    }
+
     // ---------------------------------------------------------------------
     // Student / Guardian CRUD
     // ---------------------------------------------------------------------
