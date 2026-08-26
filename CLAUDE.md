@@ -2,7 +2,9 @@
 
 Multi-tenant queue-management SaaS. ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
 (`src/Q-Mgr.Web`), Postgres via EF Core, CQRS via the `Mediator` source-generator library (not
-MediatR). No git repository exists in this working directory — the user has declined `git init`.
+MediatR). **Git was adopted 2026-08-25** (local-only, no remote) — this line previously said no
+git repo existed by the user's choice; that's no longer current, see `git log` for history from
+2026-08-25 forward instead of this file's older prose for anything after that date.
 
 ## Design system reference
 
@@ -122,6 +124,31 @@ real API shapes exactly, used purely for deserialization, then mapped into the d
 mapping in this project, including the one that broke here, is hand-written object-initializer
 code. There is no auto-mapper safety net — a mismatched field name is a silent runtime bug, not a
 compile error, until proven otherwise by exactly this kind of manual review.
+
+## Raw SQL must schema-qualify table names explicitly — found live 2026-08-26, was a severe bug
+
+`QMgrDbContext` sets `modelBuilder.HasDefaultSchema("qmgr")`, so every normal EF LINQ query is
+automatically schema-qualified in the generated SQL. **Raw SQL (`FromSqlInterpolated`,
+`FromSqlRaw`, `ExecuteSqlInterpolated`, `ExecuteSqlRaw`) does not get this for free** — an
+unqualified table name in raw SQL is resolved via Postgres's connection-level `search_path`, which
+for this DB is the server default (`"$user", public`), not `qmgr`. `public` has none of this app's
+tables, so an unqualified raw-SQL table reference fails outright with `relation "X" does not
+exist` — it doesn't silently query the wrong data, it hard-fails every time.
+
+This was found live 2026-08-26 (Phase 57) in `TokenRepository.GetNextWaitingTokenForCounterAsync`,
+whose `FOR UPDATE SKIP LOCKED` raw query (added to fix a real double-assignment race) read `FROM
+tokens` unqualified — meaning **every single "Call Next" request, the core action of this entire
+product, had been 500ing** until this was caught by accident while e2e-testing something unrelated
+(an actual live browser session hit the same error independently). Fixed by writing `FROM
+qmgr.tokens` explicitly. A repo-wide grep for `FromSql|ExecuteSql` at the time found only this one
+bad instance (the other 3 call sites are `pg_advisory_xact_lock(...)` calls with no table
+reference, which don't have this problem) — but that grep isn't automated regression coverage.
+
+**Before merging any new raw SQL**: schema-qualify every table name explicitly (`qmgr.tablename`),
+and actually execute the query against a live row at least once — this bug class produces a hard
+runtime failure with no compiler, EF-migration, or type-check catching it, and (per this file's
+standing "no automated test coverage" gap) nothing else catches it either until a human or an e2e
+pass hits that exact code path.
 
 ## Auth: login identifier and SuperAdmin credentials (decided 2026-08-21)
 
