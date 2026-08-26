@@ -2,6 +2,7 @@
 @using System.Text.Json
 @implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
+@inject IStudentApiService StudentApi
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
@@ -24,6 +25,9 @@
         <div class="header-actions">
             <QButton Text="Scan Badge" Icon="qr-code-scan" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/scan"))" />
             <QButton Text="Display Board" Icon="display" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/board"))" />
+            <PermissionGuard Permission="students.view">
+                <QButton Text="Student Roster" Icon="mortarboard-fill" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/roster"))" />
+            </PermissionGuard>
             <PermissionGuard Permission="visitors.manage">
                 <QButton Text="Group Passes" Icon="people-fill" Variant="secondary" OnClick="@OpenPassesModal" />
                 <QButton Text="Audit Log" Icon="clock-history" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/audit"))" />
@@ -185,7 +189,7 @@
 
 <QModal @bind-Visible="showCheckInModal" Title="Check In Visitor" Size="md">
     <ChildContent>
-        @RenderReturningVisitorSearch(checkInSelectedProfile, p => ApplyProfileToCheckIn(p))
+        @RenderReturningVisitorSearch(checkInSelectedProfile, checkInSelectedRoster, p => ApplyProfileToCheckIn(p), r => ApplyRosterToCheckIn(r))
         <div class="form-grid">
             <label>Full Name *<input @bind="checkInModel.FullName" placeholder="Jane Doe" /></label>
             <label>Company<input @bind="checkInModel.Company" placeholder="SACC Software Limited" /></label>
@@ -232,7 +236,7 @@
 
 <QModal @bind-Visible="showPreRegisterModal" Title="Pre-Register Visitor" Size="md">
     <ChildContent>
-        @RenderReturningVisitorSearch(preRegisterSelectedProfile, p => ApplyProfileToPreRegister(p))
+        @RenderReturningVisitorSearch(preRegisterSelectedProfile, preRegisterSelectedRoster, p => ApplyProfileToPreRegister(p), r => ApplyRosterToPreRegister(r))
         <div class="form-grid">
             <label>Full Name *<input @bind="preRegisterModel.FullName" placeholder="Jane Doe" /></label>
             <label>Company<input @bind="preRegisterModel.Company" placeholder="SACC Software Limited" /></label>
@@ -442,6 +446,10 @@
     .returning-result-name { font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 6px; }
     .returning-result-meta { font-size: 12px; color: var(--qm-text-muted); }
     .returning-selected { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--qm-primary-light); border-radius: var(--qm-radius-sm); font-size: 13px; color: var(--qm-primary); }
+    .returning-result.roster { background: color-mix(in srgb, var(--qm-primary) 5%, transparent); }
+    .roster-flag { color: var(--qm-primary); }
+    .roster-badge { font-size: 11px; color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; }
+    .returning-selected.roster { background: var(--qm-primary-light); color: var(--qm-primary); }
 
     .badge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; text-align: center; }
     .badge-qr-container { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
@@ -494,6 +502,9 @@
     private bool showPreRegisterModal;
     private VisitorProfileSearchResultDto? checkInSelectedProfile;
     private VisitorProfileSearchResultDto? preRegisterSelectedProfile;
+    private StudentGuardianSearchResultDto? checkInSelectedRoster;
+    private StudentGuardianSearchResultDto? preRegisterSelectedRoster;
+    private List<StudentGuardianSearchResultDto> rosterSearchResults = new();
 
     private bool showCheckInExistingModal;
     private CheckInVisitorRequest checkInExistingModel = new();
@@ -587,6 +598,7 @@
     {
         checkInModel = new CheckInVisitorRequest();
         checkInSelectedProfile = null;
+        checkInSelectedRoster = null;
         checkInConsentGiven = false;
         ClearSearch();
         showCheckInModal = true;
@@ -602,6 +614,7 @@
     {
         preRegisterModel = new PreRegisterVisitorRequest();
         preRegisterSelectedProfile = null;
+        preRegisterSelectedRoster = null;
         ClearSearch();
         scheduledAtLocal = DateTime.Now.AddMinutes(30);
         showPreRegisterModal = true;
@@ -611,6 +624,7 @@
     {
         searchQuery = "";
         searchResults = new();
+        rosterSearchResults = new();
     }
 
     private void ApplyProfileToCheckIn(VisitorProfileSearchResultDto p)
@@ -622,6 +636,36 @@
         checkInModel.Email = p.Email;
         checkInModel.Company = p.Company;
         checkInModel.IdNumber = p.IdNumber;
+        ClearSearch();
+    }
+
+    // Roster match: prefills the guardian's own identity fields (same as a plain returning-
+    // visitor match) plus the student link, and defaults Purpose/HostName so staff don't have to
+    // type "Visiting day — see [Student]" by hand for every family — this is the actual speed win
+    // the visiting-day flow exists for. Both stay editable; this is just what's pre-filled.
+    private void ApplyRosterToCheckIn(StudentGuardianSearchResultDto r)
+    {
+        checkInSelectedRoster = r;
+        checkInModel.VisitorProfileId = r.GuardianProfileId;
+        checkInModel.FullName = r.GuardianName;
+        checkInModel.Phone = r.GuardianPhone;
+        checkInModel.Email = r.GuardianEmail;
+        checkInModel.StudentId = r.StudentId;
+        if (string.IsNullOrWhiteSpace(checkInModel.HostName)) checkInModel.HostName = r.StudentName;
+        if (string.IsNullOrWhiteSpace(checkInModel.Purpose)) checkInModel.Purpose = $"Visiting day — see {r.StudentName}";
+        ClearSearch();
+    }
+
+    private void ApplyRosterToPreRegister(StudentGuardianSearchResultDto r)
+    {
+        preRegisterSelectedRoster = r;
+        preRegisterModel.VisitorProfileId = r.GuardianProfileId;
+        preRegisterModel.FullName = r.GuardianName;
+        preRegisterModel.Phone = r.GuardianPhone;
+        preRegisterModel.Email = r.GuardianEmail;
+        preRegisterModel.StudentId = r.StudentId;
+        if (string.IsNullOrWhiteSpace(preRegisterModel.HostName)) preRegisterModel.HostName = r.StudentName;
+        if (string.IsNullOrWhiteSpace(preRegisterModel.Purpose)) preRegisterModel.Purpose = $"Visiting day — see {r.StudentName}";
         ClearSearch();
     }
 
@@ -645,6 +689,7 @@
         if (searchQuery.Trim().Length < 2)
         {
             searchResults = new();
+            rosterSearchResults = new();
             return;
         }
 
@@ -653,19 +698,43 @@
         try
         {
             await Task.Delay(300, cts.Token);
-            searchResults = await VisitorApi.SearchVisitorProfilesAsync(branchId, searchQuery);
+            // Roster matches first (they're the more specific, higher-value result for a
+            // visiting-day search), then plain returning-visitor matches — run together, not
+            // sequentially, so one slow query doesn't hold up the other.
+            var rosterTask = StudentApi.SearchAsync(branchId, searchQuery);
+            var visitorTask = VisitorApi.SearchVisitorProfilesAsync(branchId, searchQuery);
+            await Task.WhenAll(rosterTask, visitorTask);
+            cts.Token.ThrowIfCancellationRequested();
+
+            rosterSearchResults = rosterTask.Result;
+            // A guardian already shown under their roster match shouldn't also show as a
+            // duplicate plain "returning visitor" a few pixels below it.
+            var rosterProfileIds = rosterSearchResults.Select(r => r.GuardianProfileId).ToHashSet();
+            searchResults = visitorTask.Result.Where(p => !rosterProfileIds.Contains(p.Id)).ToList();
             StateHasChanged();
         }
         catch (TaskCanceledException) { /* superseded by a newer keystroke */ }
+        catch (OperationCanceledException) { /* superseded by a newer keystroke */ }
     }
 
     // Renders inline rather than as a child component — keeps this modal's own model in one
     // place instead of splitting state across a wrapper component + event callbacks for what's
     // only used in two spots on this page.
-    private RenderFragment RenderReturningVisitorSearch(VisitorProfileSearchResultDto? selected, Action<VisitorProfileSearchResultDto> onSelect) => __builder =>
+    private RenderFragment RenderReturningVisitorSearch(
+        VisitorProfileSearchResultDto? selected,
+        StudentGuardianSearchResultDto? selectedRoster,
+        Action<VisitorProfileSearchResultDto> onSelect,
+        Action<StudentGuardianSearchResultDto> onSelectRoster) => __builder =>
     {
         <div class="returning-search">
-            @if (selected != null)
+            @if (selectedRoster != null)
+            {
+                <div class="returning-selected roster">
+                    <span><QIcon Name="mortarboard-fill" /> <strong>@selectedRoster.GuardianName</strong> (@selectedRoster.Relationship of @selectedRoster.StudentName@(string.IsNullOrEmpty(selectedRoster.ClassName) ? "" : $", {selectedRoster.ClassName}"))</span>
+                    <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => { if (selectedRoster == checkInSelectedRoster) checkInSelectedRoster = null; if (selectedRoster == preRegisterSelectedRoster) preRegisterSelectedRoster = null; })" />
+                </div>
+            }
+            else if (selected != null)
             {
                 <div class="returning-selected">
                     <span><QIcon Name="arrow-repeat" /> Returning visitor: <strong>@selected.FullName</strong> (@selected.TotalVisits visits)</span>
@@ -674,10 +743,23 @@
             }
             else
             {
-                <input value="@searchQuery" @oninput="OnSearchInput" placeholder="Search returning visitors by name, phone, email or ID..." />
-                @if (searchResults.Any())
+                <input value="@searchQuery" @oninput="OnSearchInput" placeholder="Search by visitor or student name, phone, email or ID..." />
+                @if (rosterSearchResults.Any() || searchResults.Any())
                 {
                     <div class="returning-results">
+                        @foreach (var r in rosterSearchResults)
+                        {
+                            <div class="returning-result roster" @onclick="@(() => onSelectRoster(r))">
+                                <span class="returning-result-name">
+                                    <QIcon Name="mortarboard-fill" Class="roster-flag" />
+                                    @r.GuardianName
+                                    <span class="roster-badge">@r.Relationship of @r.StudentName</span>
+                                </span>
+                                <span class="returning-result-meta">
+                                    @(r.ClassName ?? "") @(string.IsNullOrEmpty(r.ClassName) ? "" : "·") @(r.GuardianPhone ?? r.GuardianEmail ?? "")
+                                </span>
+                            </div>
+                        }
                         @foreach (var p in searchResults)
                         {
                             <div class="returning-result" @onclick="@(() => onSelect(p))">

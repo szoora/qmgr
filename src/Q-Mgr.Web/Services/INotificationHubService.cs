@@ -25,6 +25,12 @@ public interface INotificationClientService : IAsyncDisposable
     event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
 
     /// <summary>
+    /// Event fired as a roster bulk-import job progresses — backs the live progress bar on the
+    /// Bulk Import panel. Same connection, same branch-group membership.
+    /// </summary>
+    event Func<RosterImportProgressEvent, Task>? OnRosterImportProgressReceived;
+
+    /// <summary>
     /// Current connection state
     /// </summary>
     HubConnectionState State { get; }
