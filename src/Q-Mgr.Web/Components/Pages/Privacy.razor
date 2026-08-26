@@ -1,0 +1,175 @@
+@page "/privacy"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@attribute [AllowAnonymous]
+
+<PageTitle>Privacy Policy - Q-Mgr</PageTitle>
+
+<div class="doc-page">
+    <AmbientBackground />
+
+    <div class="doc-shell">
+        <div class="doc-topbar">
+            <a href="/" class="doc-brand">
+                <span class="doc-brand-mark"><QIcon Name="people-fill" /></span>
+                <span>Q-Mgr</span>
+            </a>
+            <a href="/login" class="doc-topbar-link">Back to Sign In</a>
+        </div>
+
+        <article class="doc-card">
+            <header class="doc-header">
+                <h1>Privacy Policy</h1>
+                <p class="doc-meta">Effective 26 August 2026 &middot; SACC Software Limited</p>
+            </header>
+
+            <p class="doc-lede">
+                Q-Mgr is queue and visitor management software built by SACC Software Limited. Organizations
+                use it to run their front desks, service counters, and visitor logs — which means it handles
+                two different kinds of personal data, and this policy tries to be honest about the difference
+                rather than blur it the way most privacy pages do.
+            </p>
+
+            <section class="doc-callout">
+                <strong>The short version:</strong> if you're a staff member at an organization using Q-Mgr, we
+                are the ones responsible for your account data, described below. If you're someone who took a
+                queue ticket, checked in at a front desk, or received a message through Q-Mgr, your data was
+                collected by that organization, using our platform — we just store and move it on their
+                instruction. If you want it corrected or deleted, start with them, not us; see
+                "If you're a customer or visitor of one of our clients" below.
+            </section>
+
+            <h2>1. Who this covers</h2>
+            <p>
+                Two groups of people interact with data that passes through Q-Mgr:
+            </p>
+            <ul>
+                <li>
+                    <strong>Our customers</strong> &mdash; the organizations (banks, hospitals, government offices,
+                    telecoms, retailers, and similar) who sign up for a Q-Mgr account, and the staff they invite
+                    (admins, branch managers, counter agents). We are directly responsible for this data.
+                </li>
+                <li>
+                    <strong>Their customers and visitors</strong> &mdash; the people who take a queue ticket, are
+                    checked in at a front desk, or receive an SMS/email/WhatsApp/Telegram message an organization
+                    sends through our Campaign Marketing tool. Legally, the organization is the data controller
+                    here and we are the data processor: they decide what to collect and why, we provide the
+                    software that stores and moves it.
+                </li>
+            </ul>
+
+            <h2>2. What we collect, and why</h2>
+            <p><strong>From organizations and their staff:</strong></p>
+            <ul>
+                <li>Account details — name, work email, phone number, role, and a password (stored as a salted hash, never in plain text).</li>
+                <li>Organization details — business name, industry, branch locations, timezone, and billing contact.</li>
+                <li>Billing information — handled by Stripe on our behalf; we never see or store your full card number.</li>
+                <li>Usage data — which features get used, API calls made through your integration keys, and error logs, so we can keep the service running and fix things that break.</li>
+            </ul>
+            <p><strong>From the people your organization serves, if you use these features:</strong></p>
+            <ul>
+                <li><em>Queue tickets</em> &mdash; a name and phone number, if the organization asks for them at check-in, plus which counter served them and how long they waited.</li>
+                <li><em>Visitor Management</em> &mdash; full name, phone, email, a national ID or passport number if the site requires it, a check-in photo if the organization's kiosk captures one, vehicle plate, host name, and purpose of visit. If a person is placed on a site's watchlist, the reason given for that flag is also stored — this is one of the more sensitive things we hold, and it exists purely so front-desk staff can be warned; we don't do anything with it beyond storing it and surfacing it back to that organization.</li>
+                <li><em>Campaign Marketing</em> &mdash; contact details (email, phone, or a Telegram chat ID) that an organization uploads or collects, used to send messages the organization composes. Every message we send on their behalf includes a working unsubscribe link — that's not optional, it's built into the sending pipeline.</li>
+            </ul>
+
+            <h2>3. How long we keep it</h2>
+            <p>
+                Visitor records are the one category with a built-in expiry: by default we hold them for 730
+                days (two years) and then a nightly job permanently deletes them. Any organization can change
+                that window to anywhere between 30 days and 10 years to match their own compliance needs — we
+                don't second-guess that setting, it's theirs to configure. A visitor who's still checked in when
+                their record would otherwise expire is never purged mid-visit; the clock only runs on completed
+                visits.
+            </p>
+            <p>
+                Queue ticket history and campaign send logs are kept for as long as the organization's account
+                is active, since they're the basis for the reporting features we provide. If an organization
+                closes its account, we keep a copy of its data for a short period in case of accidental
+                cancellation, then delete it.
+            </p>
+
+            <h2>4. Who else sees it</h2>
+            <p>We don't sell personal data, to anyone, ever. A small number of processors handle parts of the job on our behalf:</p>
+            <ul>
+                <li><strong>Stripe</strong> &mdash; payment processing for subscription billing.</li>
+                <li><strong>SMS, email, WhatsApp, and Telegram gateways</strong> &mdash; only for organizations that actively use Campaign Marketing, and only to deliver the specific message that organization sent.</li>
+                <li><strong>Our hosting and database provider</strong> &mdash; where everything above physically lives.</li>
+            </ul>
+            <p>
+                We hand data to law enforcement only when legally compelled to (a valid court order or
+                equivalent), and we'll tell the affected organization unless we're legally barred from doing so.
+            </p>
+
+            <h2>5. Keeping it safe</h2>
+            <p>
+                Every connection to Q-Mgr runs over HTTPS. Passwords are hashed, never stored as plain text.
+                Each organization's data is logically separated from every other organization's — a bug in one
+                tenant's view can't leak another tenant's records, and this is enforced at the database query
+                level, not just in the interface. Access to production data internally is limited to the people
+                who need it to keep the service running. No system is unbreakable, and if something ever does go
+                wrong badly enough to expose your data, we'll tell you promptly and plainly, not bury it in a
+                blog post six months later.
+            </p>
+
+            <h2>6. Cookies and local storage</h2>
+            <p>
+                We use your browser's local storage to keep you signed in between visits and to remember small
+                preferences like your last-selected branch. We don't run third-party advertising trackers, and
+                we don't sell browsing data to ad networks — there isn't an ad network involved in Q-Mgr at all,
+                on the admin side.
+            </p>
+
+            <h2>7. If you're a staff user of an organization on Q-Mgr</h2>
+            <p>
+                You can review and correct your own account details from your profile page at any time. To
+                delete your account, ask your organization's admin, or email us at
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a> and we'll help.
+            </p>
+
+            <h2>8. If you're a customer or visitor of one of our clients</h2>
+            <p>
+                If an organization checked you into a queue, logged you as a visitor, or sent you a message
+                through Q-Mgr, that organization decided to collect your data and is the right first place to
+                ask about it — they can see, correct, or delete it directly from their admin dashboard. If you
+                can't reach them, or you'd rather come to us first, email
+                <a href="mailto:support@getsacc.com">support@getsacc.com</a> with the organization's name and
+                what you'd like done, and we'll help route it and, where we're able to act directly, act on it.
+            </p>
+
+            <h2>9. Children</h2>
+            <p>
+                Q-Mgr's admin tools are built for organizations and their staff, not for children. We don't
+                knowingly collect account data from anyone under 18. A visitor log entry for a minor (e.g. a
+                patient at a clinic) is handled the same as any other visitor record, under the organization's
+                own responsibility as the data controller.
+            </p>
+
+            <h2>10. Changes to this policy</h2>
+            <p>
+                If we make a material change to how we handle personal data, we'll update the effective date at
+                the top of this page and, for changes that meaningfully affect existing customers, email the
+                account admins directly rather than expecting anyone to notice a quiet edit.
+            </p>
+
+            <h2>11. Contact</h2>
+            <p>
+                Questions, requests, or concerns about any of the above: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
+                We read every email that comes in ourselves.
+            </p>
+
+            <footer class="doc-footer">
+                <div class="doc-footer-links">
+                    <a href="/terms">Terms of Service</a>
+                    <span>&middot;</span>
+                    <a href="/support">Support</a>
+                    <span>&middot;</span>
+                    <a href="/login">Sign In</a>
+                </div>
+            </footer>
+        </article>
+
+        <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
+    </div>
+</div>

@@ -1,0 +1,258 @@
+/* Shared shell for the public document pages (Privacy, Terms, Support) — one stylesheet so the
+   three stay visually identical instead of drifting apart as separate copy-pasted <style> blocks. */
+
+.doc-page {
+    min-height: 100vh;
+    background: var(--qm-primary);
+    padding: 40px 20px 60px;
+    position: relative;
+}
+
+.doc-shell {
+    max-width: 820px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+}
+
+.doc-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.doc-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: #fff;
+    text-decoration: none;
+    font-family: var(--qm-font-display, inherit);
+    font-weight: 700;
+    font-size: 20px;
+}
+
+.doc-brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #fff;
+    font-size: 16px;
+}
+
+.doc-topbar-link {
+    color: #fff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--qm-radius-full, 999px);
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    transition: background 0.2s;
+}
+
+.doc-topbar-link:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.doc-card {
+    background: #fff;
+    border-radius: var(--qm-radius-xl);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+    padding: 56px 64px;
+}
+
+.doc-header h1 {
+    font-family: var(--qm-font-display, inherit);
+    font-size: 36px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 0 0 8px;
+}
+
+.doc-meta {
+    color: #6c757d;
+    font-size: 14px;
+    margin: 0 0 28px;
+}
+
+.doc-lede {
+    font-size: 17px;
+    line-height: 1.7;
+    color: #333;
+    margin: 0 0 28px;
+}
+
+.doc-callout {
+    background: var(--qm-primary-light, rgba(140, 47, 82, 0.08));
+    border-left: 3px solid var(--qm-primary);
+    padding: 16px 20px;
+    border-radius: var(--qm-radius-md);
+    font-size: 14px;
+    line-height: 1.65;
+    color: #3a2430;
+    margin-bottom: 32px;
+}
+
+.doc-card h2 {
+    font-family: var(--qm-font-display, inherit);
+    font-size: 20px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 36px 0 12px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.doc-card h2:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.doc-card p,
+.doc-card li {
+    font-size: 15px;
+    line-height: 1.75;
+    color: #3a3a3a;
+}
+
+.doc-card ul,
+.doc-card ol {
+    padding-left: 22px;
+    margin: 12px 0;
+}
+
+.doc-card li {
+    margin-bottom: 8px;
+}
+
+.doc-card li > strong:first-child {
+    color: #1a1a1a;
+}
+
+.doc-card a {
+    color: var(--qm-primary);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.doc-card a:hover {
+    text-decoration: underline;
+}
+
+.doc-footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid #eee;
+    text-align: center;
+}
+
+.doc-footer-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-size: 13px;
+    flex-wrap: wrap;
+}
+
+.doc-footer-links a {
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.doc-footer-links a:hover {
+    color: var(--qm-primary);
+}
+
+.doc-footer-links span {
+    color: #dee2e6;
+}
+
+.doc-copyright {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 12px;
+    margin: 24px 0 0;
+}
+
+/* Support page extras — FAQ accordion + contact tiles, kept in the same sheet since they only
+   ever appear inside a .doc-card. */
+.doc-contact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 20px 0 8px;
+}
+
+.doc-contact-tile {
+    border: 1px solid #eee;
+    border-radius: var(--qm-radius-lg);
+    padding: 20px;
+    text-align: left;
+}
+
+.doc-contact-tile .doc-contact-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--qm-primary-light, rgba(140, 47, 82, 0.08));
+    color: var(--qm-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+    font-size: 18px;
+}
+
+.doc-contact-tile h3 {
+    font-size: 15px;
+    margin: 0 0 6px;
+    color: #1a1a1a;
+}
+
+.doc-contact-tile p {
+    font-size: 13px;
+    margin: 0 0 10px;
+    color: #6c757d;
+}
+
+.doc-faq-item {
+    border-bottom: 1px solid #eee;
+    padding: 18px 0;
+}
+
+.doc-faq-item:last-child {
+    border-bottom: none;
+}
+
+.doc-faq-item h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0 0 8px;
+}
+
+.doc-faq-item p {
+    margin: 0;
+}
+
+@media (max-width: 700px) {
+    .doc-card {
+        padding: 36px 26px;
+    }
+
+    .doc-header h1 {
+        font-size: 28px;
+    }
+}

@@ -1,6 +1,7 @@
 @page "/login"
 @layout KioskLayout
 @using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
 @using System.ComponentModel.DataAnnotations
 @using Blazored.LocalStorage
 @using Microsoft.AspNetCore.Authorization
@@ -15,6 +16,7 @@
 <PageTitle>Sign In - Q-Mgr</PageTitle>
 
 <div class="login-container">
+    <AmbientBackground />
     <div class="login-card @(isLoading ? "loading" : "")">
         @if (currentStep == LoginStep.Email)
         {

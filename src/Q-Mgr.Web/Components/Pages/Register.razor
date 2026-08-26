@@ -3,6 +3,7 @@
 @using System.Text.Json
 @using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
@@ -14,6 +15,7 @@
     <div class="register-container">
         <!-- Left Panel - Branding -->
         <div class="register-branding">
+            <AmbientBackground Contained="true" />
             <div class="branding-content">
                 <img src="/images/icon-512.svg" alt="Q-Mgr" class="brand-logo" />
                 <h1>Q-Mgr</h1>
@@ -143,7 +145,7 @@
                                     <input type="text" id="slug" @bind="formData.Slug"
                                            @oninput="OnSlugChanged"
                                            placeholder="sacc" class="form-control slug-input" />
-                                    <span class="slug-suffix">.qmgr.app</span>
+                                    <span class="slug-suffix">.@baseDomain</span>
                                 </div>
                                 @if (isCheckingSlug)
                                 {
@@ -291,7 +293,7 @@
                                 </div>
                                 <div class="summary-row">
                                     <span class="summary-label">URL:</span>
-                                    <span class="summary-value">@(formData.Slug).qmgr.app</span>
+                                    <span class="summary-value">@(formData.Slug).@baseDomain</span>
                                 </div>
                                 @if (!string.IsNullOrEmpty(formData.IndustryType))
                                 {
@@ -381,10 +383,14 @@
         flex-direction: column;
         justify-content: center;
         color: white;
+        position: relative;
+        overflow: hidden;
     }
 
     .branding-content {
         max-width: 320px;
+        position: relative;
+        z-index: 1;
     }
 
     .brand-logo {
@@ -943,6 +949,11 @@
     private System.Timers.Timer? slugCheckTimer;
     private int trialDays = 14; // Overwritten by the real platform setting below; this is only the fallback if that fetch fails.
 
+    // Overwritten by the real platform setting below. Deliberately blank rather than any specific
+    // domain as the fallback — the base domain belongs entirely to Platform Settings, and showing
+    // a guessed value if that fetch fails would be worse than showing nothing.
+    private string baseDomain = "";
+
     private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
 
     protected override async Task OnInitializedAsync()
@@ -954,15 +965,19 @@
         try
         {
             var response = await Http.GetFromJsonAsync<TrialInfoResponse>("api/v1/register/trial-info");
-            if (response != null) trialDays = response.TrialDays;
+            if (response != null)
+            {
+                trialDays = response.TrialDays;
+                if (!string.IsNullOrWhiteSpace(response.BaseDomain)) baseDomain = response.BaseDomain;
+            }
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Failed to fetch live trial length, showing the fallback value instead");
+            Logger.LogWarning(ex, "Failed to fetch live trial length/base domain, showing fallback values instead");
         }
     }
 
-    private record TrialInfoResponse(int TrialDays);
+    private record TrialInfoResponse(int TrialDays, string? BaseDomain);
 
     // BUG FIX: the previous "should I keep auto-generating?" check compared the OLD slug
     // (from the prior keystroke) against a slug freshly generated from the NEW full name —
