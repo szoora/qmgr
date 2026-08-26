@@ -214,7 +214,7 @@
     </FooterContent>
 </QModal>
 
-<QModal @bind-Visible="showCheckInExistingModal" Title="Check In Visitor" Size="sm">
+<QModal @bind-Visible="showCheckInExistingModal" Title="Check In Visitor" Size="md">
     <ChildContent>
         <p class="confirm-message">Confirm arrival for <strong>@visitorPendingCheckIn?.FullName</strong>.</p>
         <div class="form-grid">
@@ -434,7 +434,7 @@
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
     .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
-    .form-grid input, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .form-grid input, .form-grid textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
     .checkin-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
 
     .returning-search { position: relative; }
@@ -450,6 +450,9 @@
     .roster-flag { color: var(--qm-primary); }
     .roster-badge { font-size: 11px; color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; }
     .returning-selected.roster { background: var(--qm-primary-light); color: var(--qm-primary); }
+    .card-usage-flag { font-size: 11px; color: var(--qm-text-muted); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .card-usage-flag.warn { color: #a9781f; background: rgba(169, 120, 31, 0.12); padding: 2px 8px; border-radius: 999px; }
+    span.card-usage-flag { flex-shrink: 0; }
 
     .badge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; text-align: center; }
     .badge-qr-container { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
@@ -480,6 +483,12 @@
 </style>
 
 @code {
+    // A guardian's roster card being checked in more than once on visiting day isn't inherently
+    // wrong (morning drop-off + afternoon pick-up is a normal 2), but 2+ is the point past which
+    // it's worth a front-desk glance rather than a silent auto-approve — see CheckInsToday on
+    // StudentGuardianSearchResultDto.
+    private const int CardAbuseWarningThreshold = 2;
+
     private List<VisitorDto> allVisitors = new();
     private List<VisitorDto> visitors = new();
     private VisitorSummaryDto? summary;
@@ -731,6 +740,13 @@
             {
                 <div class="returning-selected roster">
                     <span><QIcon Name="mortarboard-fill" /> <strong>@selectedRoster.GuardianName</strong> (@selectedRoster.Relationship of @selectedRoster.StudentName@(string.IsNullOrEmpty(selectedRoster.ClassName) ? "" : $", {selectedRoster.ClassName}"))</span>
+                    @if (selectedRoster.CheckInsToday > 0)
+                    {
+                        <span class="card-usage-flag @(selectedRoster.CheckInsToday >= CardAbuseWarningThreshold ? "warn" : "")" title="How many times this guardian's card has already been checked in today, across any student">
+                            <QIcon Name="@(selectedRoster.CheckInsToday >= CardAbuseWarningThreshold ? "exclamation-triangle" : "info-circle")" />
+                            Checked in @(selectedRoster.CheckInsToday)x today
+                        </span>
+                    }
                     <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => { if (selectedRoster == checkInSelectedRoster) checkInSelectedRoster = null; if (selectedRoster == preRegisterSelectedRoster) preRegisterSelectedRoster = null; })" />
                 </div>
             }
@@ -757,6 +773,12 @@
                                 </span>
                                 <span class="returning-result-meta">
                                     @(r.ClassName ?? "") @(string.IsNullOrEmpty(r.ClassName) ? "" : "·") @(r.GuardianPhone ?? r.GuardianEmail ?? "")
+                                    @if (r.CheckInsToday > 0)
+                                    {
+                                        <span class="@(r.CheckInsToday >= CardAbuseWarningThreshold ? "card-usage-flag warn" : "card-usage-flag")">
+                                            · checked in @(r.CheckInsToday)x today
+                                        </span>
+                                    }
                                 </span>
                             </div>
                         }
