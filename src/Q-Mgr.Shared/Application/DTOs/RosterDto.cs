@@ -146,3 +146,13 @@ public record StudentGuardianSearchResultDto
     // already-watchlisted profile as already past the gate.
     public bool GuardianIsWatchlisted { get; init; }
 }
+
+// Stored inside Branch.Settings under the "ClassColors" key — a plain className-to-hex-color
+// map an admin defines themselves (Students.ClassName is free text, not a separate entity with
+// its own color field, so this is deliberately just a lookup table rather than a schema change).
+// A class with no entry here has no assigned color yet; the UI shows a neutral placeholder and
+// prompts the admin to pick one rather than guessing at a color for them.
+public record ClassColorSettingsDto
+{
+    public Dictionary<string, string> Colors { get; set; } = new();
+}

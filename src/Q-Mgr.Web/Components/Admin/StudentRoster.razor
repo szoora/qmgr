@@ -23,6 +23,7 @@
         <div class="header-actions">
             <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
             <PermissionGuard Permission="students.manage">
+                <QButton Text="Class Colors" Icon="palette-fill" Variant="secondary" OnClick="@OpenClassColorsModal" />
                 <QButton Text="Bulk Import" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal" />
                 <QButton Text="Add Student" Icon="person-plus-fill" Variant="primary" OnClick="@OpenAddStudentModal" />
             </PermissionGuard>
@@ -65,11 +66,27 @@
                 <div class="roster-row @(s.IsActive ? "" : "inactive")">
                     <span class="roster-name">@s.FullName</span>
                     <span class="roster-code">@(s.StudentCode ?? "—")</span>
-                    <span>@(s.ClassName ?? "—")</span>
+                    <span>
+                        @if (!string.IsNullOrEmpty(s.ClassName))
+                        {
+                            <span class="class-pill" style="@($"background:{GetClassColor(s.ClassName)}")">@s.ClassName</span>
+                        }
+                        else
+                        {
+                            @:—
+                        }
+                    </span>
                     <span class="roster-guardians">
                         @if (s.Guardians.Any())
                         {
-                            @string.Join(", ", s.Guardians.Select(g => $"{g.FullName} ({g.Relationship})"))
+                            @foreach (var g in s.Guardians)
+                            {
+                                <span class="guardian-chip">
+                                    @g.FullName (@g.Relationship)
+                                    <QButton Icon="printer-fill" Size="sm" Variant="ghost" Class="guardian-print-btn"
+                                             OnClick="@(() => PrintGuardianCard(s, g))" Title="@($"Print visiting-day pass for {g.FullName}")" />
+                                </span>
+                            }
                         }
                         else
                         {
@@ -105,6 +122,38 @@
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showStudentModal = false)" />
         <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveStudent" Disabled="@string.IsNullOrWhiteSpace(studentModel.FullName)" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Class Colors ---------------- *@
+<QModal @bind-Visible="showClassColorsModal" Title="Class Colors" Size="md">
+    <ChildContent>
+        <p class="form-hint">
+            Pick a color for each class — used on the roster list and on printed visiting-day
+            passes so staff can tell classes apart at a glance. Classes with no color yet show grey.
+        </p>
+        @if (!DistinctClassNames.Any())
+        {
+            <p class="form-hint">No classes on the roster yet — add a student with a class first.</p>
+        }
+        else
+        {
+            <div class="class-color-list">
+                @foreach (var className in DistinctClassNames)
+                {
+                    var currentColor = classColorEdits.TryGetValue(className, out var edited) ? edited : UnassignedClassColor;
+                    <div class="class-color-row">
+                        <span class="class-pill" style="@($"background:{currentColor}")">@className</span>
+                        <input type="color" value="@currentColor"
+                               @onchange="@(e => classColorEdits[className] = e.Value?.ToString() ?? UnassignedClassColor)" />
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showClassColorsModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveClassColors" />
     </FooterContent>
 </QModal>
 
@@ -270,8 +319,15 @@
     .roster-row.inactive { opacity: 0.5; }
     .roster-name { font-weight: 600; color: var(--qm-text-primary); }
     .roster-code { font-family: monospace; color: var(--qm-text-muted); }
-    .roster-guardians { font-size: 13px; color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .roster-guardians { font-size: 13px; color: var(--qm-text-muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
     .roster-empty-guardians { font-style: italic; }
+    .guardian-chip { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+    .guardian-print-btn { padding: 2px !important; min-width: unset !important; }
+    .class-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
+    .class-color-list { display: flex; flex-direction: column; gap: 10px; }
+    .class-color-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
+    .class-color-row:last-child { border-bottom: none; }
+    .class-color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
     .roster-actions { display: flex; gap: 4px; justify-self: end; }
 
     .loading-state, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); text-align: center; }
@@ -348,6 +404,112 @@
             (s.ClassName?.Contains(filterQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
             s.Guardians.Any(g => g.FullName.Contains(filterQuery, StringComparison.OrdinalIgnoreCase)));
 
+    // Admin-defined, not auto-derived — a class only gets a color once someone picks one via
+    // the Class Colors modal below. Unassigned classes render with UnassignedClassColor instead
+    // of a guessed one.
+    private const string UnassignedClassColor = "#9aa0a6";
+    private Dictionary<string, string> classColors = new();
+
+    private string GetClassColor(string? className) =>
+        !string.IsNullOrWhiteSpace(className) && classColors.TryGetValue(className, out var color) ? color : UnassignedClassColor;
+
+    // Class Colors modal
+    private bool showClassColorsModal;
+    private Dictionary<string, string> classColorEdits = new();
+
+    private IEnumerable<string> DistinctClassNames => students
+        .Select(s => s.ClassName)
+        .Where(c => !string.IsNullOrWhiteSpace(c))
+        .Select(c => c!)
+        .Distinct()
+        .OrderBy(c => c);
+
+    private void OpenClassColorsModal()
+    {
+        classColorEdits = new Dictionary<string, string>(classColors);
+        showClassColorsModal = true;
+    }
+
+    private async Task SaveClassColors()
+    {
+        var result = await StudentApi.UpdateClassColorsAsync(branchId, new ClassColorSettingsDto { Colors = classColorEdits });
+        if (result == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't save class colors");
+            return;
+        }
+
+        classColors = result.Colors;
+        showClassColorsModal = false;
+        NotificationService.Notify(ToastSeverity.Success, "Success", "Class colors saved");
+    }
+
+    /// <summary>
+    /// Pre-print a "Visiting Day Pass" for one guardian ahead of the actual visit — distinct from
+    /// VisitorManagement.razor's PrintBadge, which prints the real single-use check-in/checkout
+    /// badge for an ACTIVE visit. There's no Visit row yet here, so this card carries no real
+    /// entry token; its QR is a plain lookup aid (guardian+student id pair), not a validated,
+    /// scannable credential — the printed text says so explicitly so nobody mistakes it for one.
+    /// </summary>
+    private async Task PrintGuardianCard(StudentDto student, StudentGuardianDto guardian)
+    {
+        var qrPayload = $"ROSTER:{guardian.VisitorProfileId:N}:{student.Id:N}";
+        var qrDataUrl = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", qrPayload);
+        if (string.IsNullOrEmpty(qrDataUrl))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate the pass for printing");
+            return;
+        }
+
+        var classColor = GetClassColor(student.ClassName);
+        var classLine = string.IsNullOrEmpty(student.ClassName) ? "Unassigned" : System.Net.WebUtility.HtmlEncode(student.ClassName);
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Visiting Day Pass - {{System.Net.WebUtility.HtmlEncode(guardian.FullName)}}</title>
+                <style>
+                    @page { size: 90mm 130mm; margin: 6mm; }
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
+                    .badge { border: 2px solid {{classColor}}; border-radius: 8px; overflow: hidden; }
+                    .class-band { background: {{classColor}}; color: #fff; font-weight: 700; font-size: 14px; padding: 6px 0; letter-spacing: 0.5px; }
+                    .content { padding: 16px; }
+                    img { width: 170px; height: 170px; }
+                    .name { font-size: 20px; font-weight: 700; margin-top: 10px; }
+                    .relationship { font-size: 13px; color: #555; margin-top: 2px; }
+                    .hint { font-size: 11px; color: #888; margin-top: 12px; }
+                    .date { font-size: 10px; color: #aaa; margin-top: 6px; }
+                </style>
+            </head>
+            <body>
+                <div class="badge">
+                    <div class="class-band">{{classLine}}</div>
+                    <div class="content">
+                        <img src="{{qrDataUrl}}" alt="QR pass" />
+                        <div class="name">{{System.Net.WebUtility.HtmlEncode(guardian.FullName)}}</div>
+                        <div class="relationship">{{System.Net.WebUtility.HtmlEncode(guardian.Relationship)}} of {{System.Net.WebUtility.HtmlEncode(student.FullName)}}</div>
+                        <div class="hint">Visiting Day Pass — present at check-in.<br />Not valid for entry without staff verification.</div>
+                        <div class="date">Printed {{DateTime.Now:MMM dd, yyyy}}</div>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    private record PrintJsResult
+    {
+        public bool Success { get; init; }
+        public string? Message { get; init; }
+    }
+
     // Add/Edit Student
     private bool showStudentModal;
     private Guid? editingStudentId;
@@ -386,6 +548,9 @@
 
         NotificationClient.OnRosterImportProgressReceived += HandleImportProgress;
         await NotificationClient.JoinBranchAsync(branchId);
+
+        var colorSettings = await StudentApi.GetClassColorsAsync(branchId);
+        classColors = colorSettings.Colors;
 
         await LoadStudents();
     }
