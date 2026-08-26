@@ -1,5 +1,5 @@
 @page "/admin/visitors/board"
-@implements IDisposable
+@implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
 @inject INotificationClientService NotificationClient
 @inject IBranchStateService BranchState
@@ -53,12 +53,17 @@
                         <div class="onsite-row @(v.IsWatchlisted ? "watchlisted" : "")">
                             <span class="onsite-name">
                                 @v.FullName
+                                <span class="onsite-badge">@v.BadgeCode</span>
                                 @if (v.IsWatchlisted)
                                 {
-                                    <QIcon Name="shield-exclamation" />
+                                    <QIcon Name="shield-exclamation" title="@v.WatchlistReason" />
                                 }
                             </span>
-                            <span class="onsite-meta">@v.HostName · in @v.CheckedInAt?.ToString("HH:mm")</span>
+                            <span class="onsite-meta">
+                                @if (!string.IsNullOrEmpty(v.Purpose)) { <text>@v.Purpose · </text> }
+                                @if (!string.IsNullOrEmpty(v.HostName)) { <text>Visiting @v.HostName · </text> }
+                                in @v.CheckedInAt?.ToString("HH:mm")
+                            </span>
                         </div>
                     }
                 </div>
@@ -122,6 +127,7 @@
     .onsite-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }
     .onsite-row.watchlisted { background: rgba(217, 83, 79, 0.08); }
     .onsite-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .onsite-badge { font-weight: 500; font-size: 11px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 1px 6px; }
     .onsite-meta { font-size: 12px; color: var(--qm-text-muted); }
 
     .feed-list { display: flex; flex-direction: column; gap: 8px; }
@@ -156,8 +162,24 @@
         var visitors = await VisitorApi.GetVisitorsAsync(branchId, VisitorStatus.CheckedIn);
         currentlyOnSite = visitors;
 
+        // Seed the feed with everyone already on site so the board shows something real the
+        // instant it loads — without this, "Live Feed" said "Waiting for activity..." even while
+        // people were visibly checked in, which read as broken rather than just quiet.
+        feed.AddRange(visitors
+            .OrderByDescending(v => v.CheckedInAt ?? v.CreatedAt)
+            .Select(v => new VisitorActivityEvent { Kind = VisitorActivityKind.CheckedIn, Visitor = v, OccurredAt = v.CheckedInAt ?? v.CreatedAt }));
+
         isLive = NotificationClient.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
         NotificationClient.OnVisitorActivityReceived += HandleActivity;
+        NotificationClient.ConnectionStateChanged += HandleConnectionStateChanged;
+
+        // This board's whole premise is "updates the instant someone checks in/out/is flagged,"
+        // but nothing in the app ever actually called JoinBranchAsync — the only reason it worked
+        // at all was that the initial hub connection (set up once, elsewhere, with whatever branch
+        // was active then) happened to match. That's an accident for a single-branch org and a
+        // real gap for anyone with more than one; join explicitly for the branch this board is
+        // actually showing, and leave it on dispose so a stale group membership doesn't linger.
+        await NotificationClient.JoinBranchAsync(branchId);
     }
 
     private async Task HandleActivity(VisitorActivityEvent activity)
@@ -188,6 +210,19 @@
         await InvokeAsync(StateHasChanged);
     }
 
+    /// <summary>
+    /// Without this, `isLive` was set once from a snapshot of `NotificationClient.State` at page
+    /// load and only ever flipped true afterward (by HandleActivity firing) — never re-checked, so
+    /// a connection that happened to be mid-reconnect at the exact moment this page loaded stayed
+    /// stuck showing "Reconnecting..." indefinitely even after it genuinely reconnected, since
+    /// nothing here was listening for that.
+    /// </summary>
+    private async void HandleConnectionStateChanged()
+    {
+        isLive = NotificationClient.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
+        await InvokeAsync(StateHasChanged);
+    }
+
     private static string IconFor(VisitorActivityKind kind) => kind switch
     {
         VisitorActivityKind.CheckedIn => "box-arrow-in-right",
@@ -210,8 +245,10 @@
         _ => ""
     };
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         NotificationClient.OnVisitorActivityReceived -= HandleActivity;
+        NotificationClient.ConnectionStateChanged -= HandleConnectionStateChanged;
+        try { await NotificationClient.LeaveBranchAsync(branchId); } catch { /* connection may already be gone */ }
     }
 }

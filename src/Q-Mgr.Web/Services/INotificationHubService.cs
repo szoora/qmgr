@@ -30,6 +30,14 @@ public interface INotificationClientService : IAsyncDisposable
     HubConnectionState State { get; }
 
     /// <summary>
+    /// Fires whenever the underlying connection state changes (connecting/reconnecting/
+    /// reconnected/closed) — for any UI showing a live/reconnecting indicator tied to this
+    /// connection (e.g. the visitor activity board) rather than just checking `State` once at
+    /// load and never again.
+    /// </summary>
+    event Action? ConnectionStateChanged;
+
+    /// <summary>
     /// Start the SignalR connection
     /// </summary>
     Task StartAsync(Guid userId, Guid? branchId = null);

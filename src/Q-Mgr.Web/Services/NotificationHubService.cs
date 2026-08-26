@@ -20,6 +20,7 @@ public class NotificationClientService : INotificationClientService
     public event Func<NotificationDto, Task>? OnNotificationReceived;
     public event Func<int, Task>? OnUnreadCountUpdated;
     public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
+    public event Action? ConnectionStateChanged;
 
     public HubConnectionState State => _hubConnection?.State ?? HubConnectionState.Disconnected;
 
@@ -105,18 +106,21 @@ public class NotificationClientService : INotificationClientService
         _hubConnection.Reconnecting += error =>
         {
             _logger.LogWarning("Notification hub reconnecting: {Error}", error?.Message);
+            ConnectionStateChanged?.Invoke();
             return Task.CompletedTask;
         };
 
         _hubConnection.Reconnected += connectionId =>
         {
             _logger.LogInformation("Notification hub reconnected: {ConnectionId}", connectionId);
+            ConnectionStateChanged?.Invoke();
             return Task.CompletedTask;
         };
 
         _hubConnection.Closed += error =>
         {
             _logger.LogWarning("Notification hub connection closed: {Error}", error?.Message);
+            ConnectionStateChanged?.Invoke();
             return Task.CompletedTask;
         };
 
@@ -124,6 +128,7 @@ public class NotificationClientService : INotificationClientService
         {
             await _hubConnection.StartAsync();
             _logger.LogInformation("Connected to notification hub for user {UserId}", userId);
+            ConnectionStateChanged?.Invoke();
         }
         catch (Exception ex)
         {
