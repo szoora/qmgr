@@ -32,10 +32,14 @@ public class RegistrationController : ControllerBase
     }
 
     /// <summary>
-    /// Real trial length, for the registration page's own marketing copy to render instead of a
-    /// hardcoded number — that copy previously said "14-day free trial" regardless of what
-    /// PlatformSettings.SaaS.TrialDays actually was, which is exactly the kind of drift that
-    /// happens when the same fact is asserted in two places (see CLAUDE.md's SSoT note).
+    /// Real trial length and base domain, for the registration page's own marketing copy and
+    /// subdomain-preview text to render instead of hardcoded values — the trial length previously
+    /// said "14-day free trial" regardless of what PlatformSettings.SaaS.TrialDays actually was,
+    /// and the subdomain suffix shown next to the slug field was a bare ".qmgr.app" string
+    /// literal, independent of PlatformSettings.SaaS.BaseDomain — both are exactly the kind of
+    /// drift that happens when the same fact is asserted in two places (see CLAUDE.md's SSoT
+    /// note). The platform's actual base domain belongs entirely to Platform Settings; nothing in
+    /// application code should assume what it is.
     /// </summary>
     [HttpGet("trial-info")]
     [AllowAnonymous]
@@ -43,7 +47,7 @@ public class RegistrationController : ControllerBase
     public async Task<IActionResult> GetTrialInfo()
     {
         var saas = await _platformSettingsService.GetSettingsAsync<QMgr.Domain.Entities.Platform.SaasSettings>("SaaS");
-        return Ok(new { trialDays = saas?.TrialDays ?? 14 });
+        return Ok(new { trialDays = saas?.TrialDays ?? 14, baseDomain = saas?.BaseDomain ?? "" });
     }
 
     /// <summary>

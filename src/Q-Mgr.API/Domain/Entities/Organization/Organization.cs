@@ -63,7 +63,7 @@ public class Organization : BaseAuditableEntity
     #region SaaS / Multi-Tenancy Fields
 
     /// <summary>
-    /// URL-safe unique identifier for tenant (e.g., "sacc" for sacc.qmgr.app)
+    /// URL-safe unique identifier for tenant (e.g., "sacc" for sacc.{PlatformSettings.SaaS.BaseDomain})
     /// </summary>
     public string Slug { get; set; } = string.Empty;
 
