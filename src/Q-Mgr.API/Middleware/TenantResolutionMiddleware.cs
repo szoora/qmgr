@@ -10,7 +10,7 @@ namespace QMgr.Middleware;
 
 /// <summary>
 /// Middleware that resolves the current tenant from various sources:
-/// 1. Subdomain (sacc.qmgr.app)
+/// 1. Subdomain (sacc.{PlatformSettings.SaaS.BaseDomain})
 /// 2. X-Tenant-Id header
 /// 3. JWT claim (org_id)
 /// 4. Query string (?tenant=sacc)

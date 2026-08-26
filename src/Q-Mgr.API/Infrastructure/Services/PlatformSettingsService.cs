@@ -201,8 +201,8 @@ public class PlatformSettingsService : IPlatformSettingsService
                 IsEditable = true,
                 SettingsJson = System.Text.Json.JsonSerializer.Serialize(new SaasSettings
                 {
-                    BaseDomain = "qmgr.app",
-                    BaseUrl = "https://qmgr.app",
+                    BaseDomain = "cashbook.ug",
+                    BaseUrl = "https://cashbook.ug",
                     TrialDays = 14,
                     DefaultPlanCode = "free",
                     AllowCustomDomains = true,

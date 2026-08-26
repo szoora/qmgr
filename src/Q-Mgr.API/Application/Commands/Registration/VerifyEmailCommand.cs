@@ -28,7 +28,7 @@ public record VerifyEmailResult
     /// <summary>Redirect URL after verification</summary>
     public string? RedirectUrl { get; init; }
 
-    // Relative, not a per-tenant subdomain ("https://{slug}.qmgr.app/...") — this app resolves
+    // Relative, not a per-tenant subdomain ("https://{slug}.{baseDomain}/...") — this app resolves
     // the tenant from the JWT after login on a single shared host (every page in this codebase
     // is reached via that one host), not via subdomain routing, so a subdomain URL here would
     // 404 in this deployment. Slug is kept on the result for display purposes even though it's

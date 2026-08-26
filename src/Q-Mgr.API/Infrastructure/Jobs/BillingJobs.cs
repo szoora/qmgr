@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
+using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 
@@ -18,6 +19,7 @@ public class BillingJobs
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly ITenantProvisioningService _provisioningService;
     private readonly INotificationService _notificationService;
+    private readonly IPlatformSettingsService _platformSettingsService;
     private readonly ILogger<BillingJobs> _logger;
 
     public BillingJobs(
@@ -26,6 +28,7 @@ public class BillingJobs
         IUsageTrackingService usageTrackingService,
         ITenantProvisioningService provisioningService,
         INotificationService notificationService,
+        IPlatformSettingsService platformSettingsService,
         ILogger<BillingJobs> logger)
     {
         _dbContext = dbContext;
@@ -33,7 +36,20 @@ public class BillingJobs
         _usageTrackingService = usageTrackingService;
         _provisioningService = provisioningService;
         _notificationService = notificationService;
+        _platformSettingsService = platformSettingsService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// These billing emails previously hardcoded "https://{slug}.qmgr.app/..." links, independent
+    /// of PlatformSettings.SaaS.BaseDomain — the same fact asserted in two places, and the one
+    /// that actually drifted when the platform's real domain changed. Resolved once per job run
+    /// (GetSettingsAsync is memory-cached) rather than baked into the template strings.
+    /// </summary>
+    private async Task<string> GetBaseDomainAsync()
+    {
+        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+        return saas?.BaseDomain ?? "";
     }
 
     /// <summary>
@@ -45,6 +61,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting check for expiring trials");
 
+        var baseDomain = await GetBaseDomainAsync();
         var now = DateTime.UtcNow;
         var warningThreshold = now.AddDays(3); // Warn 3 days before expiry
 
@@ -67,7 +84,7 @@ public class BillingJobs
                     org.Id,
                     org.EffectiveBillingEmail,
                     $"Your Q-Mgr trial expires in {daysLeft} days",
-                    GetTrialExpiringEmailBody(org.Name, daysLeft, org.Slug),
+                    GetTrialExpiringEmailBody(org.Name, daysLeft, org.Slug, baseDomain),
                     true);
 
                 _logger.LogInformation(
@@ -108,7 +125,7 @@ public class BillingJobs
                         org.Id,
                         org.EffectiveBillingEmail,
                         "Your Q-Mgr trial has ended",
-                        GetTrialExpiredEmailBody(org.Name, org.Slug),
+                        GetTrialExpiredEmailBody(org.Name, org.Slug, baseDomain),
                         true);
                 }
 
@@ -257,6 +274,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting pending invoice processing");
 
+        var baseDomain = await GetBaseDomainAsync();
         var pendingInvoices = await _dbContext.Invoices
             .Include(i => i.Subscription)
                 .ThenInclude(s => s!.Organization)
@@ -293,7 +311,8 @@ public class BillingJobs
                                 GetPaymentFailedEmailBody(
                                     invoice.Subscription.Organization.Name,
                                     invoice.Total,
-                                    invoice.Subscription.Organization.Slug),
+                                    invoice.Subscription.Organization.Slug,
+                                    baseDomain),
                                 true);
                         }
                     }
@@ -320,6 +339,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting overdue accounts suspension check");
 
+        var baseDomain = await GetBaseDomainAsync();
         var gracePeriodDays = 7;
         var cutoffDate = DateTime.UtcNow.AddDays(-gracePeriodDays);
 
@@ -347,7 +367,8 @@ public class BillingJobs
                         "Your Q-Mgr account has been suspended",
                         GetAccountSuspendedEmailBody(
                             subscription.Organization.Name,
-                            subscription.Organization.Slug),
+                            subscription.Organization.Slug,
+                            baseDomain),
                         true);
 
                     _logger.LogWarning(
@@ -430,7 +451,7 @@ public class BillingJobs
 
     #region Email Templates
 
-    private static string GetTrialExpiringEmailBody(string orgName, int daysLeft, string slug)
+    private static string GetTrialExpiringEmailBody(string orgName, int daysLeft, string slug, string baseDomain)
     {
         return $@"
 <!DOCTYPE html>
@@ -442,7 +463,7 @@ public class BillingJobs
         <p>Your Q-Mgr trial for <strong>{orgName}</strong> will expire in <strong>{daysLeft} days</strong>.</p>
         <p>To continue using Q-Mgr without interruption, please subscribe to a plan:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.qmgr.app/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Choose a Plan</a>
+            <a href='https://{slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Choose a Plan</a>
         </div>
         <p>If you have any questions, our support team is here to help.</p>
         <p>Best regards,<br>The Q-Mgr Team</p>
@@ -451,7 +472,7 @@ public class BillingJobs
 </html>";
     }
 
-    private static string GetTrialExpiredEmailBody(string orgName, string slug)
+    private static string GetTrialExpiredEmailBody(string orgName, string slug, string baseDomain)
     {
         return $@"
 <!DOCTYPE html>
@@ -463,7 +484,7 @@ public class BillingJobs
         <p>Your Q-Mgr trial for <strong>{orgName}</strong> has expired.</p>
         <p>Your account has been temporarily suspended. To restore access, please subscribe to a plan:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.qmgr.app/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Subscribe Now</a>
+            <a href='https://{slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Subscribe Now</a>
         </div>
         <p>Your data is safe and will be available once you subscribe.</p>
         <p>Best regards,<br>The Q-Mgr Team</p>
@@ -472,7 +493,7 @@ public class BillingJobs
 </html>";
     }
 
-    private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string slug)
+    private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string slug, string baseDomain)
     {
         return $@"
 <!DOCTYPE html>
@@ -484,7 +505,7 @@ public class BillingJobs
         <p>We were unable to process your payment of <strong>${amount:F2}</strong> for <strong>{orgName}</strong>.</p>
         <p>Please update your payment method to avoid service interruption:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.qmgr.app/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Update Payment Method</a>
+            <a href='https://{slug}.{baseDomain}/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Update Payment Method</a>
         </div>
         <p>If you believe this is an error, please contact our support team.</p>
         <p>Best regards,<br>The Q-Mgr Team</p>
@@ -493,7 +514,7 @@ public class BillingJobs
 </html>";
     }
 
-    private static string GetAccountSuspendedEmailBody(string orgName, string slug)
+    private static string GetAccountSuspendedEmailBody(string orgName, string slug, string baseDomain)
     {
         return $@"
 <!DOCTYPE html>
@@ -505,7 +526,7 @@ public class BillingJobs
         <p>Your Q-Mgr account for <strong>{orgName}</strong> has been suspended due to payment issues.</p>
         <p>To restore your account, please update your payment method and clear any outstanding balance:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.qmgr.app/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Restore Account</a>
+            <a href='https://{slug}.{baseDomain}/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Restore Account</a>
         </div>
         <p>Your data is being preserved and will be available once payment is received.</p>
         <p>Best regards,<br>The Q-Mgr Team</p>
@@ -525,6 +546,7 @@ public class BillingJobs
         int limit)
     {
         var percentage = (int)((double)current / limit * 100);
+        var baseDomain = await GetBaseDomainAsync();
 
         await _notificationService.SendEmailAsync(
             org.Id,
@@ -541,7 +563,7 @@ public class BillingJobs
         <p>Current usage: <strong>{current:N0}</strong> / <strong>{limit:N0}</strong></p>
         <p>To avoid service interruption, consider upgrading your plan:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{org.Slug}.qmgr.app/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Plan</a>
+            <a href='https://{org.Slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Plan</a>
         </div>
         <p>Best regards,<br>The Q-Mgr Team</p>
     </div>
@@ -560,6 +582,8 @@ public class BillingJobs
         int current,
         int limit)
     {
+        var baseDomain = await GetBaseDomainAsync();
+
         await _notificationService.SendEmailAsync(
             org.Id,
             org.EffectiveBillingEmail,
@@ -575,7 +599,7 @@ public class BillingJobs
         <p>Current usage: <strong>{current:N0}</strong> / <strong>{limit:N0}</strong></p>
         <p>Some features may be restricted until your usage resets next month or you upgrade your plan:</p>
         <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{org.Slug}.qmgr.app/billing/plans' style='background-color: #dc2626; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Now</a>
+            <a href='https://{org.Slug}.{baseDomain}/billing/plans' style='background-color: #dc2626; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Now</a>
         </div>
         <p>Best regards,<br>The Q-Mgr Team</p>
     </div>
