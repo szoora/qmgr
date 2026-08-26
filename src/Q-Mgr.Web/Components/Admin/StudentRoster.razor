@@ -37,6 +37,8 @@
             <input type="checkbox" @bind="includeInactive" @bind:after="LoadStudents" />
             <span>Show inactive</span>
         </label>
+        <QButton Text="Print All Cards" Icon="printer-fill" Variant="secondary" OnClick="@PrintAllStudentCards"
+                 Title="Print Student Visitation Cards for everyone matching the current filter — 8 per A4 sheet" />
     </div>
 
     @if (isLoading)
@@ -94,6 +96,7 @@
                         }
                     </span>
                     <span class="roster-actions">
+                        <QButton Icon="person-vcard-fill" Size="sm" Variant="ghost" OnClick="@(() => PrintStudentIdCard(s))" Title="Print Student Visitation Card (all guardians)" />
                         <QButton Icon="person-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
                         <QButton Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenEditStudentModal(s))" Title="Edit" />
                     </span>
@@ -501,6 +504,168 @@
         if (!result.Success)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    // Shared by the single-card and batch print paths below — structural only (no color), since
+    // batch mode puts differently-colored cards on one sheet and each card supplies its own
+    // border/band color inline rather than through a single hardcoded class rule.
+    private const string CardCss = """
+        .card { width: 85.6mm; height: 54mm; box-sizing: border-box; border: 1.5px solid #ccc; border-radius: 3mm; overflow: hidden; display: flex; flex-direction: column; background: #fff; }
+        .class-band { color: #fff; font-size: 6.5pt; font-weight: 700; padding: 1.5mm 3mm; display: flex; justify-content: space-between; text-transform: uppercase; letter-spacing: 0.3px; }
+        .body { flex: 1; display: flex; padding: 2mm 3mm; gap: 2mm; overflow: hidden; }
+        .info { flex: 1; min-width: 0; }
+        .student-name { font-size: 11pt; font-weight: 700; line-height: 1.15; }
+        .student-code { font-size: 7pt; color: #666; margin-top: 0.5mm; }
+        .guardians-label { font-size: 6pt; color: #999; margin-top: 1.5mm; text-transform: uppercase; letter-spacing: 0.3px; }
+        .guardian-row { font-size: 7.5pt; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .guardian-row .rel { color: #777; }
+        .guardian-row.none { font-style: italic; color: #999; }
+        .qr { width: 15mm; height: 15mm; flex-shrink: 0; }
+        .footer { font-size: 5pt; color: #999; text-align: center; padding: 1mm; border-top: 0.5px solid #eee; }
+        """;
+
+    /// <summary>
+    /// Builds one card's markup (a durable, ID-card-sized — CR80, 85.6x54mm, standard credit-
+    /// card/badge size — "Student Visitation Card" listing every guardian on file), or null if
+    /// its QR couldn't be generated. Shared by PrintStudentIdCard (one card, its own print job)
+    /// and PrintAllStudentCards (many cards laid out on shared A4 sheets) so the two stay
+    /// visually identical rather than two copies of the same markup drifting apart.
+    /// </summary>
+    private async Task<string?> BuildStudentCardMarkupAsync(StudentDto student)
+    {
+        var qrDataUrl = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", $"STUDENT:{student.Id:N}");
+        if (string.IsNullOrEmpty(qrDataUrl)) return null;
+
+        var classColor = GetClassColor(student.ClassName);
+        var classLine = string.IsNullOrEmpty(student.ClassName) ? "No Class" : System.Net.WebUtility.HtmlEncode(student.ClassName);
+        var codeLine = string.IsNullOrEmpty(student.StudentCode) ? "" : System.Net.WebUtility.HtmlEncode(student.StudentCode);
+
+        var guardianRows = student.Guardians.Any()
+            ? string.Join("", student.Guardians.Select(g =>
+                $"""<div class="guardian-row">{System.Net.WebUtility.HtmlEncode(g.FullName)} <span class="rel">({System.Net.WebUtility.HtmlEncode(g.Relationship)})</span></div>"""))
+            : """<div class="guardian-row none">No guardians on file yet</div>""";
+
+        return $$"""
+            <div class="card" style="border-color:{{classColor}}">
+                <div class="class-band" style="background:{{classColor}}"><span>{{classLine}}</span><span>Student Visitation Card</span></div>
+                <div class="body">
+                    <div class="info">
+                        <div class="student-name">{{System.Net.WebUtility.HtmlEncode(student.FullName)}}</div>
+                        <div class="student-code">{{codeLine}}</div>
+                        <div class="guardians-label">Authorized Guardians</div>
+                        {{guardianRows}}
+                    </div>
+                    <img class="qr" src="{{qrDataUrl}}" alt="QR" />
+                </div>
+                <div class="footer">Verify guardian identity at check-in — not a payment or government ID.</div>
+            </div>
+            """;
+    }
+
+    /// <summary>
+    /// Prints one Student Visitation Card, as opposed to PrintGuardianCard's per-guardian
+    /// visiting-day pass. Meant to double as an identification document staff can check a
+    /// presented guardian against (or that's kept on file at the gate/office), not a one-off
+    /// event pass — so unlike the visiting-day pass this doesn't get reprinted per visit, just
+    /// whenever the guardian list changes. Same QR-is-a-lookup-aid-not-a-credential caveat.
+    /// </summary>
+    private async Task PrintStudentIdCard(StudentDto student)
+    {
+        var cardHtml = await BuildStudentCardMarkupAsync(student);
+        if (cardHtml == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate the card for printing");
+            return;
+        }
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Student Visitation Card - {{System.Net.WebUtility.HtmlEncode(student.FullName)}}</title>
+                <style>
+                    @page { size: 85.6mm 54mm; margin: 0; }
+                    body { font-family: Arial, sans-serif; margin: 0; }
+                    {{CardCss}}
+                </style>
+            </head>
+            <body>
+                {{cardHtml}}
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    /// <summary>
+    /// Batch-prints Student Visitation Cards for every student currently matching the roster
+    /// filter — 8 per A4 sheet (2 columns x 4 rows of CR80 cards, the standard packing for this
+    /// card size with room for cut margins), spilling onto additional sheets past 8. Respects
+    /// the search filter so staff can print just one class rather than the whole roster.
+    /// </summary>
+    private async Task PrintAllStudentCards()
+    {
+        var targets = FilteredStudents.Where(s => s.IsActive).ToList();
+        if (!targets.Any())
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Nothing to print", "No students match the current filter.");
+            return;
+        }
+
+        var cardBlocks = new List<string>();
+        var skipped = 0;
+        foreach (var student in targets)
+        {
+            var cardHtml = await BuildStudentCardMarkupAsync(student);
+            if (cardHtml == null) { skipped++; continue; }
+            cardBlocks.Add(cardHtml);
+        }
+
+        if (!cardBlocks.Any())
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate any cards for printing");
+            return;
+        }
+
+        const int cardsPerPage = 8;
+        var pagesHtml = string.Join("", cardBlocks
+            .Select((html, i) => (html, page: i / cardsPerPage))
+            .GroupBy(x => x.page)
+            .Select(page => $"""<div class="sheet-page">{string.Join("", page.Select(x => x.html))}</div>"""));
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Student Visitation Cards ({{cardBlocks.Count}})</title>
+                <style>
+                    @page { size: A4; margin: 10mm; }
+                    body { font-family: Arial, sans-serif; margin: 0; }
+                    .sheet-page { display: grid; grid-template-columns: repeat(2, 85.6mm); grid-auto-rows: 54mm; gap: 4mm 8mm; justify-content: center; page-break-after: always; }
+                    .sheet-page:last-child { page-break-after: auto; }
+                    {{CardCss}}
+                </style>
+            </head>
+            <body>
+                {{pagesHtml}}
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+        else if (skipped > 0)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Some cards skipped", $"{skipped} student(s) couldn't be included.");
         }
     }
 
