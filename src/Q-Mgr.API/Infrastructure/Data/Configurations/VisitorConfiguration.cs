@@ -19,6 +19,7 @@ public class VisitorConfiguration : IEntityTypeConfiguration<Visitor>
         builder.Property(v => v.Purpose).HasMaxLength(500);
         builder.Property(v => v.VehiclePlate).HasMaxLength(20);
         builder.Property(v => v.HostName).HasMaxLength(255);
+        builder.Property(v => v.StudentName).HasMaxLength(255);
         builder.Property(v => v.Notes).HasMaxLength(2000);
         builder.Property(v => v.DeletionReason).HasMaxLength(500);
 
@@ -73,6 +74,11 @@ public class VisitorConfiguration : IEntityTypeConfiguration<Visitor>
         builder.HasOne(v => v.VisitorPass)
             .WithMany(p => p.Visits)
             .HasForeignKey(v => v.VisitorPassId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasOne(v => v.Student)
+            .WithMany()
+            .HasForeignKey(v => v.StudentId)
             .OnDelete(DeleteBehavior.SetNull);
     }
 }

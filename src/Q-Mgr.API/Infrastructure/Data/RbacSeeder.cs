@@ -146,6 +146,12 @@ public class RbacSeeder
         new("visitors.manage", "Manage Visitors", "Edit visitor details, delete records, manage watchlist", "Visitor Management", 4, true),
 
         // ============================================
+        // STUDENT ROSTERS
+        // ============================================
+        new("students.view", "View Student Rosters", "View students and their authorized guardians", "Student Rosters", 1, true),
+        new("students.manage", "Manage Student Rosters", "Create/edit/delete students and guardians, bulk import a roster", "Student Rosters", 2, true),
+
+        // ============================================
         // MARKETING (contacts + broadcast campaigns)
         // ============================================
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1, true),
@@ -263,6 +269,8 @@ public class RbacSeeder
                 "feedback.view", "feedback.respond", "feedback.analytics",
                 // Visitor Management (full)
                 "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
+                // Student Rosters (full)
+                "students.view", "students.manage",
                 // Marketing (full)
                 "marketing.view", "marketing.manage", "marketing.send",
                 // Settings (view only)
@@ -298,6 +306,8 @@ public class RbacSeeder
                 "feedback.view",
                 // Visitor Management (front-desk operations)
                 "visitors.view", "visitors.checkin", "visitors.checkout",
+                // Student Rosters (search/lookup only — bulk import stays a manager+ action)
+                "students.view",
             }
         ),
 

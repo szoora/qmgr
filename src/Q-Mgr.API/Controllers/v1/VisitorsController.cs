@@ -217,6 +217,22 @@ public class VisitorsController : ControllerBase
         return await query.Include(v => v.Branch).FirstOrDefaultAsync();
     }
 
+    /// <summary>
+    /// Resolves the visiting-day student link, if any — validates it belongs to this branch, and
+    /// hands back sensible defaults for Purpose/HostName when the caller left them blank, since
+    /// a roster-driven check-in shouldn't require staff to retype "Visiting day — see [Student]"
+    /// for every single family that walks through the gate.
+    /// </summary>
+    private async Task<(Guid? StudentId, string? StudentName, string? DefaultHostName, string? DefaultPurpose)> ResolveStudentAsync(Guid? studentId, Guid branchId)
+    {
+        if (!studentId.HasValue) return (null, null, null, null);
+
+        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId.Value && s.BranchId == branchId && s.IsActive);
+        if (student == null) return (null, null, null, null); // stale/invalid reference — fail open to a plain walk-in rather than 400 the whole check-in
+
+        return (student.Id, student.FullName, student.FullName, $"Visiting day — see {student.FullName}");
+    }
+
     internal record ProfileStats(int Total, int Last24h);
 
     /// <summary>
@@ -261,6 +277,8 @@ public class VisitorsController : ControllerBase
         VehiclePlate = v.VehiclePlate,
         HostUserId = v.HostUserId,
         HostName = v.HostName,
+        StudentId = v.StudentId,
+        StudentName = v.StudentName,
         Status = v.Status,
         ScheduledAt = v.ScheduledAt,
         CheckedInAt = v.CheckedInAt,
@@ -710,6 +728,7 @@ public class VisitorsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var (studentId, studentName, defaultHostName, defaultPurpose) = await ResolveStudentAsync(request.StudentId, branchId);
 
         Visitor visitor = null!;
         VisitorProfile profile = null!;
@@ -743,10 +762,12 @@ public class VisitorsController : ControllerBase
                 BranchId = branchId,
                 VisitorProfileId = profile.Id,
                 BadgeCode = badgeCode,
-                Purpose = request.Purpose,
+                Purpose = string.IsNullOrWhiteSpace(request.Purpose) ? (defaultPurpose ?? request.Purpose) : request.Purpose,
                 VehiclePlate = request.VehiclePlate,
                 HostUserId = request.HostUserId,
-                HostName = request.HostName,
+                HostName = string.IsNullOrWhiteSpace(request.HostName) ? (defaultHostName ?? request.HostName) : request.HostName,
+                StudentId = studentId,
+                StudentName = studentName,
                 Status = VisitorStatus.CheckedIn,
                 CheckedInAt = DateTime.UtcNow,
                 ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null,

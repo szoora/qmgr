@@ -30,6 +30,13 @@ public class Visitor : BaseEntity
     public Guid? HostUserId { get; set; }
     public string HostName { get; set; } = string.Empty;
 
+    // Set when this visit came from the roster-driven "visiting day" flow rather than a plain
+    // walk-in — the student being visited, denormalized to a name for the same reason HostName
+    // is: the visit record should still read correctly if the student is later removed from the
+    // roster (graduated, transferred) rather than going blank.
+    public Guid? StudentId { get; set; }
+    public string? StudentName { get; set; }
+
     public VisitorStatus Status { get; set; } = VisitorStatus.PreRegistered;
 
     public DateTime? ScheduledAt { get; set; }
@@ -62,4 +69,5 @@ public class Visitor : BaseEntity
     public virtual Identity.User? HostUser { get; set; }
     public virtual VisitorProfile? VisitorProfile { get; set; }
     public virtual VisitorPass? VisitorPass { get; set; }
+    public virtual Student? Student { get; set; }
 }
