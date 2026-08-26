@@ -6,6 +6,165 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-08-26, after Phase 57)
+
+Read this section first. Note: 18 commits (`04761f0`..`9ece0c3` in `git log`) landed between the
+Phase 56 entry below and this one without a matching tracker update — the Visitor Management
+module was substantially expanded (group QR passes, badge scanning, watchlist person-matching,
+consent tracking, retention purge job) and Campaign Marketing grew file attachments, but none of
+that got a Phase entry. Treat `git log` as more current than this file's prose for that gap; this
+entry covers only what Phase 57 itself found and fixed.
+
+### Phase 57, in one paragraph: "complete all pending tasks, aggressive e2e, confirm production readiness"
+Started from a large uncommitted diff (the Visitor Pass/Profile/consent/retention expansion above)
+sitting on top of the 18 undocumented commits. Reviewed the uncommitted code directly plus two
+parallel background reviews (visitor backend/RBAC, visitor Web UI), then ran a genuinely live e2e
+pass against both dev servers — real HTTP calls, not just reading code — covering registration,
+login, tenant-status gating, visitor check-in/pass/consent/retention, and the core queue flow.
+**Found and fixed 4 real bugs, one of them severe enough to have made the product's core action
+non-functional:**
+
+1. **[MUST-FIX, FIXED] Core "Call Next" queue action was completely broken.**
+   `TokenRepository.GetNextWaitingTokenForCounterAsync`'s raw SQL (`FromSqlInterpolated`, added to
+   fix a double-assignment race with `FOR UPDATE SKIP LOCKED`) read `FROM tokens` unqualified. EF's
+   own generated SQL is always schema-qualified (`HasDefaultSchema("qmgr")` in `QMgrDbContext`
+   handles that for LINQ), but raw SQL bypasses that and falls back to Postgres's connection-level
+   `search_path`, which for this DB is the server default (`"$user", public`) — not `qmgr`. Every
+   call to `POST /api/v1/counters/{id}/call-next` — the literal core action of a queue-management
+   product — 500'd with `relation "tokens" does not exist`. Found live: an actual browser session
+   (not one I started) hit this exact error mid-session while I was testing something unrelated.
+   Compounding it, `CounterTerminal.razor`'s `CallNext()` caught the exception and showed the
+   identical "There are no customers waiting in the queue" message a real empty queue would show —
+   front-desk staff had no way to tell "queue's empty" from "the call failed." Fixed both: schema-
+   qualified the raw SQL (`FROM qmgr.tokens`), and changed `CallNextTokenAsync` to only swallow the
+   genuine-empty-queue case (204) to null while letting real errors propagate, so the UI now shows
+   a distinct "Call Next Failed — try again" error toast instead of the misleading empty-queue one.
+   **Live-verified end-to-end after the fix**: created a token, called `call-next`, got a real
+   token back and the queue summary updated correctly; also live-verified `complete`/`no-show`/
+   `transfer`/`call-specific-token` all work correctly (no further bugs found in those).
+2. **[MUST-FIX, FIXED] Cross-tenant PII leak via `NotificationHub`'s branch-group join had no
+   authorization check.** Found by the backend review agent. Any authenticated user, from any org,
+   could call the hub's public `JoinBranch("<arbitrary-branch-guid>")` method — no check that the
+   branch belonged to the caller's tenant. This existed before today, but the new
+   `VisitorActivityBroadcaster` (uncommitted work) made it materially worse: it now pushes full
+   visitor PII (name, phone, email, ID number, watchlist reason) to that same group on every
+   check-in/checkout/flag event. Fixed by resolving the caller's org from JWT claims (SuperAdmin
+   exempt) and verifying the target branch belongs to it — in both `OnConnectedAsync` (the
+   `?branchId=` query-string path) and the client-callable `JoinBranch` method — before adding the
+   connection to the group, mirroring the `VerifyBranchOwnership` pattern every REST controller
+   already uses. Verified the legitimate case (same-org join) still works via the live dev session's
+   own SignalR reconnect logs after the fix.
+3. **[MUST-FIX, FIXED] Tenant-status gate bypass — an unverified (`Pending`) or
+   suspended/cancelled tenant could still perform mutating business actions.**
+   `TenantStatusMiddleware`'s allowlist matched `/api/v1/branches` by exact path only, with no HTTP
+   method check. `BranchesController` maps both `[HttpGet]` (branch list — the ambient page-chrome
+   read this allowlist exists for) and `[HttpPost]` (create a branch — a real, plan-limited
+   mutation) to that same bare path, so POST rode through on the GET's allowlist entry. **Live-
+   verified the bug before fixing it**: registered a brand-new org (email deliberately left
+   unverified, `Status = Pending`), and its admin successfully created a branch via
+   `POST /api/v1/branches` — a tenant that should have been blocked from everything except
+   verifying their email. Fixed by making the allowlist match `(method, path)` pairs instead of
+   path alone; hub negotiate/connect paths get their own always-allowed set since they're
+   connectivity, not REST mutations. **Live re-verified after the fix**: same Pending tenant's GET
+   still succeeds (chrome preserved), POST now correctly 403s with `ACCOUNT_PENDING`; also re-
+   verified the parallel `Suspended`/reactivate path still works correctly (suspend → mutating
+   action blocked with `ACCOUNT_SUSPENDED`, ambient chrome/health/billing still reachable per
+   existing design → reactivate → mutating action works again, this time correctly hitting the
+   free-tier branch-limit gate instead, confirming usage-limit enforcement is itself working).
+4. **[FIXED] Group visitor-pass capacity had a real concurrency race**, found via direct code
+   review before any live testing: `VisitorPassesController.ScanPassBadge` did a plain
+   read-then-increment/decrement of `pass.CurrentVisitors` with no lock — unlike every other
+   mutation in this codebase's own established pattern (`pg_advisory_xact_lock`, same as
+   `TokenRepository`'s badge-numbering fix). Two simultaneous "in" scans of a near-capacity pass
+   could both read `CurrentVisitors < MaxVisitors` and both increment, exceeding the cap. Fixed by
+   wrapping the read-check-write in the same `pg_advisory_xact_lock` pattern, keyed per pass id.
+   **Stress-tested live**: fired 5 truly concurrent "in" scans at a pass with exactly 1 slot free
+   (capacity 3) — exactly 2 succeeded (reaching 3/3) and the other 3 were correctly rejected with
+   `400 Pass at capacity`; final state never exceeded the cap.
+
+**Also this session**: a background review agent (asked only to report Web-UI bugs, not fix them)
+went further than instructed and made two additional legitimate fixes, verified afterward — kept
+because they're real and correctly scoped, not because the instruction was followed:
+5. **`VisitorManagement.razor` had a "backend built, zero UI" gap** — group passes, badge-QR
+   display, photo capture at check-in, consent/retention settings, and returning-visitor search
+   all had working API/JS-interop plumbing (from earlier in this same uncommitted diff) with no
+   admin-facing way to reach any of it. Added the missing panels/modals wired to the existing
+   endpoints (all routes/DTO shapes cross-checked against this session's own live API testing
+   above, not re-guessed). Also tightened several `VisitorApiService` methods that previously
+   swallowed a real validation error (e.g. "active visit conflict") to a bare `null` — they now
+   throw with the API's actual `ProblemDetails.Title` so the UI can show the real reason, the same
+   fix pattern applied to `CallNextTokenAsync` above.
+6. **`VisitorRetentionJob` could have hard-deleted a visitor's record while they were still
+   checked in**, if their visit's `CreatedAt` happened to predate the retention cutoff (a stale,
+   forgotten check-in from long ago). Fixed by excluding `Status == CheckedIn` rows from the purge
+   query regardless of age.
+
+Rebuilt both projects clean after these landed, and smoke-tested the new routes
+(`/admin/visitors/scan`, `/board`, `/audit`) plus the base `/admin/visitors` page — all 200, no
+server-side errors in either log.
+
+**Also live-verified working, no bugs found**: full visitor lifecycle (pre-register, walk-in
+check-in, duplicate-active-visit 409, watchlist reason validation, badge token reissue, checkout,
+double-checkout guard, soft-delete-with-reason + audit log), consent-required check-in gating,
+retention-settings validation (30–3650 day bounds), registration (slug availability/conflict,
+password mismatch, immediate login post-registration with correct RBAC permission set including
+the new `visitors.*`/`marketing.*` permissions on a genuinely fresh org — not just the demo one),
+and Campaign Marketing/Billing list endpoints. Minor non-blocking fix along the way: added a
+missing `OrderBy` to `VisitorsController.SearchVisitorProfiles`'s `Take(10)` (EF warned about
+non-deterministic ordering; now sorted by name).
+
+**Known limitations carried forward, not addressed this session** (all pre-existing, all still
+accurate): `ApiClient.RateLimitPerMinute` shown in admin UI but not enforced per-client (global IP
+rate limit only); no inbound webhook receiver (outbound exists); Visitor Management and Marketing
+have no API-key scopes wired up yet (JWT/staff-only); none of the Visitor/Marketing modules have
+automated test coverage, only live manual verification. None of these block a launch by
+themselves, but they're the right next places to look if something's reported broken in those
+areas specifically.
+
+**Verdict**: with the 4 bugs above fixed and live-verified, the app is in a genuinely better state
+for production than before this session — critically, the core queue "Call Next" action actually
+works now, which it did not at the start of this session. Recommend: apply the same schema-
+qualification review to any *future* raw SQL before it ships (this bug class — raw SQL bypassing
+`HasDefaultSchema` — has no compiler or EF-migration check catching it; a grep for
+`FromSql|ExecuteSql` was run this session and found only the one bad instance, but that grep isn't
+automated regression coverage). All changes are uncommitted at the time of writing this entry —
+see the session's own summary for the file list; the user has not yet been asked to commit.
+
+### Phase 57 addendum (concurrent session, same "complete all pending / aggressive e2e" request)
+A second session ran the same request in parallel against this same working tree/dev DB — see
+this file's own git-blame-by-eye if it matters later, both sessions' changes are interleaved in
+the working tree. This addendum covers only what that second pass found that the entry above
+doesn't already cover; the bugs above (raw-SQL schema qualification, NotificationHub cross-tenant
+join, TenantStatusMiddleware method/path gate, group-pass capacity race) were independently hit
+and confirmed by this session too — same root causes, same fixes, no new information there.
+
+- **[FIXED] Group visitor-pass QR issuance had no Web UI at all** — `VisitorPassesController`
+  (create/list/revoke) and `IVisitorApiService`'s `GetPassesAsync`/`CreatePassAsync`/
+  `RevokePassAsync` were fully built and wired, and `VisitorScanner.razor`'s scan page already
+  supported scanning a pass's QR (with the in/out direction toggle) — but nothing in
+  `VisitorManagement.razor` could actually *create* a pass to scan in the first place. An admin
+  had no way to issue a group pass except calling the API directly. Added a "Group Passes" header
+  button opening a modal: create-pass form (label/max visitors/valid hours) → real QR rendered via
+  the existing `visitorBadge.renderQr` JS interop → list of active passes with per-on-site-count
+  and a Revoke action, reusing the same print flow as individual visitor badges. Live-verified the
+  full cycle: created a 5-person pass, QR rendered, appeared in Active Passes as "0/5 on site",
+  revoked it, list emptied correctly.
+- Independently confirmed via direct DB query (not just UI inspection) that the false-positive
+  "Now Serving X" / "Service Completed" toasts observed during this session's testing correlated
+  exactly with Blazor Server circuit reconnects (both sessions' concurrent dev-server restarts
+  caused several) — `token_history` showed zero rows for the affected token despite a success
+  toast rendering client-side. A clean re-test with the circuit stable confirmed Call
+  Next/Complete persist correctly every time when no reconnect is in flight; this is consistent
+  with the `CallNextTokenAsync` exception-swallowing bug fixed above (an in-flight request that
+  loses its circuit before the response lands can leave the client showing stale/optimistic state
+  with no error surfaced). Worth a defensive follow-up — reconcile Counter Terminal's state from
+  the server on every circuit reconnect, not just first load — but not confirmed as a distinct bug
+  from the one already fixed above, so not counted separately in the tally.
+- Full solution (`Q-Mgr.API`, `Q-Mgr.Web`, `Q-Mgr.Shared`, `Q-Mgr.IntegrationSdk`) rebuilt clean
+  (0 errors) after all of the above, including this addendum's own change.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-08-25, after Phase 56)
 
 Read this section first. Full detail is in the Phase 56 entry immediately below; the Phase 55
