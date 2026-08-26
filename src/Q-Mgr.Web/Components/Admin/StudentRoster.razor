@@ -408,6 +408,7 @@
     private bool includeInactive = false;
     private string filterQuery = "";
     private List<StudentDto> students = new();
+    private PrintLetterheadDto? printLetterhead;
 
     private IEnumerable<StudentDto> FilteredStudents => string.IsNullOrWhiteSpace(filterQuery)
         ? students
@@ -498,6 +499,14 @@
 
         var classColor = GetClassColor(student.ClassName);
         var classLine = string.IsNullOrEmpty(student.ClassName) ? "Unassigned" : System.Net.WebUtility.HtmlEncode(student.ClassName);
+        var contactLine = LetterheadContactLine();
+        var contactLineHtml = string.IsNullOrEmpty(contactLine) ? "" : $"""<div class="contact-line">{contactLine}</div>""";
+        var orgHeaderHtml = string.IsNullOrEmpty(LetterheadOrgName) ? "" : $"""
+            <div class="org-header">
+                {LetterheadLogoTag}
+                <span>{LetterheadOrgName}</span>
+            </div>
+            """;
 
         var html = $$"""
             <html>
@@ -507,24 +516,29 @@
                     @page { size: 90mm 130mm; margin: 6mm; }
                     body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
                     .badge { border: 2px solid {{classColor}}; border-radius: 8px; overflow: hidden; }
-                    .class-band { background: {{classColor}}; color: #fff; font-weight: 700; font-size: 14px; padding: 6px 0; letter-spacing: 0.5px; }
+                    .org-header { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px 0; font-size: 13px; font-weight: 700; color: #333; }
+                    .org-header img { width: 20px; height: 20px; object-fit: contain; }
+                    .class-band { background: {{classColor}}; color: #fff; font-weight: 700; font-size: 14px; padding: 6px 0; letter-spacing: 0.5px; margin-top: 8px; }
                     .content { padding: 16px; }
-                    img { width: 170px; height: 170px; }
+                    img.qr-img { width: 170px; height: 170px; }
                     .name { font-size: 20px; font-weight: 700; margin-top: 10px; }
                     .relationship { font-size: 13px; color: #555; margin-top: 2px; }
                     .hint { font-size: 11px; color: #888; margin-top: 12px; }
                     .date { font-size: 10px; color: #aaa; margin-top: 6px; }
+                    .contact-line { font-size: 10px; color: #999; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
                 </style>
             </head>
             <body>
                 <div class="badge">
+                    {{orgHeaderHtml}}
                     <div class="class-band">{{classLine}}</div>
                     <div class="content">
-                        <img src="{{qrDataUrl}}" alt="QR pass" />
+                        <img class="qr-img" src="{{qrDataUrl}}" alt="QR pass" />
                         <div class="name">{{System.Net.WebUtility.HtmlEncode(guardian.FullName)}}</div>
                         <div class="relationship">{{System.Net.WebUtility.HtmlEncode(guardian.Relationship)}} of {{System.Net.WebUtility.HtmlEncode(student.FullName)}}</div>
                         <div class="hint">Visiting Day Pass — present at check-in.<br />Not valid for entry without staff verification.</div>
                         <div class="date">Printed {{DateTime.Now:MMM dd, yyyy}}</div>
+                        {{contactLineHtml}}
                     </div>
                 </div>
             </body>
@@ -532,7 +546,7 @@
             """;
 
         await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
-        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
         if (!result.Success)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
@@ -544,7 +558,9 @@
     // border/band color inline rather than through a single hardcoded class rule.
     private const string CardCss = """
         .card { width: 85.6mm; height: 54mm; box-sizing: border-box; border: 1.5px solid #ccc; border-radius: 3mm; overflow: hidden; display: flex; flex-direction: column; background: #fff; }
-        .class-band { color: #fff; font-size: 6.5pt; font-weight: 700; padding: 1.5mm 3mm; display: flex; justify-content: space-between; text-transform: uppercase; letter-spacing: 0.3px; }
+        .class-band { color: #fff; font-size: 6.5pt; font-weight: 700; padding: 1.5mm 3mm; display: flex; align-items: center; justify-content: space-between; gap: 2mm; text-transform: uppercase; letter-spacing: 0.3px; }
+        .class-band .org-name { display: flex; align-items: center; gap: 1.5mm; text-align: right; }
+        .letterhead-logo { width: 4mm; height: 4mm; object-fit: contain; border-radius: 1px; background: #fff; flex-shrink: 0; }
         .body { flex: 1; display: flex; padding: 2mm 3mm; gap: 2mm; overflow: hidden; }
         .info { flex: 1; min-width: 0; }
         .student-name { font-size: 11pt; font-weight: 700; line-height: 1.15; }
@@ -554,8 +570,26 @@
         .guardian-row .rel { color: #777; }
         .guardian-row.none { font-style: italic; color: #999; }
         .qr { width: 15mm; height: 15mm; flex-shrink: 0; }
-        .footer { font-size: 5pt; color: #999; text-align: center; padding: 1mm; border-top: 0.5px solid #eee; }
+        .footer { font-size: 5pt; color: #999; text-align: center; padding: 1mm 2mm; border-top: 0.5px solid #eee; }
+        .footer .contact-line { color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .footer .disclaimer-line { margin-top: 0.5mm; }
         """;
+
+    // The tenant's own identity (name/address/contact), not the app's — fetched once and reused
+    // across every card this page prints. Null (fetch failed) or an empty OrganizationName both
+    // degrade gracefully to "just omit the letterhead" rather than showing a placeholder.
+    private string LetterheadOrgName => string.IsNullOrWhiteSpace(printLetterhead?.OrganizationName)
+        ? "" : System.Net.WebUtility.HtmlEncode(printLetterhead.OrganizationName);
+
+    private string LetterheadLogoTag => string.IsNullOrWhiteSpace(printLetterhead?.LogoUrl)
+        ? "" : $"""<img class="letterhead-logo" src="{System.Net.WebUtility.HtmlEncode(printLetterhead.LogoUrl)}" alt="" />""";
+
+    private string LetterheadContactLine()
+    {
+        var parts = new List<string?> { printLetterhead?.Address, printLetterhead?.ContactPhone, printLetterhead?.ContactEmail }
+            .Where(p => !string.IsNullOrWhiteSpace(p));
+        return parts.Any() ? System.Net.WebUtility.HtmlEncode(string.Join("  ·  ", parts)) : "";
+    }
 
     /// <summary>
     /// Builds one card's markup (a durable, ID-card-sized — CR80, 85.6x54mm, standard credit-
@@ -578,9 +612,15 @@
                 $"""<div class="guardian-row">{System.Net.WebUtility.HtmlEncode(g.FullName)} <span class="rel">({System.Net.WebUtility.HtmlEncode(g.Relationship)})</span></div>"""))
             : """<div class="guardian-row none">No guardians on file yet</div>""";
 
+        var contactLine = LetterheadContactLine();
+        var contactLineHtml = string.IsNullOrEmpty(contactLine) ? "" : $"""<div class="contact-line">{contactLine}</div>""";
+
         return $$"""
             <div class="card" style="border-color:{{classColor}}">
-                <div class="class-band" style="background:{{classColor}}"><span>{{classLine}}</span><span>Student Visitation Card</span></div>
+                <div class="class-band" style="background:{{classColor}}">
+                    <span>{{classLine}}</span>
+                    <span class="org-name">{{LetterheadOrgName}}{{LetterheadLogoTag}}</span>
+                </div>
                 <div class="body">
                     <div class="info">
                         <div class="student-name">{{System.Net.WebUtility.HtmlEncode(student.FullName)}}</div>
@@ -590,7 +630,10 @@
                     </div>
                     <img class="qr" src="{{qrDataUrl}}" alt="QR" />
                 </div>
-                <div class="footer">Verify guardian identity at check-in — not a payment or government ID.</div>
+                <div class="footer">
+                    {{contactLineHtml}}
+                    <div class="disclaimer-line">Student Visitation Card — verify guardian identity at check-in.</div>
+                </div>
             </div>
             """;
     }
@@ -628,7 +671,7 @@
             """;
 
         await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
-        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
         if (!result.Success)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
@@ -692,7 +735,7 @@
             """;
 
         await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
-        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
         if (!result.Success)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
@@ -750,6 +793,7 @@
 
         var colorSettings = await StudentApi.GetClassColorsAsync(branchId);
         classColors = colorSettings.Colors;
+        printLetterhead = await StudentApi.GetPrintLetterheadAsync(branchId);
 
         await LoadStudents();
     }

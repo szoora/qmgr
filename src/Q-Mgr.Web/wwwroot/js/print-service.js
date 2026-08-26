@@ -27,7 +27,11 @@ window.QMgrPrint = {
 
         switch (this.currentMethod) {
             case 'browser':
-                return await this.browserPrint(data.htmlContent);
+                // autoPrint defaults true (unset = true) so every existing caller — token
+                // receipts, the check-in badge — keeps today's "open then immediately trigger
+                // the OS print dialog" behavior. Pass autoPrint:false to open a reviewable
+                // preview window instead, left open for the user to print themselves when ready.
+                return await this.browserPrint(data.htmlContent, data.autoPrint !== false);
             case 'qztray':
                 return await this.qzTrayPrint(data.escPosData, data.printerName);
             case 'webusb':
@@ -44,11 +48,13 @@ window.QMgrPrint = {
     // ===================
     // Browser Print
     // ===================
-    browserPrint: function (htmlContent) {
+    browserPrint: function (htmlContent, autoPrint) {
         return new Promise((resolve) => {
             try {
-                // Create print window
-                const printWindow = window.open('', '_blank', 'width=400,height=600');
+                // Create print window — wider than the old 400px default so an A4 batch sheet
+                // (or a landscape ID card) isn't cramped when autoPrint is false and the window
+                // stays open for the user to actually look at.
+                const printWindow = window.open('', '_blank', 'width=900,height=700');
 
                 if (!printWindow) {
                     resolve({ success: false, message: 'Popup blocked. Please allow popups for printing.' });
@@ -57,6 +63,15 @@ window.QMgrPrint = {
 
                 printWindow.document.write(htmlContent);
                 printWindow.document.close();
+
+                if (autoPrint === false) {
+                    // Preview only — leave the window open and don't touch window.print() at
+                    // all, so the user reviews it and prints themselves (Ctrl+P or the OS/
+                    // browser's own UI) only if and when they choose to.
+                    printWindow.focus();
+                    resolve({ success: true, message: 'Preview opened' });
+                    return;
+                }
 
                 // Wait for content to load then print
                 printWindow.onload = function () {

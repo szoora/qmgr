@@ -2,6 +2,22 @@ using QMgr.Domain.Enums;
 
 namespace QMgr.Application.DTOs;
 
+/// <summary>
+/// Letterhead info for printed Student Visitation Cards / Visiting Day Passes — the tenant's own
+/// identity (school name, this branch's address, contact details), not the app's branding.
+/// Deliberately its own DTO rather than reusing OrganizationBrandingDto, which is explicitly
+/// anonymous-safe and excludes contact info by design (served to public kiosk/display screens);
+/// this one is only ever fetched from an already-authenticated admin page.
+/// </summary>
+public record PrintLetterheadDto
+{
+    public string OrganizationName { get; init; } = string.Empty;
+    public string? Address { get; init; }
+    public string? ContactPhone { get; init; }
+    public string? ContactEmail { get; init; }
+    public string? LogoUrl { get; init; }
+}
+
 public record StudentDto
 {
     public Guid Id { get; init; }

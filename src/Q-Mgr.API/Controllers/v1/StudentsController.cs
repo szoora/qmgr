@@ -127,6 +127,33 @@ public class StudentsController : ControllerBase
         return Ok(request);
     }
 
+    /// <summary>
+    /// Letterhead info for printed Student Visitation Cards / Visiting Day Passes — the tenant's
+    /// real name/address/contact details, not the app's own branding. Address prefers this
+    /// specific branch's own address over the organization's (a multi-campus tenant's branches
+    /// can be in different places); falls back to the organization's if the branch has none set.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/print-letterhead")]
+    [RequirePermission(Permissions.StudentsView)]
+    [ProducesResponseType(typeof(PrintLetterheadDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPrintLetterhead(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var branch = await _context.Branches.Include(b => b.Organization).FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch?.Organization == null) return NotFound();
+
+        return Ok(new PrintLetterheadDto
+        {
+            OrganizationName = string.IsNullOrWhiteSpace(branch.Organization.BrandName) ? branch.Organization.Name : branch.Organization.BrandName,
+            Address = string.IsNullOrWhiteSpace(branch.Address) ? branch.Organization.Address : branch.Address,
+            ContactPhone = branch.Organization.ContactPhone,
+            ContactEmail = branch.Organization.ContactEmail,
+            LogoUrl = branch.Organization.LogoUrl
+        });
+    }
+
     // ---------------------------------------------------------------------
     // Student / Guardian CRUD
     // ---------------------------------------------------------------------
