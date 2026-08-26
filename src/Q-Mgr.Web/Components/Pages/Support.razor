@@ -1,0 +1,134 @@
+@page "/support"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@attribute [AllowAnonymous]
+
+<PageTitle>Support - Q-Mgr</PageTitle>
+
+<div class="doc-page">
+    <AmbientBackground />
+
+    <div class="doc-shell">
+        <div class="doc-topbar">
+            <a href="/" class="doc-brand">
+                <span class="doc-brand-mark"><QIcon Name="people-fill" /></span>
+                <span>Q-Mgr</span>
+            </a>
+            <a href="/login" class="doc-topbar-link">Back to Sign In</a>
+        </div>
+
+        <article class="doc-card">
+            <header class="doc-header">
+                <h1>Support</h1>
+                <p class="doc-meta">Real humans, one inbox &middot; SACC Software Limited</p>
+            </header>
+
+            <p class="doc-lede">
+                No ticket portal, no chatbot standing between you and an answer — email goes to the people who
+                actually build and run Q-Mgr, and we aim to get back to you within one business day.
+            </p>
+
+            <div class="doc-contact-grid">
+                <div class="doc-contact-tile">
+                    <div class="doc-contact-icon"><QIcon Name="envelope-fill" /></div>
+                    <h3>General &amp; Technical Support</h3>
+                    <p>Something's not working, or you're not sure how to do something.</p>
+                    <a href="mailto:support@getsacc.com">support@getsacc.com</a>
+                </div>
+                <div class="doc-contact-tile">
+                    <div class="doc-contact-icon"><QIcon Name="credit-card-fill" /></div>
+                    <h3>Billing &amp; Plans</h3>
+                    <p>Questions about your subscription, an invoice, or upgrading.</p>
+                    <a href="mailto:support@getsacc.com?subject=Billing question">support@getsacc.com</a>
+                </div>
+                <div class="doc-contact-tile">
+                    <div class="doc-contact-icon"><QIcon Name="shield-lock-fill" /></div>
+                    <h3>Security Reports</h3>
+                    <p>Found a vulnerability? Please tell us before anyone else.</p>
+                    <a href="mailto:support@getsacc.com?subject=Security disclosure">support@getsacc.com</a>
+                </div>
+                <div class="doc-contact-tile">
+                    <div class="doc-contact-icon"><QIcon Name="code-slash" /></div>
+                    <h3>API &amp; Integrations</h3>
+                    <p>Building on top of Q-Mgr, or connecting an external system.</p>
+                    <a href="/api/docs" target="_blank">View API documentation</a>
+                </div>
+            </div>
+
+            <h2>Frequently asked</h2>
+
+            <div class="doc-faq-item">
+                <h3>How long is the free trial, and what happens when it ends?</h3>
+                <p>
+                    14 days, no card required to start. If it ends without an active subscription, your account
+                    moves into a restricted state rather than being wiped — your branches, staff, and history
+                    are all still there. Subscribe from the billing page and everything picks back up exactly
+                    where it left off.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>Can I switch plans later, or add more branches?</h3>
+                <p>
+                    Yes, any time, from Billing &rarr; Plans inside the app. Upgrades take effect immediately;
+                    downgrades apply from your next billing cycle so you're not cut off mid-period.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>How long do you keep our visitors' and customers' data?</h3>
+                <p>
+                    Visitor records default to a 730-day (two-year) retention window, and you can change that to
+                    anything from 30 days to 10 years under Visitor Management &rarr; Settings, to match whatever
+                    your own compliance requirements are. Full detail is in our
+                    <a href="/privacy">Privacy Policy</a>.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>If we leave, can we take our data with us?</h3>
+                <p>
+                    Yes. Email us before you cancel and we'll help you get an export of your queue history,
+                    visitor logs, and contact lists in a usable format.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>Someone unsubscribed from a campaign message — what actually happens?</h3>
+                <p>
+                    They're marked opted-out against that contact record immediately, and every future broadcast
+                    skips them automatically. It's not something you need to manage by hand.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>I forgot my password.</h3>
+                <p>
+                    Use <a href="/forgot-password">Forgot password</a> from the sign-in screen. If you don't
+                    have access to the email on file, contact us directly and we'll verify you another way.
+                </p>
+            </div>
+
+            <div class="doc-faq-item">
+                <h3>Do you have a status page for outages?</h3>
+                <p>
+                    Not a separate public one yet — if something's down, email us and you'll get a direct,
+                    honest answer about what's happening and where things stand, faster than a status page auto-refreshing anyway.
+                </p>
+            </div>
+
+            <footer class="doc-footer">
+                <div class="doc-footer-links">
+                    <a href="/privacy">Privacy Policy</a>
+                    <span>&middot;</span>
+                    <a href="/terms">Terms of Service</a>
+                    <span>&middot;</span>
+                    <a href="/login">Sign In</a>
+                </div>
+            </footer>
+        </article>
+
+        <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
+    </div>
+</div>

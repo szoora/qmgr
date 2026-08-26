@@ -1,0 +1,170 @@
+@page "/terms"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@attribute [AllowAnonymous]
+
+<PageTitle>Terms of Service - Q-Mgr</PageTitle>
+
+<div class="doc-page">
+    <AmbientBackground />
+
+    <div class="doc-shell">
+        <div class="doc-topbar">
+            <a href="/" class="doc-brand">
+                <span class="doc-brand-mark"><QIcon Name="people-fill" /></span>
+                <span>Q-Mgr</span>
+            </a>
+            <a href="/login" class="doc-topbar-link">Back to Sign In</a>
+        </div>
+
+        <article class="doc-card">
+            <header class="doc-header">
+                <h1>Terms of Service</h1>
+                <p class="doc-meta">Effective 26 August 2026 &middot; SACC Software Limited</p>
+            </header>
+
+            <p class="doc-lede">
+                This is the agreement between you (or the organization you're signing up on behalf of) and SACC
+                Software Limited for the use of Q-Mgr. Registering an organization, or clicking "I agree" on the
+                sign-up form, means you're accepting it — so it's worth actually reading, and we've tried to
+                write it so that's not a chore.
+            </p>
+
+            <h2>1. Who can use Q-Mgr</h2>
+            <p>
+                You need to be at least 18 and have real authority to sign your organization up — a business
+                owner, an IT admin, an operations manager, whoever's actually responsible for making this call.
+                If you're setting this up on behalf of a company, "you" throughout this document means that
+                company, and you're confirming you're allowed to bind it to these terms.
+            </p>
+
+            <h2>2. What Q-Mgr actually is</h2>
+            <p>
+                Q-Mgr is a queue and visitor management platform: ticket-based queuing across service counters,
+                a Visitor Management module for front-desk check-in and badges, digital signage for waiting-area
+                screens, a Campaign Marketing tool for SMS/email/WhatsApp/Telegram outreach to your own contacts,
+                and the reporting that ties it together. Every organization gets its own isolated space — your
+                data, your branches, your users — even though we all run on the same platform underneath.
+            </p>
+
+            <h2>3. Your account and your trial</h2>
+            <p>
+                New organizations start on a free trial with no card required up front &mdash; the current trial
+                length is always shown on the registration page itself, since it's the kind of number that
+                changes more often than this document should. During the trial
+                you can use the plan's features without being charged; if the trial ends without an active paid
+                subscription, the account moves to a restricted state rather than being deleted outright — your
+                data stays put, you just can't keep operating day-to-day until you either subscribe or reach out
+                to us. You're responsible for keeping your login credentials to yourself and for what happens
+                under your account, so use a real password and don't share logins between staff who should each
+                have their own.
+            </p>
+
+            <h2>4. Plans, billing, and cancelling</h2>
+            <p>
+                We offer a Free tier and paid Starter, Professional, and Enterprise plans, each with different
+                limits on branches, staff seats, and monthly ticket volume — the current pricing and limits are
+                shown on the billing page inside the app, since those numbers change more often than this
+                document should. Paid subscriptions are billed monthly or annually through Stripe, in advance.
+                If a payment fails and isn't resolved, we'll suspend account access rather than let usage run up
+                against an unpaid bill — you'll see exactly why, with a way to fix it, not just a dead login
+                page. You can cancel a paid subscription at any time from the billing page; you keep access
+                through the end of the period you've already paid for, and we don't do partial refunds for
+                unused time unless something on our end genuinely went wrong.
+            </p>
+
+            <h2>5. Using it responsibly</h2>
+            <p>You agree not to:</p>
+            <ul>
+                <li>Use Q-Mgr for anything illegal, or to harass, defraud, or discriminate against anyone.</li>
+                <li>Send Campaign Marketing messages to people who haven't given you a real reason to expect them — a past customer, a patient, someone who opted in. The unsubscribe link on every message is there so recipients can opt out; removing it, ignoring opt-outs, or buying a contact list to blast is a violation of these terms and, in most places, the law. That's on you as the sender, not on us.</li>
+                <li>Use the Visitor Management watchlist feature to flag people for discriminatory reasons. It exists for genuine security purposes — a documented past incident, a real safety concern — not as a way to informally blacklist someone you'd rather not deal with.</li>
+                <li>Try to break tenant isolation, access another organization's data, or probe the platform for vulnerabilities without telling us first (we'd rather you email us about a security issue than exploit it — see Section 10).</li>
+                <li>Resell or sublicense access to the platform itself without a separate written agreement with us.</li>
+            </ul>
+            <p>
+                If we find an account doing any of the above, we can suspend or terminate it. We'd rather warn
+                you and give you a chance to fix it — abuse serious enough for an instant termination is the
+                exception, not our default move.
+            </p>
+
+            <h2>6. Whose data it is</h2>
+            <p>
+                Everything you or your staff put into Q-Mgr — your visitor logs, your queue history, your
+                contact lists, your branding — is yours. We don't claim ownership of it, and we don't use it for
+                anything beyond running the service you're paying us for and, in aggregate and de-identified
+                form, understanding how the platform gets used so we can improve it. If your account is
+                cancelled, your data is retained for a short recovery window and then deleted along with any
+                associated visitor/customer records, following the same retention rules described in our
+                Privacy Policy.
+            </p>
+
+            <h2>7. Uptime and things breaking</h2>
+            <p>
+                We run Q-Mgr to be available and reliable, and we take outages seriously when they happen. We're
+                not going to promise a specific uptime percentage with financial penalties attached here — that
+                kind of formal SLA is something Enterprise customers can discuss with us directly, not a blanket
+                claim we'll make to everyone up front. What we will say plainly: if the service is down, we're
+                already working on it, and we'll tell you what happened once we know.
+            </p>
+
+            <h2>8. Ending the relationship</h2>
+            <p>
+                You can close your account whenever you like from the billing page, or by emailing us. We can
+                suspend or terminate an account for non-payment, a real breach of Section 5, or if we're required
+                to by law — and where it's practical to do so without making the underlying problem worse, we'll
+                give notice and a chance to fix things first. On termination, access stops, and your data follows
+                the retention and deletion rules described in our Privacy Policy rather than disappearing
+                instantly.
+            </p>
+
+            <h2>9. Liability</h2>
+            <p>
+                Q-Mgr is provided as-is. We work to keep it accurate and available, but we can't promise it will
+                be error-free or uninterrupted, and to the extent the law allows, we're not liable for indirect
+                or consequential losses — lost business, lost data from something outside our control, that sort
+                of thing. Nothing here limits liability that can't legally be limited, like liability for our own
+                gross negligence or willful misconduct.
+            </p>
+
+            <h2>10. Found a security issue?</h2>
+            <p>
+                Tell us before you tell anyone else: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
+                We won't pursue action against a good-faith report made responsibly, and we genuinely want to
+                know before a real problem finds us the hard way.
+            </p>
+
+            <h2>11. Changes to these terms</h2>
+            <p>
+                If we change these terms in a way that meaningfully affects how you use Q-Mgr, we'll update the
+                effective date above and email account admins directly. Continuing to use the service after that
+                means you've accepted the update; if you don't agree with a change, you can close your account
+                before it takes effect.
+            </p>
+
+            <h2>12. Governing law</h2>
+            <p>
+                These terms are governed by the laws of the Republic of Uganda. Any dispute that can't be worked
+                out directly between us will be handled under that jurisdiction.
+            </p>
+
+            <h2>13. Contact</h2>
+            <p>
+                Questions about any of this: <a href="mailto:support@getsacc.com">support@getsacc.com</a>.
+            </p>
+
+            <footer class="doc-footer">
+                <div class="doc-footer-links">
+                    <a href="/privacy">Privacy Policy</a>
+                    <span>&middot;</span>
+                    <a href="/support">Support</a>
+                    <span>&middot;</span>
+                    <a href="/login">Sign In</a>
+                </div>
+            </footer>
+        </article>
+
+        <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
+    </div>
+</div>

@@ -1,0 +1,56 @@
+@* Thin falling-bar backdrop used behind the public auth/document pages, over the solid brand
+   background. See wwwroot/js/ambientBackground.js for the actual animation — this component is
+   just the canvas element plus its lifecycle wiring. *@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<canvas id="@_canvasId" class="ambient-canvas @(Contained ? "contained" : "")" aria-hidden="true"></canvas>
+
+<style>
+    /* Fixed by default — this only ever needs to cover the viewport, not whatever height the
+       page content grows to (a long policy document can be several viewports tall; a canvas
+       sized to match would mean an unnecessarily large backing store for no visual gain, since
+       nothing above the fold changes by scrolling). Contained mode (Register's two-panel layout,
+       where only the branding panel — not the whole page — gets the effect) scopes it to its
+       positioned parent instead. */
+    .ambient-canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 0;
+        pointer-events: auto;
+    }
+
+    .ambient-canvas.contained {
+        position: absolute;
+    }
+</style>
+
+@code {
+    /// <summary>When true, scopes the canvas to its positioned parent (which must itself set
+    /// position: relative/absolute and overflow: hidden) instead of the full viewport.</summary>
+    [Parameter] public bool Contained { get; set; }
+
+    private readonly string _canvasId = $"ambient-{Guid.NewGuid():N}";
+    private bool _started;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("ambientBackground.start", _canvasId);
+                _started = true;
+            }
+            catch { /* pre-render / JS not yet available — nothing visible is lost */ }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!_started) return;
+        try { await JS.InvokeVoidAsync("ambientBackground.stop"); } catch { }
+    }
+}
