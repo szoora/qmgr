@@ -1183,6 +1183,11 @@ a:hover {
     background: rgba(220, 38, 38, 0.1);
 }
 
+.stats-card .stats-change.neutral {
+    color: var(--qm-text-muted);
+    background: var(--qm-bg-elevated);
+}
+
 /* Queue Board */
 .queue-board {
     display: grid;
