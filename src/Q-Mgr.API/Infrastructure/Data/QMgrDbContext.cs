@@ -46,6 +46,8 @@ public class QMgrDbContext : DbContext
     public DbSet<TokenHistory> TokenHistories => Set<TokenHistory>();
     public DbSet<Feedback> Feedbacks => Set<Feedback>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
+    public DbSet<VisitorProfile> VisitorProfiles => Set<VisitorProfile>();
+    public DbSet<VisitorPass> VisitorPasses => Set<VisitorPass>();
 
     #endregion
 

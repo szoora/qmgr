@@ -10,10 +10,10 @@ namespace QMgr.Middleware;
 
 /// <summary>
 /// Middleware that resolves the current tenant from various sources:
-/// 1. Subdomain (acme.qmgr.app)
+/// 1. Subdomain (sacc.qmgr.app)
 /// 2. X-Tenant-Id header
 /// 3. JWT claim (org_id)
-/// 4. Query string (?tenant=acme)
+/// 4. Query string (?tenant=sacc)
 /// </summary>
 public class TenantResolutionMiddleware
 {

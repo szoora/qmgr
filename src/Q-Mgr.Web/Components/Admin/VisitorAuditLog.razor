@@ -1,0 +1,108 @@
+@page "/admin/visitors/audit"
+@inject IVisitorApiService VisitorApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Visitor Deletion Audit - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Visitor Deletion Audit</h1>
+            <p class="subtitle">Every deleted visit record for this branch — the records themselves were never actually removed, only hidden from the active log</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Back to Visitors" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading audit log...</span>
+        </div>
+    }
+    else if (!entries.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="clock-history" />
+            <h3>No Deletions</h3>
+            <p>No visitor records have been deleted for this branch</p>
+        </div>
+    }
+    else
+    {
+        <div class="audit-table-wrap">
+            <table class="audit-table">
+                <thead>
+                    <tr>
+                        <th>Visitor</th>
+                        <th>Badge</th>
+                        <th>Purpose</th>
+                        <th>Status at deletion</th>
+                        <th>Deleted by</th>
+                        <th>Deleted at</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in entries)
+                    {
+                        <tr>
+                            <td>@entry.FullName</td>
+                            <td class="mono">@entry.BadgeCode</td>
+                            <td>@entry.Purpose</td>
+                            <td>@entry.StatusAtDeletion</td>
+                            <td>@(entry.DeletedByUserName ?? "—")</td>
+                            <td>@entry.DeletedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
+                            <td class="reason">@entry.DeletionReason</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; max-width: 640px; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+
+    .audit-table-wrap { overflow-x: auto; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
+    .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .audit-table th { text-align: left; padding: 10px 14px; color: var(--qm-text-muted); font-weight: 600; border-bottom: 1px solid var(--qm-border); white-space: nowrap; }
+    .audit-table td { padding: 10px 14px; border-bottom: 1px solid var(--qm-border); color: var(--qm-text-primary); vertical-align: top; }
+    .audit-table tr:last-child td { border-bottom: none; }
+    .mono { font-family: monospace; }
+    .reason { color: var(--qm-text-muted); max-width: 320px; }
+</style>
+
+@code {
+    private Guid branchId;
+    private List<DeletedVisitorDto> entries = new();
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        entries = await VisitorApi.GetDeletedVisitorsAsync(branchId);
+        isLoading = false;
+    }
+}

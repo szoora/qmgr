@@ -272,5 +272,6 @@ BillingJobsRegistration.RegisterRecurringJobs();
 RateLimitJobsRegistration.RegisterRecurringJobs();
 WebhookJobsRegistration.RegisterRecurringJobs();
 BroadcastJobsRegistration.RegisterRecurringJobs();
+VisitorRetentionJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

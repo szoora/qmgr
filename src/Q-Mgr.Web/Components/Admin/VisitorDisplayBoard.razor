@@ -1,0 +1,217 @@
+@page "/admin/visitors/board"
+@implements IDisposable
+@inject IVisitorApiService VisitorApi
+@inject INotificationClientService NotificationClient
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Visitor Activity Board - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Visitor Activity Board</h1>
+            <p class="subtitle">Live feed — updates the instant someone checks in, checks out, or is flagged</p>
+        </div>
+        <div class="header-actions">
+            <span class="live-indicator @(isLive ? "on" : "off")"><QIcon Name="circle-fill" /> @(isLive ? "Live" : "Reconnecting...")</span>
+            <QButton Text="Back to Visitors" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+        </div>
+    </div>
+
+    <div class="board-cards">
+        <div class="board-card onsite">
+            <span class="board-value">@currentlyOnSite.Count</span>
+            <span class="board-label">Currently On Site</span>
+        </div>
+        <div class="board-card watchlist">
+            <span class="board-value">@currentlyOnSite.Count(v => v.IsWatchlisted)</span>
+            <span class="board-label">Watchlisted On Site</span>
+        </div>
+        <div class="board-card feed">
+            <span class="board-value">@feed.Count</span>
+            <span class="board-label">Events This Session</span>
+        </div>
+    </div>
+
+    <div class="board-grid">
+        <div class="board-panel">
+            <h2>Currently On Site</h2>
+            @if (!currentlyOnSite.Any())
+            {
+                <p class="board-empty">No one currently checked in</p>
+            }
+            else
+            {
+                <div class="onsite-list">
+                    @foreach (var v in currentlyOnSite.OrderByDescending(x => x.CheckedInAt))
+                    {
+                        <div class="onsite-row @(v.IsWatchlisted ? "watchlisted" : "")">
+                            <span class="onsite-name">
+                                @v.FullName
+                                @if (v.IsWatchlisted)
+                                {
+                                    <QIcon Name="shield-exclamation" />
+                                }
+                            </span>
+                            <span class="onsite-meta">@v.HostName · in @v.CheckedInAt?.ToString("HH:mm")</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="board-panel">
+            <h2>Live Feed</h2>
+            @if (!feed.Any())
+            {
+                <p class="board-empty">Waiting for activity...</p>
+            }
+            else
+            {
+                <div class="feed-list">
+                    @foreach (var entry in feed)
+                    {
+                        <div class="feed-row @(entry.Kind.ToString().ToLower())">
+                            <span class="feed-icon"><QIcon Name="@IconFor(entry.Kind)" /></span>
+                            <span class="feed-text">
+                                <strong>@entry.Visitor.FullName</strong> @LabelFor(entry.Kind)
+                                @if (entry.Kind == VisitorActivityKind.Flagged)
+                                {
+                                    <span class="feed-danger"> — @entry.Visitor.WatchlistReason</span>
+                                }
+                            </span>
+                            <span class="feed-time">@entry.OccurredAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .header-actions { display: flex; align-items: center; gap: 14px; }
+
+    .live-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+    .live-indicator .q-icon { font-size: 9px; }
+    .live-indicator.on { color: #3f7d58; }
+    .live-indicator.off { color: var(--qm-text-muted); }
+
+    .board-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .board-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; display: flex; flex-direction: column; gap: 4px; }
+    .board-card.watchlist { border-color: var(--qm-danger, #d9534f); }
+    .board-value { font-size: 32px; font-weight: 700; color: var(--qm-text-primary); }
+    .board-label { font-size: 13px; color: var(--qm-text-muted); }
+
+    .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @@media (max-width: 900px) { .board-grid { grid-template-columns: 1fr; } }
+    .board-panel { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; max-height: 560px; overflow-y: auto; }
+    .board-panel h2 { margin: 0 0 14px; font-size: 16px; color: var(--qm-text-primary); }
+    .board-empty { color: var(--qm-text-muted); font-size: 14px; }
+
+    .onsite-list { display: flex; flex-direction: column; gap: 10px; }
+    .onsite-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }
+    .onsite-row.watchlisted { background: rgba(217, 83, 79, 0.08); }
+    .onsite-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .onsite-meta { font-size: 12px; color: var(--qm-text-muted); }
+
+    .feed-list { display: flex; flex-direction: column; gap: 8px; }
+    .feed-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); font-size: 13px; animation: feed-in 0.3s ease-out; }
+    .feed-row.flagged { background: rgba(217, 83, 79, 0.1); }
+    .feed-icon { color: var(--qm-primary); flex-shrink: 0; }
+    .feed-text { flex: 1; color: var(--qm-text-primary); }
+    .feed-danger { color: var(--qm-danger, #d9534f); }
+    .feed-time { font-size: 11px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
+
+    @@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+
+@code {
+    private Guid branchId;
+    private List<VisitorDto> currentlyOnSite = new();
+    private readonly List<VisitorActivityEvent> feed = new();
+    private bool isLive;
+    private const int MaxFeedEntries = 100;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        var visitors = await VisitorApi.GetVisitorsAsync(branchId, VisitorStatus.CheckedIn);
+        currentlyOnSite = visitors;
+
+        isLive = NotificationClient.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
+        NotificationClient.OnVisitorActivityReceived += HandleActivity;
+    }
+
+    private async Task HandleActivity(VisitorActivityEvent activity)
+    {
+        if (activity.Visitor.BranchId != branchId) return;
+
+        feed.Insert(0, activity);
+        if (feed.Count > MaxFeedEntries) feed.RemoveRange(MaxFeedEntries, feed.Count - MaxFeedEntries);
+
+        switch (activity.Kind)
+        {
+            case VisitorActivityKind.CheckedIn:
+                currentlyOnSite.RemoveAll(v => v.Id == activity.Visitor.Id);
+                currentlyOnSite.Add(activity.Visitor);
+                break;
+            case VisitorActivityKind.CheckedOut:
+            case VisitorActivityKind.Deleted:
+                currentlyOnSite.RemoveAll(v => v.Id == activity.Visitor.Id);
+                break;
+            case VisitorActivityKind.Flagged:
+            case VisitorActivityKind.Unflagged:
+                var existing = currentlyOnSite.FirstOrDefault(v => v.Id == activity.Visitor.Id);
+                if (existing != null) currentlyOnSite[currentlyOnSite.IndexOf(existing)] = activity.Visitor;
+                break;
+        }
+
+        isLive = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string IconFor(VisitorActivityKind kind) => kind switch
+    {
+        VisitorActivityKind.CheckedIn => "box-arrow-in-right",
+        VisitorActivityKind.CheckedOut => "box-arrow-right",
+        VisitorActivityKind.PreRegistered => "calendar-plus",
+        VisitorActivityKind.Flagged => "shield-exclamation",
+        VisitorActivityKind.Unflagged => "shield-check",
+        VisitorActivityKind.Deleted => "trash",
+        _ => "circle"
+    };
+
+    private static string LabelFor(VisitorActivityKind kind) => kind switch
+    {
+        VisitorActivityKind.CheckedIn => "checked in",
+        VisitorActivityKind.CheckedOut => "checked out",
+        VisitorActivityKind.PreRegistered => "was pre-registered",
+        VisitorActivityKind.Flagged => "was flagged",
+        VisitorActivityKind.Unflagged => "was unflagged",
+        VisitorActivityKind.Deleted => "record deleted",
+        _ => ""
+    };
+
+    public void Dispose()
+    {
+        NotificationClient.OnVisitorActivityReceived -= HandleActivity;
+    }
+}

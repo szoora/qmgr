@@ -19,6 +19,12 @@ public interface INotificationClientService : IAsyncDisposable
     event Func<int, Task>? OnUnreadCountUpdated;
 
     /// <summary>
+    /// Event fired when a visitor check-in/out/flag/etc. happens on a joined branch — backs the
+    /// live visitor activity board. Rides this same connection rather than a second hub.
+    /// </summary>
+    event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
+
+    /// <summary>
     /// Current connection state
     /// </summary>
     HubConnectionState State { get; }

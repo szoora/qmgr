@@ -1,0 +1,171 @@
+@page "/admin/visitors/scan"
+@implements IAsyncDisposable
+@inject IVisitorApiService VisitorApi
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Scan Visitor Badge - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Scan Visitor Badge</h1>
+            <p class="subtitle">Point the camera at a visitor's QR badge or a group pass</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Back to Visitors" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+        </div>
+    </div>
+
+    <div class="scanner-layout">
+        <div class="scanner-frame">
+            <video id="scanner-video" autoplay playsinline muted></video>
+            <canvas id="scanner-canvas" class="scanner-hidden-canvas"></canvas>
+            @if (!cameraStarted)
+            {
+                <div class="scanner-overlay">
+                    <QButton Text="Start Camera" Icon="camera-fill" Variant="primary" OnClick="@StartCamera" />
+                </div>
+            }
+        </div>
+
+        <div class="scanner-side">
+            <div class="direction-toggle">
+                <span class="direction-label">For group passes, this scan means:</span>
+                <div class="direction-buttons">
+                    <button class="direction-btn @(direction == "in" ? "active" : "")" @onclick="@(() => direction = "in")">
+                        <QIcon Name="box-arrow-in-right" /> Entering
+                    </button>
+                    <button class="direction-btn @(direction == "out" ? "active" : "")" @onclick="@(() => direction = "out")">
+                        <QIcon Name="box-arrow-right" /> Leaving
+                    </button>
+                </div>
+                <p class="direction-hint">Individual visitor badges toggle automatically — this only matters for a shared group pass, which can't tell arrival from departure on its own.</p>
+            </div>
+
+            @if (lastResult != null)
+            {
+                <div class="scan-result @(lastResult.IsWatchlisted ? "watchlisted" : "")">
+                    @if (lastResult.IsWatchlisted)
+                    {
+                        <div class="scan-result-alert"><QIcon Name="shield-exclamation" /> WATCHLISTED VISITOR</div>
+                    }
+                    <div class="scan-result-icon">
+                        <QIcon Name="@(lastResult.Action == VisitorScanAction.CheckedIn ? "box-arrow-in-right" : "box-arrow-right")" />
+                    </div>
+                    <div class="scan-result-message">@lastResult.Message</div>
+                    @if (lastResult.Visitor != null)
+                    {
+                        <div class="scan-result-detail">@lastResult.Visitor.FullName · badge @lastResult.Visitor.BadgeCode</div>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(lastError))
+            {
+                <div class="scan-error"><QIcon Name="x-circle-fill" /> @lastError</div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .scanner-layout { display: grid; grid-template-columns: minmax(280px, 480px) 1fr; gap: 24px; align-items: start; }
+    @@media (max-width: 800px) { .scanner-layout { grid-template-columns: 1fr; } }
+
+    .scanner-frame { position: relative; background: #000; border-radius: var(--qm-radius-md); overflow: hidden; aspect-ratio: 1 / 1; }
+    .scanner-frame video { width: 100%; height: 100%; object-fit: cover; }
+    .scanner-hidden-canvas { display: none; }
+    .scanner-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); }
+
+    .scanner-side { display: flex; flex-direction: column; gap: 16px; }
+    .direction-toggle { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 16px; }
+    .direction-label { font-size: 13px; color: var(--qm-text-muted); display: block; margin-bottom: 10px; }
+    .direction-buttons { display: flex; gap: 8px; }
+    .direction-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: var(--qm-radius-sm); border: 1px solid var(--qm-border); background: var(--qm-bg-secondary); color: var(--qm-text-muted); cursor: pointer; }
+    .direction-btn.active { background: var(--qm-primary); border-color: var(--qm-primary); color: #fff; }
+    .direction-hint { font-size: 12px; color: var(--qm-text-muted); margin: 10px 0 0; }
+
+    .scan-result { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; text-align: center; }
+    .scan-result.watchlisted { border-color: var(--qm-danger, #d9534f); background: rgba(217, 83, 79, 0.06); }
+    .scan-result-alert { color: var(--qm-danger, #d9534f); font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .scan-result-icon { font-size: 32px; color: var(--qm-primary); margin-bottom: 8px; }
+    .scan-result-message { font-weight: 600; color: var(--qm-text-primary); }
+    .scan-result-detail { font-size: 13px; color: var(--qm-text-muted); margin-top: 4px; }
+
+    .scan-error { background: rgba(217, 83, 79, 0.1); color: var(--qm-danger, #d9534f); border-radius: var(--qm-radius-sm); padding: 12px 14px; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+</style>
+
+@code {
+    private Guid branchId;
+    private bool cameraStarted;
+    private string direction = "in";
+    private VisitorScanResultDto? lastResult;
+    private string? lastError;
+    private DotNetObjectReference<VisitorScanner>? dotNetRef;
+    private DateTime lastScanAt = DateTime.MinValue;
+    private const int ScanCooldownMs = 2000; // avoid re-processing the same badge across consecutive frames
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsCheckIn))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+    }
+
+    private async Task StartCamera()
+    {
+        dotNetRef = DotNetObjectReference.Create(this);
+        var started = await JS.InvokeAsync<bool>("visitorBadge.startScanner", "scanner-video", "scanner-canvas", dotNetRef);
+        if (started)
+        {
+            cameraStarted = true;
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Camera unavailable", "Couldn't access the camera — check browser permissions.");
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnQrDetected(string token)
+    {
+        if ((DateTime.UtcNow - lastScanAt).TotalMilliseconds < ScanCooldownMs) return;
+        lastScanAt = DateTime.UtcNow;
+
+        lastError = null;
+        try
+        {
+            lastResult = await VisitorApi.ScanAsync(branchId, token, direction);
+        }
+        catch (InvalidOperationException ex)
+        {
+            lastResult = null;
+            lastError = ex.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await JS.InvokeVoidAsync("visitorBadge.resumeScanner");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("visitorBadge.stopScanner"); } catch { /* page navigating away, JS interop may already be gone */ }
+        dotNetRef?.Dispose();
+    }
+}
