@@ -140,4 +140,9 @@ public record StudentGuardianSearchResultDto
     /// another check-in against it.
     /// </summary>
     public int CheckInsToday { get; init; }
+
+    // Lets the Check-In UI skip prompting for a flag-and-override reason when the card is
+    // already flagged — the repeat-check-in gate in VisitorsController.CheckIn treats an
+    // already-watchlisted profile as already past the gate.
+    public bool GuardianIsWatchlisted { get; init; }
 }

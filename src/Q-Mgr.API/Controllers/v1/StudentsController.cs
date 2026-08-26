@@ -130,7 +130,8 @@ public class StudentsController : ControllerBase
                 GuardianName = g.VisitorProfile!.FullName,
                 GuardianPhone = g.VisitorProfile.Phone,
                 GuardianEmail = g.VisitorProfile.Email,
-                Relationship = g.Relationship
+                Relationship = g.Relationship,
+                GuardianIsWatchlisted = g.VisitorProfile.IsWatchlisted
             })
             .ToListAsync();
 

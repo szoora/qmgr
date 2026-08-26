@@ -196,6 +196,18 @@ public class VisitorPassesController : ControllerBase
 
         var profile = visitor.VisitorProfile!;
 
+        // Checked ahead of and independently of Status: Status already blocks a normal second
+        // scan (see below), but BadgeConsumedAt can never be reset by anything else that later
+        // touches Status, so a photographed/shared QR stays dead for good, not just "until
+        // Status happens to change back."
+        if (visitor.BadgeConsumedAt.HasValue)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Badge already used",
+                Detail = $"This badge was already scanned at {visitor.BadgeConsumedAt.Value:HH:mm} — it's single-use and can't be scanned again.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
         if (visitor.Status != VisitorStatus.CheckedIn)
             return BadRequest(new ProblemDetails
             {
@@ -206,6 +218,7 @@ public class VisitorPassesController : ControllerBase
 
         visitor.Status = VisitorStatus.CheckedOut;
         visitor.CheckedOutAt = DateTime.UtcNow;
+        visitor.BadgeConsumedAt = DateTime.UtcNow;
         visitor.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 

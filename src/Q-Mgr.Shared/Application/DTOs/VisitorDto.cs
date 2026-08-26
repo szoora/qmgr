@@ -47,6 +47,11 @@ public record VisitorDto
     // Only populated in the response right after a check-in/check-in-existing call — the raw
     // string to render as a QR code client-side. Never returned on ordinary reads.
     public string? BadgeQrToken { get; init; }
+
+    // Set the first time this visit's badge QR is successfully scanned (checkout) — independent
+    // of Status, so a photographed/shared code stays permanently dead even if Status is ever
+    // touched by something else. See VisitorPassesController.ScanVisitBadge.
+    public DateTime? BadgeConsumedAt { get; init; }
 }
 
 // Pre-register a visitor ahead of their arrival (Status starts as PreRegistered).
@@ -99,6 +104,18 @@ public record CheckInVisitorRequest
 
     public string? Notes { get; set; }
     public bool ConsentGiven { get; set; }
+}
+
+// Stored inside Branch.Settings under the "VisitingDay" key, alongside VisitorConsent and
+// whatever else that JSON blob carries. Governs the visiting-day-specific abuse controls added
+// on top of plain visitor check-in: how many times a guardian's roster card can be checked in
+// before front-desk staff must flag it or a Manager+ user must complete it instead, and whether
+// guardians get an SMS confirming their card was used. Mutable for the same @bind reason as the
+// other settings DTOs.
+public record VisitingDaySettingsDto
+{
+    public int CardCheckInWarningThreshold { get; set; } = 2;
+    public bool NotifyGuardianOnCheckIn { get; set; }
 }
 
 public record UpdateVisitorRequest
@@ -240,4 +257,56 @@ public record VisitorScanResultDto
 
     // Populated only when the scanned badge was a group VisitorPass, not an individual visit.
     public VisitorPassDto? Pass { get; init; }
+}
+
+// A day/count or hour/count pair for the trend and peak-hours charts on the Visitor report.
+public record DayCountDto
+{
+    public DateOnly Day { get; init; }
+    public int Count { get; init; }
+}
+
+public record HourCountDto
+{
+    public int Hour { get; init; }
+    public int Count { get; init; }
+}
+
+public record HostVisitCountDto
+{
+    public string HostName { get; init; } = string.Empty;
+    public int Count { get; init; }
+}
+
+// A visitor with an unusually high visit count within the reported range — the same signal as
+// VisitsLast24Hours/CheckInsToday, aggregated over the report's date range instead of a rolling
+// window, for a supervisor reviewing a whole day/week/month at once rather than one live search.
+public record FrequentVisitorDto
+{
+    public Guid VisitorProfileId { get; init; }
+    public string FullName { get; init; } = string.Empty;
+    public string? Phone { get; init; }
+    public bool IsWatchlisted { get; init; }
+    public int VisitCount { get; init; }
+}
+
+public record VisitorReportDto
+{
+    public DateOnly From { get; init; }
+    public DateOnly To { get; init; }
+
+    public int TotalVisits { get; init; }
+    public int UniqueVisitors { get; init; }
+    public int WatchlistIncidents { get; init; }
+    public int RosterCheckIns { get; init; }
+    public double AvgDwellMinutes { get; init; }
+    public double ConsentCompliancePercent { get; init; }
+
+    public List<DayCountDto> VisitsByDay { get; init; } = new();
+    public List<HourCountDto> VisitsByHour { get; init; } = new();
+    public List<HostVisitCountDto> TopHosts { get; init; } = new();
+
+    // Visitors with 3+ visits within the reported range — the same "worth a second look"
+    // threshold philosophy as CardCheckInWarningThreshold, just over a longer window.
+    public List<FrequentVisitorDto> FrequentVisitors { get; init; } = new();
 }

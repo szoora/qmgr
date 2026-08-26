@@ -117,6 +117,45 @@ public class VisitorsController : ControllerBase
         return System.Text.Json.JsonSerializer.Serialize(merged);
     }
 
+    private const string VisitingDaySettingsKey = "VisitingDay";
+
+    private static VisitingDaySettingsDto ReadVisitingDaySettings(string? branchSettingsJson)
+    {
+        if (string.IsNullOrEmpty(branchSettingsJson)) return new VisitingDaySettingsDto();
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson);
+            if (root != null && root.TryGetValue(VisitingDaySettingsKey, out var element))
+                return System.Text.Json.JsonSerializer.Deserialize<VisitingDaySettingsDto>(element.GetRawText()) ?? new VisitingDaySettingsDto();
+        }
+        catch (System.Text.Json.JsonException) { /* malformed settings blob — treat as not configured */ }
+        return new VisitingDaySettingsDto();
+    }
+
+    private static string WriteVisitingDaySettings(string? branchSettingsJson, VisitingDaySettingsDto settings)
+    {
+        var merged = string.IsNullOrEmpty(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[VisitingDaySettingsKey] = settings;
+        return System.Text.Json.JsonSerializer.Serialize(merged);
+    }
+
+    /// <summary>
+    /// How many times this profile has already been checked in today (UTC calendar day) —
+    /// same definition StudentsController.SearchStudents uses for CheckInsToday, factored out
+    /// here so the visiting-day repeat check-in gate in CheckIn uses the identical count the
+    /// front-desk search UI already showed staff before they picked this guardian.
+    /// </summary>
+    private async Task<int> GetCheckInsTodayAsync(Guid profileId)
+    {
+        var today = DateTime.UtcNow.Date;
+        return await _context.Visitors.CountAsync(v =>
+            v.VisitorProfileId == profileId && v.DeletedAt == null &&
+            v.CheckedInAt != null && v.CheckedInAt.Value.Date == today);
+    }
+
     private Guid? CurrentUserId()
     {
         var raw = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
@@ -283,6 +322,7 @@ public class VisitorsController : ControllerBase
         ScheduledAt = v.ScheduledAt,
         CheckedInAt = v.CheckedInAt,
         CheckedOutAt = v.CheckedOutAt,
+        BadgeConsumedAt = v.BadgeConsumedAt,
         CreatedAt = v.CreatedAt,
         Notes = v.Notes,
         ConsentGivenAt = v.ConsentGivenAt,
@@ -313,6 +353,34 @@ public class VisitorsController : ControllerBase
             // Host notification failing shouldn't fail the check-in itself — the visitor is
             // still on the log and can be found by front desk staff.
             _logger.LogError(ex, "Failed to notify host {HostUserId} of visitor {VisitorId} arrival", hostUserId, visitor.Id);
+        }
+    }
+
+    /// <summary>
+    /// Confirms to a guardian, by SMS, that their roster card was just used to check in — opt-in
+    /// per branch (VisitingDaySettingsDto.NotifyGuardianOnCheckIn) since it costs real money and
+    /// isn't every school's preference. Doubles as its own abuse control: a guardian who didn't
+    /// actually visit gets an immediate signal their card was used without them. Only fires for
+    /// roster (StudentId-linked) check-ins — SendSmsAsync already no-ops safely (returns false,
+    /// logs) when SMS isn't configured for the org, so no extra guard needed for that case.
+    /// </summary>
+    private async Task NotifyGuardianAsync(Visitor visitor, VisitorProfile profile, Guid organizationId, VisitingDaySettingsDto settings)
+    {
+        if (!settings.NotifyGuardianOnCheckIn) return;
+        if (visitor.StudentId == null) return;
+        if (string.IsNullOrWhiteSpace(profile.Phone)) return;
+
+        try
+        {
+            var message = $"Q-Mgr: {profile.FullName}, your card was just used to check in to see {visitor.StudentName}. " +
+                          "If this wasn't you, please contact the front desk immediately.";
+            await _notificationService.SendSmsAsync(organizationId, profile.Phone, message);
+        }
+        catch (Exception ex)
+        {
+            // Same reasoning as NotifyHostAsync — a failed guardian SMS shouldn't fail the
+            // check-in itself.
+            _logger.LogError(ex, "Failed to notify guardian for visitor {VisitorId}", visitor.Id);
         }
     }
 
@@ -384,6 +452,150 @@ public class VisitorsController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Aggregate visitor-management report for an admin-chosen date range — summary stats, a
+    /// day-by-day trend, a peak-hours breakdown, top hosts, and a "worth a second look" repeat-
+    /// visitor list (the report-range equivalent of CheckInsToday/VisitsLast24Hours, just over a
+    /// longer window a supervisor actually reviews). Materializes the range's visits once and
+    /// aggregates in memory rather than several separate SQL group-bys — simpler to get right for
+    /// a reporting endpoint that isn't a hot path, and avoids fighting EF's SQL translation of
+    /// TimeSpan arithmetic (dwell time) and DateOnly grouping.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/report")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorReportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVisitorReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var rows = await _context.Visitors
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null && v.CreatedAt >= rangeStart && v.CreatedAt < rangeEndExclusive)
+            .Select(v => new
+            {
+                v.VisitorProfileId,
+                ProfileFullName = v.VisitorProfile!.FullName,
+                ProfilePhone = v.VisitorProfile.Phone,
+                ProfileIsWatchlisted = v.VisitorProfile.IsWatchlisted,
+                v.CreatedAt,
+                v.CheckedInAt,
+                v.CheckedOutAt,
+                v.ConsentGivenAt,
+                v.StudentId,
+                v.HostName
+            })
+            .ToListAsync();
+
+        var completed = rows.Where(r => r.CheckedInAt.HasValue).ToList();
+        var withDwell = completed.Where(r => r.CheckedOutAt.HasValue).ToList();
+
+        return Ok(new VisitorReportDto
+        {
+            From = fromDate,
+            To = toDate,
+            TotalVisits = rows.Count,
+            UniqueVisitors = rows.Select(r => r.VisitorProfileId).Distinct().Count(),
+            WatchlistIncidents = rows.Count(r => r.ProfileIsWatchlisted),
+            RosterCheckIns = rows.Count(r => r.StudentId != null),
+            AvgDwellMinutes = withDwell.Count > 0
+                ? Math.Round(withDwell.Average(r => (r.CheckedOutAt!.Value - r.CheckedInAt!.Value).TotalMinutes), 1)
+                : 0,
+            ConsentCompliancePercent = completed.Count > 0
+                ? Math.Round(100.0 * completed.Count(r => r.ConsentGivenAt.HasValue) / completed.Count, 1)
+                : 0,
+            VisitsByDay = rows
+                .GroupBy(r => DateOnly.FromDateTime(r.CreatedAt))
+                .Select(g => new DayCountDto { Day = g.Key, Count = g.Count() })
+                .OrderBy(d => d.Day)
+                .ToList(),
+            VisitsByHour = Enumerable.Range(0, 24)
+                .Select(h => new HourCountDto { Hour = h, Count = rows.Count(r => r.CreatedAt.Hour == h) })
+                .ToList(),
+            TopHosts = rows
+                .Where(r => !string.IsNullOrWhiteSpace(r.HostName))
+                .GroupBy(r => r.HostName)
+                .Select(g => new HostVisitCountDto { HostName = g.Key, Count = g.Count() })
+                .OrderByDescending(h => h.Count)
+                .Take(10)
+                .ToList(),
+            FrequentVisitors = rows
+                .GroupBy(r => r.VisitorProfileId)
+                .Select(g => new FrequentVisitorDto
+                {
+                    VisitorProfileId = g.Key,
+                    FullName = g.First().ProfileFullName,
+                    Phone = g.First().ProfilePhone,
+                    IsWatchlisted = g.First().ProfileIsWatchlisted,
+                    VisitCount = g.Count()
+                })
+                .Where(f => f.VisitCount >= 3)
+                .OrderByDescending(f => f.VisitCount)
+                .Take(20)
+                .ToList()
+        });
+    }
+
+    /// <summary>
+    /// Raw visit log for the same range GetVisitorReport summarizes, as a CSV download — the
+    /// "hand this to an auditor/inspector" artifact a dashboard chart alone can't be. Gated on
+    /// ReportsExport rather than VisitorsView since it's a bulk PII export (name/phone/email per
+    /// row), not just an on-screen aggregate.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/report/export")]
+    [RequirePermission(Permissions.ReportsExport)]
+    public async Task<IActionResult> ExportVisitorReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var visits = await _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null && v.CreatedAt >= rangeStart && v.CreatedAt < rangeEndExclusive)
+            .OrderBy(v => v.CreatedAt)
+            .ToListAsync();
+
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine("Badge Code,Full Name,Phone,Email,Purpose,Host,Student,Status,Checked In,Checked Out,Watchlisted");
+        foreach (var v in visits)
+        {
+            var p = v.VisitorProfile!;
+            csv.AppendLine(string.Join(",", new[]
+            {
+                CsvField(v.BadgeCode), CsvField(p.FullName), CsvField(p.Phone ?? ""), CsvField(p.Email ?? ""),
+                CsvField(v.Purpose), CsvField(v.HostName), CsvField(v.StudentName ?? ""), CsvField(v.Status.ToString()),
+                CsvField(v.CheckedInAt?.ToString("u") ?? ""), CsvField(v.CheckedOutAt?.ToString("u") ?? ""),
+                CsvField(p.IsWatchlisted ? "Yes" : "No")
+            }));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
+        return File(bytes, "text/csv", $"visitor-log-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.csv");
+    }
+
+    private static (DateOnly From, DateOnly To, DateTime RangeStart, DateTime RangeEndExclusive) ResolveReportRange(DateOnly? from, DateOnly? to)
+    {
+        var toDate = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var fromDate = from ?? toDate.AddDays(-6); // default: trailing 7 days
+        if (fromDate > toDate) (fromDate, toDate) = (toDate, fromDate);
+
+        // Npgsql rejects Kind=Unspecified DateTimes against "timestamp with time zone" columns —
+        // DateOnly.ToDateTime always produces Unspecified, so it has to be stamped UTC explicitly
+        // rather than compared directly against CreatedAt (which is already UTC).
+        var rangeStart = DateTime.SpecifyKind(fromDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var rangeEndExclusive = DateTime.SpecifyKind(toDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddDays(1);
+        return (fromDate, toDate, rangeStart, rangeEndExclusive);
+    }
+
+    private static string CsvField(string value)
+    {
+        return value.Contains(',') || value.Contains('"') || value.Contains('\n')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+    }
+
     [HttpGet("branches/{branchId:guid}/visitors/consent-settings")]
     [RequirePermission(Permissions.VisitorsView)]
     [ProducesResponseType(typeof(VisitorConsentSettingsDto), StatusCodes.Status200OK)]
@@ -417,6 +629,45 @@ public class VisitorsController : ControllerBase
         if (branch == null) return NotFound();
 
         branch.Settings = WriteConsentSettings(branch.Settings, request);
+        branch.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(request);
+    }
+
+    [HttpGet("branches/{branchId:guid}/visitors/visiting-day-settings")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitingDaySettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVisitingDaySettings(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var settingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        return Ok(ReadVisitingDaySettings(settingsJson));
+    }
+
+    /// <summary>
+    /// Configures the visiting-day repeat check-in gate's threshold and whether guardians get an
+    /// SMS confirming their card was used — both branch-scoped for the same reason consent
+    /// settings are (different sites can want different policies).
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitors/visiting-day-settings")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(VisitingDaySettingsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateVisitingDaySettings(Guid branchId, [FromBody] VisitingDaySettingsDto request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request.CardCheckInWarningThreshold < 1)
+            return BadRequest(new ProblemDetails { Title = "Threshold must be at least 1", Status = StatusCodes.Status400BadRequest });
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch == null) return NotFound();
+
+        branch.Settings = WriteVisitingDaySettings(branch.Settings, request);
         branch.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
@@ -726,6 +977,7 @@ public class VisitorsController : ControllerBase
         var consentSettings = ReadConsentSettings(branchSettingsJson);
         if (consentSettings.Required && !request.ConsentGiven)
             return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
+        var visitingDaySettings = ReadVisitingDaySettings(branchSettingsJson);
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var (studentId, studentName, defaultHostName, defaultPurpose) = await ResolveStudentAsync(request.StudentId, branchId);
@@ -755,6 +1007,30 @@ public class VisitorsController : ControllerBase
                 return;
             }
 
+            // Visiting-day repeat check-in gate: only applies to roster (StudentId-linked)
+            // check-ins — a plain walk-in visitor isn't part of the guardian-card abuse scenario
+            // this exists for. A Manager+ user's own elevated login IS the "supervisor override";
+            // a Staff/Viewer user must flag the card first (StudentGuardianSearchResultDto's
+            // CheckInsToday already showed them this same count before they picked this guardian,
+            // so the gate here can never surprise them with a number they haven't already seen).
+            if (studentId.HasValue)
+            {
+                var checkInsToday = await GetCheckInsTodayAsync(profile.Id);
+                if (checkInsToday >= visitingDaySettings.CardCheckInWarningThreshold
+                    && !profile.IsWatchlisted
+                    && !RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole))
+                {
+                    conflict = BadRequest(new ProblemDetails
+                    {
+                        Title = "This card has already been used today",
+                        Detail = $"{profile.FullName}'s card has already been checked in {checkInsToday} time(s) today. Flag the card with a reason to proceed, or ask a Manager/Admin to complete this check-in.",
+                        Status = StatusCodes.Status400BadRequest
+                    });
+                    await transaction.RollbackAsync();
+                    return;
+                }
+            }
+
             var badgeCode = await GenerateBadgeCodeAsync(branchId);
             visitor = new Visitor
             {
@@ -781,6 +1057,7 @@ public class VisitorsController : ControllerBase
         if (conflict != null) return conflict;
 
         await NotifyHostAsync(visitor, profile, organizationId, branchId);
+        await NotifyGuardianAsync(visitor, profile, organizationId, visitingDaySettings);
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
@@ -831,6 +1108,23 @@ public class VisitorsController : ControllerBase
         var consentSettings = ReadConsentSettings(branchSettingsJson);
         if (consentSettings.Required && !(request?.ConsentGiven ?? false))
             return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
+        var visitingDaySettings = ReadVisitingDaySettings(branchSettingsJson);
+
+        if (visitor.StudentId.HasValue)
+        {
+            var checkInsToday = await GetCheckInsTodayAsync(profile.Id);
+            if (checkInsToday >= visitingDaySettings.CardCheckInWarningThreshold
+                && !profile.IsWatchlisted
+                && !RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole))
+            {
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "This card has already been used today",
+                    Detail = $"{profile.FullName}'s card has already been checked in {checkInsToday} time(s) today. Flag the card with a reason to proceed, or ask a Manager/Admin to complete this check-in.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+            }
+        }
 
         if (request != null)
         {
@@ -854,6 +1148,7 @@ public class VisitorsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await NotifyHostAsync(visitor, profile, visitor.OrganizationId, branchId);
+        await NotifyGuardianAsync(visitor, profile, visitor.OrganizationId, visitingDaySettings);
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
@@ -973,6 +1268,48 @@ public class VisitorsController : ControllerBase
         var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id));
         await _activityBroadcaster.BroadcastAsync(branchId, request.IsWatchlisted ? VisitorActivityKind.Flagged : VisitorActivityKind.Unflagged, dto);
         return Ok(dto);
+    }
+
+    /// <summary>
+    /// Same flagging action as SetWatchlist, but reached by VisitorProfileId directly instead of
+    /// an existing visit row — needed by the "Flag &amp; Check In" path in the visiting-day repeat
+    /// check-in gate (VisitorsController.CheckIn), where staff need to flag a guardian's card
+    /// BEFORE today's visit row exists yet, not after.
+    ///
+    /// Deliberately gated on VisitorsCheckIn, not VisitorsManage like the general per-visit
+    /// SetWatchlist above — Staff (who have VisitorsCheckIn but not VisitorsManage) are exactly
+    /// who needs to call this: they're the tier the repeat-check-in gate is written to stop from
+    /// self-approving, and the ONLY self-service way past it (short of a Manager+ login) is to
+    /// flag the card themselves. Gating this the same as the general watchlist toggle would make
+    /// that path silently 403 for the one role it exists for.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitor-profiles/{profileId:guid}/watchlist")]
+    [RequirePermission(Permissions.VisitorsCheckIn)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetProfileWatchlist(Guid branchId, Guid profileId, [FromBody] SetWatchlistRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var profile = await _context.VisitorProfiles.FirstOrDefaultAsync(
+            p => p.Id == profileId && p.OrganizationId == organizationId && p.DeletedAt == null);
+        if (profile == null) return NotFound();
+
+        if (request.IsWatchlisted && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new ProblemDetails
+            {
+                Title = "A reason is required to add a visitor to the watchlist",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        profile.IsWatchlisted = request.IsWatchlisted;
+        profile.WatchlistReason = request.IsWatchlisted ? request.Reason : null;
+        profile.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new { profile.Id, profile.IsWatchlisted, profile.WatchlistReason });
     }
 
     /// <summary>
