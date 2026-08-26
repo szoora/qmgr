@@ -473,9 +473,18 @@ public class VisitorsController : ControllerBase
 
     /// <summary>
     /// Returning-visitor search by name/phone/email/ID, org-wide (a person is recognized at any
-    /// branch, not just the one they're being looked up from). Phone/email/ID hit the partial
-    /// unique indexes directly (exact match, effectively instant); name uses a prefix-indexed
-    /// ILIKE. Capped at SearchResultLimit — this backs a live typeahead, not a report.
+    /// branch, not just the one they're being looked up from). Deliberately a substring match
+    /// anywhere in each field, not a prefix match — a front-desk search for "kamau" needs to find
+    /// "Peter Kamau" by last name, a partial phone/email/ID needs to find its owner too, and none
+    /// of that works with a "starts with" search. Case-insensitive throughout: FullName is
+    /// lower-cased on both sides of the comparison, and the phone/email/ID fields are already
+    /// normalized to one consistent case when stored (see VisitorMatching), so comparing against
+    /// an identically-normalized search term is case-insensitive for free. `.Contains()` here
+    /// (not a raw ILIKE '%term%' string) is deliberate too — EF Core escapes LIKE metacharacters
+    /// in the pattern automatically, a raw ILIKE would need that done by hand. Capped at
+    /// SearchResultLimit — this backs a live typeahead, not a report; a substring scan can't use
+    /// a plain b-tree index the way the old prefix/exact-match version could, but that's an
+    /// acceptable trade for a per-organization visitor list at typeahead scale.
     /// </summary>
     [HttpGet("branches/{branchId:guid}/visitors/search")]
     [RequirePermission(Permissions.VisitorsView)]
@@ -490,6 +499,7 @@ public class VisitorsController : ControllerBase
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var term = q.Trim();
+        var lowerTerm = term.ToLowerInvariant();
         var normEmail = VisitorMatching.NormalizeEmail(term);
         var normPhone = VisitorMatching.NormalizePhone(term);
         var normId = VisitorMatching.NormalizeIdNumber(term);
@@ -497,10 +507,10 @@ public class VisitorsController : ControllerBase
         var matches = await _context.VisitorProfiles
             .Where(p => p.OrganizationId == organizationId && p.DeletedAt == null)
             .Where(p =>
-                EF.Functions.ILike(p.FullName, term + "%") ||
-                (normEmail != null && p.NormalizedEmail == normEmail) ||
-                (normPhone != null && p.NormalizedPhone == normPhone) ||
-                (normId != null && p.NormalizedIdNumber == normId))
+                p.FullName.ToLower().Contains(lowerTerm) ||
+                (normEmail != null && p.NormalizedEmail != null && p.NormalizedEmail.Contains(normEmail)) ||
+                (normPhone != null && p.NormalizedPhone != null && p.NormalizedPhone.Contains(normPhone)) ||
+                (normId != null && p.NormalizedIdNumber != null && p.NormalizedIdNumber.Contains(normId)))
             .OrderBy(p => p.FullName)
             .Take(SearchResultLimit)
             .ToListAsync();
