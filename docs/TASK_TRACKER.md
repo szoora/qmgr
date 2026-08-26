@@ -6,6 +6,149 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-08-26, after Phase 58 — supersedes the Phase 57 handover below as the "read first" entry, though that entry is still accurate for what it covers)
+
+**Gap note, same pattern as the Phase 57 entry below**: 13 commits (`9e1860d`..`2c563f3` in `git log`)
+landed between that entry and this one without a matching tracker update — Visitor Activity Board
+polish, real Privacy/Terms/Support pages + an auth-page backdrop, a hardcoded-`qmgr.app`-in-
+billing-emails fix, routing SuperAdmin's empty-branch Dashboard to the real Platform Dashboard, a
+wildcard/case-insensitive returning-visitor search fix, and — the bulk of the gap — the entire
+**school-visiting-day roster feature** (students/guardians, bulk Excel/CSV import as a background
+job with live progress, an SMIS-consumable import API) built from scratch. None of that got a
+Phase entry; treat `git log` as authoritative for it. **Phase 58 below covers only what this
+specific session (continuing on top of that roster feature) did**: three abuse-prevention controls
+for the roster check-in flow, a new Visitor Report page, and three roster print/ID-card features.
+
+### Phase 58 — Visiting-day card abuse prevention (gate, guardian SMS, single-use badges)
+Built the three items the user picked from an earlier recommendation list (a repeat-check-in gate,
+guardian SMS confirmation, single-use badges), on top of the already-shipped `CheckInsToday`
+visibility feature (`StudentGuardianSearchResultDto.CheckInsToday`, shown in the Check-In modal's
+roster search).
+
+1. **Repeat check-in gate.** `VisitingDaySettingsDto` (`CardCheckInWarningThreshold` default 2,
+   `NotifyGuardianOnCheckIn` default false) stored in `Branch.Settings` under a new `"VisitingDay"`
+   key, same read/write pattern as the existing `VisitorConsent`/`VisitorRetention` settings.
+   Enforced in **both** `VisitorsController.CheckIn` and `CheckInExisting` (the walk-in and
+   pre-registered-arrival paths) — a roster (`StudentId`-linked) guardian whose `CheckInsToday`
+   already meets the threshold is blocked with a 400 unless the profile is already flagged
+   (`IsWatchlisted`) or the caller is Manager+. Added `RoleCodes.IsManagerOrAbove` (mirrored on
+   both `QMgr.Domain.Constants.RoleCodes` and the Web project's own `RoleCodes` static class) —
+   only flat permission-string checks existed before this, no role-tier comparison helper.
+   - **New endpoint** `PUT branches/{branchId}/visitor-profiles/{profileId}/watchlist`
+     (`VisitorsController.SetProfileWatchlist`) — flags a card by `VisitorProfileId` directly,
+     needed because the gate fires *before* today's `Visit` row exists (the existing per-visit
+     `SetWatchlist` endpoint needs one to already exist).
+   - **Real bug found and fixed via live testing as an actual Staff account, not just SuperAdmin**:
+     `SetProfileWatchlist` was first gated on `Permissions.VisitorsManage`, which Staff never has —
+     meaning the *only* self-service way past the gate (flag the card) would 403 for exactly the
+     role the gate exists to challenge. Caught by creating a real Staff-tier test user
+     (`teststaff@getsacc.com` / `Staff@12345`, still in the DB — **delete it if not wanted**;
+     created via a direct `POST /api/v1/users` call rather than the Admin UI's own "Add User" form
+     because that form's Branch dropdown returns empty for a SuperAdmin session with no org
+     context — a separate, pre-existing, **not fixed** bug worth a look if picked up later). Fixed
+     by re-gating `SetProfileWatchlist` on `Permissions.VisitorsCheckIn` instead, which Staff does
+     have.
+   - **Verified live end-to-end, both roles**: as Staff, a check-in attempt past the threshold
+     correctly 400s ("This card has already been used today..."); flagging via the new endpoint
+     then unlocks it (200 → 201). As SuperAdmin (Manager+), the same scenario succeeds with no
+     extra step. Also confirmed through the actual Check-In modal UI (not just curl/fetch): the
+     amber "Checked in Nx today" chip, the "Flag Card & Check In" button swap with a required
+     reason field, and successful completion all render and work correctly logged in as the real
+     Staff account.
+2. **Guardian SMS confirmation.** `NotifyGuardianAsync` in `VisitorsController` calls
+   `INotificationService.SendSmsAsync` directly (no `MarketingContact` row needed — that service
+   takes a raw phone number). Opt-in per branch via the same `VisitingDaySettingsDto`, wired into
+   the Visitor Settings modal's new "Visiting Day" section. Verified live: fires on check-in,
+   no-ops gracefully with no SMS gateway configured in this dev environment (confirmed via the
+   API log: `"SMS notifications disabled or not configured"` — expected, not a bug).
+3. **Single-use badges.** New `Visitor.BadgeConsumedAt` column (migration
+   `20260826100702_AddVisitorBadgeConsumedAt`), checked *independently of and before* the existing
+   `Status` check in `VisitorPassesController.ScanVisitBadge` — a defense-in-depth guard that can't
+   be reset by anything else later touching `Status`, so a photographed/reprinted badge stays dead
+   after one scan even if `Status` is ever manipulated some other way. Verified live: first scan of
+   a real badge token succeeds (checkout), an immediate second scan of the *same* token is
+   explicitly rejected ("Badge already used — scanned at HH:mm").
+- **Testing gotcha worth knowing**: this Blazor login page silently resumes an already-valid
+  session if you type a different account's email and hit Continue without first clicking Logout
+  and waiting ~1-2s — cost real time working around it while switching between SuperAdmin/Staff
+  test accounts. Always explicitly log out, wait, *then* type the next identifier.
+
+### Phase 59 — Visitor Report page (`/reports/visitors`)
+New page under Reports & Analytics: summary stats (total/unique visits, roster check-ins, avg
+dwell time, consent-capture %, watchlist incidents), a visits-by-day line chart, a peak-hours bar
+chart, a top-hosts table, a "worth a second look" (3+ visits in the selected range) table, and a
+CSV export of the raw visit log. Backend: `VisitorsController.GetVisitorReport` /
+`ExportVisitorReport`, date range resolved by `ResolveReportRange` (defaults to the trailing 7
+days). CSV export reuses the already-loaded `window.downloadDataUrl` from `share-utils.js` — no
+new script needed.
+- **Real bug found and fixed**: the report endpoint 400'd with `"Cannot write DateTime with
+  Kind=Unspecified to PostgreSQL type 'timestamp with time zone'"` — `DateOnly.ToDateTime()`
+  always produces `DateTimeKind.Unspecified`, and Npgsql rejects that against a `timestamptz`
+  column. Fixed with `DateTime.SpecifyKind(..., DateTimeKind.Utc)` in `ResolveReportRange`.
+- Verified live against real data (11 total visits, 7 unique, 5 roster check-ins, 39min avg dwell,
+  70% consent, 5 watchlist incidents at the time of testing) — stats/charts/tables all rendered
+  correctly, CSV export downloaded a properly formatted `text/csv` file.
+
+### Phase 60 — Roster print/ID-card features (three distinct card types, batch printing, selection)
+Built incrementally across several user requests in the same session:
+1. **`PrintGuardianCard`** — a per-guardian "Visiting Day Pass" (pre-visit, printed ahead of time
+   from the Student Roster page). No real Visit row exists yet at print time, so its QR is a plain
+   `guardian+student` lookup string, not a validated credential — the card says so explicitly.
+2. **`PrintStudentIdCard` / "Student Visitation Card"** — per **student**, ID-card/CR80 sized
+   (85.6×54mm, standard credit-card/badge size), listing **every** guardian on file, with a
+   class-colored band. Meant as a durable identification document kept on hand, not reprinted
+   per visit like the guardian pass.
+3. **Class Colors** — admin-defined only, **not** auto-derived. First draft hashed the class name
+   to a fixed palette slot; the user explicitly corrected this ("do not hard code the class
+   colors, user should define the color"). Rebuilt as `ClassColorSettingsDto` (a plain
+   `className → hex` dictionary) stored in `Branch.Settings` under `"ClassColors"`, with new
+   `StudentsController.GetClassColors`/`UpdateClassColors` endpoints and a modal with one native
+   `<input type="color">` per distinct class currently on the roster. Classes with no assigned
+   color show a neutral grey placeholder, never a guessed color.
+4. **Batch printing, 8 cards per A4 sheet** (2×4 grid of CR80 cards, `page-break-after` every 8th)
+   — `PrintAllStudentCards`, sharing card-markup generation with the single-card path via
+   `BuildStudentCardMarkupAsync` so the two can't visually drift apart.
+5. **Explicit selection**, added per a follow-up request ("user should have option to select
+   cards to print... select all or select 2 or even select one class"): a checkbox per roster row
+   plus a header "select all" that acts on whatever the current filter currently shows.
+   Selection **persists across filter changes** (pick some from one class, filter to another,
+   pick more — both stay selected), so one mechanism covers all three asked-for cases: select-all
+   with no filter = whole roster, check individual rows = exactly those students, filter to one
+   class + select-all = just that class. Button reads "Print Selected (N)", disabled at zero.
+- **Important tooling note for future print-feature testing in this codebase**: clicking a real
+  print button triggers `window.print()`, which opens Chrome's **native** print dialog — this
+  genuinely freezes the automated browser tab (confirmed the hard way: `CDP Runtime.evaluate`
+  timed out after 45s, the tab stayed unresponsive until the user manually dismissed the dialog).
+  This is the same class of problem as `alert()`/`confirm()` blocking automation, just not
+  explicitly called out as such anywhere. **The safe verification technique used successfully
+  here**: before clicking print, monkey-patch `window.open` in the page (via the JS-exec tool) to
+  capture the generated HTML into a variable instead of opening a real window/calling `print()`,
+  then render that captured HTML in an `<iframe>` overlay on the same page to visually inspect the
+  layout. Reuse this pattern rather than clicking real print buttons in any future automated
+  session against this codebase.
+- Verified live: single guardian pass and single student card both print-flow-completed
+  successfully (confirmed via toast + no console errors) before the blocking issue above was even
+  understood; the full batch-print HTML (5 real students, correct per-class colors, correct
+  guardian lists, correct "no guardians on file yet" fallback, correct 2-column grid) was
+  confirmed via the iframe technique; the selection checkboxes were confirmed via direct
+  `.click()` calls in the JS-exec tool after discovering that the automation's coordinate-based
+  `computer` click action was unreliable against the small (16×16px) checkbox targets — use
+  JS-driven clicks for small form controls in this codebase going forward, not coordinate clicks.
+
+**Known follow-ups, not done this session**:
+- `teststaff@getsacc.com` test account (Staff role, `Staff@12345`) is still in the DB — delete if
+  not wanted.
+- The Admin UI's "Add User" Branch dropdown returns empty for a SuperAdmin session (pre-existing,
+  unrelated to this session's work) — worth fixing if picked up.
+- The Dashboard's "Create your first branch" onboarding wizard shows for any role lacking
+  `branches.view` (e.g. Staff) even when the org already has branches — it's misreading a 403 from
+  the branch-list call as "zero branches." Pre-existing, noticed but not fixed this session.
+- The lookup QR codes on both the guardian pass and the student card are plain informational
+  strings (`ROSTER:{guardianId}:{studentId}` / `STUDENT:{studentId}`), not wired to any scan
+  endpoint — explicitly out of scope so far and labeled as such on the printed cards themselves.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-08-26, after Phase 57)
 
 Read this section first. Note: 18 commits (`04761f0`..`9ece0c3` in `git log`) landed between the
