@@ -25,6 +25,8 @@ public interface IStudentApiService
 
     Task<ClassColorSettingsDto> GetClassColorsAsync(Guid branchId);
     Task<ClassColorSettingsDto?> UpdateClassColorsAsync(Guid branchId, ClassColorSettingsDto request);
+
+    Task<PrintLetterheadDto?> GetPrintLetterheadAsync(Guid branchId);
 }
 
 public class StudentApiService : IStudentApiService
@@ -214,6 +216,20 @@ public class StudentApiService : IStudentApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update class colors for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<PrintLetterheadDto?> GetPrintLetterheadAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<PrintLetterheadDto>(
+                $"api/v1/branches/{branchId}/students/print-letterhead", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get print letterhead for branch {BranchId}", branchId);
             return null;
         }
     }
