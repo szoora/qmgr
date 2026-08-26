@@ -112,8 +112,8 @@ else if (queueStatus != null)
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.TotalWaiting</span>
                     <span class="stats-label">Waiting in Queue</span>
-                    <span class="stats-change positive">
-                        <QIcon Name="graph-up-arrow" /> +12% from yesterday
+                    <span class="stats-change neutral">
+                        <QIcon Name="grid-fill" /> Across @queueStatus.ServiceTypes.Count(st => st.WaitingCount > 0) service type@(queueStatus.ServiceTypes.Count(st => st.WaitingCount > 0) == 1 ? "" : "s")
                     </span>
                 </div>
                 <div class="stats-icon">
@@ -142,8 +142,8 @@ else if (queueStatus != null)
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.AverageWaitMinutes.ToString("F0")<small>min</small></span>
                     <span class="stats-label">Average Wait Time</span>
-                    <span class="stats-change negative">
-                        <QIcon Name="clock-fill" /> Target: 10 min
+                    <span class="stats-change neutral">
+                        <QIcon Name="clock-fill" /> Avg service: @queueStatus.Summary.AverageServiceMinutes.ToString("F0") min
                     </span>
                 </div>
                 <div class="stats-icon">
@@ -157,8 +157,12 @@ else if (queueStatus != null)
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.TotalCompletedToday</span>
                     <span class="stats-label">Completed Today</span>
-                    <span class="stats-change positive">
-                        <QIcon Name="check-circle-fill" /> Great progress!
+                    @{
+                        var totalToday = queueStatus.Summary.TotalCompletedToday + queueStatus.Summary.TotalWaiting + queueStatus.Summary.TotalServing;
+                        var clearedPct = totalToday > 0 ? (int)Math.Round(100.0 * queueStatus.Summary.TotalCompletedToday / totalToday) : 0;
+                    }
+                    <span class="stats-change @(totalToday == 0 ? "neutral" : "positive")">
+                        <QIcon Name="check-circle-fill" /> @(totalToday == 0 ? "No activity yet today" : $"{clearedPct}% of today's queue cleared")
                     </span>
                 </div>
                 <div class="stats-icon">
@@ -848,6 +852,19 @@ else if (queueStatus != null)
             // Check if branches exist and one is selected
             if (!BranchState.HasBranches)
             {
+                // SuperAdmin's own "Platform Administration" org is an internal account, not a
+                // real tenant — it will never have branches, so the "create your first branch"
+                // onboarding checklist doesn't apply to it and previously showed regardless,
+                // which read as broken/meaningless for the one account that will always land
+                // here with zero branches. Send SuperAdmin to the platform-wide dashboard
+                // instead, which is what they actually want to see. A regular tenant admin with
+                // genuinely zero branches yet still gets the real onboarding checklist below.
+                if (await PermissionService.IsSuperAdminAsync())
+                {
+                    Navigation.NavigateTo("/platform/dashboard", forceLoad: false);
+                    return;
+                }
+
                 // No branches exist - show getting started
                 isLoading = false;
                 StateHasChanged();
