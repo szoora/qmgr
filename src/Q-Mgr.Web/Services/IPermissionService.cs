@@ -31,6 +31,13 @@ public interface IPermissionService
     Task<bool> IsSuperAdminAsync();
 
     /// <summary>
+    /// Checks if the current user is Manager, Admin, or SuperAdmin — the "can approve an
+    /// exception a front-desk Staff/Viewer user can't" tier. Client-side check for UX only; the
+    /// same rule is re-enforced server-side (RoleCodes.IsManagerOrAbove) wherever it matters.
+    /// </summary>
+    Task<bool> IsManagerOrAboveAsync();
+
+    /// <summary>
     /// Clears the cached permissions (call on logout)
     /// </summary>
     void ClearCache();
@@ -133,6 +140,23 @@ public class PermissionService : IPermissionService
         }
 
         return _cachedRoleCode.Equals(RoleCodes.SuperAdmin, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public async Task<bool> IsManagerOrAboveAsync()
+    {
+        var user = await _authService.GetCurrentUserAsync();
+        if (user == null) return false;
+
+        if (_cachedUserId != null && _cachedUserId != user.Id)
+            ClearCache();
+
+        if (_cachedRoleCode == null)
+        {
+            _cachedUserId = user.Id;
+            _cachedRoleCode = user.RoleCode;
+        }
+
+        return RoleCodes.IsManagerOrAbove(_cachedRoleCode);
     }
 
     public void ClearCache()
@@ -299,5 +323,18 @@ public static class RoleCodes
     public static bool IsAdministrator(string? roleCode)
     {
         return IsSuperAdmin(roleCode) || string.Equals(roleCode, Admin, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly string[] TierOrder = { SuperAdmin, Admin, Manager, Staff, Viewer };
+
+    /// <summary>
+    /// Checks if the role is Manager, Admin, or SuperAdmin — mirrors
+    /// QMgr.Domain.Constants.RoleCodes.IsManagerOrAbove on the API side.
+    /// </summary>
+    public static bool IsManagerOrAbove(string? roleCode)
+    {
+        var rank = Array.FindIndex(TierOrder, r => string.Equals(r, roleCode, StringComparison.OrdinalIgnoreCase));
+        if (rank < 0) rank = TierOrder.Length;
+        return rank <= Array.IndexOf(TierOrder, Manager);
     }
 }
