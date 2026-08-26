@@ -144,9 +144,17 @@ public class TokenRepository : Repository<Token>, ITokenRepository
         // means a concurrent caller racing for the same row doesn't block on the lock, it simply
         // skips that (already-claimed) row and picks the next candidate instead — exactly the
         // "each counter gets a different waiting token" semantics this handler needs.
+        // BUG FIX: this raw SQL previously read "FROM tokens" unqualified. EF's own generated SQL
+        // is always schema-qualified (HasDefaultSchema("qmgr") in QMgrDbContext handles that
+        // automatically), but raw FromSqlInterpolated bypasses that entirely and is resolved via
+        // Postgres's connection-level search_path instead — which for this DB is the server
+        // default ("$user", public), not qmgr. That made every single "Call Next" request 500
+        // with "relation \"tokens\" does not exist" — found live, not by inspection, while
+        // e2e-testing an unrelated flow. The fix is the same schema-qualification EF already does
+        // for you everywhere else; write it explicitly since raw SQL doesn't get it for free.
         var tokenId = await _dbSet
             .FromSqlInterpolated($@"
-                SELECT * FROM tokens
+                SELECT * FROM qmgr.tokens
                 WHERE ""BranchId"" = {counter.BranchId}
                   AND ""ServiceTypeId"" = ANY({serviceTypeIds})
                   AND ""Status"" = {(int)TokenStatus.Waiting}

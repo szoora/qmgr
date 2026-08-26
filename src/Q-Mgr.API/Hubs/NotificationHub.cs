@@ -1,9 +1,12 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
+using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Notification;
+using QMgr.Infrastructure.Data;
 
 namespace QMgr.Hubs;
 
@@ -16,10 +19,35 @@ namespace QMgr.Hubs;
 public class NotificationHub : Hub
 {
     private readonly ILogger<NotificationHub> _logger;
+    private readonly QMgrDbContext _context;
 
-    public NotificationHub(ILogger<NotificationHub> logger)
+    public NotificationHub(ILogger<NotificationHub> logger, QMgrDbContext context)
     {
         _logger = logger;
+        _context = context;
+    }
+
+    /// <summary>
+    /// SECURITY: branch groups now carry visitor PII (name, phone, email, ID number, watchlist
+    /// reason) via VisitorActivityBroadcaster, on top of ordinary notifications. Without this
+    /// check any authenticated caller could join an arbitrary "branch-{id}" group — including one
+    /// belonging to a different organization — and eavesdrop indefinitely. SuperAdmin is exempt,
+    /// matching every REST controller's VerifyBranchOwnership pattern.
+    /// </summary>
+    private async Task<bool> IsAuthorizedForBranchAsync(string? branchId)
+    {
+        if (string.IsNullOrEmpty(branchId) || !Guid.TryParse(branchId, out var branchGuid))
+            return false;
+
+        var roleCode = Context.User?.FindFirst(ClaimTypes.Role)?.Value;
+        if (RoleCodes.IsSuperAdmin(roleCode))
+            return true;
+
+        var orgIdClaim = Context.User?.FindFirst("org_id")?.Value;
+        if (!Guid.TryParse(orgIdClaim, out var orgGuid))
+            return false;
+
+        return await _context.Branches.AnyAsync(b => b.Id == branchGuid && b.OrganizationId == orgGuid);
     }
 
     public override async Task OnConnectedAsync()
@@ -41,8 +69,15 @@ public class NotificationHub : Hub
 
         if (!string.IsNullOrEmpty(branchId))
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"branch-{branchId}");
-            _logger.LogInformation("Connection added to branch group {BranchId}", branchId);
+            if (await IsAuthorizedForBranchAsync(branchId))
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"branch-{branchId}");
+                _logger.LogInformation("Connection added to branch group {BranchId}", branchId);
+            }
+            else
+            {
+                _logger.LogWarning("Rejected connection-time join to branch group {BranchId} by user {UserId}: not authorized for this branch", branchId, authenticatedUserId);
+            }
         }
 
         await base.OnConnectedAsync();
@@ -61,10 +96,18 @@ public class NotificationHub : Hub
     }
 
     /// <summary>
-    /// Join a specific branch notification group
+    /// Join a specific branch notification group. See IsAuthorizedForBranchAsync — client-callable,
+    /// so this is the primary path a malicious caller would use to reach another org's branch group.
     /// </summary>
     public async Task JoinBranch(string branchId)
     {
+        if (!await IsAuthorizedForBranchAsync(branchId))
+        {
+            var authenticatedUserId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            _logger.LogWarning("Rejected JoinBranch({BranchId}) from user {UserId}: not authorized for this branch", branchId, authenticatedUserId);
+            return;
+        }
+
         await Groups.AddToGroupAsync(Context.ConnectionId, $"branch-{branchId}");
         _logger.LogInformation("Connection joined branch group {BranchId}", branchId);
     }

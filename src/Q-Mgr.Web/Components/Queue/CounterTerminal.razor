@@ -931,7 +931,17 @@
 
     private async Task CallNext()
     {
-        var token = await QueueApi.CallNextTokenAsync(selectedCounterId);
+        TokenDto? token;
+        try
+        {
+            token = await QueueApi.CallNextTokenAsync(selectedCounterId);
+        }
+        catch (Exception)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Call Next Failed", "Something went wrong calling the next customer. Please try again — if it keeps happening, contact support.");
+            return;
+        }
+
         if (token != null)
         {
             currentToken = token;
