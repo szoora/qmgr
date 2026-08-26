@@ -8,3 +8,4 @@ appsettings.Development.json
 node_modules/
 dataprotection-keys/
 .claude/scheduled_tasks.lock
+src/Q-Mgr.API/wwwroot/uploads/

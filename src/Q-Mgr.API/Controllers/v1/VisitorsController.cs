@@ -22,17 +22,30 @@ public class VisitorsController : ControllerBase
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly INotificationService _notificationService;
+    private readonly IVisitorBadgeTokenService _badgeTokenService;
+    private readonly IVisitorActivityBroadcaster _activityBroadcaster;
+    private readonly IMediaStorageService _mediaStorage;
     private readonly ILogger<VisitorsController> _logger;
+
+    private const int SearchResultLimit = 10;
+    private const long MaxPhotoSizeBytes = 5 * 1024 * 1024; // 5MB — a headshot, not a document
+    private static readonly TimeSpan BadgeValidity = TimeSpan.FromHours(16); // covers a full working day
 
     public VisitorsController(
         QMgrDbContext context,
         ITenantContextAccessor tenantAccessor,
         INotificationService notificationService,
+        IVisitorBadgeTokenService badgeTokenService,
+        IVisitorActivityBroadcaster activityBroadcaster,
+        IMediaStorageService mediaStorage,
         ILogger<VisitorsController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notificationService = notificationService;
+        _badgeTokenService = badgeTokenService;
+        _activityBroadcaster = activityBroadcaster;
+        _mediaStorage = mediaStorage;
         _logger = logger;
     }
 
@@ -71,6 +84,45 @@ public class VisitorsController : ControllerBase
         return null;
     }
 
+    private async Task<Guid> ResolveOrganizationIdAsync(Guid branchId)
+    {
+        var tenantContext = _tenantAccessor.TenantContext!;
+        return RoleCodes.IsSuperAdmin(tenantContext.UserRole)
+            ? (await _context.Branches.Where(b => b.Id == branchId).Select(b => b.OrganizationId).FirstAsync())
+            : tenantContext.OrganizationId;
+    }
+
+    private const string ConsentSettingsKey = "VisitorConsent";
+
+    private static VisitorConsentSettingsDto ReadConsentSettings(string? branchSettingsJson)
+    {
+        if (string.IsNullOrEmpty(branchSettingsJson)) return new VisitorConsentSettingsDto { Required = false };
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson);
+            if (root != null && root.TryGetValue(ConsentSettingsKey, out var element))
+                return System.Text.Json.JsonSerializer.Deserialize<VisitorConsentSettingsDto>(element.GetRawText()) ?? new VisitorConsentSettingsDto { Required = false };
+        }
+        catch (System.Text.Json.JsonException) { /* malformed settings blob — treat as not configured */ }
+        return new VisitorConsentSettingsDto { Required = false };
+    }
+
+    private static string WriteConsentSettings(string? branchSettingsJson, VisitorConsentSettingsDto consent)
+    {
+        var merged = string.IsNullOrEmpty(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[ConsentSettingsKey] = consent;
+        return System.Text.Json.JsonSerializer.Serialize(merged);
+    }
+
+    private Guid? CurrentUserId()
+    {
+        var raw = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(raw, out var uid) ? uid : null;
+    }
+
     /// <summary>
     /// CONCURRENCY: mirrors TokenRepository.GetNextTokenNumberAsync — a plain read-then-increment
     /// of "today's last badge number" would let two front-desk check-ins issued at the same instant
@@ -90,31 +142,138 @@ public class VisitorsController : ControllerBase
         return $"V-{today:yyyyMMdd}-{(countToday + 1):D4}";
     }
 
-    private static VisitorDto MapToDto(Visitor v) => new()
+    /// <summary>
+    /// Finds the profile matching any of the given identifiers (Email, then Phone, then
+    /// IdNumber — email is the most stable identity signal a real person reuses; name alone is
+    /// never used as a match key, only for display/search), or creates one. When a match is
+    /// found, backfills any identifier the profile didn't have yet — the unique partial indexes
+    /// turn a colliding backfill into a clean 409 via the global exception middleware rather than
+    /// silently merging two different people.
+    /// </summary>
+    private async Task<VisitorProfile> FindOrCreateProfileAsync(
+        Guid organizationId, Guid? explicitProfileId,
+        string fullName, string? phone, string? email, string? idNumber, string? company, string? photoUrl)
+    {
+        if (explicitProfileId.HasValue)
+        {
+            var chosen = await _context.VisitorProfiles.FirstOrDefaultAsync(
+                p => p.Id == explicitProfileId.Value && p.OrganizationId == organizationId && p.DeletedAt == null);
+            if (chosen != null) return chosen;
+        }
+
+        var normEmail = VisitorMatching.NormalizeEmail(email);
+        var normPhone = VisitorMatching.NormalizePhone(phone);
+        var normId = VisitorMatching.NormalizeIdNumber(idNumber);
+
+        VisitorProfile? match = null;
+        if (normEmail != null)
+            match = await _context.VisitorProfiles.FirstOrDefaultAsync(
+                p => p.OrganizationId == organizationId && p.DeletedAt == null && p.NormalizedEmail == normEmail);
+        if (match == null && normPhone != null)
+            match = await _context.VisitorProfiles.FirstOrDefaultAsync(
+                p => p.OrganizationId == organizationId && p.DeletedAt == null && p.NormalizedPhone == normPhone);
+        if (match == null && normId != null)
+            match = await _context.VisitorProfiles.FirstOrDefaultAsync(
+                p => p.OrganizationId == organizationId && p.DeletedAt == null && p.NormalizedIdNumber == normId);
+
+        if (match != null)
+        {
+            if (match.NormalizedEmail == null && normEmail != null) { match.Email = email; match.NormalizedEmail = normEmail; }
+            if (match.NormalizedPhone == null && normPhone != null) { match.Phone = phone; match.NormalizedPhone = normPhone; }
+            if (match.NormalizedIdNumber == null && normId != null) { match.IdNumber = idNumber; match.NormalizedIdNumber = normId; }
+            if (!string.IsNullOrWhiteSpace(company)) match.Company = company;
+            if (!string.IsNullOrWhiteSpace(photoUrl)) match.PhotoUrl = photoUrl;
+            match.UpdatedAt = DateTime.UtcNow;
+            return match;
+        }
+
+        var profile = new VisitorProfile
+        {
+            OrganizationId = organizationId,
+            FullName = fullName,
+            Phone = phone,
+            NormalizedPhone = normPhone,
+            Email = email,
+            NormalizedEmail = normEmail,
+            IdNumber = idNumber,
+            NormalizedIdNumber = normId,
+            Company = company,
+            PhotoUrl = photoUrl
+        };
+        _context.VisitorProfiles.Add(profile);
+        return profile;
+    }
+
+    /// <summary>
+    /// "Duplicate" in the sense actually requested: a profile can't have two simultaneously
+    /// active visits. Not branch-scoped — a person checked in at one branch can't also be
+    /// checked in at another. Doesn't restrict historical visits at all.
+    /// </summary>
+    private async Task<Visitor?> GetActiveVisitAsync(Guid profileId, Guid? excludeVisitId = null)
+    {
+        var query = _context.Visitors.Where(v =>
+            v.VisitorProfileId == profileId && v.DeletedAt == null && v.Status == VisitorStatus.CheckedIn);
+        if (excludeVisitId.HasValue) query = query.Where(v => v.Id != excludeVisitId.Value);
+        return await query.Include(v => v.Branch).FirstOrDefaultAsync();
+    }
+
+    internal record ProfileStats(int Total, int Last24h);
+
+    /// <summary>
+    /// Bulk visit-count lookup for a batch of profiles — one grouped query regardless of list
+    /// size, not one query per row. This is the piece that keeps the list/search endpoints fast.
+    /// </summary>
+    private async Task<Dictionary<Guid, ProfileStats>> GetStatsAsync(IEnumerable<Guid> profileIds)
+    {
+        var ids = profileIds.Distinct().ToList();
+        if (ids.Count == 0) return new();
+
+        var cutoff = DateTime.UtcNow.AddHours(-24);
+        var rows = await _context.Visitors
+            .Where(v => ids.Contains(v.VisitorProfileId) && v.DeletedAt == null)
+            .GroupBy(v => v.VisitorProfileId)
+            .Select(g => new
+            {
+                ProfileId = g.Key,
+                Total = g.Count(),
+                Last24h = g.Count(v => v.CreatedAt >= cutoff)
+            })
+            .ToListAsync();
+
+        return rows.ToDictionary(r => r.ProfileId, r => new ProfileStats(r.Total, r.Last24h));
+    }
+
+    internal static VisitorDto MapToDto(Visitor v, VisitorProfile p, ProfileStats? stats = null, string? qrToken = null) => new()
     {
         Id = v.Id,
         BranchId = v.BranchId,
+        VisitorProfileId = p.Id,
         BadgeCode = v.BadgeCode,
-        FullName = v.FullName,
-        Phone = v.Phone,
-        Email = v.Email,
-        Company = v.Company,
-        IdNumber = v.IdNumber,
-        PhotoUrl = v.PhotoUrl,
+        FullName = p.FullName,
+        Phone = p.Phone,
+        Email = p.Email,
+        Company = p.Company,
+        IdNumber = p.IdNumber,
+        PhotoUrl = p.PhotoUrl,
+        IsWatchlisted = p.IsWatchlisted,
+        WatchlistReason = p.WatchlistReason,
         Purpose = v.Purpose,
+        VehiclePlate = v.VehiclePlate,
         HostUserId = v.HostUserId,
         HostName = v.HostName,
         Status = v.Status,
-        IsWatchlisted = v.IsWatchlisted,
-        WatchlistReason = v.WatchlistReason,
         ScheduledAt = v.ScheduledAt,
         CheckedInAt = v.CheckedInAt,
         CheckedOutAt = v.CheckedOutAt,
         CreatedAt = v.CreatedAt,
-        Notes = v.Notes
+        Notes = v.Notes,
+        ConsentGivenAt = v.ConsentGivenAt,
+        TotalVisits = stats?.Total ?? 1,
+        VisitsLast24Hours = stats?.Last24h ?? 1,
+        BadgeQrToken = qrToken
     };
 
-    private async Task NotifyHostAsync(Visitor visitor, Guid organizationId, Guid branchId)
+    private async Task NotifyHostAsync(Visitor visitor, VisitorProfile profile, Guid organizationId, Guid branchId)
     {
         if (visitor.HostUserId is not { } hostUserId) return;
 
@@ -126,7 +285,7 @@ public class VisitorsController : ControllerBase
                 BranchId = branchId,
                 OrganizationId = organizationId,
                 Title = "Visitor arrived",
-                Message = $"{visitor.FullName} has checked in to see you ({visitor.Purpose}).",
+                Message = $"{profile.FullName} has checked in to see you ({visitor.Purpose}).",
                 Type = NotificationType.VisitorArrived,
                 Priority = NotificationPriority.High
             });
@@ -154,22 +313,34 @@ public class VisitorsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var query = _context.Visitors.Where(v => v.BranchId == branchId);
+        var query = _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null);
 
         if (status.HasValue)
             query = query.Where(v => v.Status == status.Value);
 
-        query = query.Where(v => v.CreatedAt >= (fromDate ?? DateTime.UtcNow.Date));
+        if (fromDate.HasValue)
+        {
+            // Explicit lower bound (reporting/history use) — plain "created on/after" range.
+            query = query.Where(v => v.CreatedAt >= fromDate.Value);
+        }
+        else
+        {
+            // Default "today" view: either logged today (walk-ins, same-day pre-registrations)
+            // OR scheduled for today regardless of when the pre-registration was created —
+            // otherwise a visitor pre-registered several days ahead of their visit never appears
+            // to front-desk staff on the day they actually arrive.
+            var today = DateTime.UtcNow.Date;
+            query = query.Where(v => v.CreatedAt >= today || (v.ScheduledAt != null && v.ScheduledAt.Value.Date == today));
+        }
 
         if (watchlistOnly)
-            query = query.Where(v => v.IsWatchlisted);
+            query = query.Where(v => v.VisitorProfile!.IsWatchlisted);
 
-        var visitors = await query
-            .OrderByDescending(v => v.CreatedAt)
-            .Select(v => v)
-            .ToListAsync();
+        var visits = await query.OrderByDescending(v => v.CreatedAt).ToListAsync();
+        var stats = await GetStatsAsync(visits.Select(v => v.VisitorProfileId));
 
-        return Ok(visitors.Select(MapToDto).ToList());
+        return Ok(visits.Select(v => MapToDto(v, v.VisitorProfile!, stats.GetValueOrDefault(v.VisitorProfileId))).ToList());
     }
 
     [HttpGet("branches/{branchId:guid}/visitors/summary")]
@@ -181,8 +352,9 @@ public class VisitorsController : ControllerBase
         if (branchError != null) return branchError;
 
         var today = DateTime.UtcNow.Date;
-        var todaysVisitors = await _context.Visitors
-            .Where(v => v.BranchId == branchId && v.CreatedAt >= today)
+        var todaysVisitors = await _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null &&
+                        (v.CreatedAt >= today || (v.ScheduledAt != null && v.ScheduledAt.Value.Date == today)))
             .ToListAsync();
 
         return Ok(new VisitorSummaryDto
@@ -190,8 +362,185 @@ public class VisitorsController : ControllerBase
             CurrentlyOnSite = todaysVisitors.Count(v => v.Status == VisitorStatus.CheckedIn),
             TotalToday = todaysVisitors.Count,
             PreRegisteredUpcoming = todaysVisitors.Count(v => v.Status == VisitorStatus.PreRegistered),
-            WatchlistedOnSite = todaysVisitors.Count(v => v.Status == VisitorStatus.CheckedIn && v.IsWatchlisted)
+            WatchlistedOnSite = todaysVisitors.Count(v => v.Status == VisitorStatus.CheckedIn && v.VisitorProfile!.IsWatchlisted)
         });
+    }
+
+    [HttpGet("branches/{branchId:guid}/visitors/consent-settings")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorConsentSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetConsentSettings(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var settingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        return Ok(ReadConsentSettings(settingsJson));
+    }
+
+    /// <summary>
+    /// Configures whether check-in requires the visitor to accept a consent/NDA statement, and
+    /// what it says. Deliberately branch-scoped (stored in Branch.Settings) rather than org-wide —
+    /// different sites within the same org can have different site-access agreements.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitors/consent-settings")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(VisitorConsentSettingsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateConsentSettings(Guid branchId, [FromBody] VisitorConsentSettingsDto request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request.Required && string.IsNullOrWhiteSpace(request.Text))
+            return BadRequest(new ProblemDetails { Title = "Consent text is required when consent is enabled", Status = StatusCodes.Status400BadRequest });
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch == null) return NotFound();
+
+        branch.Settings = WriteConsentSettings(branch.Settings, request);
+        branch.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(request);
+    }
+
+    private const string RetentionSettingsKey = "VisitorRetention";
+
+    internal static VisitorRetentionSettingsDto ReadRetentionSettings(string? orgSettingsJson)
+    {
+        if (string.IsNullOrEmpty(orgSettingsJson)) return new VisitorRetentionSettingsDto();
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(orgSettingsJson);
+            if (root != null && root.TryGetValue(RetentionSettingsKey, out var element))
+                return System.Text.Json.JsonSerializer.Deserialize<VisitorRetentionSettingsDto>(element.GetRawText()) ?? new VisitorRetentionSettingsDto();
+        }
+        catch (System.Text.Json.JsonException) { /* malformed settings blob — fall back to default */ }
+        return new VisitorRetentionSettingsDto();
+    }
+
+    private static string WriteRetentionSettings(string? orgSettingsJson, VisitorRetentionSettingsDto retention)
+    {
+        var merged = string.IsNullOrEmpty(orgSettingsJson)
+            ? new Dictionary<string, object>()
+            : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(orgSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[RetentionSettingsKey] = retention;
+        return System.Text.Json.JsonSerializer.Serialize(merged);
+    }
+
+    [HttpGet("organizations/{organizationId:guid}/visitors/retention-settings")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(VisitorRetentionSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetRetentionSettings(Guid organizationId)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved) return Unauthorized();
+        if (!RoleCodes.IsSuperAdmin(tenantContext.UserRole) && tenantContext.OrganizationId != organizationId) return Forbid();
+
+        var settingsJson = await _context.Organizations.Where(o => o.Id == organizationId).Select(o => o.Settings).FirstOrDefaultAsync();
+        return Ok(ReadRetentionSettings(settingsJson));
+    }
+
+    /// <summary>
+    /// How long a visit record is kept before the daily VisitorRetentionJob purges it, org-wide.
+    /// This is a data-minimization control, not just housekeeping — visit records carry real PII
+    /// (name, phone, email, ID number, photo), so keeping them past their useful compliance
+    /// window is itself a liability, not a neutral default.
+    /// </summary>
+    [HttpPut("organizations/{organizationId:guid}/visitors/retention-settings")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(VisitorRetentionSettingsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateRetentionSettings(Guid organizationId, [FromBody] VisitorRetentionSettingsDto request)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved) return Unauthorized();
+        if (!RoleCodes.IsSuperAdmin(tenantContext.UserRole) && tenantContext.OrganizationId != organizationId) return Forbid();
+
+        if (request.RetentionDays < 30 || request.RetentionDays > 3650)
+            return BadRequest(new ProblemDetails { Title = "RetentionDays must be between 30 and 3650 (10 years)", Status = StatusCodes.Status400BadRequest });
+
+        var org = await _context.Organizations.FirstOrDefaultAsync(o => o.Id == organizationId);
+        if (org == null) return NotFound();
+
+        org.Settings = WriteRetentionSettings(org.Settings, request);
+        await _context.SaveChangesAsync();
+
+        return Ok(request);
+    }
+
+    /// <summary>
+    /// Returning-visitor search by name/phone/email/ID, org-wide (a person is recognized at any
+    /// branch, not just the one they're being looked up from). Phone/email/ID hit the partial
+    /// unique indexes directly (exact match, effectively instant); name uses a prefix-indexed
+    /// ILIKE. Capped at SearchResultLimit — this backs a live typeahead, not a report.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/search")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(List<VisitorProfileSearchResultDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SearchVisitorProfiles(Guid branchId, [FromQuery] string q)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
+            return Ok(new List<VisitorProfileSearchResultDto>());
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var term = q.Trim();
+        var normEmail = VisitorMatching.NormalizeEmail(term);
+        var normPhone = VisitorMatching.NormalizePhone(term);
+        var normId = VisitorMatching.NormalizeIdNumber(term);
+
+        var matches = await _context.VisitorProfiles
+            .Where(p => p.OrganizationId == organizationId && p.DeletedAt == null)
+            .Where(p =>
+                EF.Functions.ILike(p.FullName, term + "%") ||
+                (normEmail != null && p.NormalizedEmail == normEmail) ||
+                (normPhone != null && p.NormalizedPhone == normPhone) ||
+                (normId != null && p.NormalizedIdNumber == normId))
+            .OrderBy(p => p.FullName)
+            .Take(SearchResultLimit)
+            .ToListAsync();
+
+        if (matches.Count == 0) return Ok(new List<VisitorProfileSearchResultDto>());
+
+        var profileIds = matches.Select(p => p.Id).ToList();
+        var stats = await GetStatsAsync(profileIds);
+        var lastVisitByProfile = await _context.Visitors
+            .Where(v => profileIds.Contains(v.VisitorProfileId) && v.DeletedAt == null)
+            .GroupBy(v => v.VisitorProfileId)
+            .Select(g => new { ProfileId = g.Key, LastVisitAt = g.Max(v => v.CreatedAt) })
+            .ToDictionaryAsync(x => x.ProfileId, x => x.LastVisitAt);
+        var activeProfileIds = (await _context.Visitors
+            .Where(v => profileIds.Contains(v.VisitorProfileId) && v.DeletedAt == null && v.Status == VisitorStatus.CheckedIn)
+            .Select(v => v.VisitorProfileId)
+            .ToListAsync()).ToHashSet();
+
+        var results = matches.Select(p =>
+        {
+            var s = stats.GetValueOrDefault(p.Id);
+            return new VisitorProfileSearchResultDto
+            {
+                Id = p.Id,
+                FullName = p.FullName,
+                Phone = p.Phone,
+                Email = p.Email,
+                Company = p.Company,
+                IdNumber = p.IdNumber,
+                PhotoUrl = p.PhotoUrl,
+                IsWatchlisted = p.IsWatchlisted,
+                WatchlistReason = p.WatchlistReason,
+                LastVisitAt = lastVisitByProfile.GetValueOrDefault(p.Id),
+                TotalVisits = s.Total,
+                VisitsLast24Hours = s.Last24h,
+                HasActiveVisit = activeProfileIds.Contains(p.Id)
+            };
+        }).ToList();
+
+        return Ok(results);
     }
 
     [HttpGet("branches/{branchId:guid}/visitors/{visitorId:guid}")]
@@ -203,11 +552,75 @@ public class VisitorsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var visitor = await _context.Visitors
-            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId);
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
 
         if (visitor == null) return NotFound();
-        return Ok(MapToDto(visitor));
+        var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
+        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId)));
+    }
+
+    /// <summary>
+    /// Reissues a fresh signed QR token for an already-checked-in visit — used when staff reopen
+    /// the badge view later rather than right after check-in (the token from the original
+    /// check-in response isn't persisted anywhere, by design; a new one is just as valid).
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/visitors/{visitorId:guid}/badge-token")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReissueBadgeToken(Guid branchId, Guid visitorId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
+        if (visitor == null) return NotFound();
+
+        if (visitor.Status != VisitorStatus.CheckedIn)
+            return BadRequest(new ProblemDetails { Title = "Only an active (checked-in) visit has a badge", Status = StatusCodes.Status400BadRequest });
+
+        var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
+        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), qrToken));
+    }
+
+    /// <summary>
+    /// Uploads a check-in photo (captured client-side from the camera) and returns its stored
+    /// URL. Standalone from any particular visitor/profile — the photo is taken before the
+    /// check-in form is submitted, so nothing to attach it to exists yet; the caller passes the
+    /// returned URL back as PhotoUrl on the actual check-in request.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/visitors/photo")]
+    [RequirePermission(Permissions.VisitorsCheckIn)]
+    [RequestSizeLimit(MaxPhotoSizeBytes)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UploadPhoto(Guid branchId, IFormFile file)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (file == null || file.Length == 0)
+            return BadRequest(new ProblemDetails { Title = "No photo was provided", Status = StatusCodes.Status400BadRequest });
+        if (file.Length > MaxPhotoSizeBytes)
+            return BadRequest(new ProblemDetails { Title = $"Photo exceeds the {MaxPhotoSizeBytes / 1024 / 1024}MB size limit", Status = StatusCodes.Status400BadRequest });
+
+        var mimeType = file.ContentType ?? "";
+        if (!mimeType.StartsWith("image/"))
+            return BadRequest(new ProblemDetails { Title = "Only image files are accepted", Status = StatusCodes.Status400BadRequest });
+
+        await using var uploadStream = file.OpenReadStream();
+        var uploadResult = await _mediaStorage.UploadAsync(uploadStream, file.FileName, mimeType);
+        if (!uploadResult.Success)
+        {
+            _logger.LogError("Visitor photo upload failed for branch {BranchId}: {Error}", branchId, uploadResult.ErrorMessage);
+            return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Failed to store the photo" });
+        }
+
+        return Ok(uploadResult.FileUrl);
     }
 
     /// <summary>
@@ -224,12 +637,10 @@ public class VisitorsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FullName))
             return BadRequest(new ProblemDetails { Title = "Full name is required", Status = StatusCodes.Status400BadRequest });
 
-        var tenantContext = _tenantAccessor.TenantContext!;
-        var organizationId = RoleCodes.IsSuperAdmin(tenantContext.UserRole)
-            ? (await _context.Branches.Where(b => b.Id == branchId).Select(b => b.OrganizationId).FirstAsync())
-            : tenantContext.OrganizationId;
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         Visitor visitor = null!;
+        VisitorProfile profile = null!;
         // Npgsql's retrying execution strategy (EnableRetryOnFailure) doesn't allow a raw
         // BeginTransactionAsync — the whole retriable unit must go through
         // CreateExecutionStrategy().ExecuteAsync, same requirement as IUnitOfWork.ExecuteInTransactionAsync
@@ -239,17 +650,18 @@ public class VisitorsController : ControllerBase
         {
             await using var transaction = await _context.Database.BeginTransactionAsync();
 
+            profile = await FindOrCreateProfileAsync(organizationId, request.VisitorProfileId,
+                request.FullName, request.Phone, request.Email, request.IdNumber, request.Company, null);
+
             var badgeCode = await GenerateBadgeCodeAsync(branchId);
             visitor = new Visitor
             {
                 OrganizationId = organizationId,
                 BranchId = branchId,
+                VisitorProfileId = profile.Id,
                 BadgeCode = badgeCode,
-                FullName = request.FullName,
-                Phone = request.Phone,
-                Email = request.Email,
-                Company = request.Company,
                 Purpose = request.Purpose,
+                VehiclePlate = request.VehiclePlate,
                 HostUserId = request.HostUserId,
                 HostName = request.HostName,
                 Status = VisitorStatus.PreRegistered,
@@ -261,7 +673,10 @@ public class VisitorsController : ControllerBase
             await transaction.CommitAsync();
         });
 
-        return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, MapToDto(visitor));
+        var stats = await GetStatsAsync(new[] { profile.Id });
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id));
+        await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.PreRegistered, dto);
+        return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, dto);
     }
 
     /// <summary>
@@ -270,6 +685,7 @@ public class VisitorsController : ControllerBase
     [HttpPost("branches/{branchId:guid}/visitors/checkin")]
     [RequirePermission(Permissions.VisitorsCheckIn)]
     [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CheckIn(Guid branchId, [FromBody] CheckInVisitorRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
@@ -278,42 +694,52 @@ public class VisitorsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FullName))
             return BadRequest(new ProblemDetails { Title = "Full name is required", Status = StatusCodes.Status400BadRequest });
 
-        var tenantContext = _tenantAccessor.TenantContext!;
-        var organizationId = RoleCodes.IsSuperAdmin(tenantContext.UserRole)
-            ? (await _context.Branches.Where(b => b.Id == branchId).Select(b => b.OrganizationId).FirstAsync())
-            : tenantContext.OrganizationId;
+        var branchSettingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        var consentSettings = ReadConsentSettings(branchSettingsJson);
+        if (consentSettings.Required && !request.ConsentGiven)
+            return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
 
-        // Flag on arrival, not just for staff to notice later — check name+ID against anyone
-        // already on this branch's watchlist.
-        var isWatchlisted = !string.IsNullOrWhiteSpace(request.IdNumber) && await _context.Visitors
-            .AnyAsync(v => v.BranchId == branchId && v.IsWatchlisted &&
-                           v.IdNumber == request.IdNumber);
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         Visitor visitor = null!;
+        VisitorProfile profile = null!;
         var strategy = _context.Database.CreateExecutionStrategy();
+        IActionResult? conflict = null;
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await _context.Database.BeginTransactionAsync();
+
+            profile = await FindOrCreateProfileAsync(organizationId, request.VisitorProfileId,
+                request.FullName, request.Phone, request.Email, request.IdNumber, request.Company, request.PhotoUrl);
+            await _context.SaveChangesAsync(); // profile needs an Id before the active-visit check below
+
+            var activeVisit = await GetActiveVisitAsync(profile.Id);
+            if (activeVisit != null)
+            {
+                conflict = Conflict(new ProblemDetails
+                {
+                    Title = "Already checked in",
+                    Detail = $"{profile.FullName} already has an active visit (badge {activeVisit.BadgeCode}, checked in {activeVisit.CheckedInAt:HH:mm} at {activeVisit.Branch?.Name}). They must check out before starting a new visit.",
+                    Status = StatusCodes.Status409Conflict
+                });
+                await transaction.RollbackAsync();
+                return;
+            }
 
             var badgeCode = await GenerateBadgeCodeAsync(branchId);
             visitor = new Visitor
             {
                 OrganizationId = organizationId,
                 BranchId = branchId,
+                VisitorProfileId = profile.Id,
                 BadgeCode = badgeCode,
-                FullName = request.FullName,
-                Phone = request.Phone,
-                Email = request.Email,
-                Company = request.Company,
-                IdNumber = request.IdNumber,
-                PhotoUrl = request.PhotoUrl,
                 Purpose = request.Purpose,
+                VehiclePlate = request.VehiclePlate,
                 HostUserId = request.HostUserId,
                 HostName = request.HostName,
                 Status = VisitorStatus.CheckedIn,
                 CheckedInAt = DateTime.UtcNow,
-                IsWatchlisted = isWatchlisted,
-                WatchlistReason = isWatchlisted ? "Matches an existing watchlist entry by ID number" : null,
+                ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null,
                 Notes = request.Notes
             };
             _context.Visitors.Add(visitor);
@@ -321,9 +747,16 @@ public class VisitorsController : ControllerBase
             await transaction.CommitAsync();
         });
 
-        await NotifyHostAsync(visitor, organizationId, branchId);
+        if (conflict != null) return conflict;
 
-        return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, MapToDto(visitor));
+        await NotifyHostAsync(visitor, profile, organizationId, branchId);
+
+        var stats = await GetStatsAsync(new[] { profile.Id });
+        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken);
+        await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
+
+        return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, dto);
     }
 
     /// <summary>
@@ -334,15 +767,17 @@ public class VisitorsController : ControllerBase
     [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CheckInExisting(Guid branchId, Guid visitorId, [FromBody] CheckInVisitorRequest? request = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var visitor = await _context.Visitors
-            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId);
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
 
         if (visitor == null) return NotFound();
+        var profile = visitor.VisitorProfile!;
 
         if (visitor.Status != VisitorStatus.PreRegistered)
             return BadRequest(new ProblemDetails
@@ -352,20 +787,49 @@ public class VisitorsController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
+        var activeVisit = await GetActiveVisitAsync(profile.Id, excludeVisitId: visitor.Id);
+        if (activeVisit != null)
+            return Conflict(new ProblemDetails
+            {
+                Title = "Already checked in",
+                Detail = $"{profile.FullName} already has an active visit (badge {activeVisit.BadgeCode}) at {activeVisit.Branch?.Name}. They must check out before starting a new visit.",
+                Status = StatusCodes.Status409Conflict
+            });
+
+        var branchSettingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        var consentSettings = ReadConsentSettings(branchSettingsJson);
+        if (consentSettings.Required && !(request?.ConsentGiven ?? false))
+            return BadRequest(new ProblemDetails { Title = "Visitor consent is required to check in", Status = StatusCodes.Status400BadRequest });
+
         if (request != null)
         {
-            if (!string.IsNullOrWhiteSpace(request.IdNumber)) visitor.IdNumber = request.IdNumber;
-            if (!string.IsNullOrWhiteSpace(request.PhotoUrl)) visitor.PhotoUrl = request.PhotoUrl;
+            if (!string.IsNullOrWhiteSpace(request.IdNumber) && string.IsNullOrWhiteSpace(profile.IdNumber))
+            {
+                profile.IdNumber = request.IdNumber;
+                profile.NormalizedIdNumber = VisitorMatching.NormalizeIdNumber(request.IdNumber);
+            }
+            if (!string.IsNullOrWhiteSpace(request.PhotoUrl)) profile.PhotoUrl = request.PhotoUrl;
+            if (!string.IsNullOrWhiteSpace(request.VehiclePlate)) visitor.VehiclePlate = request.VehiclePlate;
         }
+
+        // Watchlist matching happens on the profile itself now (FindOrCreateProfileAsync /
+        // SetWatchlist keep it current), so no separate re-check is needed here — if this
+        // profile is flagged, IsWatchlisted is already true and travels with every visit.
 
         visitor.Status = VisitorStatus.CheckedIn;
         visitor.CheckedInAt = DateTime.UtcNow;
+        visitor.ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null;
         visitor.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        await NotifyHostAsync(visitor, visitor.OrganizationId, branchId);
+        await NotifyHostAsync(visitor, profile, visitor.OrganizationId, branchId);
 
-        return Ok(MapToDto(visitor));
+        var stats = await GetStatsAsync(new[] { profile.Id });
+        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken);
+        await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
+
+        return Ok(dto);
     }
 
     [HttpPost("branches/{branchId:guid}/visitors/{visitorId:guid}/checkout")]
@@ -382,7 +846,7 @@ public class VisitorsController : ControllerBase
         // double-submit guard — only a visitor still CheckedIn can transition to CheckedOut,
         // checked as part of the same UPDATE rather than read-then-write.
         var affected = await _context.Visitors
-            .Where(v => v.Id == visitorId && v.BranchId == branchId && v.Status == VisitorStatus.CheckedIn)
+            .Where(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null && v.Status == VisitorStatus.CheckedIn)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(v => v.Status, VisitorStatus.CheckedOut)
                 .SetProperty(v => v.CheckedOutAt, DateTime.UtcNow)
@@ -390,7 +854,7 @@ public class VisitorsController : ControllerBase
 
         if (affected == 0)
         {
-            var exists = await _context.Visitors.AnyAsync(v => v.Id == visitorId && v.BranchId == branchId);
+            var exists = await _context.Visitors.AnyAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
             if (!exists) return NotFound();
             return BadRequest(new ProblemDetails
             {
@@ -400,8 +864,11 @@ public class VisitorsController : ControllerBase
             });
         }
 
-        var visitor = await _context.Visitors.FirstAsync(v => v.Id == visitorId);
-        return Ok(MapToDto(visitor));
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile).FirstAsync(v => v.Id == visitorId);
+        var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
+        var dto = MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId));
+        await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedOut, dto);
+        return Ok(dto);
     }
 
     [HttpPut("branches/{branchId:guid}/visitors/{visitorId:guid}")]
@@ -413,23 +880,34 @@ public class VisitorsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var visitor = await _context.Visitors
-            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId);
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
         if (visitor == null) return NotFound();
+        var profile = visitor.VisitorProfile!;
 
-        visitor.FullName = request.FullName;
-        visitor.Phone = request.Phone;
-        visitor.Email = request.Email;
-        visitor.Company = request.Company;
-        visitor.IdNumber = request.IdNumber;
+        // Identity fields belong to the profile now — editing them here edits the person's
+        // record, which is exactly what should happen (a corrected phone number should apply
+        // to their next visit too, not just this one).
+        profile.FullName = request.FullName;
+        profile.Phone = request.Phone;
+        profile.NormalizedPhone = VisitorMatching.NormalizePhone(request.Phone);
+        profile.Email = request.Email;
+        profile.NormalizedEmail = VisitorMatching.NormalizeEmail(request.Email);
+        profile.Company = request.Company;
+        profile.IdNumber = request.IdNumber;
+        profile.NormalizedIdNumber = VisitorMatching.NormalizeIdNumber(request.IdNumber);
+        profile.UpdatedAt = DateTime.UtcNow;
+
         visitor.Purpose = request.Purpose;
+        visitor.VehiclePlate = request.VehiclePlate;
         visitor.HostUserId = request.HostUserId;
         visitor.HostName = request.HostName;
         visitor.Notes = request.Notes;
         visitor.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
-        return Ok(MapToDto(visitor));
+        var stats = await GetStatsAsync(new[] { profile.Id });
+        return Ok(MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id)));
     }
 
     [HttpPut("branches/{branchId:guid}/visitors/{visitorId:guid}/watchlist")]
@@ -441,33 +919,105 @@ public class VisitorsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var visitor = await _context.Visitors
-            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId);
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
         if (visitor == null) return NotFound();
 
-        visitor.IsWatchlisted = request.IsWatchlisted;
-        visitor.WatchlistReason = request.IsWatchlisted ? request.Reason : null;
-        visitor.UpdatedAt = DateTime.UtcNow;
+        if (request.IsWatchlisted && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new ProblemDetails
+            {
+                Title = "A reason is required to add a visitor to the watchlist",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        // Flagging is a property of the PERSON, not this one visit — it follows the profile to
+        // every branch and every future visit.
+        var profile = visitor.VisitorProfile!;
+        profile.IsWatchlisted = request.IsWatchlisted;
+        profile.WatchlistReason = request.IsWatchlisted ? request.Reason : null;
+        profile.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
-        return Ok(MapToDto(visitor));
+        var stats = await GetStatsAsync(new[] { profile.Id });
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id));
+        await _activityBroadcaster.BroadcastAsync(branchId, request.IsWatchlisted ? VisitorActivityKind.Flagged : VisitorActivityKind.Unflagged, dto);
+        return Ok(dto);
     }
 
+    /// <summary>
+    /// Soft-deletes a visit record — a reason is mandatory. Visitor logs are a compliance
+    /// artifact in their own right (evacuation rosters, incident/investigation lookback), so a
+    /// hard delete would erase exactly what the log exists to prove; deleting instead hides the
+    /// row from normal views while keeping who deleted it, when, and why. Only the visit is
+    /// removed — the person's profile (and their other visits) is untouched.
+    /// </summary>
     [HttpDelete("branches/{branchId:guid}/visitors/{visitorId:guid}")]
     [RequirePermission(Permissions.VisitorsManage)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteVisitor(Guid branchId, Guid visitorId)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> DeleteVisitor(Guid branchId, Guid visitorId, [FromBody] DeleteVisitorRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var visitor = await _context.Visitors
-            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId);
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new ProblemDetails { Title = "A reason is required to delete a visitor record", Status = StatusCodes.Status400BadRequest });
+
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
         if (visitor == null) return NotFound();
 
-        _context.Visitors.Remove(visitor);
+        visitor.DeletedAt = DateTime.UtcNow;
+        visitor.DeletedByUserId = CurrentUserId();
+        visitor.DeletionReason = request.Reason;
+        visitor.UpdatedAt = DateTime.UtcNow;
+
         await _context.SaveChangesAsync();
+        var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
+        await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.Deleted,
+            MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId)));
         return NoContent();
+    }
+
+    /// <summary>
+    /// Compliance audit view — every deleted visit record for this branch, with who deleted it,
+    /// when, and why. The records themselves were never actually removed (see DeleteVisitor);
+    /// this just surfaces them without going to the database directly.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/deleted")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(typeof(List<DeletedVisitorDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetDeletedVisitors(Guid branchId, [FromQuery] int limit = 100)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var deleted = await _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt != null)
+            .OrderByDescending(v => v.DeletedAt)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync();
+
+        var deleterIds = deleted.Select(v => v.DeletedByUserId).Where(id => id != null).Select(id => id!.Value).Distinct().ToList();
+        var deleterNames = await _context.Users
+            .Where(u => deleterIds.Contains(u.Id))
+            .Select(u => new { u.Id, u.FirstName, u.LastName })
+            .ToDictionaryAsync(u => u.Id, u => $"{u.FirstName} {u.LastName}".Trim());
+
+        var results = deleted.Select(v => new DeletedVisitorDto
+        {
+            Id = v.Id,
+            BadgeCode = v.BadgeCode,
+            FullName = v.VisitorProfile!.FullName,
+            Purpose = v.Purpose,
+            StatusAtDeletion = v.Status,
+            CreatedAt = v.CreatedAt,
+            DeletedAt = v.DeletedAt!.Value,
+            DeletedByUserName = v.DeletedByUserId.HasValue ? deleterNames.GetValueOrDefault(v.DeletedByUserId.Value) : null,
+            DeletionReason = v.DeletionReason ?? ""
+        }).ToList();
+
+        return Ok(results);
     }
 }

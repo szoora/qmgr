@@ -42,6 +42,8 @@ public static class DependencyInjection
         // Services
         services.AddScoped<IQueueService, QueueService>();
         services.AddScoped<IWebhookService, WebhookService>();
+        services.AddSingleton<IVisitorBadgeTokenService, VisitorBadgeTokenService>();
+        services.AddScoped<IVisitorActivityBroadcaster, VisitorActivityBroadcaster>();
 
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using QMgr.Infrastructure.Data;
@@ -11,9 +12,11 @@ using QMgr.Infrastructure.Data;
 namespace QMgr.Infrastructure.Migrations
 {
     [DbContext(typeof(QMgrDbContext))]
-    partial class QMgrDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825162707_AddVisitorSoftDelete")]
+    partial class AddVisitorSoftDelete
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2926,164 +2929,6 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<DateTime?>("CheckedOutAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTime?>("ConsentGivenAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("DeletedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("DeletionReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("HostName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<Guid?>("HostUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Purpose")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime?>("ScheduledAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("VehiclePlate")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
-
-                    b.Property<Guid?>("VisitorPassId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("VisitorProfileId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("HostUserId");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("VisitorPassId");
-
-                    b.HasIndex("VisitorProfileId")
-                        .IsUnique()
-                        .HasDatabaseName("idx_visitors_profile_active_unique")
-                        .HasFilter("\"Status\" = 'CheckedIn' AND \"DeletedAt\" IS NULL");
-
-                    b.HasIndex("BranchId", "BadgeCode")
-                        .IsUnique()
-                        .HasDatabaseName("idx_visitors_branch_badge");
-
-                    b.HasIndex("BranchId", "CheckedInAt")
-                        .HasDatabaseName("idx_visitors_branch_checkedin");
-
-                    b.HasIndex("BranchId", "DeletedAt")
-                        .HasDatabaseName("idx_visitors_branch_deleted");
-
-                    b.HasIndex("BranchId", "Status")
-                        .HasDatabaseName("idx_visitors_branch_status");
-
-                    b.ToTable("visitors", "qmgr");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorPass", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("BranchId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("CreatedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("CurrentVisitors")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Label")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<int>("MaxVisitors")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RevokedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("RevokedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("TokenId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("TokenId")
-                        .IsUnique()
-                        .HasDatabaseName("idx_visitor_passes_token");
-
-                    b.HasIndex("BranchId", "RevokedAt", "ExpiresAt")
-                        .HasDatabaseName("idx_visitor_passes_branch_active");
-
-                    b.ToTable("visitor_passes", "qmgr");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorProfile", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Company")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
@@ -3110,6 +2955,14 @@ namespace QMgr.Infrastructure.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("HostName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid?>("HostUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("IdNumber")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -3120,17 +2973,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<bool>("IsWatchlisted")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("NormalizedEmail")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<string>("NormalizedIdNumber")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("NormalizedPhone")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
@@ -3142,6 +2987,19 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<string>("PhotoUrl")
                         .HasColumnType("text");
 
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("ScheduledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -3151,31 +3009,24 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("FullName")
-                        .HasDatabaseName("idx_visitor_profiles_name_prefix");
+                    b.HasIndex("HostUserId");
 
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("FullName"), "btree");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("FullName"), new[] { "text_pattern_ops" });
+                    b.HasIndex("OrganizationId");
 
-                    b.HasIndex("OrganizationId", "DeletedAt")
-                        .HasDatabaseName("idx_visitor_profiles_org_deleted");
-
-                    b.HasIndex("OrganizationId", "NormalizedEmail")
+                    b.HasIndex("BranchId", "BadgeCode")
                         .IsUnique()
-                        .HasDatabaseName("idx_visitor_profiles_org_email_unique")
-                        .HasFilter("\"NormalizedEmail\" IS NOT NULL AND \"DeletedAt\" IS NULL");
+                        .HasDatabaseName("idx_visitors_branch_badge");
 
-                    b.HasIndex("OrganizationId", "NormalizedIdNumber")
-                        .IsUnique()
-                        .HasDatabaseName("idx_visitor_profiles_org_id_unique")
-                        .HasFilter("\"NormalizedIdNumber\" IS NOT NULL AND \"DeletedAt\" IS NULL");
+                    b.HasIndex("BranchId", "CheckedInAt")
+                        .HasDatabaseName("idx_visitors_branch_checkedin");
 
-                    b.HasIndex("OrganizationId", "NormalizedPhone")
-                        .IsUnique()
-                        .HasDatabaseName("idx_visitor_profiles_org_phone_unique")
-                        .HasFilter("\"NormalizedPhone\" IS NOT NULL AND \"DeletedAt\" IS NULL");
+                    b.HasIndex("BranchId", "DeletedAt")
+                        .HasDatabaseName("idx_visitors_branch_deleted");
 
-                    b.ToTable("visitor_profiles", "qmgr");
+                    b.HasIndex("BranchId", "Status")
+                        .HasDatabaseName("idx_visitors_branch_status");
+
+                    b.ToTable("visitors", "qmgr");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Billing.AdImpression", b =>
@@ -3785,54 +3636,9 @@ namespace QMgr.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("QMgr.Domain.Entities.Visitor.VisitorPass", "VisitorPass")
-                        .WithMany("Visits")
-                        .HasForeignKey("VisitorPassId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("QMgr.Domain.Entities.Visitor.VisitorProfile", "VisitorProfile")
-                        .WithMany("Visits")
-                        .HasForeignKey("VisitorProfileId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.Navigation("Branch");
 
                     b.Navigation("HostUser");
-
-                    b.Navigation("Organization");
-
-                    b.Navigation("VisitorPass");
-
-                    b.Navigation("VisitorProfile");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorPass", b =>
-                {
-                    b.HasOne("QMgr.Domain.Entities.Organization.Branch", "Branch")
-                        .WithMany()
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Branch");
-
-                    b.Navigation("Organization");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorProfile", b =>
-                {
-                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
 
                     b.Navigation("Organization");
                 });
@@ -3948,16 +3754,6 @@ namespace QMgr.Infrastructure.Migrations
             modelBuilder.Entity("QMgr.Domain.Entities.Queue.Token", b =>
                 {
                     b.Navigation("History");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorPass", b =>
-                {
-                    b.Navigation("Visits");
-                });
-
-            modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorProfile", b =>
-                {
-                    b.Navigation("Visits");
                 });
 #pragma warning restore 612, 618
         }

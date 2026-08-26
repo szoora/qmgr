@@ -63,12 +63,12 @@ public class Organization : BaseAuditableEntity
     #region SaaS / Multi-Tenancy Fields
 
     /// <summary>
-    /// URL-safe unique identifier for tenant (e.g., "acme" for acme.qmgr.app)
+    /// URL-safe unique identifier for tenant (e.g., "sacc" for sacc.qmgr.app)
     /// </summary>
     public string Slug { get; set; } = string.Empty;
 
     /// <summary>
-    /// Custom domain for white-label (e.g., "queue.acmecorp.com")
+    /// Custom domain for white-label (e.g., "queue.getsacc.com")
     /// </summary>
     public string? CustomDomain { get; set; }
 

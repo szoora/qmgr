@@ -19,6 +19,7 @@ public class NotificationClientService : INotificationClientService
 
     public event Func<NotificationDto, Task>? OnNotificationReceived;
     public event Func<int, Task>? OnUnreadCountUpdated;
+    public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
 
     public HubConnectionState State => _hubConnection?.State ?? HubConnectionState.Disconnected;
 
@@ -87,6 +88,16 @@ public class NotificationClientService : INotificationClientService
             if (OnUnreadCountUpdated != null)
             {
                 await OnUnreadCountUpdated.Invoke(count);
+            }
+        });
+
+        // Handle visitor activity (live board)
+        _hubConnection.On<VisitorActivityEvent>("VisitorActivity", async activity =>
+        {
+            _logger.LogDebug("Visitor activity: {Kind} - {VisitorName}", activity.Kind, activity.Visitor.FullName);
+            if (OnVisitorActivityReceived != null)
+            {
+                await OnVisitorActivityReceived.Invoke(activity);
             }
         });
 

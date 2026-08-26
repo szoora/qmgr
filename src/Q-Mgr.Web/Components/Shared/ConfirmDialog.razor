@@ -4,12 +4,26 @@
 <QModal @bind-Visible="IsVisible" Title="@Title" Size="sm" ShowDefaultFooter="false">
     <ChildContent>
         <p class="confirm-message">@Message</p>
+        @if (RequireReason)
+        {
+            <label class="confirm-reason-label">
+                @ReasonLabel
+                <textarea class="confirm-reason-input" rows="3" placeholder="@ReasonPlaceholder"
+                          value="@Reason" @oninput="@OnReasonInput"></textarea>
+            </label>
+        }
     </ChildContent>
     <FooterContent>
         <QButton Text="@CancelText" Icon="x-lg" Variant="ghost" OnClick="@Cancel" />
-        <QButton Text="@ConfirmText" Icon="@GetConfirmIcon()" Variant="@GetConfirmVariant()" OnClick="@Confirm" />
+        <QButton Text="@ConfirmText" Icon="@GetConfirmIcon()" Variant="@GetConfirmVariant()" OnClick="@Confirm"
+                 Disabled="@(RequireReason && string.IsNullOrWhiteSpace(Reason))" />
     </FooterContent>
 </QModal>
+
+<style>
+    .confirm-reason-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); margin-top: 12px; }
+    .confirm-reason-input { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; font-family: inherit; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); resize: vertical; }
+</style>
 
 @code {
     [Parameter] public bool IsVisible { get; set; }
@@ -21,6 +35,19 @@
     [Parameter] public string ConfirmButtonClass { get; set; } = "btn-primary";
     [Parameter] public string CancelButtonClass { get; set; } = "btn-outline-secondary";
     [Parameter] public EventCallback<bool> OnClose { get; set; }
+
+    /// <summary>
+    /// When true, shows a required reason textarea and disables Confirm until it's filled —
+    /// used for compliance-sensitive destructive actions (e.g. deleting a visitor record) where
+    /// the reason must be captured before the action is allowed to proceed. Caller owns the bound
+    /// value (same convention as Title/Message) and reads it from OnClose(true), so it should
+    /// reset the field itself before opening the dialog.
+    /// </summary>
+    [Parameter] public bool RequireReason { get; set; }
+    [Parameter] public string ReasonLabel { get; set; } = "Reason *";
+    [Parameter] public string ReasonPlaceholder { get; set; } = "Enter a reason...";
+    [Parameter] public string Reason { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ReasonChanged { get; set; }
 
     private string GetConfirmVariant()
     {
@@ -46,6 +73,12 @@
             "btn-success" => "check-lg",
             _ => "check-lg"
         };
+    }
+
+    private async Task OnReasonInput(ChangeEventArgs e)
+    {
+        Reason = e.Value?.ToString() ?? string.Empty;
+        await ReasonChanged.InvokeAsync(Reason);
     }
 
     private async Task Confirm()

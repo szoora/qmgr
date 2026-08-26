@@ -1,10 +1,13 @@
 @page "/admin/visitors"
 @using System.Text.Json
+@implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IAuthService AuthService
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
@@ -19,6 +22,13 @@
             <p class="subtitle">Check in visitors, notify hosts, and keep a record of who's on site</p>
         </div>
         <div class="header-actions">
+            <QButton Text="Scan Badge" Icon="qr-code-scan" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/scan"))" />
+            <QButton Text="Display Board" Icon="display" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/board"))" />
+            <PermissionGuard Permission="visitors.manage">
+                <QButton Text="Group Passes" Icon="people-fill" Variant="secondary" OnClick="@OpenPassesModal" />
+                <QButton Text="Audit Log" Icon="clock-history" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/audit"))" />
+                <QButton Icon="gear-fill" Variant="secondary" OnClick="@OpenSettingsModal" />
+            </PermissionGuard>
             <PermissionGuard Permission="visitors.checkin">
                 <QButton Text="Pre-Register" Icon="calendar-plus" Variant="secondary" OnClick="@OpenPreRegisterModal" />
                 <QButton Text="Check In Visitor" Icon="person-plus-fill" Variant="primary" OnClick="@OpenCheckInModal" />
@@ -104,6 +114,18 @@
                             {
                                 <span class="visitor-company">@visitor.Company</span>
                             }
+                            @if (visitor.TotalVisits > 1)
+                            {
+                                <span class="returning-badge" title="@($"{visitor.TotalVisits} total visits")">
+                                    <QIcon Name="arrow-repeat" /> Returning (@visitor.TotalVisits)
+                                </span>
+                            }
+                            @if (visitor.VisitsLast24Hours > 3)
+                            {
+                                <span class="frequency-flag" title="Unusually frequent — worth a second look">
+                                    <QIcon Name="exclamation-triangle" /> @visitor.VisitsLast24Hours visits/24h
+                                </span>
+                            }
                         </div>
                         <span class="status-badge">@visitor.Status</span>
                     </div>
@@ -117,6 +139,10 @@
                         @if (!string.IsNullOrEmpty(visitor.Phone))
                         {
                             <span class="detail-item"><QIcon Name="telephone-fill" /> @visitor.Phone</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.VehiclePlate))
+                        {
+                            <span class="detail-item"><QIcon Name="car-front-fill" /> @visitor.VehiclePlate</span>
                         }
                         @if (visitor.ScheduledAt.HasValue)
                         {
@@ -136,18 +162,19 @@
                         @if (visitor.Status == VisitorStatus.PreRegistered)
                         {
                             <PermissionGuard Permission="visitors.checkin">
-                                <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => CheckInExisting(visitor))" />
+                                <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => OpenCheckInExistingModal(visitor))" />
                             </PermissionGuard>
                         }
                         @if (visitor.Status == VisitorStatus.CheckedIn)
                         {
                             <PermissionGuard Permission="visitors.checkout">
+                                <QButton Text="Badge" Icon="qr-code" Size="sm" Variant="ghost" OnClick="@(() => ShowBadge(visitor))" />
                                 <QButton Text="Check Out" Icon="box-arrow-right" Size="sm" Variant="secondary" OnClick="@(() => CheckOut(visitor))" />
                             </PermissionGuard>
                         }
                         <PermissionGuard Permission="visitors.manage">
-                            <QButton Text="@(visitor.IsWatchlisted ? "Unflag" : "Flag")" Icon="shield-exclamation" Size="sm" Variant="ghost" OnClick="@(() => ToggleWatchlist(visitor))" />
-                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => DeleteVisitor(visitor))" />
+                            <QButton Text="@(visitor.IsWatchlisted ? "Unflag" : "Flag")" Icon="shield-exclamation" Size="sm" Variant="ghost" OnClick="@(() => RequestToggleWatchlist(visitor))" />
+                            <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => RequestDeleteVisitor(visitor))" />
                         </PermissionGuard>
                     </div>
                 </div>
@@ -158,31 +185,60 @@
 
 <QModal @bind-Visible="showCheckInModal" Title="Check In Visitor" Size="md">
     <ChildContent>
+        @RenderReturningVisitorSearch(checkInSelectedProfile, p => ApplyProfileToCheckIn(p))
         <div class="form-grid">
             <label>Full Name *<input @bind="checkInModel.FullName" placeholder="Jane Doe" /></label>
-            <label>Company<input @bind="checkInModel.Company" placeholder="Acme Inc." /></label>
-            <label>Phone<input @bind="checkInModel.Phone" placeholder="+1 555 0100" /></label>
-            <label>Email<input @bind="checkInModel.Email" placeholder="jane@acme.com" /></label>
+            <label>Company<input @bind="checkInModel.Company" placeholder="SACC Software Limited" /></label>
+            <label>Phone<input @bind="checkInModel.Phone" placeholder="0753404044" /></label>
+            <label>Email<input @bind="checkInModel.Email" placeholder="support@getsacc.com" /></label>
             <label>ID Number<input @bind="checkInModel.IdNumber" placeholder="Passport / National ID" /></label>
+            <label>Vehicle Plate<input @bind="checkInModel.VehiclePlate" placeholder="KDA 123B" /></label>
             <label>Purpose of Visit *<input @bind="checkInModel.Purpose" placeholder="Meeting, delivery, interview..." /></label>
             <label>Host Name<input @bind="checkInModel.HostName" placeholder="Who are they visiting?" /></label>
             <label class="full-width">Notes<textarea @bind="checkInModel.Notes" rows="2"></textarea></label>
         </div>
+        @RenderPhotoCapture("checkin-photo", url => checkInModel.PhotoUrl = url, checkInModel.PhotoUrl)
+        @if (consentRequired)
+        {
+            @RenderConsentCheckbox(checkInConsentGiven, v => checkInConsentGiven = v)
+        }
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCheckInModal = false)" />
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => CloseCheckInModal())" />
         <QButton Text="Check In" Icon="person-plus-fill" Variant="primary" OnClick="@SubmitCheckIn"
-                 Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose))" />
+                 Disabled="@(string.IsNullOrWhiteSpace(checkInModel.FullName) || string.IsNullOrWhiteSpace(checkInModel.Purpose) || (consentRequired && !checkInConsentGiven))" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showCheckInExistingModal" Title="Check In Visitor" Size="sm">
+    <ChildContent>
+        <p class="confirm-message">Confirm arrival for <strong>@visitorPendingCheckIn?.FullName</strong>.</p>
+        <div class="form-grid">
+            <label>ID Number<input @bind="checkInExistingModel.IdNumber" placeholder="Passport / National ID" /></label>
+            <label>Vehicle Plate<input @bind="checkInExistingModel.VehiclePlate" placeholder="KDA 123B" /></label>
+        </div>
+        @RenderPhotoCapture("checkin-existing-photo", url => checkInExistingModel.PhotoUrl = url, checkInExistingModel.PhotoUrl)
+        @if (consentRequired)
+        {
+            @RenderConsentCheckbox(checkInExistingConsentGiven, v => checkInExistingConsentGiven = v)
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => CloseCheckInExistingModal())" />
+        <QButton Text="Check In" Icon="box-arrow-in-right" Variant="primary" OnClick="@SubmitCheckInExisting"
+                 Disabled="@(consentRequired && !checkInExistingConsentGiven)" />
     </FooterContent>
 </QModal>
 
 <QModal @bind-Visible="showPreRegisterModal" Title="Pre-Register Visitor" Size="md">
     <ChildContent>
+        @RenderReturningVisitorSearch(preRegisterSelectedProfile, p => ApplyProfileToPreRegister(p))
         <div class="form-grid">
             <label>Full Name *<input @bind="preRegisterModel.FullName" placeholder="Jane Doe" /></label>
-            <label>Company<input @bind="preRegisterModel.Company" placeholder="Acme Inc." /></label>
-            <label>Phone<input @bind="preRegisterModel.Phone" placeholder="+1 555 0100" /></label>
-            <label>Email<input @bind="preRegisterModel.Email" placeholder="jane@acme.com" /></label>
+            <label>Company<input @bind="preRegisterModel.Company" placeholder="SACC Software Limited" /></label>
+            <label>Phone<input @bind="preRegisterModel.Phone" placeholder="0753404044" /></label>
+            <label>Email<input @bind="preRegisterModel.Email" placeholder="support@getsacc.com" /></label>
+            <label>Vehicle Plate<input @bind="preRegisterModel.VehiclePlate" placeholder="KDA 123B" /></label>
             <label>Scheduled Time<input type="datetime-local" @bind="scheduledAtLocal" /></label>
             <label>Purpose of Visit *<input @bind="preRegisterModel.Purpose" placeholder="Meeting, delivery, interview..." /></label>
             <label>Host Name<input @bind="preRegisterModel.HostName" placeholder="Who are they visiting?" /></label>
@@ -196,13 +252,144 @@
     </FooterContent>
 </QModal>
 
+<QModal @bind-Visible="showBadgeModal" Title="Visitor Badge" Size="sm">
+    <ChildContent>
+        @if (badgeVisitor != null)
+        {
+            <div class="badge-card">
+                <div id="badge-qr-canvas" class="badge-qr-container"></div>
+                <div class="badge-name">@badgeVisitor.FullName</div>
+                <div class="badge-code">@badgeVisitor.BadgeCode</div>
+                @if (!string.IsNullOrEmpty(badgeVisitor.HostName))
+                {
+                    <div class="badge-host">Visiting: @badgeVisitor.HostName</div>
+                }
+                <p class="badge-hint">Scan at the exit to check out automatically.</p>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => showBadgeModal = false)" />
+        <QButton Text="Print" Icon="printer-fill" Variant="primary" OnClick="@PrintBadge" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showSettingsModal" Title="Visitor Settings" Size="md">
+    <ChildContent>
+        <div class="settings-section">
+            <h3>Consent / NDA</h3>
+            <p class="settings-hint">When enabled, every check-in requires the visitor (or the staff member on their behalf) to accept this statement before the visit can start.</p>
+            <label class="settings-toggle">
+                <input type="checkbox" @bind="consentSettingsModel.Required" />
+                <span>Require consent at check-in</span>
+            </label>
+            <label class="full-width-label">
+                Consent text
+                <textarea @bind="consentSettingsModel.Text" rows="3" disabled="@(!consentSettingsModel.Required)"></textarea>
+            </label>
+        </div>
+        <div class="settings-section">
+            <h3>Data Retention</h3>
+            <p class="settings-hint">
+                Visit records (name, phone, email, ID, photo) are automatically and permanently purged after this many days.
+                Default is 730 days (2 years) — a common baseline for security/compliance logs; adjust to match your jurisdiction's actual requirement.
+            </p>
+            <label>
+                Retention period (days)
+                <input type="number" min="30" max="3650" @bind="retentionSettingsModel.RetentionDays" />
+            </label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSettingsModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showPassesModal" Title="Group Passes" Size="md">
+    <ChildContent>
+        <div class="settings-section">
+            <h3>New Pass</h3>
+            <p class="settings-hint">A single QR badge that admits a group (e.g. a contractor crew or tour) — up to the cap you set, checked in/out individually at the scanner.</p>
+            <div class="form-grid">
+                <label>Label *<input @bind="newPassRequest.Label" placeholder="e.g. ACME Contractors - Roof Repair" /></label>
+                <label>Max Visitors<input type="number" min="1" max="200" @bind="newPassRequest.MaxVisitors" /></label>
+                <label>Valid For (hours)<input type="number" min="1" max="168" @bind="newPassRequest.ValidHours" /></label>
+            </div>
+            <QButton Text="Create Pass" Icon="qr-code" Variant="primary" OnClick="@CreatePass"
+                     Disabled="@string.IsNullOrWhiteSpace(newPassRequest.Label)" />
+        </div>
+
+        @if (createdPass != null)
+        {
+            <div class="settings-section">
+                <h3>New Pass Created</h3>
+                <div class="badge-card">
+                    <div id="pass-qr-canvas" class="badge-qr-container"></div>
+                    <div class="badge-name">@createdPass.Label</div>
+                    <div class="badge-code">Admits up to @createdPass.MaxVisitors, expires @createdPass.ExpiresAt.ToLocalTime().ToString("MMM dd, HH:mm")</div>
+                </div>
+                <QButton Text="Print" Icon="printer-fill" Variant="secondary" OnClick="@PrintPass" />
+            </div>
+        }
+
+        <div class="settings-section">
+            <h3>Active Passes</h3>
+            @if (passes.Count == 0)
+            {
+                <p class="settings-hint">No active group passes for this branch.</p>
+            }
+            else
+            {
+                @foreach (var pass in passes)
+                {
+                    <div class="visitor-row">
+                        <div>
+                            <strong>@pass.Label</strong>
+                            <div class="settings-hint">@pass.CurrentVisitors / @pass.MaxVisitors on site &middot; expires @pass.ExpiresAt.ToLocalTime().ToString("MMM dd, HH:mm")</div>
+                        </div>
+                        <QButton Text="Revoke" Icon="x-circle" Size="sm" Variant="ghost" OnClick="@(() => RevokePass(pass))" />
+                    </div>
+                }
+            }
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@ClosePassesModal" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog IsVisible="@showDeleteConfirm"
+               Title="Delete Visitor Record"
+               Message="@deleteConfirmMessage"
+               ConfirmText="Delete"
+               CancelText="Cancel"
+               ConfirmButtonClass="btn-danger"
+               RequireReason="true"
+               ReasonLabel="Reason for deletion *"
+               ReasonPlaceholder="e.g. duplicate entry, entered in error, visitor requested removal..."
+               @bind-Reason="deleteReason"
+               OnClose="@HandleDeleteConfirm" />
+
+<ConfirmDialog IsVisible="@showFlagConfirm"
+               Title="@(pendingFlagState ? "Add to Watchlist" : "Remove from Watchlist")"
+               Message="@flagConfirmMessage"
+               ConfirmText="@(pendingFlagState ? "Flag" : "Unflag")"
+               CancelText="Cancel"
+               ConfirmButtonClass="@(pendingFlagState ? "btn-danger" : "btn-warning")"
+               RequireReason="@pendingFlagState"
+               ReasonLabel="Reason *"
+               ReasonPlaceholder="Why is this visitor being flagged?"
+               @bind-Reason="flagReason"
+               OnClose="@HandleToggleWatchlistConfirm" />
+
 <style>
     .admin-page { padding: 0; }
 
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-    .header-actions { display: flex; gap: 12px; }
+    .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
     .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
     .summary-card { display: flex; align-items: center; gap: 14px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 18px; }
@@ -229,6 +416,8 @@
     .visitor-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
     .watchlist-flag { color: var(--qm-danger, #d9534f); }
     .visitor-company { color: var(--qm-text-muted); font-size: 13px; }
+    .returning-badge { font-size: 11px; color: var(--qm-primary); background: var(--qm-primary-light); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+    .frequency-flag { font-size: 11px; color: #a9781f; background: rgba(169, 120, 31, 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
     .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .status-checkedin .status-badge { background: rgba(63, 125, 88, 0.15); color: #3f7d58; }
     .status-preregistered .status-badge { background: rgba(169, 120, 31, 0.15); color: #a9781f; }
@@ -238,10 +427,48 @@
 
     .visitor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
     .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
     .form-grid label.full-width { grid-column: 1 / -1; }
     .form-grid input, .form-grid textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .checkin-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
+
+    .returning-search { position: relative; }
+    .returning-search input { width: 100%; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 9px 12px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+    .returning-results { position: absolute; z-index: 20; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); box-shadow: var(--qm-shadow-md, 0 4px 12px rgba(0,0,0,.12)); max-height: 260px; overflow-y: auto; }
+    .returning-result { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--qm-border); }
+    .returning-result:last-child { border-bottom: none; }
+    .returning-result:hover { background: var(--qm-bg-secondary); }
+    .returning-result-name { font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 6px; }
+    .returning-result-meta { font-size: 12px; color: var(--qm-text-muted); }
+    .returning-selected { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--qm-primary-light); border-radius: var(--qm-radius-sm); font-size: 13px; color: var(--qm-primary); }
+
+    .badge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 0; text-align: center; }
+    .badge-qr-container { width: 220px; height: 220px; display: flex; align-items: center; justify-content: center; }
+    .badge-name { font-weight: 700; font-size: 16px; color: var(--qm-text-primary); margin-top: 8px; }
+    .badge-code { font-family: monospace; }
+    .badge-host { font-size: 13px; color: var(--qm-text-muted); }
+    .badge-hint { font-size: 12px; color: var(--qm-text-muted); margin-top: 10px; }
+
+    .photo-capture { margin-top: 14px; }
+    .photo-preview { display: flex; align-items: center; gap: 12px; }
+    .photo-preview img { width: 64px; height: 64px; border-radius: var(--qm-radius-sm); object-fit: cover; border: 1px solid var(--qm-border); }
+    .photo-live { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .photo-live video { width: 220px; height: 165px; border-radius: var(--qm-radius-sm); background: #000; object-fit: cover; }
+    .scanner-hidden-canvas { display: none; }
+
+    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
+    .consent-check input { margin-top: 3px; }
+
+    .visitor-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .visitor-row:last-child { border-bottom: none; }
+
+    .settings-section { margin-bottom: 20px; }
+    .settings-section h3 { margin: 0 0 6px; font-size: 15px; color: var(--qm-text-primary); }
+    .settings-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 10px; }
+    .settings-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-primary); margin-bottom: 10px; cursor: pointer; }
+    .full-width-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .full-width-label textarea { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
 </style>
 
 @code {
@@ -265,6 +492,50 @@
     private DateTime? scheduledAtLocal;
     private bool showCheckInModal;
     private bool showPreRegisterModal;
+    private VisitorProfileSearchResultDto? checkInSelectedProfile;
+    private VisitorProfileSearchResultDto? preRegisterSelectedProfile;
+
+    private bool showCheckInExistingModal;
+    private CheckInVisitorRequest checkInExistingModel = new();
+    private VisitorDto? visitorPendingCheckIn;
+
+    private bool showDeleteConfirm;
+    private string deleteConfirmMessage = "";
+    private string deleteReason = "";
+    private VisitorDto? visitorPendingDelete;
+
+    private bool showFlagConfirm;
+    private string flagConfirmMessage = "";
+    private string flagReason = "";
+    private bool pendingFlagState;
+    private VisitorDto? visitorPendingFlag;
+
+    private bool showBadgeModal;
+    private VisitorDto? badgeVisitor;
+
+    // Shared returning-visitor search state — only one modal is open at a time, so one set of
+    // fields is enough; RenderReturningVisitorSearch scopes results to whichever modal called it.
+    private string searchQuery = "";
+    private List<VisitorProfileSearchResultDto> searchResults = new();
+    private CancellationTokenSource? searchDebounce;
+
+    // Which modal (by idPrefix) currently has its camera live, if any — only one at a time.
+    private string? photoCapturingFor;
+
+    private bool consentRequired;
+    private string consentText = "";
+    private bool checkInConsentGiven;
+    private bool checkInExistingConsentGiven;
+
+    private bool showSettingsModal;
+    private VisitorConsentSettingsDto consentSettingsModel = new();
+    private VisitorRetentionSettingsDto retentionSettingsModel = new();
+    private Guid organizationId;
+
+    private bool showPassesModal;
+    private List<VisitorPassDto> passes = new();
+    private CreateVisitorPassRequest newPassRequest = new();
+    private VisitorPassDto? createdPass;
 
     protected override async Task OnInitializedAsync()
     {
@@ -276,6 +547,13 @@
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
+
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user != null) organizationId = user.OrganizationId;
+
+        var consent = await VisitorApi.GetConsentSettingsAsync(branchId);
+        consentRequired = consent.Required;
+        consentText = consent.Text;
 
         await LoadData();
     }
@@ -308,58 +586,272 @@
     private void OpenCheckInModal()
     {
         checkInModel = new CheckInVisitorRequest();
+        checkInSelectedProfile = null;
+        checkInConsentGiven = false;
+        ClearSearch();
         showCheckInModal = true;
+    }
+
+    private async Task CloseCheckInModal()
+    {
+        await StopPhotoCamera();
+        showCheckInModal = false;
     }
 
     private void OpenPreRegisterModal()
     {
         preRegisterModel = new PreRegisterVisitorRequest();
+        preRegisterSelectedProfile = null;
+        ClearSearch();
         scheduledAtLocal = DateTime.Now.AddMinutes(30);
         showPreRegisterModal = true;
     }
 
+    private void ClearSearch()
+    {
+        searchQuery = "";
+        searchResults = new();
+    }
+
+    private void ApplyProfileToCheckIn(VisitorProfileSearchResultDto p)
+    {
+        checkInSelectedProfile = p;
+        checkInModel.VisitorProfileId = p.Id;
+        checkInModel.FullName = p.FullName;
+        checkInModel.Phone = p.Phone;
+        checkInModel.Email = p.Email;
+        checkInModel.Company = p.Company;
+        checkInModel.IdNumber = p.IdNumber;
+        ClearSearch();
+    }
+
+    private void ApplyProfileToPreRegister(VisitorProfileSearchResultDto p)
+    {
+        preRegisterSelectedProfile = p;
+        preRegisterModel.VisitorProfileId = p.Id;
+        preRegisterModel.FullName = p.FullName;
+        preRegisterModel.Phone = p.Phone;
+        preRegisterModel.Email = p.Email;
+        preRegisterModel.Company = p.Company;
+        preRegisterModel.IdNumber = p.IdNumber;
+        ClearSearch();
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchQuery = e.Value?.ToString() ?? "";
+
+        searchDebounce?.Cancel();
+        if (searchQuery.Trim().Length < 2)
+        {
+            searchResults = new();
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        searchDebounce = cts;
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            searchResults = await VisitorApi.SearchVisitorProfilesAsync(branchId, searchQuery);
+            StateHasChanged();
+        }
+        catch (TaskCanceledException) { /* superseded by a newer keystroke */ }
+    }
+
+    // Renders inline rather than as a child component — keeps this modal's own model in one
+    // place instead of splitting state across a wrapper component + event callbacks for what's
+    // only used in two spots on this page.
+    private RenderFragment RenderReturningVisitorSearch(VisitorProfileSearchResultDto? selected, Action<VisitorProfileSearchResultDto> onSelect) => __builder =>
+    {
+        <div class="returning-search">
+            @if (selected != null)
+            {
+                <div class="returning-selected">
+                    <span><QIcon Name="arrow-repeat" /> Returning visitor: <strong>@selected.FullName</strong> (@selected.TotalVisits visits)</span>
+                    <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => { if (selected == checkInSelectedProfile) checkInSelectedProfile = null; if (selected == preRegisterSelectedProfile) preRegisterSelectedProfile = null; })" />
+                </div>
+            }
+            else
+            {
+                <input value="@searchQuery" @oninput="OnSearchInput" placeholder="Search returning visitors by name, phone, email or ID..." />
+                @if (searchResults.Any())
+                {
+                    <div class="returning-results">
+                        @foreach (var p in searchResults)
+                        {
+                            <div class="returning-result" @onclick="@(() => onSelect(p))">
+                                <span class="returning-result-name">
+                                    @p.FullName
+                                    @if (p.IsWatchlisted)
+                                    {
+                                        <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                    }
+                                    @if (p.HasActiveVisit)
+                                    {
+                                        <span class="frequency-flag">Currently checked in elsewhere</span>
+                                    }
+                                </span>
+                                <span class="returning-result-meta">
+                                    @(p.Company ?? "") @(string.IsNullOrEmpty(p.Company) ? "" : "·") @(p.Phone ?? p.Email ?? "")
+                                    · @p.TotalVisits visit@(p.TotalVisits == 1 ? "" : "s")
+                                    @(p.LastVisitAt.HasValue ? $"· last {p.LastVisitAt.Value:MMM dd}" : "")
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    };
+
+    // videoId/canvasId are namespaced per modal (checkin vs checkin-existing) so opening one
+    // never fights the other's camera/canvas elements if both were ever mounted at once.
+    private RenderFragment RenderPhotoCapture(string idPrefix, Action<string> onCaptured, string? currentUrl) => __builder =>
+    {
+        <div class="photo-capture">
+            @if (!string.IsNullOrEmpty(currentUrl))
+            {
+                <div class="photo-preview">
+                    <img src="@currentUrl" alt="Visitor photo" />
+                    <QButton Text="Retake" Icon="arrow-counterclockwise" Size="sm" Variant="ghost" OnClick="@(() => { onCaptured(""); _ = StartPhotoCamera(idPrefix); })" />
+                </div>
+            }
+            else if (photoCapturingFor == idPrefix)
+            {
+                <div class="photo-live">
+                    <video id="@($"{idPrefix}-video")" autoplay playsinline muted></video>
+                    <canvas id="@($"{idPrefix}-canvas")" class="scanner-hidden-canvas"></canvas>
+                    <QButton Text="Capture" Icon="camera-fill" Size="sm" Variant="primary" OnClick="@(() => CapturePhoto(idPrefix, onCaptured))" />
+                </div>
+            }
+            else
+            {
+                <QButton Text="Add Photo" Icon="camera" Size="sm" Variant="ghost" OnClick="@(() => StartPhotoCamera(idPrefix))" />
+            }
+        </div>
+    };
+
+    private RenderFragment RenderConsentCheckbox(bool given, Action<bool> onChange) => __builder =>
+    {
+        <label class="consent-check">
+            <input type="checkbox" checked="@given" @onchange="@(e => onChange((bool)(e.Value ?? false)))" />
+            <span>@consentText</span>
+        </label>
+    };
+
     private async Task SubmitCheckIn()
     {
-        var result = await VisitorApi.CheckInAsync(branchId, checkInModel);
-        if (result != null)
+        try
         {
+            checkInModel.ConsentGiven = checkInConsentGiven;
+            var result = await VisitorApi.CheckInAsync(branchId, checkInModel);
             NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in — badge {result.BadgeCode}");
+            await StopPhotoCamera();
             showCheckInModal = false;
             await LoadData();
+            await ShowBadge(result);
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check in visitor");
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", ex.Message);
         }
     }
 
     private async Task SubmitPreRegister()
     {
-        var request = preRegisterModel with { ScheduledAt = scheduledAtLocal?.ToUniversalTime() };
-        var result = await VisitorApi.PreRegisterAsync(branchId, request);
-        if (result != null)
+        try
         {
+            var request = preRegisterModel with { ScheduledAt = scheduledAtLocal?.ToUniversalTime() };
+            var result = await VisitorApi.PreRegisterAsync(branchId, request);
             NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} pre-registered — badge {result.BadgeCode}");
             showPreRegisterModal = false;
             await LoadData();
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to pre-register visitor");
+            NotificationService.Notify(ToastSeverity.Error, "Cannot pre-register", ex.Message);
         }
     }
 
-    private async Task CheckInExisting(VisitorDto visitor)
+    private void OpenCheckInExistingModal(VisitorDto visitor)
     {
-        var result = await VisitorApi.CheckInExistingAsync(branchId, visitor.Id);
-        if (result != null)
+        visitorPendingCheckIn = visitor;
+        checkInExistingModel = new CheckInVisitorRequest();
+        checkInExistingConsentGiven = false;
+        showCheckInExistingModal = true;
+    }
+
+    private async Task CloseCheckInExistingModal()
+    {
+        await StopPhotoCamera();
+        showCheckInExistingModal = false;
+    }
+
+    private async Task StartPhotoCamera(string idPrefix)
+    {
+        photoCapturingFor = idPrefix;
+        StateHasChanged();
+        await Task.Delay(50); // let the <video> element render before JS looks for it
+        var started = await JS.InvokeAsync<bool>("visitorBadge.startPhotoCamera", $"{idPrefix}-video");
+        if (!started)
         {
-            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in");
-            await LoadData();
+            photoCapturingFor = null;
+            NotificationService.Notify(ToastSeverity.Error, "Camera unavailable", "Couldn't access the camera — check browser permissions.");
+        }
+    }
+
+    private async Task CapturePhoto(string idPrefix, Action<string> onCaptured)
+    {
+        var dataUrl = await JS.InvokeAsync<string?>("visitorBadge.capturePhoto", $"{idPrefix}-video", $"{idPrefix}-canvas");
+        await StopPhotoCamera();
+        if (string.IsNullOrEmpty(dataUrl))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't capture a photo");
+            return;
+        }
+
+        // data:image/jpeg;base64,<...>
+        var base64 = dataUrl[(dataUrl.IndexOf(',') + 1)..];
+        var bytes = Convert.FromBase64String(base64);
+        var url = await VisitorApi.UploadPhotoAsync(branchId, bytes);
+        if (url != null)
+        {
+            onCaptured(url);
         }
         else
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to check in visitor");
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't upload the photo");
+        }
+        StateHasChanged();
+    }
+
+    private async Task StopPhotoCamera()
+    {
+        if (photoCapturingFor == null) return;
+        photoCapturingFor = null;
+        try { await JS.InvokeVoidAsync("visitorBadge.stopPhotoCamera"); } catch { /* page may already be navigating away */ }
+    }
+
+    private async Task SubmitCheckInExisting()
+    {
+        await StopPhotoCamera();
+        showCheckInExistingModal = false;
+        var visitor = visitorPendingCheckIn;
+        visitorPendingCheckIn = null;
+        if (visitor == null) return;
+
+        try
+        {
+            checkInExistingModel.ConsentGiven = checkInExistingConsentGiven;
+            var result = await VisitorApi.CheckInExistingAsync(branchId, visitor.Id, checkInExistingModel);
+            NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} checked in");
+            await LoadData();
+            await ShowBadge(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", ex.Message);
         }
     }
 
@@ -377,12 +869,260 @@
         }
     }
 
-    private async Task ToggleWatchlist(VisitorDto visitor)
+    private async Task ShowBadge(VisitorDto visitor)
     {
-        var result = await VisitorApi.SetWatchlistAsync(branchId, visitor.Id, !visitor.IsWatchlisted,
-            !visitor.IsWatchlisted ? "Manually flagged by staff" : null);
+        // A token from the original check-in response isn't persisted anywhere — reissue a
+        // fresh one when reopening the badge later (e.g. from the list, not right after check-in).
+        if (string.IsNullOrEmpty(visitor.BadgeQrToken))
+        {
+            visitor = await VisitorApi.ReissueBadgeTokenAsync(branchId, visitor.Id) ?? visitor;
+        }
+
+        badgeVisitor = visitor;
+        showBadgeModal = true;
+        StateHasChanged();
+
+        if (!string.IsNullOrEmpty(visitor.BadgeQrToken))
+        {
+            await Task.Delay(50); // let the modal/container render before drawing into it
+            await JS.InvokeVoidAsync("visitorBadge.renderQr", "badge-qr-canvas", visitor.BadgeQrToken);
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate a badge for this visitor");
+        }
+    }
+
+    private async Task OpenSettingsModal()
+    {
+        consentSettingsModel = await VisitorApi.GetConsentSettingsAsync(branchId);
+        retentionSettingsModel = organizationId != Guid.Empty
+            ? await VisitorApi.GetRetentionSettingsAsync(organizationId)
+            : new VisitorRetentionSettingsDto();
+        showSettingsModal = true;
+    }
+
+    private async Task SaveSettings()
+    {
+        if (consentSettingsModel.Required && string.IsNullOrWhiteSpace(consentSettingsModel.Text))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Consent text is required when consent is enabled");
+            return;
+        }
+        if (retentionSettingsModel.RetentionDays < 30 || retentionSettingsModel.RetentionDays > 3650)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Retention period must be between 30 and 3650 days");
+            return;
+        }
+
+        var consentResult = await VisitorApi.UpdateConsentSettingsAsync(branchId, consentSettingsModel);
+        var retentionResult = organizationId != Guid.Empty
+            ? await VisitorApi.UpdateRetentionSettingsAsync(organizationId, retentionSettingsModel)
+            : retentionSettingsModel;
+
+        if (consentResult != null && retentionResult != null)
+        {
+            consentRequired = consentResult.Required;
+            consentText = consentResult.Text;
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Visitor settings saved");
+            showSettingsModal = false;
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to save one or more settings");
+        }
+    }
+
+    private async Task OpenPassesModal()
+    {
+        passes = await VisitorApi.GetPassesAsync(branchId);
+        newPassRequest = new CreateVisitorPassRequest();
+        createdPass = null;
+        showPassesModal = true;
+    }
+
+    private void ClosePassesModal()
+    {
+        showPassesModal = false;
+        createdPass = null;
+    }
+
+    private async Task CreatePass()
+    {
+        if (string.IsNullOrWhiteSpace(newPassRequest.Label))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "A label is required for the pass");
+            return;
+        }
+        if (newPassRequest.MaxVisitors < 1 || newPassRequest.MaxVisitors > 200)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Max visitors must be between 1 and 200");
+            return;
+        }
+        if (newPassRequest.ValidHours < 1 || newPassRequest.ValidHours > 168)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Valid hours must be between 1 and 168 (one week)");
+            return;
+        }
+
+        var result = await VisitorApi.CreatePassAsync(branchId, newPassRequest);
+        createdPass = result;
+        passes.Insert(0, result);
+        newPassRequest = new CreateVisitorPassRequest();
+        NotificationService.Notify(ToastSeverity.Success, "Success", "Group pass created");
+        StateHasChanged();
+
+        if (!string.IsNullOrEmpty(result.QrToken))
+        {
+            await Task.Delay(50); // let the QR container render before drawing into it
+            await JS.InvokeVoidAsync("visitorBadge.renderQr", "pass-qr-canvas", result.QrToken);
+        }
+    }
+
+    private async Task RevokePass(VisitorPassDto pass)
+    {
+        var result = await VisitorApi.RevokePassAsync(branchId, pass.Id);
         if (result != null)
         {
+            passes.Remove(pass);
+            if (createdPass?.Id == pass.Id) createdPass = null;
+            NotificationService.Notify(ToastSeverity.Success, "Success", "Pass revoked");
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to revoke pass");
+        }
+    }
+
+    private async Task PrintPass()
+    {
+        if (createdPass == null || string.IsNullOrEmpty(createdPass.QrToken)) return;
+
+        var qrDataUrl = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", createdPass.QrToken);
+        if (string.IsNullOrEmpty(qrDataUrl))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate the pass for printing");
+            return;
+        }
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Group Pass - {{System.Net.WebUtility.HtmlEncode(createdPass.Label)}}</title>
+                <style>
+                    @page { size: 90mm 130mm; margin: 6mm; }
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
+                    .badge { border: 2px solid #333; border-radius: 8px; padding: 16px; }
+                    img { width: 180px; height: 180px; }
+                    .name { font-size: 18px; font-weight: 700; margin-top: 10px; }
+                    .code { font-size: 13px; color: #555; margin-top: 4px; }
+                    .date { font-size: 11px; color: #888; margin-top: 12px; }
+                </style>
+            </head>
+            <body>
+                <div class="badge">
+                    <img src="{{qrDataUrl}}" alt="QR pass" />
+                    <div class="name">{{System.Net.WebUtility.HtmlEncode(createdPass.Label)}}</div>
+                    <div class="code">Admits up to {{createdPass.MaxVisitors}} &middot; expires {{createdPass.ExpiresAt.ToLocalTime():MMM dd, yyyy HH:mm}}</div>
+                    <div class="date">{{DateTime.Now:MMM dd, yyyy HH:mm}}</div>
+                </div>
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    private async Task PrintBadge()
+    {
+        if (badgeVisitor == null || string.IsNullOrEmpty(badgeVisitor.BadgeQrToken)) return;
+
+        var qrDataUrl = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", badgeVisitor.BadgeQrToken);
+        if (string.IsNullOrEmpty(qrDataUrl))
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't generate the badge for printing");
+            return;
+        }
+
+        var companyLine = string.IsNullOrEmpty(badgeVisitor.Company)
+            ? ""
+            : $"""<div class="company">{System.Net.WebUtility.HtmlEncode(badgeVisitor.Company)}</div>""";
+        var hostLine = string.IsNullOrEmpty(badgeVisitor.HostName)
+            ? ""
+            : $"""<div class="host">Visiting: {System.Net.WebUtility.HtmlEncode(badgeVisitor.HostName)}</div>""";
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Visitor Badge - {{System.Net.WebUtility.HtmlEncode(badgeVisitor.FullName)}}</title>
+                <style>
+                    @page { size: 90mm 130mm; margin: 6mm; }
+                    body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
+                    .badge { border: 2px solid #333; border-radius: 8px; padding: 16px; }
+                    img { width: 180px; height: 180px; }
+                    .name { font-size: 20px; font-weight: 700; margin-top: 10px; }
+                    .code { font-family: monospace; font-size: 13px; color: #555; margin-top: 4px; }
+                    .company { font-size: 13px; color: #555; margin-top: 4px; }
+                    .host { font-size: 13px; color: #555; margin-top: 8px; }
+                    .date { font-size: 11px; color: #888; margin-top: 12px; }
+                </style>
+            </head>
+            <body>
+                <div class="badge">
+                    <img src="{{qrDataUrl}}" alt="QR badge" />
+                    <div class="name">{{System.Net.WebUtility.HtmlEncode(badgeVisitor.FullName)}}</div>
+                    <div class="code">{{badgeVisitor.BadgeCode}}</div>
+                    {{companyLine}}
+                    {{hostLine}}
+                    <div class="date">{{DateTime.Now:MMM dd, yyyy HH:mm}}</div>
+                </div>
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    private record PrintJsResult
+    {
+        public bool Success { get; init; }
+        public string? Message { get; init; }
+    }
+
+    private void RequestToggleWatchlist(VisitorDto visitor)
+    {
+        visitorPendingFlag = visitor;
+        pendingFlagState = !visitor.IsWatchlisted;
+        flagReason = "";
+        flagConfirmMessage = pendingFlagState
+            ? $"Add {visitor.FullName} to the watchlist? They'll be flagged automatically on future visits."
+            : $"Remove {visitor.FullName} from the watchlist?";
+        showFlagConfirm = true;
+    }
+
+    private async Task HandleToggleWatchlistConfirm(bool confirmed)
+    {
+        showFlagConfirm = false;
+        var visitor = visitorPendingFlag;
+        visitorPendingFlag = null;
+        if (!confirmed || visitor == null) return;
+
+        var result = await VisitorApi.SetWatchlistAsync(branchId, visitor.Id, pendingFlagState,
+            pendingFlagState ? flagReason : null);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Success",
+                pendingFlagState ? $"{visitor.FullName} added to watchlist" : $"{visitor.FullName} removed from watchlist");
             await LoadData();
         }
         else
@@ -391,9 +1131,23 @@
         }
     }
 
-    private async Task DeleteVisitor(VisitorDto visitor)
+    private void RequestDeleteVisitor(VisitorDto visitor)
     {
-        if (await VisitorApi.DeleteVisitorAsync(branchId, visitor.Id))
+        visitorPendingDelete = visitor;
+        deleteReason = "";
+        deleteConfirmMessage = $"Delete the visitor record for {visitor.FullName} (badge {visitor.BadgeCode})? " +
+                                "This removes it from the active log; a reason is required for the compliance record.";
+        showDeleteConfirm = true;
+    }
+
+    private async Task HandleDeleteConfirm(bool confirmed)
+    {
+        showDeleteConfirm = false;
+        var visitor = visitorPendingDelete;
+        visitorPendingDelete = null;
+        if (!confirmed || visitor == null) return;
+
+        if (await VisitorApi.DeleteVisitorAsync(branchId, visitor.Id, deleteReason))
         {
             NotificationService.Notify(ToastSeverity.Success, "Success", "Visitor record deleted");
             await LoadData();
@@ -402,5 +1156,11 @@
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to delete visitor");
         }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        searchDebounce?.Cancel();
+        return ValueTask.CompletedTask;
     }
 }
