@@ -110,6 +110,16 @@ public class QueueApiService : IQueueApiService
         }
     }
 
+    /// <summary>
+    /// Null legitimately means "no one is waiting" (204 No Content) — the caller shows an
+    /// informational message for that. A real failure (network error, 500, etc.) is deliberately
+    /// NOT swallowed to null here, unlike most other methods on this service: doing so previously
+    /// made a genuine backend error on this specific action ("relation \"tokens\" does not exist",
+    /// found live this session) present to front-desk staff as the identical, misleading "There
+    /// are no customers waiting in the queue" message as a real empty queue — the one action in
+    /// this whole app where that distinction is load-bearing, since staff would otherwise have no
+    /// way to tell "queue's actually empty" from "the call failed, try again."
+    /// </summary>
     public async Task<TokenDto?> CallNextTokenAsync(Guid counterId)
     {
         try
@@ -124,7 +134,7 @@ public class QueueApiService : IQueueApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to call next token for counter {CounterId}", counterId);
-            return null;
+            throw;
         }
     }
 

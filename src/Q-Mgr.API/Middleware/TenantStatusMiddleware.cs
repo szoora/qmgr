@@ -35,24 +35,42 @@ public class TenantStatusMiddleware
         "/scalar"
     };
 
-    // Exact matches only (not prefixes) — MainLayout (the admin shell every non-Kiosk page
-    // renders inside: sidebar branch selector, notification bell) calls these on every page
-    // load regardless of what page a suspended tenant is actually trying to reach. Without this,
-    // TenantStatusMessageHandler on the Web side — which redirects to /account-status on ANY
-    // ACCOUNT_SUSPENDED 403 — would catch these ambient chrome calls too: a suspended admin
-    // clicking "Update Payment" would navigate to the real, working /billing/subscription page,
-    // only to have MainLayout's own branches/notifications calls 403 a moment later and bounce
-    // them straight back to /account-status, an infinite ping-pong that made the one page a
-    // suspended tenant most needs unreachable. This is the tenant's own account chrome (branch
-    // names, notification list) — not gated business functionality — so exposing exactly these
-    // is intentional; deliberately NOT a "/api/v1/branches" *prefix* match, which would also
-    // allow-list branch/counter/service-type create-edit-delete (BranchesController) and
-    // notification-settings writes (NotificationsController) for a suspended, non-paying tenant.
-    private static readonly HashSet<string> AlwaysAllowedExact = new(StringComparer.OrdinalIgnoreCase)
+    // Exact (method, path) matches only (not prefixes) — MainLayout (the admin shell every
+    // non-Kiosk page renders inside: sidebar branch selector, notification bell) calls these on
+    // every page load regardless of what page a suspended tenant is actually trying to reach.
+    // Without this, TenantStatusMessageHandler on the Web side — which redirects to
+    // /account-status on ANY ACCOUNT_SUSPENDED 403 — would catch these ambient chrome calls too: a
+    // suspended admin clicking "Update Payment" would navigate to the real, working
+    // /billing/subscription page, only to have MainLayout's own branches/notifications calls 403 a
+    // moment later and bounce them straight back to /account-status, an infinite ping-pong that
+    // made the one page a suspended tenant most needs unreachable. This is the tenant's own
+    // account chrome (branch names, notification list) — not gated business functionality — so
+    // exposing exactly these READS is intentional; deliberately NOT a "/api/v1/branches" *prefix*
+    // match, which would also allow-list branch/counter/service-type create-edit-delete
+    // (BranchesController) and notification-settings writes (NotificationsController) for a
+    // suspended, non-paying tenant.
+    //
+    // SECURITY: the method must be part of the match, not just the path. BranchesController maps
+    // both [HttpGet] (list, the chrome call this allowlist exists for) and [HttpPost] (create a
+    // branch — a real, paid-tier business mutation) to the same bare "/api/v1/branches" path. An
+    // earlier path-only version of this allowlist let POST/PUT/DELETE ride through on the same
+    // exact-path match as the GET, which meant a brand-new, unverified (Status=Pending) tenant —
+    // who should be blocked from everything except verifying their email — could create branches,
+    // and a suspended/cancelled tenant could keep mutating branches/notification-settings, before
+    // ever fixing their account. Found live: a freshly-registered, never-verified test tenant
+    // successfully created a branch via POST /api/v1/branches while still Pending.
+    private static readonly HashSet<(string Method, string Path)> AlwaysAllowedExact = new()
     {
-        "/api/v1/branches",
-        "/api/v1/notifications",
-        "/api/v1/notifications/count",
+        ("GET", "/api/v1/branches"),
+        ("GET", "/api/v1/notifications"),
+        ("GET", "/api/v1/notifications/count"),
+    };
+
+    // SignalR's own connection handshake — not a REST business endpoint, so every method it uses
+    // (GET for negotiate, POST/WebSocket upgrade for the actual connection) stays allowed
+    // regardless of verb; this is connectivity, not a mutation gated by tenant status.
+    private static readonly HashSet<string> AlwaysAllowedHubPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
         "/hubs/notifications",
         "/hubs/notifications/negotiate"
     };
@@ -66,9 +84,10 @@ public class TenantStatusMiddleware
     public async Task InvokeAsync(HttpContext context, ITenantContextAccessor tenantAccessor)
     {
         var path = context.Request.Path.Value ?? string.Empty;
+        var method = context.Request.Method;
 
         // Skip always-allowed endpoints
-        if (IsAlwaysAllowed(path))
+        if (IsAlwaysAllowed(method, path))
         {
             await _next(context);
             return;
@@ -150,9 +169,10 @@ public class TenantStatusMiddleware
         await _next(context);
     }
 
-    private static bool IsAlwaysAllowed(string path)
+    private static bool IsAlwaysAllowed(string method, string path)
     {
-        return AlwaysAllowedExact.Contains(path) ||
+        return AlwaysAllowedExact.Contains((method.ToUpperInvariant(), path.ToLowerInvariant())) ||
+               AlwaysAllowedHubPaths.Contains(path) ||
                AlwaysAllowedEndpoints.Any(endpoint =>
                    path.StartsWith(endpoint, StringComparison.OrdinalIgnoreCase));
     }
