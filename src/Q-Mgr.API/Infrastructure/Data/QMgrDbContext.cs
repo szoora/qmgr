@@ -4,6 +4,7 @@ using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Billing;
 using QMgr.Domain.Entities.Content;
+using QMgr.Domain.Entities.Docs;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Domain.Entities.Integration;
 using QMgr.Domain.Entities.Notification;
@@ -12,6 +13,7 @@ using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Entities.Marketing;
 using QMgr.Domain.Entities.Queue;
 using QMgr.Domain.Entities.Visitor;
+using QMgr.Domain.Entities.Welfare;
 
 namespace QMgr.Infrastructure.Data;
 
@@ -52,6 +54,16 @@ public class QMgrDbContext : DbContext
     public DbSet<StudentGuardian> StudentGuardians => Set<StudentGuardian>();
     public DbSet<RosterImportJob> RosterImportJobs => Set<RosterImportJob>();
     public DbSet<RosterImportJobEntry> RosterImportJobEntries => Set<RosterImportJobEntry>();
+
+    #endregion
+
+    #region Welfare
+
+    public DbSet<WelfareCategory> WelfareCategories => Set<WelfareCategory>();
+    public DbSet<WelfareRecord> WelfareRecords => Set<WelfareRecord>();
+    public DbSet<WelfareAttachment> WelfareAttachments => Set<WelfareAttachment>();
+    public DbSet<WelfareNote> WelfareNotes => Set<WelfareNote>();
+    public DbSet<WelfareNotification> WelfareNotifications => Set<WelfareNotification>();
 
     #endregion
 
@@ -109,6 +121,7 @@ public class QMgrDbContext : DbContext
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<OrganizationModule> OrganizationModules => Set<OrganizationModule>();
     public DbSet<UsageRecord> UsageRecords => Set<UsageRecord>();
     public DbSet<AdImpression> AdImpressions => Set<AdImpression>();
 
@@ -119,6 +132,13 @@ public class QMgrDbContext : DbContext
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
     public DbSet<PlatformConfiguration> PlatformConfigurations => Set<PlatformConfiguration>();
     public DbSet<PlatformSpotifyConnection> PlatformSpotifyConnections => Set<PlatformSpotifyConnection>();
+
+    #endregion
+
+    #region Docs
+
+    // No tenant query filter — platform-owned content, same as the Platform region above.
+    public DbSet<DocArticle> DocArticles => Set<DocArticle>();
 
     #endregion
 
@@ -202,6 +222,9 @@ public class QMgrDbContext : DbContext
         modelBuilder.Entity<Payment>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
 
+        modelBuilder.Entity<OrganizationModule>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+
         modelBuilder.Entity<UsageRecord>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
 
@@ -250,6 +273,23 @@ public class QMgrDbContext : DbContext
             entity.HasOne(e => e.Subscription)
                 .WithMany(s => s.Invoices)
                 .HasForeignKey(e => e.SubscriptionId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // OrganizationModule configuration — the modular subscription system's core join table:
+        // an org can hold many of these (one per purchased module), unlike the legacy single
+        // Subscription.PlanId FK it supersedes.
+        modelBuilder.Entity<OrganizationModule>(entity =>
+        {
+            entity.ToTable("organization_modules");
+            entity.HasIndex(e => new { e.OrganizationId, e.ModuleId }).IsUnique();
+            entity.HasOne(e => e.Organization)
+                .WithMany()
+                .HasForeignKey(e => e.OrganizationId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Module)
+                .WithMany()
+                .HasForeignKey(e => e.ModuleId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 

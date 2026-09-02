@@ -259,9 +259,18 @@
                 var position = await JS.InvokeAsync<DropdownPosition?>("qSelectInterop.getDropdownPosition", triggerRef);
                 if (position != null)
                 {
+                    // BUG FOUND LIVE (2026-09-01): the stylesheet's default rule for this class
+                    // sets `top: calc(100% + 4px)` — inline `style` only overrides properties it
+                    // explicitly names, so the upward-opening branch below must set `top: auto`
+                    // itself, or that stylesheet `top` keeps applying *alongside* the `bottom`
+                    // value being set here. With both `top` and `bottom` pinned to definite
+                    // values, a fixed-position element's height is FORCED to the gap between
+                    // them instead of sizing to content — collapsing the whole option list to a
+                    // sliver a couple of pixels tall. Reproduced deterministically (not a device/
+                    // viewport quirk) by forcing the upward-opening path at any viewport size.
                     dropdownStyle = position.Top.HasValue
-                        ? $"position: fixed; left: {position.Left}px; width: {position.Width}px; top: {position.Top}px;"
-                        : $"position: fixed; left: {position.Left}px; width: {position.Width}px; bottom: {position.Bottom}px;";
+                        ? $"position: fixed; left: {position.Left}px; width: {position.Width}px; top: {position.Top}px; bottom: auto;"
+                        : $"position: fixed; left: {position.Left}px; width: {position.Width}px; bottom: {position.Bottom}px; top: auto;";
                 }
             }
             catch (JSException)

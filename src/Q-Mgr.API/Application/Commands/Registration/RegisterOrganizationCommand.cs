@@ -48,6 +48,10 @@ public record RegisterOrganizationCommand : IRequest<RegisterOrganizationResult>
 
     /// <summary>Referral code if applicable</summary>
     public string? ReferralCode { get; init; }
+
+    /// <summary>Modules picked in the registration wizard's module-picker step (at least one
+    /// required — enforced client-side and re-checked here). Each starts a no-card trial.</summary>
+    public List<string> SelectedModuleCodes { get; init; } = new();
 }
 
 /// <summary>

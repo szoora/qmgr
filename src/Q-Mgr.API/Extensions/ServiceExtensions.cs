@@ -60,7 +60,9 @@ public static class ServiceExtensions
                 ClockSkew = TimeSpan.Zero
             };
 
-            // Allow SignalR to receive token from query string
+            // Allow SignalR (and, below, the API docs page) to receive the token from the query
+            // string rather than an Authorization header - neither a WebSocket handshake nor a
+            // plain browser navigation (clicking the "API Documentation" link) can attach one.
             options.Events = new JwtBearerEvents
             {
                 OnMessageReceived = context =>
@@ -69,7 +71,9 @@ public static class ServiceExtensions
                     var path = context.HttpContext.Request.Path;
 
                     if (!string.IsNullOrEmpty(accessToken) &&
-                        path.StartsWithSegments("/hubs"))
+                        (path.StartsWithSegments("/hubs") ||
+                         path.StartsWithSegments("/api/docs") ||
+                         path.StartsWithSegments("/openapi")))
                     {
                         context.Token = accessToken;
                     }

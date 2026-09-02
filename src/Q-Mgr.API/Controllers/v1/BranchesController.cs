@@ -41,7 +41,7 @@ public class BranchesController : ControllerBase
     [HttpGet]
     [RequirePermission(Permissions.BranchesView)]
     [ProducesResponseType(typeof(List<BranchDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetBranches([FromQuery] bool includeInactive = false)
+    public async Task<IActionResult> GetBranches([FromQuery] bool includeInactive = false, [FromQuery] Guid? organizationId = null)
     {
         var tenantContext = _tenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
@@ -52,8 +52,21 @@ public class BranchesController : ControllerBase
                 Status = StatusCodes.Status401Unauthorized
             });
 
+        // SuperAdmin's own tenant context is the Platform org, which never has branches of
+        // its own - that org has no operational meaning, it just needs *a* context to log in
+        // with. Without this override, SuperAdmin could never see branches for the tenant
+        // whose user they're trying to manage (e.g. the "Add User" branch dropdown), the
+        // exact gap reported live in Phase 58. Non-SuperAdmin callers can never override
+        // their own org via this param - client-supplied organizationId is only honored for
+        // the one role that's allowed to reach across tenants at all.
+        var effectiveOrganizationId = tenantContext.OrganizationId;
+        if (organizationId.HasValue && RoleCodes.IsSuperAdmin(tenantContext.UserRole))
+        {
+            effectiveOrganizationId = organizationId.Value;
+        }
+
         var query = _dbContext.Branches
-            .Where(b => b.OrganizationId == tenantContext.OrganizationId);
+            .Where(b => b.OrganizationId == effectiveOrganizationId);
 
         if (!includeInactive)
             query = query.Where(b => b.IsActive);

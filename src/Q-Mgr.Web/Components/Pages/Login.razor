@@ -1,5 +1,6 @@
 @page "/login"
-@layout KioskLayout
+@layout PublicLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Shared
 @using System.ComponentModel.DataAnnotations
@@ -33,15 +34,15 @@
 
             @if (!string.IsNullOrEmpty(errorMessage))
             {
-                <div class="alert alert-danger animate-in">
-                    <div class="alert-icon">
+                <div class="auth-alert auth-alert-danger auth-animate-in">
+                    <div class="auth-alert-icon">
                         <QIcon Name="exclamation-circle-fill" />
                     </div>
-                    <div class="alert-content">
+                    <div class="auth-alert-content">
                         <strong>Error</strong>
                         <p>@errorMessage</p>
                     </div>
-                    <button type="button" class="alert-close" @onclick="@(() => errorMessage = null)">
+                    <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
                         <QIcon Name="x" />
                     </button>
                 </div>
@@ -49,11 +50,11 @@
 
             @if (Verified == true)
             {
-                <div class="alert alert-success animate-in">
-                    <div class="alert-icon">
+                <div class="auth-alert auth-alert-success auth-animate-in">
+                    <div class="auth-alert-icon">
                         <QIcon Name="check-circle-fill" />
                     </div>
-                    <div class="alert-content">
+                    <div class="auth-alert-content">
                         <p>Email verified! You can now sign in.</p>
                     </div>
                 </div>
@@ -88,7 +89,7 @@
                 <button type="submit" class="btn-login" disabled="@isLoading">
                     @if (isLoading)
                     {
-                        <span class="spinner-border"></span>
+                        <span class="auth-spinner"></span>
                         <span>Checking...</span>
                     }
                     else
@@ -118,15 +119,15 @@
 
             @if (!string.IsNullOrEmpty(errorMessage))
             {
-                <div class="alert alert-danger animate-in">
-                    <div class="alert-icon">
+                <div class="auth-alert auth-alert-danger auth-animate-in">
+                    <div class="auth-alert-icon">
                         <QIcon Name="exclamation-circle-fill" />
                     </div>
-                    <div class="alert-content">
+                    <div class="auth-alert-content">
                         <strong>Authentication Failed</strong>
                         <p>@errorMessage</p>
                     </div>
-                    <button type="button" class="alert-close" @onclick="@(() => errorMessage = null)">
+                    <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
                         <QIcon Name="x" />
                     </button>
                 </div>
@@ -134,11 +135,11 @@
 
             @if (!string.IsNullOrEmpty(successMessage))
             {
-                <div class="alert alert-success animate-in">
-                    <div class="alert-icon">
+                <div class="auth-alert auth-alert-success auth-animate-in">
+                    <div class="auth-alert-icon">
                         <QIcon Name="check-circle-fill" />
                     </div>
-                    <div class="alert-content">
+                    <div class="auth-alert-content">
                         <p>@successMessage</p>
                     </div>
                 </div>
@@ -178,7 +179,7 @@
                 <button type="submit" class="btn-login" disabled="@isLoading">
                     @if (isLoading)
                     {
-                        <span class="spinner-border"></span>
+                        <span class="auth-spinner"></span>
                         <span>Signing in...</span>
                     }
                     else
@@ -208,459 +209,6 @@
 
 </div>
 
-<style>
-    * {
-        box-sizing: border-box;
-    }
-
-    .login-container {
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--qm-primary);
-        padding: 20px;
-        position: relative;
-        overflow: hidden;
-    }
-
-    .login-card {
-        background: white;
-        border-radius: var(--qm-radius-xl);
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-        padding: 48px;
-        width: 100%;
-        max-width: 480px;
-        position: relative;
-        z-index: 1;
-        animation: slideUp 0.5s ease-out;
-        transition: all 0.3s ease;
-    }
-
-    .login-card.loading {
-        opacity: 0.7;
-        pointer-events: none;
-    }
-
-    @@keyframes slideUp {
-        from {
-            opacity: 0;
-            transform: translateY(30px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    .login-header {
-        text-align: center;
-        margin-bottom: 32px;
-        position: relative;
-    }
-
-    .btn-back {
-        position: absolute;
-        left: 0;
-        top: 0;
-        background: #f5f5f5;
-        border: none;
-        border-radius: var(--qm-radius-lg);
-        padding: 8px;
-        cursor: pointer;
-        color: #666;
-        transition: all 0.2s;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .btn-back:hover {
-        background: #e0e0e0;
-        color: var(--qm-primary);
-    }
-
-    .logo-wrapper {
-        margin-bottom: 20px;
-    }
-
-    .logo-circle {
-        width: 80px;
-        height: 80px;
-        margin: 0 auto;
-        background: var(--qm-primary);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-    }
-
-    .user-avatar {
-        width: 80px;
-        height: 80px;
-        margin: 0 auto 16px;
-        background: var(--qm-primary);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 28px;
-        font-weight: 600;
-    }
-
-    .user-email {
-        font-size: 18px;
-        font-weight: 600;
-        color: #1a1a1a;
-        margin: 0 0 12px 0;
-    }
-
-    .org-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: #f0f0f0;
-        padding: 6px 12px;
-        border-radius: var(--qm-radius-full);
-        font-size: 13px;
-        color: #666;
-    }
-
-    .login-header h1 {
-        font-size: 28px;
-        font-weight: 700;
-        color: #1a1a1a;
-        margin: 0 0 8px 0;
-    }
-
-    .login-header p {
-        color: #6c757d;
-        margin: 0;
-        font-size: 15px;
-    }
-
-    .alert {
-        padding: 16px;
-        border-radius: var(--qm-radius-lg);
-        margin-bottom: 24px;
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        position: relative;
-    }
-
-    .animate-in {
-        animation: fadeInDown 0.3s ease-out;
-    }
-
-    @@keyframes fadeInDown {
-        from {
-            opacity: 0;
-            transform: translateY(-10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-
-    .alert-icon {
-        flex-shrink: 0;
-        font-size: 20px;
-    }
-
-    .alert-content {
-        flex: 1;
-    }
-
-    .alert-content strong {
-        display: block;
-        margin-bottom: 4px;
-        font-size: 14px;
-    }
-
-    .alert-content p {
-        margin: 0;
-        font-size: 13px;
-        line-height: 1.5;
-    }
-
-    .alert-close {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 0;
-        color: inherit;
-        opacity: 0.6;
-        transition: opacity 0.2s;
-    }
-
-    .alert-close:hover {
-        opacity: 1;
-    }
-
-    .alert-danger {
-        background-color: #fee;
-        color: #c33;
-        border: 1px solid #fdd;
-    }
-
-    .alert-success {
-        background-color: #efe;
-        color: #3c3;
-        border: 1px solid #dfd;
-    }
-
-    .form-group {
-        margin-bottom: 20px;
-    }
-
-    .form-group label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
-        font-weight: 500;
-        color: #333;
-        font-size: 14px;
-    }
-
-    .input-wrapper {
-        position: relative;
-    }
-
-    /* Scoped under .login-card so this beats the dashboard's generic
-       .form-group .form-control rule in app.css (both reuse Bootstrap's
-       class names; without this the dashboard's dark input styling was
-       leaking into this standalone page). */
-    .login-card .form-control {
-        width: 100%;
-        padding: 12px 40px 12px 16px;
-        border: 2px solid #e0e0e0;
-        border-radius: var(--qm-radius-lg);
-        font-size: 15px;
-        transition: all 0.2s;
-        background: #fafafa;
-        color: #1a1a1a;
-    }
-
-    .login-card .form-control:hover {
-        border-color: #d0d0d0;
-        background: white;
-    }
-
-    .login-card .form-control:focus {
-        outline: none;
-        border-color: var(--qm-primary);
-        background: white;
-        box-shadow: 0 0 0 4px var(--qm-primary-light);
-    }
-
-    .login-card .form-control:disabled {
-        background-color: #f5f5f5;
-        cursor: not-allowed;
-        opacity: 0.6;
-    }
-
-    .input-toggle,
-    .input-clear {
-        position: absolute;
-        right: 12px;
-        top: 50%;
-        transform: translateY(-50%);
-        background: none;
-        border: none;
-        cursor: pointer;
-        color: #6c757d;
-        padding: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: color 0.2s;
-    }
-
-    .input-toggle:hover,
-    .input-clear:hover {
-        color: var(--qm-primary);
-    }
-
-    .form-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-        flex-wrap: wrap;
-        gap: 12px;
-    }
-
-    .checkbox-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        cursor: pointer;
-        user-select: none;
-    }
-
-    .checkbox-label {
-        font-size: 14px;
-        color: #555;
-    }
-
-    .link-forgot {
-        color: var(--qm-primary);
-        text-decoration: none;
-        font-size: 14px;
-        font-weight: 500;
-        transition: color 0.2s;
-    }
-
-    .link-forgot:hover {
-        color: var(--qm-primary-dark);
-        text-decoration: underline;
-    }
-
-    .btn-login {
-        width: 100%;
-        padding: 14px;
-        background: var(--qm-primary);
-        color: white;
-        border: none;
-        border-radius: var(--qm-radius-lg);
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.3s;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-    }
-
-    .btn-login:hover:not(:disabled) {
-        background: var(--qm-primary-dark);
-    }
-
-    .btn-login:active:not(:disabled) {
-        transform: translateY(0);
-    }
-
-    .btn-login:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-        transform: none;
-    }
-
-    .spinner-border {
-        width: 18px;
-        height: 18px;
-        border: 2px solid currentColor;
-        border-right-color: transparent;
-        border-radius: 50%;
-        animation: spinner-rotate 0.75s linear infinite;
-    }
-
-    @@keyframes spinner-rotate {
-        to { transform: rotate(360deg); }
-    }
-
-    .login-footer {
-        text-align: center;
-        padding-top: 24px;
-        border-top: 1px solid #e9ecef;
-    }
-
-    .login-footer p {
-        margin: 0 0 16px 0;
-        font-size: 14px;
-        color: #6c757d;
-    }
-
-    .link-register {
-        color: var(--qm-primary);
-        text-decoration: none;
-        font-weight: 600;
-        transition: color 0.2s;
-    }
-
-    .link-register:hover {
-        color: var(--qm-primary-dark);
-        text-decoration: underline;
-    }
-
-    .footer-links {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        font-size: 12px;
-    }
-
-    .footer-links a {
-        color: #6c757d;
-        text-decoration: none;
-        transition: color 0.2s;
-    }
-
-    .footer-links a:hover {
-        color: var(--qm-primary);
-    }
-
-    .footer-links span {
-        color: #dee2e6;
-    }
-
-    .login-footer p.powered-by {
-        margin: 12px 0 0 0;
-        font-size: 11px;
-        color: #adb5bd;
-        letter-spacing: 0.02em;
-    }
-
-    .validation-message {
-        color: #dc3545;
-        font-size: 12px;
-        margin-top: 6px;
-        display: block;
-        animation: shake 0.3s ease-in-out;
-    }
-
-    @@keyframes shake {
-        0%, 100% { transform: translateX(0); }
-        25% { transform: translateX(-5px); }
-        75% { transform: translateX(5px); }
-    }
-
-    /* Mobile Responsive */
-    @@media (max-width: 600px) {
-        .login-card {
-            padding: 32px 24px;
-        }
-
-        .login-header h1 {
-            font-size: 24px;
-        }
-
-        .logo-circle, .user-avatar {
-            width: 64px;
-            height: 64px;
-        }
-
-        .user-avatar {
-            font-size: 24px;
-        }
-
-        .form-row {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-
-        .link-forgot {
-            margin-left: auto;
-        }
-    }
-</style>
 
 @code {
     [SupplyParameterFromQuery]

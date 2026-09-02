@@ -32,6 +32,12 @@ public class User : BaseAuditableEntity
     /// <summary>Account locked out until this time (null = not locked out). Enforced in AuthController.Login.</summary>
     public DateTime? LockoutEnd { get; set; }
 
+    /// <summary>Self-service password reset token (same raw-random-value convention as RefreshToken, not hashed). Null once used or expired.</summary>
+    public string? PasswordResetToken { get; set; }
+
+    /// <summary>Expiry for PasswordResetToken. AuthController.ResetPassword rejects the token past this time.</summary>
+    public DateTime? PasswordResetTokenExpiry { get; set; }
+
     #region Navigation Properties
 
     public virtual Organization.Organization? Organization { get; set; }

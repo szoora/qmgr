@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
@@ -16,6 +17,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/marketing/broadcasts")]
 [Produces("application/json")]
 [Authorize]
+[RequireModule(ModuleCodes.EngagementCommunications)]
 public class BroadcastsController : ControllerBase
 {
     private readonly QMgrDbContext _context;

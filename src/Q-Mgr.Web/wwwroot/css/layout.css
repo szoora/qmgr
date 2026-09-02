@@ -583,6 +583,24 @@
     box-shadow: 0 0 15px rgba(122, 40, 71, 0.3);
 }
 
+/* Modules-available badge — the only nav-level "more modules exist" signal (an unpurchased
+   module itself is never shown in the tree, per explicit direction: it doesn't scale). */
+.nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
+    margin-left: 8px;
+    background: var(--qm-primary);
+    color: #ffffff;
+    border-radius: 9px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
 /* Submenu Arrow */
 .submenu-arrow {
     margin-left: auto;

@@ -18,6 +18,7 @@ namespace QMgr.API.Controllers.v1;
 [ApiController]
 [Route("api/v1")]
 [Authorize]
+[RequireModule(ModuleCodes.EngagementCommunications)]
 [Produces("application/json")]
 public class ContentController : ControllerBase
 {

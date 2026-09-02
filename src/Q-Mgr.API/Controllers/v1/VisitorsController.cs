@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
@@ -17,6 +18,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — every action already has its own [RequirePermission]
+[RequireModule(ModuleCodes.VisitorSafeguarding)]
 public class VisitorsController : ControllerBase
 {
     private readonly QMgrDbContext _context;
@@ -68,7 +70,15 @@ public class VisitorsController : ControllerBase
             });
 
         if (RoleCodes.IsSuperAdmin(tenantContext.UserRole))
-            return null;
+        {
+            var superAdminBranchExists = await _context.Branches.AnyAsync(b => b.Id == branchId);
+            return superAdminBranchExists ? null : NotFound(new ProblemDetails
+            {
+                Title = "Branch not found",
+                Detail = $"Branch with ID '{branchId}' does not exist.",
+                Status = StatusCodes.Status404NotFound
+            });
+        }
 
         var branchExists = await _context.Branches
             .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);

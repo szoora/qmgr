@@ -152,6 +152,17 @@ public class RbacSeeder
         new("students.manage", "Manage Student Rosters", "Create/edit/delete students and guardians, bulk import a roster", "Student Rosters", 2, true),
 
         // ============================================
+        // STUDENT WELFARE LEDGER
+        // ============================================
+        new("welfare.view", "View Welfare Records", "View non-confidential achievement, behavior, and welfare records", "Student Welfare", 1, true),
+        new("welfare.create", "Log Welfare Records", "Log an achievement, behavior incident, or welfare concern", "Student Welfare", 2, true),
+        new("welfare.edit", "Add Welfare Follow-Up Notes", "Add a follow-up note to an existing record (records are never rewritten)", "Student Welfare", 3, true),
+        new("welfare.notify", "Notify Guardians", "Review and send a guardian notification for a welfare record", "Student Welfare", 4, true),
+        new("welfare.confidential.view", "View Confidential Welfare Records", "View Welfare-tier (safeguarding) records — a smaller audience than general behavior records by design", "Student Welfare", 5, true),
+        new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 6, true),
+        new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 7, true),
+
+        // ============================================
         // MARKETING (contacts + broadcast campaigns)
         // ============================================
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1, true),
@@ -187,6 +198,8 @@ public class RbacSeeder
         new("platform.settings.view", "View Platform Settings", "View platform configuration", "Platform Admin", 4, false),
         new("platform.settings.edit", "Edit Platform Settings", "Modify platform configuration", "Platform Admin", 5, false),
         new("platform.analytics", "Platform Analytics", "View cross-tenant analytics", "Platform Admin", 6, false),
+        new("platform.docs.view", "View Docs Articles", "View onboarding/docs articles (platform admin)", "Platform Admin", 7, false),
+        new("platform.docs.manage", "Manage Docs Articles", "Create, edit, publish, and delete onboarding/docs articles", "Platform Admin", 8, false),
     };
 
     #endregion
@@ -271,6 +284,10 @@ public class RbacSeeder
                 "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
                 // Student Rosters (full)
                 "students.view", "students.manage",
+                // Student Welfare Ledger (full, except confidential-tier — see the welfare-plan's
+                // "configurable, off by default" note: an Admin can grant welfare.confidential.view
+                // to a custom role, e.g. a "Counselor" role, via the existing custom-roles feature)
+                "welfare.view", "welfare.create", "welfare.edit", "welfare.notify", "welfare.reports.view",
                 // Marketing (full)
                 "marketing.view", "marketing.manage", "marketing.send",
                 // Settings (view only)
@@ -308,6 +325,9 @@ public class RbacSeeder
                 "visitors.view", "visitors.checkin", "visitors.checkout",
                 // Student Rosters (search/lookup only — bulk import stays a manager+ action)
                 "students.view",
+                // Student Welfare Ledger (log and notify, front-line staff — no confidential-tier
+                // view, no editing categories, no reports)
+                "welfare.view", "welfare.create", "welfare.notify",
             }
         ),
 

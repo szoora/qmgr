@@ -227,6 +227,73 @@
     color: #6c757d;
 }
 
+/* The one real "email us" block on Support.razor - deliberately not styled as one tile among
+   several fake "departments", since it's the single real inbox behind every contact reason. */
+.doc-contact-single {
+    border: 1px solid #eee;
+    border-radius: var(--qm-radius-lg);
+    padding: 24px;
+    text-align: left;
+    margin: 20px 0 8px;
+}
+
+.doc-contact-single .doc-contact-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--qm-primary-light, rgba(140, 47, 82, 0.08));
+    color: var(--qm-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+    font-size: 20px;
+}
+
+.doc-contact-single h3 {
+    font-size: 17px;
+    margin: 0 0 6px;
+    color: #1a1a1a;
+}
+
+.doc-contact-single > p {
+    font-size: 14px;
+    margin: 0 0 12px;
+    color: #6c757d;
+}
+
+.doc-contact-email {
+    display: inline-block;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-primary);
+    text-decoration: none;
+    margin-bottom: 16px;
+}
+
+.doc-contact-email:hover {
+    text-decoration: underline;
+}
+
+.doc-contact-hints {
+    list-style: none;
+    margin: 0;
+    padding: 16px 0 0;
+    border-top: 1px solid #eee;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.doc-contact-hints li {
+    font-size: 13px;
+    color: #6c757d;
+}
+
+.doc-contact-hints strong {
+    color: #1a1a1a;
+}
+
 .doc-faq-item {
     border-bottom: 1px solid #eee;
     padding: 18px 0;

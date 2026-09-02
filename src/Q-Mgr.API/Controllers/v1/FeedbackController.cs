@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.DTOs;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
@@ -259,6 +260,7 @@ public class FeedbackController : ControllerBase
     [HttpPost("branches/{branchId:guid}/tokens/{tokenId:guid}/feedback-link")]
     [Authorize]
     [RequirePermission(Permissions.FeedbackView)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(FeedbackLinkDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GenerateFeedbackLink(Guid branchId, Guid tokenId)
@@ -386,6 +388,7 @@ public class FeedbackController : ControllerBase
     [HttpGet("branches/{branchId:guid}/feedbacks")]
     [Authorize]
     [RequirePermission(Permissions.FeedbackView)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(List<FeedbackDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetFeedbacks(
         Guid branchId,
@@ -470,6 +473,7 @@ public class FeedbackController : ControllerBase
     [HttpGet("branches/{branchId:guid}/feedbacks/{feedbackId:guid}")]
     [Authorize]
     [RequirePermission(Permissions.FeedbackView)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(FeedbackDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetFeedback(Guid branchId, Guid feedbackId)
@@ -495,6 +499,7 @@ public class FeedbackController : ControllerBase
     [HttpGet("branches/{branchId:guid}/feedbacks/summary")]
     [Authorize]
     [RequirePermission(Permissions.FeedbackAnalytics)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(FeedbackSummaryDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetFeedbackSummary(
         Guid branchId,
@@ -543,6 +548,7 @@ public class FeedbackController : ControllerBase
     [HttpPost("branches/{branchId:guid}/feedbacks/{feedbackId:guid}/respond")]
     [Authorize]
     [RequirePermission(Permissions.FeedbackRespond)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
     [ProducesResponseType(typeof(FeedbackDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RespondToFeedback(

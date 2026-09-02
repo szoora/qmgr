@@ -163,6 +163,14 @@
                 <QInput TValue="string" @bind-Value="@formData.Password" Type="password" Label="Password *" />
             </div>
         }
+        @if (isSuperAdmin && editingUser == null)
+        {
+            <div class="form-group">
+                <QSelect TValue="Guid?" TItem="OrgOption" Value="@formData.OrganizationId" ValueChanged="@OnOrganizationSelected" Items="@orgOptions"
+                         ValueSelector="@(o => (Guid?)o.Id)" TextSelector="@(o => o.Name)" Label="Organization *"
+                         HelperText="Platform Admin accounts have no branches of their own - pick the tenant this user belongs to." />
+            </div>
+        }
         <div class="form-row">
             <div class="form-group">
                 <QSelect TValue="Guid" TItem="RoleOption" @bind-Value="@formData.RoleId" Items="@roleOptions"
@@ -170,7 +178,9 @@
             </div>
             <div class="form-group">
                 <QSelect TValue="Guid?" TItem="BranchOption" @bind-Value="@formData.BranchId" Items="@branchOptions"
-                         ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Branch" AllowClear="true" />
+                         ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Branch" AllowClear="true"
+                         Disabled="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null)"
+                         Placeholder="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null ? "Select an organization first" : "Select...")" />
             </div>
         </div>
         <div class="form-group">
@@ -560,6 +570,8 @@
     private bool canCreateUsers = false;
     private bool canEditUsers = false;
     private bool canDeleteUsers = false;
+    private bool isSuperAdmin = false;
+    private List<OrgOption> orgOptions = new();
 
     // Delete confirmation state
     private bool showDeleteConfirm = false;
@@ -587,6 +599,11 @@
             canCreateUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersCreate);
             canEditUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersEdit);
             canDeleteUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersDelete);
+            isSuperAdmin = await PermissionSvc.IsSuperAdminAsync();
+            if (isSuperAdmin)
+            {
+                await LoadOrganizations();
+            }
             await LoadData();
             StateHasChanged();
         }
@@ -648,6 +665,59 @@
 
         // Load roles data for the roles tab
         await LoadRolesData();
+    }
+
+    // BUG FIX (Phase 58 follow-up): SuperAdmin's own tenant context is the Platform org,
+    // which never has branches of its own, so the plain `GET api/v1/branches` call above
+    // always came back empty for a SuperAdmin session - the "Add User" Branch dropdown
+    // looked broken even though nothing was actually wrong with it. SuperAdmin now picks
+    // which tenant the new user belongs to first, and branches are (re)loaded for that
+    // specific organization via BranchesController's new `organizationId` override param.
+    private async Task LoadOrganizations()
+    {
+        try
+        {
+            var response = await Http.GetAsync("api/v1/admin/tenants?pageSize=200");
+            if (response.IsSuccessStatusCode)
+            {
+                var paged = await response.Content.ReadFromJsonAsync<PagedResultDto<TenantSummaryDto>>(JsonOptions);
+                orgOptions = paged?.Items.Select(o => new OrgOption { Id = o.Id, Name = o.Name }).ToList() ?? new();
+            }
+        }
+        catch
+        {
+            orgOptions = new();
+        }
+    }
+
+    private async Task LoadBranchesForOrganization(Guid? organizationId)
+    {
+        if (organizationId == null)
+        {
+            branchOptions = new();
+            return;
+        }
+
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches?includeInactive=true&organizationId={organizationId}");
+            if (response.IsSuccessStatusCode)
+            {
+                var apiBranches = await response.Content.ReadFromJsonAsync<List<BranchDto>>(JsonOptions) ?? new();
+                branchOptions = apiBranches.Select(b => new BranchOption { Id = b.Id, Name = b.Name }).ToList();
+            }
+        }
+        catch
+        {
+            branchOptions = new();
+        }
+    }
+
+    private async Task OnOrganizationSelected(Guid? organizationId)
+    {
+        formData.OrganizationId = organizationId;
+        formData.BranchId = null;
+        await LoadBranchesForOrganization(organizationId);
     }
 
     private async Task LoadRolesData()
@@ -714,6 +784,12 @@
             IsActive = true,
             RoleId = roleOptions.FirstOrDefault(r => r.Name == "Staff")?.Id ?? roleOptions.FirstOrDefault()?.Id ?? Guid.Empty
         };
+        if (isSuperAdmin)
+        {
+            // No organization picked yet - the Branch dropdown starts empty (and disabled,
+            // see the modal markup) until one is, instead of silently showing zero branches.
+            branchOptions = new();
+        }
         showDialog = true;
     }
 
@@ -754,6 +830,12 @@
             return;
         }
 
+        if (isSuperAdmin && editingUser == null && formData.OrganizationId == null)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please select an organization");
+            return;
+        }
+
         try
         {
             HttpResponseMessage response;
@@ -767,7 +849,8 @@
                     FirstName = formData.FirstName,
                     LastName = formData.LastName,
                     RoleId = formData.RoleId,
-                    AssignedBranchId = formData.BranchId
+                    AssignedBranchId = formData.BranchId,
+                    OrganizationId = formData.OrganizationId
                 };
                 response = await Http.PostAsJsonAsync("api/v1/users", createRequest, JsonOptions);
             }
@@ -1004,6 +1087,24 @@
         public string Password { get; set; } = "";
         public Guid RoleId { get; set; }
         public Guid? BranchId { get; set; }
+        public Guid? OrganizationId { get; set; }
         public bool IsActive { get; set; } = true;
+    }
+
+    private class OrgOption
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    private record TenantSummaryDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+
+    private record PagedResultDto<T>
+    {
+        public List<T> Items { get; init; } = new();
     }
 }

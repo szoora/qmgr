@@ -6,7 +6,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using QMgr.API.Application.Services;
 using QMgr.Application.DTOs;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
+using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Interfaces;
 using QMgr.Infrastructure.Data;
 
@@ -23,6 +25,8 @@ public class AuthController : ControllerBase
     private readonly IPasswordValidationService _passwordValidationService;
     private readonly ILogger<AuthController> _logger;
     private readonly ITenantContextAccessor _tenantAccessor;
+    private readonly IEmailSender _emailSender;
+    private readonly IPlatformSettingsService _platformSettingsService;
 
     public AuthController(
         IUnitOfWork unitOfWork,
@@ -30,7 +34,9 @@ public class AuthController : ControllerBase
         IConfiguration configuration,
         IPasswordValidationService passwordValidationService,
         ILogger<AuthController> logger,
-        ITenantContextAccessor tenantAccessor)
+        ITenantContextAccessor tenantAccessor,
+        IEmailSender emailSender,
+        IPlatformSettingsService platformSettingsService)
     {
         _unitOfWork = unitOfWork;
         _dbContext = dbContext;
@@ -38,6 +44,8 @@ public class AuthController : ControllerBase
         _passwordValidationService = passwordValidationService;
         _logger = logger;
         _tenantAccessor = tenantAccessor;
+        _emailSender = emailSender;
+        _platformSettingsService = platformSettingsService;
     }
 
     /// <summary>
@@ -391,7 +399,13 @@ public class AuthController : ControllerBase
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new("client_id", client.ClientId),
             new("org_id", client.OrganizationId.ToString()),
-            new("system_type", client.SystemType ?? "custom")
+            new("system_type", client.SystemType ?? "custom"),
+            // Same marker ApiKeyAuthenticationMiddleware sets for the X-API-Key path — without it,
+            // PermissionAuthorizationHandler falls through to its user-permission lookup, treating
+            // `sub` (this ApiClient's Id) as a User.Id that never matches, silently denying every
+            // [RequirePermission] endpoint regardless of the client's configured scopes. Found live
+            // 2026-08-31 testing the ERP Bridge: token issuance succeeded but every scoped call 403'd.
+            new("auth_method", "api_key")
         };
 
         // Add scopes
@@ -420,6 +434,166 @@ public class AuthController : ControllerBase
         using var rng = System.Security.Cryptography.RandomNumberGenerator.Create();
         rng.GetBytes(randomBytes);
         return Convert.ToBase64String(randomBytes);
+    }
+
+    /// <summary>
+    /// Step 1 of self-service password reset: requests a reset link by email. Always returns a
+    /// generic success response whether or not the email matches an account (and whether or not
+    /// sending the email actually succeeds) - same "don't leak which emails are registered"
+    /// convention as ResendVerificationCommandHandler.
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        const string genericMessage = "If an account exists for that email address, we've sent a link to reset the password.";
+
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            return Ok(new { message = genericMessage });
+        }
+
+        try
+        {
+            var email = request.Email.Trim().ToLowerInvariant();
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.IsActive);
+
+            if (user != null)
+            {
+                var token = GenerateRefreshToken();
+                user.PasswordResetToken = token;
+                user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
+                await _dbContext.SaveChangesAsync();
+
+                await SendPasswordResetEmailAsync(user.Email, user.FirstName, token);
+                _logger.LogInformation("Password reset requested for {Email}", user.Email);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Still return the generic success message - a delivery failure shouldn't tell an
+            // attacker anything different than "no such account" would.
+            _logger.LogError(ex, "Error processing forgot-password request for {Email}", request.Email);
+        }
+
+        return Ok(new { message = genericMessage });
+    }
+
+    /// <summary>
+    /// Step 2 of self-service password reset: exchanges a valid, unexpired token for a new
+    /// password. Also clears the token (single-use) and revokes the existing refresh token, so a
+    /// reset forces re-login everywhere rather than leaving an old session silently valid.
+    /// </summary>
+    [HttpPost("reset-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword([FromBody] SelfServiceResetPasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Validation failed",
+                Detail = "Email, token, and new password are all required.",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        if (request.NewPassword != request.ConfirmPassword)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Validation failed",
+                Detail = "Passwords do not match.",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        var email = request.Email.Trim().ToLowerInvariant();
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.IsActive);
+
+        // Deliberately the same "invalid or expired" message whether the email doesn't exist,
+        // the token doesn't match, or it's simply expired - never confirms which case applies.
+        const string invalidTokenMessage = "This reset link is invalid or has expired. Please request a new one.";
+
+        if (user == null ||
+            string.IsNullOrEmpty(user.PasswordResetToken) ||
+            user.PasswordResetToken != request.Token ||
+            user.PasswordResetTokenExpiry == null ||
+            user.PasswordResetTokenExpiry < DateTime.UtcNow)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid or expired link",
+                Detail = invalidTokenMessage,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        var passwordValidation = await _passwordValidationService.ValidatePasswordAsync(
+            request.NewPassword, user.Username, user.Email);
+
+        if (!passwordValidation.IsValid)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Password validation failed",
+                Detail = passwordValidation.ErrorMessage,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
+        // Force re-login everywhere - a leaked reset link shouldn't also inherit whatever
+        // refresh token an attacker's own prior session might already hold.
+        user.RefreshToken = null;
+        user.RefreshTokenExpiry = null;
+        user.FailedLoginAttempts = 0;
+        user.LockoutEnd = null;
+
+        await _dbContext.SaveChangesAsync();
+
+        _logger.LogInformation("Password reset completed for {Email}", user.Email);
+
+        return Ok(new { message = "Your password has been reset. You can now sign in with your new password." });
+    }
+
+    private async Task SendPasswordResetEmailAsync(string toEmail, string? firstName, string token)
+    {
+        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+        var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+        var resetUrl = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(toEmail)}&token={Uri.EscapeDataString(token)}";
+
+        var subject = "Reset your Q-Mgr password";
+        var htmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Reset your password</title>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+        <h1 style='color: #7a2847;'>Reset your password</h1>
+        <p>Hi {firstName},</p>
+        <p>We received a request to reset the password on your Q-Mgr account. Click the button below to choose a new one:</p>
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='{resetUrl}' style='background-color: #7a2847; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;'>Reset Password</a>
+        </div>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style='word-break: break-all; color: #666;'>{resetUrl}</p>
+        <p>This link will expire in 1 hour.</p>
+        <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;'>
+        <p style='color: #666; font-size: 14px;'>
+            If you didn't request this, you can safely ignore this email - your password will not be changed.
+        </p>
+    </div>
+</body>
+</html>";
+
+        await _emailSender.SendAsync(toEmail, subject, htmlBody);
     }
 }
 
@@ -470,4 +644,17 @@ public record TokenResponse
 public record RefreshTokenRequest
 {
     public string RefreshToken { get; init; } = string.Empty;
+}
+
+public record ForgotPasswordRequest
+{
+    public string Email { get; init; } = string.Empty;
+}
+
+public record SelfServiceResetPasswordRequest
+{
+    public string Email { get; init; } = string.Empty;
+    public string Token { get; init; } = string.Empty;
+    public string NewPassword { get; init; } = string.Empty;
+    public string ConfirmPassword { get; init; } = string.Empty;
 }

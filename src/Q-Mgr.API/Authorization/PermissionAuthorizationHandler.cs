@@ -44,6 +44,7 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
     {
         ["queue:read"] = new[] { Permissions.QueueView },
         ["queue:write"] = new[] { Permissions.QueueManage },
+        ["token:read"] = new[] { Permissions.TokensView },
         ["token:create"] = new[] { Permissions.TokensCreate },
         ["token:manage"] = new[] { Permissions.QueueManage, Permissions.TokensCancel },
         ["counter:read"] = new[] { Permissions.CountersView },
@@ -51,6 +52,15 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         ["stats:read"] = new[] { Permissions.ReportsView },
         ["roster:read"] = new[] { Permissions.StudentsView },
         ["roster:write"] = new[] { Permissions.StudentsManage },
+        // Added for the ERP Bridge's digital-signage sync (Hotel/Retail room-status and
+        // promo/stock content) — content:read/write were never mapped, so no API-client
+        // scope could ever satisfy a [RequirePermission(Permissions.Content*)] endpoint.
+        ["content:read"] = new[] { Permissions.ContentView },
+        ["content:write"] = new[] { Permissions.ContentCreate, Permissions.ContentEdit },
+        // DisplayBannerController.UpdateDisplayBanner requires SettingsEdit — the Bridge uses the
+        // branch ticker banner (not the full MediaContent/Playlist pipeline) as the fastest correct
+        // signage proof: it's already public, already live-pushes via DisplayHub, zero new Q-Mgr code.
+        ["settings:write"] = new[] { Permissions.SettingsEdit },
     };
 
     protected override async Task HandleRequirementAsync(

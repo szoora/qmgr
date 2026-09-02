@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.Commands.Queue;
 using QMgr.Application.DTOs;
 using QMgr.Application.Queries.Queue;
@@ -16,6 +17,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/branches/{branchId:guid}/tokens")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — every action already has its own [RequirePermission], this guards any future action that forgets one
+[RequireModule(ModuleCodes.CoreQueue)]
 public class TokensController : ControllerBase
 {
     private readonly IMediator _mediator;

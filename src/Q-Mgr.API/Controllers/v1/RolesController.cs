@@ -34,6 +34,20 @@ public class RolesController : ControllerBase
     }
 
     /// <summary>
+    /// SECURITY: true if the caller (not SuperAdmin) may not touch this role - it belongs
+    /// to a different organization. System roles (OrganizationId == null) are excluded
+    /// since they're shared/read-only for everyone; the mutating endpoints below already
+    /// separately reject any write against a system role via their own IsSystem check.
+    /// </summary>
+    private bool RoleOutOfScope(Role role)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (RoleCodes.IsSuperAdmin(tenantContext?.UserRole)) return false;
+        if (role.OrganizationId == null) return false;
+        return role.OrganizationId != tenantContext?.OrganizationId;
+    }
+
+    /// <summary>
     /// Gets all roles (system + organization-specific)
     /// </summary>
     [HttpGet]
@@ -42,6 +56,19 @@ public class RolesController : ControllerBase
     public async Task<IActionResult> GetRoles([FromQuery] bool includeInactive = false)
     {
         var query = _dbContext.Roles.AsQueryable();
+
+        // SECURITY: Roles are organization-scoped (system roles have OrganizationId ==
+        // null and are visible to everyone) - this previously had no filter at all, so
+        // any tenant Admin viewing Users & Roles saw every other tenant's custom roles
+        // (name, permission/user counts) mixed in with their own. Same bug shape as the
+        // cross-tenant IDORs found in BranchesController/ContentController/etc.
+        var tenantContext = _tenantAccessor.TenantContext;
+        var isSuperAdmin = RoleCodes.IsSuperAdmin(tenantContext?.UserRole);
+        if (!isSuperAdmin)
+        {
+            var callerOrgId = tenantContext?.OrganizationId;
+            query = query.Where(r => r.OrganizationId == null || r.OrganizationId == callerOrgId);
+        }
 
         if (!includeInactive)
             query = query.Where(r => r.IsActive);
@@ -76,10 +103,17 @@ public class RolesController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetRole(Guid roleId)
     {
+        // SECURITY: same org-scoping as GetRoles - without this, any tenant Admin could
+        // read another tenant's custom role (including its full permission list) just by
+        // knowing/guessing its GUID, e.g. one surfaced by the also-fixed GetRoles list.
+        var tenantContext = _tenantAccessor.TenantContext;
+        var isSuperAdmin = RoleCodes.IsSuperAdmin(tenantContext?.UserRole);
+        var callerOrgId = tenantContext?.OrganizationId;
+
         var role = await _dbContext.Roles
             .Include(r => r.RolePermissions)
             .ThenInclude(rp => rp.Permission)
-            .Where(r => r.Id == roleId)
+            .Where(r => r.Id == roleId && (isSuperAdmin || r.OrganizationId == null || r.OrganizationId == callerOrgId))
             .Select(r => new RoleDetailDto
             {
                 Id = r.Id,
@@ -258,7 +292,7 @@ public class RolesController : ControllerBase
             .Include(r => r.RolePermissions)
             .FirstOrDefaultAsync(r => r.Id == roleId);
 
-        if (role == null)
+        if (role == null || RoleOutOfScope(role))
             return NotFound(new ProblemDetails
             {
                 Title = "Role not found",
@@ -331,7 +365,7 @@ public class RolesController : ControllerBase
             .Include(r => r.RolePermissions)
             .FirstOrDefaultAsync(r => r.Id == roleId);
 
-        if (role == null)
+        if (role == null || RoleOutOfScope(role))
             return NotFound(new ProblemDetails
             {
                 Title = "Role not found",
@@ -419,7 +453,7 @@ public class RolesController : ControllerBase
             .Include(r => r.RolePermissions)
             .FirstOrDefaultAsync(r => r.Id == roleId);
 
-        if (role == null)
+        if (role == null || RoleOutOfScope(role))
             return NotFound(new ProblemDetails
             {
                 Title = "Role not found",
@@ -471,7 +505,7 @@ public class RolesController : ControllerBase
             .Include(r => r.Users)
             .FirstOrDefaultAsync(r => r.Id == roleId);
 
-        if (role == null)
+        if (role == null || RoleOutOfScope(role))
             return NotFound(new ProblemDetails
             {
                 Title = "Role not found",

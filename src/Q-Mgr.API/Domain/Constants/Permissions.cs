@@ -73,6 +73,15 @@ public static class Permissions
     public const string StudentsView = "students.view";
     public const string StudentsManage = "students.manage"; // Create/edit/delete students & guardians, bulk import
 
+    // Student Welfare Ledger (achievements, behavior incidents, welfare concerns)
+    public const string WelfareView = "welfare.view"; // Non-confidential records only, unless WelfareConfidentialView is also held
+    public const string WelfareCreate = "welfare.create";
+    public const string WelfareEdit = "welfare.edit"; // Adds a follow-up note — records are append-only, never rewritten
+    public const string WelfareNotify = "welfare.notify"; // Review-and-send a guardian notification
+    public const string WelfareConfidentialView = "welfare.confidential.view"; // Welfare-tier (safeguarding) records — off for Manager by default, on for Admin
+    public const string WelfareCategoriesManage = "welfare.categories.manage";
+    public const string WelfareReportsView = "welfare.reports.view";
+
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
@@ -110,6 +119,8 @@ public static class Permissions
     public const string PlatformSettingsView = "platform.settings.view";
     public const string PlatformSettingsEdit = "platform.settings.edit";
     public const string PlatformAnalytics = "platform.analytics";
+    public const string PlatformDocsView = "platform.docs.view";
+    public const string PlatformDocsManage = "platform.docs.manage";
 
     /// <summary>
     /// All permissions grouped by category for seeding and UI display
@@ -220,6 +231,8 @@ public static class Permissions
         new("platform.settings.view", "View Platform Settings", "View platform-wide configuration", "Platform Admin", 4, false),
         new("platform.settings.edit", "Edit Platform Settings", "Modify platform-wide configuration", "Platform Admin", 5, false),
         new("platform.analytics", "Platform Analytics", "View cross-tenant analytics", "Platform Admin", 6, false),
+        new("platform.docs.view", "View Docs Articles", "View onboarding/docs articles (platform admin)", "Platform Admin", 7, false),
+        new("platform.docs.manage", "Manage Docs Articles", "Create, edit, publish, and delete onboarding/docs articles", "Platform Admin", 8, false),
     };
 
     /// <summary>

@@ -1,0 +1,632 @@
+@page "/admin/welfare-categories"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+
+<PageTitle>Welfare Categories - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Welfare Categories</h1>
+            <p class="subtitle">Define the achievement, behavior and welfare categories staff can log against a student</p>
+        </div>
+        @if (canCreate)
+        {
+            <QButton Text="Add Category" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading categories...</span>
+        </div>
+    }
+    else if (!categories.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="clipboard2-pulse-fill" Size="xl" />
+            <h3>No Welfare Categories</h3>
+            <p>Create categories such as "Homework Completed", "Uniform Violation" or "Bullying Concern" to start logging records</p>
+            @if (canCreate)
+            {
+                <QButton Text="Add First Category" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        @foreach (var group in categories.GroupBy(c => c.CaseType).OrderBy(g => (int)g.Key))
+        {
+            <h2 class="case-type-heading">
+                <QIcon Name="@CaseTypeIcon(group.Key)" />
+                @CaseTypeLabel(group.Key)
+            </h2>
+            <div class="category-grid">
+                @foreach (var category in group.OrderBy(c => c.SortOrder))
+                {
+                    <div class="category-card @(category.IsActive ? "" : "category-card--inactive")">
+                        <div class="category-header">
+                            <div class="category-swatch" style="background-color: @(category.Color ?? "#8c2f52")"></div>
+                            <div class="category-actions">
+                                @if (canManage)
+                                {
+                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(category))" Title="Edit" />
+                                    <QButton Icon="@(category.IsActive ? "eye-slash-fill" : "eye-fill")" Variant="ghost" Size="sm" OnClick="@(() => ToggleCategory(category))" Title="@(category.IsActive ? "Deactivate" : "Activate")" />
+                                }
+                            </div>
+                        </div>
+                        <div class="category-body">
+                            <h4>@category.Name</h4>
+                            <p class="category-description">@(category.Description ?? "No description")</p>
+                        </div>
+                        <div class="category-footer">
+                            <span class="category-stat">
+                                <QIcon Name="bar-chart-fill" />
+                                @category.DefaultTier tier
+                            </span>
+                            @if (category.DefaultPoints.HasValue)
+                            {
+                                <span class="category-stat">
+                                    <QIcon Name="star-fill" />
+                                    @category.DefaultPoints points
+                                </span>
+                            }
+                            @if (!category.IsActive)
+                            {
+                                <span class="category-stat category-stat--muted">Inactive</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editingCategory == null ? "Add Welfare Category" : "Edit Welfare Category")" Size="md">
+    <ChildContent>
+        @if (editingCategory == null)
+        {
+            <div class="form-group">
+                <QSelect TValue="WelfareCaseType" TItem="CaseTypeOption" @bind-Value="@formData.CaseType" Items="@caseTypeOptions"
+                         TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Case Type" Required="true" />
+            </div>
+        }
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Name" Label="Name" Placeholder="e.g., Homework Completed" Required="true"
+                    MaxLength="100" HasError="@nameError" ErrorMessage="Name is required" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Description" Type="textarea" Label="Description" Placeholder="Brief description" Rows="2" MaxLength="500" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="WelfareTier" TItem="TierOption" @bind-Value="@formData.DefaultTier" Items="@tierOptions"
+                         TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Default Tier" Required="true" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="int?" @bind-Value="@formData.DefaultPoints" Type="number" Label="Default Points" Placeholder="Optional" Min="@pointsMin.ToString()" Max="@pointsMax.ToString()"
+                        HasError="@pointsError" ErrorMessage="@pointsErrorText" />
+                <small>@PointsHint(formData.CaseType)</small>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Color</label>
+            <div class="color-picker">
+                @foreach (var color in availableColors)
+                {
+                    <div class="color-option @(formData.Color == color ? "selected" : "")"
+                         style="background-color: @color"
+                         @onclick="@(() => formData.Color = color)"></div>
+                }
+            </div>
+        </div>
+        <div class="form-group">
+            <QInput TValue="int" @bind-Value="@formData.SortOrder" Type="number" Label="Sort Order" Min="0" Max="999" />
+        </div>
+        @if (editingCategory != null)
+        {
+            <div class="form-group">
+                <QCheckbox @bind-Value="@formData.IsActive" Label="Category is active" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" />
+        <QButton Text="@(editingCategory == null ? "Create" : "Save")" Icon="@(editingCategory == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveCategory" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page {
+        padding: 0;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .header-content h1 {
+        margin: 0 0 4px;
+        font-size: 28px;
+        color: var(--qm-text-primary);
+    }
+
+    .subtitle {
+        margin: 0;
+        color: var(--qm-text-muted);
+        font-size: 14px;
+    }
+
+    .loading-container, .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: var(--qm-text-muted);
+        background: var(--qm-bg-card);
+        border-radius: var(--qm-radius-xl);
+        border: 1px solid var(--qm-border);
+    }
+
+    .empty-state .rzi {
+        font-size: 64px;
+        margin-bottom: 16px;
+        color: var(--qm-primary);
+    }
+
+    .empty-state h3 {
+        margin: 0 0 8px;
+        color: var(--qm-text-primary);
+    }
+
+    .empty-state p {
+        margin: 0 0 20px;
+    }
+
+    .case-type-heading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        color: var(--qm-text-primary);
+        margin: 28px 0 14px;
+    }
+
+    .case-type-heading:first-of-type {
+        margin-top: 0;
+    }
+
+    .category-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 8px;
+    }
+
+    .category-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .category-card:hover {
+        box-shadow: var(--qm-shadow-md);
+        border-color: var(--qm-primary);
+    }
+
+    .category-card--inactive {
+        opacity: 0.6;
+    }
+
+    .category-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 16px;
+        background: var(--qm-bg-elevated);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .category-swatch {
+        width: 28px;
+        height: 28px;
+        border-radius: var(--qm-radius-md);
+    }
+
+    .category-actions {
+        display: flex;
+        gap: 4px;
+    }
+
+    .category-body {
+        padding: 16px;
+    }
+
+    .category-body h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--qm-text-primary);
+    }
+
+    .category-description {
+        margin: 0;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        line-height: 1.5;
+    }
+
+    .category-footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 12px 16px;
+        background: var(--qm-bg-elevated);
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .category-stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+        text-transform: capitalize;
+    }
+
+    .category-stat--muted {
+        text-transform: none;
+        color: var(--qm-danger, #ef4444);
+    }
+
+    .category-stat .rzi {
+        font-size: 16px;
+        color: var(--qm-primary);
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-secondary);
+    }
+
+    .form-group small {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .color-picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .color-option {
+        width: 32px;
+        height: 32px;
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: all 0.2s ease;
+    }
+
+    .color-option:hover {
+        transform: scale(1.1);
+    }
+
+    .color-option.selected {
+        border-color: var(--qm-text-primary);
+        box-shadow: 0 0 0 2px var(--qm-bg-card), 0 0 0 4px var(--qm-primary);
+    }
+</style>
+
+@code {
+    private List<WelfareCategoryDto> categories = new();
+    private bool isLoading = true;
+    private bool showDialog = false;
+    private bool canCreate = false;
+    private bool canManage = false;
+    private WelfareCategoryDto? editingCategory;
+    private CategoryFormData formData = new();
+    private bool nameError = false;
+    private bool pointsError = false;
+    private string pointsErrorText = "";
+
+    private readonly string[] availableColors = new[]
+    {
+        "#8c2f52", "#a8446e", "#47393f", "#2e242a",
+        "#16a34a", "#10b981", "#f59e0b", "#d97706",
+        "#dc2626", "#ef4444", "#2f5a54", "#5a9c92"
+    };
+
+    private readonly List<CaseTypeOption> caseTypeOptions = new()
+    {
+        new(WelfareCaseType.Achievement, "Achievement"),
+        new(WelfareCaseType.Behavior, "Behavior"),
+        new(WelfareCaseType.Welfare, "Welfare / Safeguarding")
+    };
+
+    private readonly List<TierOption> tierOptions = new()
+    {
+        new(WelfareTier.Low, "Low"),
+        new(WelfareTier.Medium, "Medium"),
+        new(WelfareTier.High, "High")
+    };
+
+    private int? pointsMin => formData.CaseType == WelfareCaseType.Behavior ? -100 : 0;
+    private int? pointsMax => formData.CaseType == WelfareCaseType.Behavior ? 0 : 100;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCategoriesManage);
+            canManage = canCreate;
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId;
+
+            if (branchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+                isLoading = false;
+                return;
+            }
+
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories?includeInactive=true");
+            if (response.IsSuccessStatusCode)
+            {
+                categories = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load welfare categories: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingCategory = null;
+        nameError = false;
+        pointsError = false;
+        formData = new CategoryFormData
+        {
+            CaseType = WelfareCaseType.Achievement,
+            Name = "",
+            DefaultTier = WelfareTier.Low,
+            Color = availableColors[0],
+            SortOrder = categories.Any() ? categories.Max(c => c.SortOrder) + 1 : 0,
+            IsActive = true
+        };
+        showDialog = true;
+    }
+
+    private void ShowEditDialog(WelfareCategoryDto category)
+    {
+        editingCategory = category;
+        nameError = false;
+        pointsError = false;
+        formData = new CategoryFormData
+        {
+            CaseType = category.CaseType,
+            Name = category.Name,
+            Description = category.Description,
+            DefaultTier = category.DefaultTier,
+            DefaultPoints = category.DefaultPoints,
+            Color = category.Color ?? availableColors[0],
+            SortOrder = category.SortOrder,
+            IsActive = category.IsActive
+        };
+        showDialog = true;
+    }
+
+    private async Task SaveCategory()
+    {
+        nameError = string.IsNullOrWhiteSpace(formData.Name);
+        pointsError = false;
+        pointsErrorText = "";
+
+        if (formData.DefaultPoints.HasValue)
+        {
+            var points = formData.DefaultPoints.Value;
+            if (formData.CaseType == WelfareCaseType.Achievement && points < 0)
+            {
+                pointsError = true;
+                pointsErrorText = "Achievement points cannot be negative";
+            }
+            else if (formData.CaseType == WelfareCaseType.Behavior && points > 0)
+            {
+                pointsError = true;
+                pointsErrorText = "Behavior points cannot be positive";
+            }
+            else if (formData.CaseType == WelfareCaseType.Welfare && points != 0)
+            {
+                pointsError = true;
+                pointsErrorText = "Welfare categories cannot carry points";
+            }
+            else if (Math.Abs(points) > 100)
+            {
+                pointsError = true;
+                pointsErrorText = "Points cannot exceed 100 in magnitude";
+            }
+        }
+
+        if (nameError || pointsError)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please fix the highlighted fields");
+            return;
+        }
+
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            HttpResponseMessage response;
+
+            if (editingCategory == null)
+            {
+                var request = new CreateWelfareCategoryRequest
+                {
+                    CaseType = formData.CaseType,
+                    Name = formData.Name.Trim(),
+                    Description = string.IsNullOrWhiteSpace(formData.Description) ? null : formData.Description.Trim(),
+                    DefaultTier = formData.DefaultTier,
+                    DefaultPoints = formData.DefaultPoints,
+                    Color = formData.Color,
+                    SortOrder = formData.SortOrder
+                };
+                response = await Http.PostAsJsonAsync($"api/v1/branches/{branchId}/welfare/categories", request, JsonOptions);
+            }
+            else
+            {
+                var request = new UpdateWelfareCategoryRequest
+                {
+                    Name = formData.Name.Trim(),
+                    Description = string.IsNullOrWhiteSpace(formData.Description) ? null : formData.Description.Trim(),
+                    DefaultTier = formData.DefaultTier,
+                    DefaultPoints = formData.DefaultPoints,
+                    Color = formData.Color,
+                    SortOrder = formData.SortOrder,
+                    IsActive = formData.IsActive
+                };
+                response = await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/welfare/categories/{editingCategory.Id}", request, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingCategory == null ? "Category created" : "Category updated");
+                showDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save category: {ex.Message}");
+        }
+    }
+
+    private async Task ToggleCategory(WelfareCategoryDto category)
+    {
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var response = await Http.PatchAsync($"api/v1/branches/{branchId}/welfare/categories/{category.Id}/toggle", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    category.IsActive ? "Category deactivated" : "Category activated");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update category: {ex.Message}");
+        }
+    }
+
+    private static string CaseTypeLabel(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "Achievement",
+        WelfareCaseType.Behavior => "Behavior",
+        WelfareCaseType.Welfare => "Welfare / Safeguarding",
+        _ => caseType.ToString()
+    };
+
+    private static string CaseTypeIcon(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "trophy-fill",
+        WelfareCaseType.Behavior => "exclamation-triangle-fill",
+        WelfareCaseType.Welfare => "shield-fill-check",
+        _ => "clipboard2-pulse-fill"
+    };
+
+    private static string PointsHint(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "0 to 100 — awarded to the student",
+        WelfareCaseType.Behavior => "-100 to 0 — deducted from the student",
+        WelfareCaseType.Welfare => "Leave blank — welfare cases do not carry points",
+        _ => ""
+    };
+
+    private class CategoryFormData
+    {
+        public WelfareCaseType CaseType { get; set; } = WelfareCaseType.Achievement;
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public WelfareTier DefaultTier { get; set; } = WelfareTier.Low;
+        public int? DefaultPoints { get; set; }
+        public string? Color { get; set; } = "#8c2f52";
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    private record CaseTypeOption(WelfareCaseType Value, string Label);
+    private record TierOption(WelfareTier Value, string Label);
+}

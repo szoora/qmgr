@@ -1,0 +1,498 @@
+/* Shared "auth card" shell for every standalone account page: Login, Register, Forgot/Reset
+   Password. One definition so these pages can't visually drift apart the way Login and Register
+   previously had (a single centered card vs. an unrelated two-panel dark layout). Page-specific
+   extras (Register's step indicator, password-strength meter, etc.) stay in that page's own
+   <style> block and build on top of these classes rather than duplicating them.
+
+   BUG FIX: every selector below is scoped under .login-container. This file is loaded globally
+   (App.razor), and several of the class names it needs (.form-group, .user-avatar,
+   .footer-links, .form-row, .validation-message, ...) are common enough that they already exist,
+   with different rules, in the app's own dashboard stylesheets (layout.css, app.css) - loading
+   this file unscoped after them silently overrode the real dashboard header avatar size and the
+   dashboard's own form-label styling app-wide. Caught live from a screenshot showing the
+   dashboard header's avatar rendering wrong. Scoping under .login-container (present on every
+   page that uses this file, and nowhere else in the app) makes that class of leak structurally
+   impossible regardless of what other stylesheets choose to name things. */
+
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--qm-primary);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+}
+
+.login-container .login-card {
+    background: var(--qm-bg-card);
+    border-radius: var(--qm-radius-xl);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    padding: 48px;
+    width: 100%;
+    max-width: 480px;
+    position: relative;
+    z-index: 1;
+    animation: authCardSlideUp 0.5s ease-out;
+    transition: all 0.3s ease;
+}
+
+.login-container .login-card.wide {
+    max-width: 620px;
+}
+
+.login-container .login-card.loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+@keyframes authCardSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.login-container .login-header {
+    text-align: center;
+    margin-bottom: 32px;
+    position: relative;
+}
+
+.login-container .btn-back {
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: var(--qm-bg-elevated);
+    border: none;
+    border-radius: var(--qm-radius-lg);
+    padding: 8px;
+    cursor: pointer;
+    color: var(--qm-text-secondary);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-container .btn-back:hover {
+    background: var(--qm-border);
+    color: var(--qm-primary);
+}
+
+.login-container .logo-wrapper {
+    margin-bottom: 20px;
+}
+
+.login-container .logo-circle {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto;
+    background: var(--qm-primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+}
+
+.login-container .user-avatar {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 16px;
+    background: var(--qm-primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
+    font-weight: 600;
+}
+
+.login-container .user-email {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--qm-text-primary);
+    margin: 0 0 12px 0;
+}
+
+.login-container .org-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--qm-bg-elevated);
+    padding: 6px 12px;
+    border-radius: var(--qm-radius-full);
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+}
+
+.login-container .login-header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+    margin: 0 0 8px 0;
+}
+
+.login-container .login-header p {
+    color: var(--qm-text-secondary);
+    margin: 0;
+    font-size: 15px;
+}
+
+.login-container .auth-alert {
+    padding: 16px;
+    border-radius: var(--qm-radius-lg);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    position: relative;
+}
+
+.login-container .auth-animate-in {
+    animation: authAlertFadeInDown 0.3s ease-out;
+}
+
+@keyframes authAlertFadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.login-container .auth-alert-icon {
+    flex-shrink: 0;
+    font-size: 20px;
+}
+
+.login-container .auth-alert-content {
+    flex: 1;
+}
+
+.login-container .auth-alert-content strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.login-container .auth-alert-content p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.login-container .auth-alert-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    color: inherit;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.login-container .auth-alert-close:hover {
+    opacity: 1;
+}
+
+.login-container .auth-alert-danger {
+    background-color: color-mix(in srgb, var(--qm-danger) 12%, var(--qm-bg-card));
+    color: var(--qm-danger);
+    border: 1px solid color-mix(in srgb, var(--qm-danger) 30%, transparent);
+}
+
+.login-container .auth-alert-success {
+    background-color: color-mix(in srgb, var(--qm-success) 12%, var(--qm-bg-card));
+    color: var(--qm-success);
+    border: 1px solid color-mix(in srgb, var(--qm-success) 30%, transparent);
+}
+
+.login-container .form-group {
+    margin-bottom: 20px;
+}
+
+.login-container .form-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--qm-text-primary);
+    font-size: 14px;
+}
+
+.login-container .input-wrapper {
+    position: relative;
+}
+
+/* Scoped under .login-card so this beats the dashboard's generic .form-group .form-control
+   rule in app.css (both reuse Bootstrap's class names). */
+.login-container .login-card .form-control {
+    width: 100%;
+    padding: 12px 40px 12px 16px;
+    border: 2px solid var(--qm-border);
+    border-radius: var(--qm-radius-lg);
+    font-size: 15px;
+    transition: all 0.2s;
+    background: var(--qm-bg-elevated);
+    color: var(--qm-text-primary);
+}
+
+.login-container .login-card .form-control:hover {
+    border-color: var(--qm-border-hover);
+    background: var(--qm-bg-card);
+}
+
+.login-container .login-card .form-control:focus {
+    outline: none;
+    border-color: var(--qm-primary);
+    background: var(--qm-bg-card);
+    box-shadow: 0 0 0 4px var(--qm-primary-light);
+}
+
+.login-container .login-card .form-control:disabled {
+    background-color: var(--qm-bg-elevated);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.login-container .input-toggle,
+.login-container .input-clear {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--qm-text-secondary);
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+}
+
+.login-container .input-toggle:hover,
+.login-container .input-clear:hover {
+    color: var(--qm-primary);
+}
+
+.login-container .form-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.login-container .checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.login-container .checkbox-label {
+    font-size: 14px;
+    color: var(--qm-text-secondary);
+}
+
+.login-container .link-forgot {
+    color: var(--qm-primary);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.login-container .link-forgot:hover {
+    color: var(--qm-primary-dark);
+    text-decoration: underline;
+}
+
+.login-container .btn-login {
+    width: 100%;
+    padding: 14px;
+    background: var(--qm-primary);
+    color: white;
+    border: none;
+    border-radius: var(--qm-radius-lg);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.login-container .btn-login:hover:not(:disabled) {
+    background: var(--qm-primary-dark);
+}
+
+.login-container .btn-login:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.login-container .btn-login:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.login-container .auth-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: authSpinnerRotate 0.75s linear infinite;
+}
+
+@keyframes authSpinnerRotate {
+    to { transform: rotate(360deg); }
+}
+
+.login-container .login-footer {
+    text-align: center;
+    padding-top: 24px;
+    border-top: 1px solid var(--qm-border);
+}
+
+.login-container .login-footer p {
+    margin: 0 0 16px 0;
+    font-size: 14px;
+    color: var(--qm-text-secondary);
+}
+
+.login-container .link-register {
+    color: var(--qm-primary);
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s;
+}
+
+.login-container .link-register:hover {
+    color: var(--qm-primary-dark);
+    text-decoration: underline;
+}
+
+.login-container .footer-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-size: 12px;
+}
+
+.login-container .footer-links a {
+    color: var(--qm-text-secondary);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.login-container .footer-links a:hover {
+    color: var(--qm-primary);
+}
+
+.login-container .footer-links span {
+    color: var(--qm-border-hover);
+}
+
+.login-container .login-footer p.powered-by {
+    margin: 12px 0 0 0;
+    font-size: 11px;
+    color: var(--qm-text-muted);
+    letter-spacing: 0.02em;
+}
+
+.login-container .validation-message {
+    color: var(--qm-danger);
+    font-size: 12px;
+    margin-top: 6px;
+    display: block;
+    animation: authValidationShake 0.3s ease-in-out;
+}
+
+@keyframes authValidationShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+/* Password-strength meter - shared by Register and ResetPassword */
+.login-container .password-strength {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 8px;
+}
+
+.login-container .strength-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--qm-bg-elevated);
+    border-radius: var(--qm-radius-sm);
+    overflow: hidden;
+}
+
+.login-container .strength-fill {
+    height: 100%;
+    transition: all 0.3s ease;
+}
+
+.login-container .strength-fill.weak { background: var(--qm-danger); }
+.login-container .strength-fill.fair { background: var(--qm-warning); }
+.login-container .strength-fill.good { background: var(--qm-primary); }
+.login-container .strength-fill.strong { background: var(--qm-success); }
+
+.login-container .strength-text {
+    font-size: 12px;
+    color: var(--qm-text-secondary);
+    min-width: 40px;
+}
+
+/* Mobile Responsive */
+@media (max-width: 600px) {
+    .login-container .login-card {
+        padding: 32px 24px;
+    }
+
+    .login-container .login-header h1 {
+        font-size: 24px;
+    }
+
+    .login-container .logo-circle,
+    .login-container .user-avatar {
+        width: 64px;
+        height: 64px;
+    }
+
+    .login-container .user-avatar {
+        font-size: 24px;
+    }
+
+    .login-container .form-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .login-container .link-forgot {
+        margin-left: auto;
+    }
+}

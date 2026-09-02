@@ -24,6 +24,7 @@ public class SuperAdminController : ControllerBase
     private readonly ITenantProvisioningService _provisioningService;
     private readonly IBillingService _billingService;
     private readonly IUsageTrackingService _usageTrackingService;
+    private readonly IModuleAccessService _moduleAccessService;
     private readonly ILogger<SuperAdminController> _logger;
 
     public SuperAdminController(
@@ -31,12 +32,14 @@ public class SuperAdminController : ControllerBase
         ITenantProvisioningService provisioningService,
         IBillingService billingService,
         IUsageTrackingService usageTrackingService,
+        IModuleAccessService moduleAccessService,
         ILogger<SuperAdminController> logger)
     {
         _dbContext = dbContext;
         _provisioningService = provisioningService;
         _billingService = billingService;
         _usageTrackingService = usageTrackingService;
+        _moduleAccessService = moduleAccessService;
         _logger = logger;
     }
 
@@ -233,6 +236,148 @@ public class SuperAdminController : ControllerBase
     }
 
     /// <summary>
+    /// Every module's purchase status for one tenant — backs the "Manage Modules" panel that
+    /// replaced the old single-select "Change Tier" modal.
+    /// </summary>
+    [HttpGet("tenants/{id:guid}/modules")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTenantModules(Guid id)
+    {
+        var org = await _dbContext.Organizations.FindAsync(id);
+        if (org == null)
+            return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        var status = await _moduleAccessService.GetOrganizationModuleStatusAsync(id);
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// Direct platform-admin grant — no payment collected, immediately Active. The literal
+    /// "add/remove modules per customer request" lever.
+    /// </summary>
+    [HttpPut("tenants/{id:guid}/modules/{moduleCode}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GrantTenantModule(Guid id, string moduleCode, [FromBody] GrantModuleRequest? request)
+    {
+        var org = await _dbContext.Organizations.FindAsync(id);
+        if (org == null)
+            return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        if (!ModuleCodes.All.Contains(moduleCode))
+            return NotFound(new { error = "MODULE_NOT_FOUND", message = $"Unknown module '{moduleCode}'." });
+
+        await _moduleAccessService.GrantAsync(id, moduleCode, CurrentUserId() ?? Guid.Empty, request?.Note);
+
+        _logger.LogInformation("Super admin granted module {ModuleCode} to tenant {TenantId}", moduleCode, id);
+
+        return Ok(new { message = "Module granted successfully" });
+    }
+
+    /// <summary>Direct platform-admin revoke — the other half of the manage-modules lever.</summary>
+    [HttpDelete("tenants/{id:guid}/modules/{moduleCode}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RevokeTenantModule(Guid id, string moduleCode, [FromQuery] string? note)
+    {
+        var org = await _dbContext.Organizations.FindAsync(id);
+        if (org == null)
+            return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
+
+        if (!ModuleCodes.All.Contains(moduleCode))
+            return NotFound(new { error = "MODULE_NOT_FOUND", message = $"Unknown module '{moduleCode}'." });
+
+        await _moduleAccessService.RevokeAsync(id, moduleCode, note);
+
+        _logger.LogInformation("Super admin revoked module {ModuleCode} from tenant {TenantId}", moduleCode, id);
+
+        return Ok(new { message = "Module revoked successfully" });
+    }
+
+    public record GrantModuleRequest(string? Note);
+
+    /// <summary>
+    /// One-time data migration: every organization currently on a paid legacy Tier
+    /// (Starter/Professional/Enterprise) gets all 4 modules grandfathered in as Active with no new
+    /// charge, preserving continuity for existing paying customers. Free-tier organizations
+    /// (which today have no Subscription row at all — the established "no subscription IS the
+    /// free tier" convention) get zero OrganizationModule rows, matching their current state.
+    ///
+    /// Deliberately NOT run automatically anywhere (no startup hook, no recurring job) — this
+    /// touches real customer access on a live production app and must be triggered explicitly by
+    /// a platform admin who has reviewed the dry-run output first. Idempotent either way: an
+    /// organization that already has any OrganizationModule rows (already migrated, or already
+    /// self-served/admin-granted a module) is skipped, never double-granted or overwritten.
+    /// </summary>
+    [HttpPost("migrate-legacy-tenants-to-modules")]
+    [ProducesResponseType(typeof(MigrationReport), StatusCodes.Status200OK)]
+    public async Task<IActionResult> MigrateLegacyTenantsToModules([FromQuery] bool dryRun = true)
+    {
+        var paidOrgs = await _dbContext.Organizations
+            .Where(o => o.Tier != TenantTier.Free && o.Status != TenantStatus.Deleted)
+            .ToListAsync();
+
+        var orgIdsWithModules = (await _dbContext.OrganizationModules
+            .Select(om => om.OrganizationId)
+            .Distinct()
+            .ToListAsync())
+            .ToHashSet();
+
+        var toMigrate = paidOrgs.Where(o => !orgIdsWithModules.Contains(o.Id)).ToList();
+        var alreadyMigrated = paidOrgs.Where(o => orgIdsWithModules.Contains(o.Id))
+            .Select(o => new MigrationOrgSummary(o.Id, o.Name, o.Tier.ToString()))
+            .ToList();
+
+        var migrated = new List<MigrationOrgSummary>();
+
+        if (!dryRun)
+        {
+            var operatorUserId = CurrentUserId() ?? Guid.Empty;
+            foreach (var org in toMigrate)
+            {
+                foreach (var moduleCode in ModuleCodes.All)
+                {
+                    await _moduleAccessService.GrantAsync(org.Id, moduleCode, operatorUserId,
+                        $"Migrated from legacy {org.Tier} tier");
+                }
+                migrated.Add(new MigrationOrgSummary(org.Id, org.Name, org.Tier.ToString()));
+
+                _logger.LogInformation(
+                    "Migrated organization {OrgId} ({OrgName}) from legacy {Tier} tier to all 4 modules",
+                    org.Id, org.Name, org.Tier);
+            }
+        }
+
+        var report = new MigrationReport(
+            DryRun: dryRun,
+            TotalPaidOrganizations: paidOrgs.Count,
+            AlreadyMigrated: alreadyMigrated,
+            Migrated: dryRun ? toMigrate.Select(o => new MigrationOrgSummary(o.Id, o.Name, o.Tier.ToString())).ToList() : migrated,
+            Message: dryRun
+                ? $"Dry run: {toMigrate.Count} organization(s) would be migrated. Re-run with dryRun=false to actually grant modules."
+                : $"Migrated {migrated.Count} organization(s)."
+        );
+
+        return Ok(report);
+    }
+
+    public record MigrationOrgSummary(Guid Id, string Name, string Tier);
+
+    public record MigrationReport(
+        bool DryRun,
+        int TotalPaidOrganizations,
+        List<MigrationOrgSummary> AlreadyMigrated,
+        List<MigrationOrgSummary> Migrated,
+        string Message);
+
+    private Guid? CurrentUserId()
+    {
+        var raw = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(raw, out var uid) ? uid : null;
+    }
+
+    /// <summary>
     /// Set (or clear) a tenant's per-tenant storage quota override. This is the platform-admin
     /// lever for the storage-conservation direction — content should mostly live on external
     /// platforms (YouTube, Vimeo, Google Drive, TikTok) that this app just links to rather than
@@ -411,7 +556,13 @@ public class SuperAdminController : ControllerBase
     [ProducesResponseType(typeof(List<PlanDetails>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPlans()
     {
+        // SubscriptionPlan rows now serve two purposes (see the modular subscription plan):
+        // the legacy Free/Starter/Professional/Enterprise tier catalog this endpoint has always
+        // shown, and the 4 new module-catalog rows (Code in ModuleCodes.All). Excluding the
+        // latter here — the "Manage Modules" panel is the real place to see and manage those,
+        // and mixing both into one flat list read as one undifferentiated, confusing catalog.
         var plans = await _dbContext.SubscriptionPlans
+            .Where(p => !ModuleCodes.All.Contains(p.Code))
             .OrderBy(p => p.SortOrder)
             .Select(p => new PlanDetails
             {

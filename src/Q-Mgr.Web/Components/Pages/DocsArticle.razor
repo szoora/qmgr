@@ -1,0 +1,105 @@
+@page "/docs/{Slug}"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>@(article?.Title ?? "Getting Started") - Q-Mgr</PageTitle>
+
+<div class="doc-page">
+    <AmbientBackground />
+
+    <div class="doc-shell">
+        <div class="doc-topbar">
+            <a href="/" class="doc-brand">
+                <span class="doc-brand-mark"><QIcon Name="people-fill" /></span>
+                <span>Q-Mgr</span>
+            </a>
+            <a href="/login" class="doc-topbar-link">Back to Sign In</a>
+        </div>
+
+        <article class="doc-card">
+            @if (isLoading)
+            {
+                <p class="doc-lede">Loading&hellip;</p>
+            }
+            else if (article == null)
+            {
+                <header class="doc-header">
+                    <h1>Article not found</h1>
+                </header>
+                <p class="doc-lede">
+                    This guide doesn't exist or isn't published. <a href="/docs">Back to all guides</a>.
+                </p>
+            }
+            else
+            {
+                @if (!string.IsNullOrEmpty(article.CoverImageUrl))
+                {
+                    <img src="@article.CoverImageUrl" alt="@article.Title" class="doc-article-hero" />
+                }
+                <header class="doc-header">
+                    <h1>@article.Title</h1>
+                    @if (!string.IsNullOrEmpty(article.Summary))
+                    {
+                        <p class="doc-meta">@article.Summary</p>
+                    }
+                </header>
+
+                <div class="doc-article-body">
+                    @((MarkupString)article.BodyHtml)
+                </div>
+
+                <footer class="doc-footer">
+                    <div class="doc-footer-links">
+                        <a href="/docs">&larr; All Guides</a>
+                        <span>&middot;</span>
+                        <a href="/support">Support</a>
+                        <span>&middot;</span>
+                        <a href="/login">Sign In</a>
+                    </div>
+                </footer>
+            }
+        </article>
+
+        <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
+    </div>
+</div>
+
+<style>
+    .doc-article-hero { width: 100%; max-height: 320px; object-fit: cover; border-radius: 12px; margin-bottom: 24px; }
+    .doc-article-body { line-height: 1.7; }
+    .doc-article-body img { max-width: 100%; border-radius: 8px; }
+    .doc-article-body h2 { margin-top: 32px; }
+</style>
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    private DocArticleDetailDto? article;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/docs/{Uri.EscapeDataString(Slug)}");
+            if (response.IsSuccessStatusCode)
+            {
+                article = await response.Content.ReadFromJsonAsync<DocArticleDetailDto>(JsonOptions);
+            }
+        }
+        catch
+        {
+            // Anonymous page — fail quiet, "not found" state covers it.
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

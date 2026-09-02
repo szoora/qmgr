@@ -52,7 +52,14 @@ if (string.IsNullOrWhiteSpace(connectionString))
 }
 else
 {
-    // Warn if using default/weak passwords in production
+    // Warn (don't block startup) on an obviously weak/default password in production. This used
+    // to throw and hard-abort the app. Downgraded 2026-08-31 per explicit instruction: on this
+    // deployment target, Postgres binds 127.0.0.1-only (confirmed via `ss -tlnp` — never reachable
+    // over the network) and appsettings.Production.json is root/www-data-only on an access-
+    // controlled VPS, so this substring check wasn't stopping a real attacker — anyone able to
+    // read the password value already has server access, at which point the check just blocks a
+    // legitimate deploy without adding real protection. Kept as a warning rather than deleted
+    // outright so a genuinely weak password is still visible in logs, not silently invisible.
     if (!builder.Environment.IsDevelopment())
     {
         var lowerConnection = connectionString.ToLowerInvariant();
@@ -61,10 +68,9 @@ else
             lowerConnection.Contains("password=password") ||
             lowerConnection.Contains("password=postgres"))
         {
-            throw new InvalidOperationException(
+            Log.Warning(
                 "Database connection string contains a weak or default password. " +
-                "This is a critical security vulnerability in production. " +
-                "Set a strong password via DB_CONNECTION_STRING environment variable.");
+                "Consider setting a strong password via DB_CONNECTION_STRING environment variable.");
         }
     }
 
@@ -176,13 +182,41 @@ var app = builder.Build();
 // Configure pipeline
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
     app.UseSwagger();
     app.UseSwaggerUI();
-
-    // Scalar API Documentation - Modern API reference
-    app.MapScalarApiReference();
 }
+
+// Scalar API Documentation - Modern API reference. Available in every environment (not just
+// Development) since real customers/integrators are meant to reach this in production, gated by
+// login - see the .RequireAuthorization() calls below.
+//
+// BUG FIX (path/host): this used to map at Scalar's own default "/scalar" prefix while every
+// Web-app link pointed at a relative "/api/docs" - broken on two counts, since that path resolves
+// against the Web app's own origin (a different process/port entirely), not the API's, and even
+// on the API host "/api/docs" was never actually mapped to anything. Mapping it here at the exact
+// path the Web app links to (combined with making those links absolute against the API's real
+// *public* origin, not its internal loopback address - see MainLayout.razor/appsettings'
+// ApiPublicUrl) closes both gaps.
+//
+// SECURITY: gated to authenticated users, per explicit request - this was previously wide open to
+// anyone who found the link. A plain browser navigation to these routes carries no Authorization
+// header (this app's auth is JWT-in-localStorage, not cookies), so the caller passes the JWT as
+// an ?access_token= query parameter - the exact same mechanism already used for the SignalR hub
+// negotiation, extended in AddJwtAuthentication (ServiceExtensions.cs) to also cover these two
+// route prefixes. The per-HttpContext options overload below reads that same query token back out
+// and bakes it into the OpenApiRoutePattern Scalar's own page embeds, so the browser's *follow-up*
+// fetch of the OpenAPI document (a separate request Scalar's JS makes after the page loads) is
+// authenticated too - without this, the page would load but the actual API reference content
+// would fail to fetch.
+app.MapOpenApi().RequireAuthorization();
+app.MapScalarApiReference("/api/docs", (options, httpContext) =>
+{
+    var token = httpContext.Request.Query["access_token"].ToString();
+    if (!string.IsNullOrEmpty(token))
+    {
+        options.OpenApiRoutePattern = $"/openapi/v1.json?access_token={Uri.EscapeDataString(token)}";
+    }
+}).RequireAuthorization();
 
 app.UseHttpsRedirection();
 app.UseSerilogRequestLogging();
@@ -273,5 +307,6 @@ RateLimitJobsRegistration.RegisterRecurringJobs();
 WebhookJobsRegistration.RegisterRecurringJobs();
 BroadcastJobsRegistration.RegisterRecurringJobs();
 VisitorRetentionJobsRegistration.RegisterRecurringJobs();
+WelfareReminderJobRegistration.RegisterRecurringJobs();
 
 app.Run();

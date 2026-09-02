@@ -15,7 +15,51 @@
         <h1><QIcon Name="building-fill" Size="32" /> Tenant Management</h1>
         <p class="page-subtitle">Manage all organizations on the platform</p>
     </div>
+    <QButton Text="Migrate Legacy Tenants to Modules" Icon="arrow-repeat" Variant="secondary" OnClick="OpenMigrationModal" />
 </div>
+
+<!-- Legacy Tier -> Modules migration: one-time, admin-triggered, dry-run first. Never runs on
+     its own — see MigrateLegacyTenantsToModules's own doc comment on the API side for why. -->
+<QModal @bind-Visible="showMigrationModal" Title="Migrate Legacy Tenants to Modules" Size="lg">
+    <ChildContent>
+        <p>Every organization still on a paid legacy tier (Starter/Professional/Enterprise) gets all 4 modules granted for free, preserving their existing access. Free-tier organizations and anyone who already has module rows are skipped automatically.</p>
+
+        @if (migrationLoading)
+        {
+            <div class="loading-state"><QSpinner Size="md" /><span>Checking...</span></div>
+        }
+        else if (migrationReport != null)
+        {
+            <div class="migration-summary">
+                <p><strong>@migrationReport.Message</strong></p>
+
+                @if (migrationReport.Migrated.Any())
+                {
+                    <h5>@(migrationReport.DryRun ? "Would migrate" : "Migrated") (@migrationReport.Migrated.Count)</h5>
+                    <ul class="migration-list">
+                        @foreach (var org in migrationReport.Migrated)
+                        {
+                            <li>@org.Name <span class="text-muted">(@org.Tier)</span></li>
+                        }
+                    </ul>
+                }
+
+                @if (migrationReport.AlreadyMigrated.Any())
+                {
+                    <h5 class="text-muted">Already has modules — skipped (@migrationReport.AlreadyMigrated.Count)</h5>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showMigrationModal = false)" />
+        @if (migrationReport is { DryRun: true } && migrationReport.Migrated.Any())
+        {
+            <QButton Text="@($"Confirm — Migrate {migrationReport.Migrated.Count} Organization(s)")" Icon="check-lg" Variant="primary"
+                     OnClick="@(() => RunMigration(dryRun: false))" Loading="@migrationLoading" />
+        }
+    </FooterContent>
+</QModal>
 
 <div class="admin-content">
     <!-- Filters -->
@@ -108,6 +152,8 @@
                                                      OnClick="@(() => ViewTenant(tenant.Id))" Title="View Details" />
                                             <QButton Icon="pencil-fill" Variant="ghost" Size="sm"
                                                      OnClick="@(() => ShowTierDialog(tenant))" Title="Change Tier" />
+                                            <QButton Icon="grid-3x3-gap-fill" Variant="ghost" Size="sm"
+                                                     OnClick="@(() => ShowModulesDialog(tenant))" Title="Manage Modules" />
                                             @if (tenant.Status == TenantStatus.Active || tenant.Status == TenantStatus.Trialing)
                                             {
                                                 <QButton Icon="pause-circle-fill" Variant="ghost" Size="sm"
@@ -271,6 +317,8 @@
                     <div class="action-buttons-vertical">
                         <QButton Text="Change Tier" Icon="arrow-up-circle-fill" Variant="primary"
                                  OnClick="@(() => { showDetailsModal = false; ShowTierDialog(MapToSummary(tenantDetails)); })" />
+                        <QButton Text="Manage Modules" Icon="grid-3x3-gap-fill" Variant="secondary"
+                                 OnClick="@(() => { showDetailsModal = false; ShowModulesDialog(MapToSummary(tenantDetails)); })" />
                         @if (tenantDetails.TrialEndsAt.HasValue)
                         {
                             <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="secondary"
@@ -332,6 +380,50 @@
     </FooterContent>
 </QModal>
 
+<!-- Manage Modules Modal — direct grant/revoke, no payment collected. The literal
+     "platform admin can add/remove modules per customer request" lever. -->
+<QModal @bind-Visible="showModulesModal" Title="Manage Modules" Size="md">
+    <ChildContent>
+        @if (selectedTenant != null)
+        {
+            <p>Modules active for <strong>@selectedTenant.Name</strong></p>
+            @if (loadingModules)
+            {
+                <p class="text-muted">Loading...</p>
+            }
+            else
+            {
+                <div class="modules-toggle-list">
+                    @foreach (var module in tenantModules)
+                    {
+                        <div class="modules-toggle-row">
+                            <div>
+                                <strong>@module.ModuleName</strong>
+                                @if (module.GrantedByPlatformAdmin && module.Purchased)
+                                {
+                                    <span class="text-muted"> &middot; granted</span>
+                                }
+                                else if (module.Purchased)
+                                {
+                                    <span class="text-muted"> &middot; @module.Status</span>
+                                }
+                            </div>
+                            <label class="qm-switch">
+                                <input type="checkbox" checked="@module.Purchased"
+                                       @onchange="@((ChangeEventArgs e) => ToggleTenantModule(module.ModuleCode, (bool)e.Value!))" />
+                                <span class="qm-switch-slider"></span>
+                            </label>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showModulesModal = false)" />
+    </FooterContent>
+</QModal>
+
 <!-- Extend Trial Modal -->
 <QModal @bind-Visible="showExtendTrialModal" Title="Extend Trial Period" Size="md">
     <ChildContent>
@@ -350,6 +442,25 @@
 <style>
     .page-header {
         margin-bottom: 32px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .migration-summary {
+        max-height: 320px;
+        overflow-y: auto;
+    }
+
+    .migration-list {
+        margin: 0 0 16px;
+        padding-left: 20px;
+    }
+
+    .migration-list li {
+        padding: 2px 0;
     }
 
     .page-header h1 {
@@ -559,6 +670,67 @@
     .text-muted {
         color: var(--qm-text-muted);
     }
+
+    .modules-toggle-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .modules-toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .modules-toggle-row:last-child {
+        border-bottom: none;
+    }
+
+    .qm-switch {
+        position: relative;
+        display: inline-block;
+        width: 38px;
+        height: 21px;
+        flex-shrink: 0;
+    }
+
+    .qm-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .qm-switch-slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        background-color: var(--qm-border-strong, var(--qm-border));
+        border-radius: 21px;
+        transition: background-color 0.15s;
+    }
+
+    .qm-switch-slider::before {
+        content: "";
+        position: absolute;
+        height: 17px;
+        width: 17px;
+        left: 2px;
+        bottom: 2px;
+        background-color: white;
+        border-radius: 50%;
+        transition: transform 0.15s;
+    }
+
+    .qm-switch input:checked + .qm-switch-slider {
+        background-color: var(--qm-primary);
+    }
+
+    .qm-switch input:checked + .qm-switch-slider::before {
+        transform: translateX(17px);
+    }
 </style>
 
 @code {
@@ -582,6 +754,9 @@
     private bool showDetailsModal = false;
     private bool showSuspendModal = false;
     private bool showTierModal = false;
+    private bool showModulesModal = false;
+    private bool loadingModules = false;
+    private List<TenantModuleStatus> tenantModules = new();
     private bool showExtendTrialModal = false;
 
     private string suspendReason = "";
@@ -756,6 +931,105 @@
         selectedTenant = tenant;
         selectedTier = tenant.Tier.ToString();
         showTierModal = true;
+    }
+
+    private async Task ShowModulesDialog(TenantSummary tenant)
+    {
+        selectedTenant = tenant;
+        showModulesModal = true;
+        loadingModules = true;
+        tenantModules = new();
+        StateHasChanged();
+
+        try
+        {
+            tenantModules = await Http.GetFromJsonAsync<List<TenantModuleStatus>>(
+                $"api/v1/admin/tenants/{tenant.Id}/modules", JsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            loadingModules = false;
+        }
+    }
+
+    private async Task ToggleTenantModule(string moduleCode, bool grant)
+    {
+        if (selectedTenant == null) return;
+
+        try
+        {
+            var response = grant
+                ? await Http.PutAsJsonAsync($"api/v1/admin/tenants/{selectedTenant.Id}/modules/{moduleCode}", new { }, JsonOptions)
+                : await Http.DeleteAsync($"api/v1/admin/tenants/{selectedTenant.Id}/modules/{moduleCode}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Updated", grant ? "Module granted" : "Module revoked");
+                await ShowModulesDialog(selectedTenant);
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+    }
+
+    private record TenantModuleStatus(string ModuleCode, string ModuleName, bool Purchased, string? Status, DateTime? ActivatedAt, DateTime? TrialEndsAt, bool GrantedByPlatformAdmin);
+
+    private bool showMigrationModal = false;
+    private bool migrationLoading = false;
+    private MigrationReport? migrationReport;
+
+    private record MigrationOrgSummary(Guid Id, string Name, string Tier);
+    private record MigrationReport(bool DryRun, int TotalPaidOrganizations, List<MigrationOrgSummary> AlreadyMigrated, List<MigrationOrgSummary> Migrated, string Message);
+
+    private async Task OpenMigrationModal()
+    {
+        showMigrationModal = true;
+        migrationReport = null;
+        await RunMigration(dryRun: true);
+    }
+
+    private async Task RunMigration(bool dryRun)
+    {
+        migrationLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/admin/migrate-legacy-tenants-to-modules?dryRun={dryRun}", null);
+            if (response.IsSuccessStatusCode)
+            {
+                migrationReport = await response.Content.ReadFromJsonAsync<MigrationReport>(JsonOptions);
+                if (!dryRun)
+                {
+                    NotificationService.Notify(ToastSeverity.Success, "Migration complete", migrationReport?.Message ?? "Done.");
+                    await LoadTenants();
+                }
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            migrationLoading = false;
+        }
     }
 
     private async Task ConfirmTierChange()

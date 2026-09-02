@@ -79,7 +79,8 @@ public class RegistrationController : ControllerBase
             PreferredCurrency = request.PreferredCurrency ?? "USD",
             AcceptTerms = request.AcceptTerms,
             Source = "web",
-            ReferralCode = request.ReferralCode
+            ReferralCode = request.ReferralCode,
+            SelectedModuleCodes = request.SelectedModuleCodes ?? new()
         };
 
         var result = await _mediator.Send(command);
@@ -285,6 +286,9 @@ public record RegisterRequest
 
     /// <summary>Referral code if applicable</summary>
     public string? ReferralCode { get; init; }
+
+    /// <summary>Modules picked in the module-picker step — at least one required.</summary>
+    public List<string>? SelectedModuleCodes { get; init; }
 }
 
 /// <summary>

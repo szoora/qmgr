@@ -249,6 +249,65 @@ public class StripeService : IStripeService
         }
     }
 
+    public async Task<CheckoutSessionResult> CreateModuleCheckoutSessionAsync(
+        Guid organizationId,
+        string moduleCode,
+        string priceId,
+        string successUrl,
+        string cancelUrl,
+        string? customerId = null,
+        string billingCycle = "Monthly")
+    {
+        try
+        {
+            var metadata = new Dictionary<string, string>
+            {
+                { "organization_id", organizationId.ToString() },
+                { "module_code", moduleCode },
+                { "billing_cycle", billingCycle }
+            };
+
+            var options = new SessionCreateOptions
+            {
+                Mode = "subscription",
+                LineItems = new List<SessionLineItemOptions>
+                {
+                    new() { Price = priceId, Quantity = 1 }
+                },
+                SuccessUrl = successUrl,
+                CancelUrl = cancelUrl,
+                Metadata = metadata,
+                SubscriptionData = new SessionSubscriptionDataOptions
+                {
+                    Metadata = metadata
+                }
+            };
+
+            if (!string.IsNullOrEmpty(customerId))
+            {
+                options.Customer = customerId;
+            }
+            else
+            {
+                options.CustomerCreation = "always";
+            }
+
+            var service = new SessionService();
+            var session = await service.CreateAsync(options);
+
+            _logger.LogInformation(
+                "Created module checkout session {SessionId} for organization {OrganizationId}, module {ModuleCode}",
+                session.Id, organizationId, moduleCode);
+
+            return new CheckoutSessionResult(session.Id, session.Url);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Failed to create module checkout session for organization {OrganizationId}, module {ModuleCode}", organizationId, moduleCode);
+            throw;
+        }
+    }
+
     public async Task<string> CreateBillingPortalSessionAsync(string customerId, string returnUrl)
     {
         try
@@ -307,6 +366,41 @@ public class StripeService : IStripeService
                     AmountPaid: invoice != null ? invoice.AmountPaid / 100m : null,
                     Currency: invoice?.Currency,
                     FailureMessage: failureMessage);
+            }
+
+            // Module-purchase Checkout Sessions (CreateModuleCheckoutSessionAsync) tag their
+            // session — and the subscription Stripe creates alongside it — with organization_id/
+            // module_code metadata specifically so this event can activate the right
+            // OrganizationModule without any other lookup. Ignores a checkout session that isn't
+            // a module purchase (e.g. the legacy CreateCheckoutSessionAsync flow, which doesn't
+            // set module_code) by simply finding no metadata to act on.
+            if (stripeEvent.Type == "checkout.session.completed")
+            {
+                var session = stripeEvent.Data.Object as Stripe.Checkout.Session;
+                if (session?.Metadata != null
+                    && session.Metadata.TryGetValue("organization_id", out var orgIdStr)
+                    && session.Metadata.TryGetValue("module_code", out var moduleCode)
+                    && Guid.TryParse(orgIdStr, out var orgId)
+                    && !string.IsNullOrEmpty(session.SubscriptionId))
+                {
+                    // The Checkout Session created a brand-new single-item subscription for this
+                    // first module — its one item is what every later AddSubscriptionItemAsync
+                    // call joins.
+                    var subscriptionService = new SubscriptionService();
+                    var subscription = await subscriptionService.GetAsync(session.SubscriptionId);
+                    var newItemId = subscription.Items?.Data?.FirstOrDefault()?.Id;
+                    session.Metadata.TryGetValue("billing_cycle", out var billingCycle);
+
+                    return new WebhookProcessResult(
+                        true,
+                        stripeEvent.Type,
+                        StripeSubscriptionId: session.SubscriptionId,
+                        StripeCustomerId: session.CustomerId,
+                        ModuleOrganizationId: orgId,
+                        ModuleCode: moduleCode,
+                        NewSubscriptionItemId: newItemId,
+                        ModuleBillingCycle: billingCycle);
+                }
             }
 
             return new WebhookProcessResult(true, stripeEvent.Type);
@@ -512,6 +606,94 @@ public class StripeService : IStripeService
         {
             _logger.LogError(ex, "Failed to charge customer {CustomerId}", customerId);
             return new ChargeResult(false, null, ex.StripeError?.Code ?? "STRIPE_ERROR", ex.Message);
+        }
+    }
+
+    public async Task<StripeSubscriptionResult> CreateMultiItemSubscriptionAsync(
+        string customerId,
+        IEnumerable<string> priceIds,
+        int? trialDays = null)
+    {
+        var items = priceIds.Select(priceId => new SubscriptionItemOptions { Price = priceId }).ToList();
+        if (items.Count == 0)
+            throw new ArgumentException("At least one price ID is required.", nameof(priceIds));
+
+        try
+        {
+            var options = new SubscriptionCreateOptions
+            {
+                Customer = customerId,
+                Items = items,
+                PaymentBehavior = "default_incomplete",
+                PaymentSettings = new SubscriptionPaymentSettingsOptions
+                {
+                    SaveDefaultPaymentMethod = "on_subscription"
+                },
+                Expand = new List<string> { "latest_invoice.payment_intent" }
+            };
+
+            if (trialDays.HasValue && trialDays > 0)
+            {
+                options.TrialPeriodDays = trialDays.Value;
+            }
+
+            var service = new SubscriptionService();
+            var subscription = await service.CreateAsync(options);
+
+            _logger.LogInformation(
+                "Created multi-item Stripe subscription {SubscriptionId} for customer {CustomerId} with {ItemCount} item(s)",
+                subscription.Id, customerId, items.Count);
+
+            return MapToResult(subscription);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Failed to create multi-item Stripe subscription for customer {CustomerId}", customerId);
+            throw;
+        }
+    }
+
+    public async Task<string> AddSubscriptionItemAsync(string subscriptionId, string priceId)
+    {
+        try
+        {
+            var itemService = new SubscriptionItemService();
+            var item = await itemService.CreateAsync(new SubscriptionItemCreateOptions
+            {
+                Subscription = subscriptionId,
+                Price = priceId,
+                ProrationBehavior = "create_prorations"
+            });
+
+            _logger.LogInformation(
+                "Added subscription item {ItemId} (price {PriceId}) to Stripe subscription {SubscriptionId}",
+                item.Id, priceId, subscriptionId);
+
+            return item.Id;
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Failed to add price {PriceId} to Stripe subscription {SubscriptionId}", priceId, subscriptionId);
+            throw;
+        }
+    }
+
+    public async Task RemoveSubscriptionItemAsync(string subscriptionItemId)
+    {
+        try
+        {
+            var itemService = new SubscriptionItemService();
+            await itemService.DeleteAsync(subscriptionItemId, new SubscriptionItemDeleteOptions
+            {
+                ProrationBehavior = "create_prorations"
+            });
+
+            _logger.LogInformation("Removed Stripe subscription item {ItemId}", subscriptionItemId);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Failed to remove Stripe subscription item {ItemId}", subscriptionItemId);
+            throw;
         }
     }
 

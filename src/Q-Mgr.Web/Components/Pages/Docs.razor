@@ -1,0 +1,141 @@
+@page "/docs"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Web.Components.Shared
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>Getting Started - Q-Mgr</PageTitle>
+
+<div class="doc-page">
+    <AmbientBackground />
+
+    <div class="doc-shell">
+        <div class="doc-topbar">
+            <a href="/" class="doc-brand">
+                <span class="doc-brand-mark"><QIcon Name="people-fill" /></span>
+                <span>Q-Mgr</span>
+            </a>
+            <a href="/login" class="doc-topbar-link">Back to Sign In</a>
+        </div>
+
+        <article class="doc-card">
+            <header class="doc-header">
+                <h1>Getting Started</h1>
+                <p class="doc-meta">Guides for setting up Q-Mgr &middot; SACC Software Limited</p>
+            </header>
+
+            <p class="doc-lede">
+                Step-by-step guides for getting your organization running on Q-Mgr, including
+                setups tailored to your industry.
+            </p>
+
+            @if (industries.Count > 1)
+            {
+                <div class="doc-filter-row">
+                    <button class="doc-filter-chip @(selectedIndustry == null ? "active" : "")" @onclick="@(() => FilterBy(null))">All</button>
+                    @foreach (var ind in industries)
+                    {
+                        <button class="doc-filter-chip @(selectedIndustry == ind ? "active" : "")" @onclick="@(() => FilterBy(ind))">@ind</button>
+                    }
+                </div>
+            }
+
+            @if (isLoading)
+            {
+                <p class="doc-lede">Loading guides&hellip;</p>
+            }
+            else if (!filteredArticles.Any())
+            {
+                <p class="doc-lede">No guides published yet — check back soon.</p>
+            }
+            else
+            {
+                <div class="doc-contact-grid">
+                    @foreach (var article in filteredArticles)
+                    {
+                        <a href="@($"/docs/{article.Slug}")" class="doc-contact-tile doc-article-tile">
+                            @if (!string.IsNullOrEmpty(article.CoverImageUrl))
+                            {
+                                <img src="@article.CoverImageUrl" alt="@article.Title" class="doc-article-cover" />
+                            }
+                            else
+                            {
+                                <div class="doc-contact-icon"><QIcon Name="journal-richtext" /></div>
+                            }
+                            <h3>@article.Title</h3>
+                            <p>@(article.Summary ?? "Read this guide")</p>
+                        </a>
+                    }
+                </div>
+            }
+
+            <footer class="doc-footer">
+                <div class="doc-footer-links">
+                    <a href="/privacy">Privacy Policy</a>
+                    <span>&middot;</span>
+                    <a href="/terms">Terms of Service</a>
+                    <span>&middot;</span>
+                    <a href="/support">Support</a>
+                    <span>&middot;</span>
+                    <a href="/login">Sign In</a>
+                </div>
+            </footer>
+        </article>
+
+        <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
+    </div>
+</div>
+
+<style>
+    .doc-filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+    .doc-filter-chip {
+        border: 1px solid var(--doc-border, #e5e7eb); background: transparent; border-radius: 999px;
+        padding: 6px 14px; font-size: 13px; cursor: pointer; color: inherit;
+    }
+    .doc-filter-chip.active { background: var(--qm-primary, #7a2847); color: #fff; border-color: transparent; }
+    .doc-article-tile { text-decoration: none; color: inherit; display: block; }
+    .doc-article-cover { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; margin-bottom: 12px; }
+</style>
+
+@code {
+    private List<DocArticleDto> articles = new();
+    private List<DocArticleDto> filteredArticles = new();
+    private List<IndustryType> industries = new();
+    private IndustryType? selectedIndustry;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var response = await Http.GetAsync("api/v1/docs");
+            if (response.IsSuccessStatusCode)
+            {
+                articles = await response.Content.ReadFromJsonAsync<List<DocArticleDto>>(JsonOptions) ?? new();
+                industries = articles.Where(a => a.Industry.HasValue).Select(a => a.Industry!.Value).Distinct().OrderBy(i => i.ToString()).ToList();
+            }
+        }
+        catch
+        {
+            // Anonymous page — fail quiet, "no guides published yet" covers it.
+        }
+        finally
+        {
+            filteredArticles = articles;
+            isLoading = false;
+        }
+    }
+
+    private void FilterBy(IndustryType? industry)
+    {
+        selectedIndustry = industry;
+        filteredArticles = industry == null
+            ? articles
+            : articles.Where(a => a.Industry == null || a.Industry == industry).ToList();
+    }
+}
