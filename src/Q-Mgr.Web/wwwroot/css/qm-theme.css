@@ -52,6 +52,14 @@
     --qm-danger: #dc2626;
     --qm-info: #8c2f52;
 
+    /* Student Welfare Ledger — three case-type accents, deliberately distinct from
+       success/warning/danger (those are semantic status colors, not category identity; a
+       Welfare concern isn't "danger" the way a failed action is). Defined once here, both
+       themes, per the welfare-plan's "zero new hex values outside qm-theme.css" rule. */
+    --qm-welfare-achievement: #c99a5b;
+    --qm-welfare-behavior: #c2624f;
+    --qm-welfare-concern: #5a9c92;
+
     /* Borders */
     --qm-border: rgba(255, 255, 255, 0.08);
     --qm-border-hover: rgba(255, 255, 255, 0.15);
@@ -140,6 +148,12 @@
     --qm-warning: #f59e0b;
     --qm-danger: #ef4444;
     --qm-info: #7a2847;
+
+    /* Student Welfare Ledger — darker than the dark-theme values above for contrast on a
+       light background; same three hues (gold/clay/teal), not a different palette per theme. */
+    --qm-welfare-achievement: #8f631f;
+    --qm-welfare-behavior: #95412f;
+    --qm-welfare-concern: #2f5a54;
 
     /* Borders - Visible on light backgrounds */
     --qm-border: rgba(0, 0, 0, 0.1);

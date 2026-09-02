@@ -9,3 +9,8 @@ node_modules/
 dataprotection-keys/
 .claude/scheduled_tasks.lock
 src/Q-Mgr.API/wwwroot/uploads/
+scripts/deploy/dist/
+build-version.txt
+src/Q-Mgr.Shared/BuildInfo.cs
+.erp_bridge_token
+.qmgr_admin_token

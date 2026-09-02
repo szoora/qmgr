@@ -1,0 +1,153 @@
+@page "/admin/welfare-my-actions"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+
+<PageTitle>My Welfare Actions - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>My Open Actions</h1>
+            <p class="subtitle">Welfare follow-ups assigned to you — the mobile "what do I still owe" view, oldest due date first.</p>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading your actions...</span></div>
+    }
+    else if (!actions.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="check2-circle" Size="xl" />
+            <h3>Nothing open right now</h3>
+            <p>Any welfare record assigned to you for follow-up will show up here.</p>
+        </div>
+    }
+    else
+    {
+        <div class="action-list">
+            @foreach (var record in actions)
+            {
+                var isOverdue = record.ActionDueDate.HasValue && record.ActionDueDate.Value < DateTime.UtcNow;
+                <div class="action-row @(isOverdue ? "action-row--overdue" : "")" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{record.StudentId}/welfare"))">
+                    <div class="action-row-marker" style="background-color: @(record.CategoryColor ?? "#8c2f52")">
+                        <QIcon Name="@CaseTypeIcon(record.CaseType)" />
+                    </div>
+                    <div class="action-row-body">
+                        <div class="action-row-title">
+                            <strong>@record.StudentName</strong>
+                            <span class="status-chip status-chip--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
+                            @if (isOverdue)
+                            {
+                                <span class="overdue-tag">Overdue</span>
+                            }
+                        </div>
+                        <p class="action-row-desc">@(string.IsNullOrWhiteSpace(record.ActionTaken) ? record.CategoryName : record.ActionTaken)</p>
+                        @if (record.ActionDueDate.HasValue)
+                        {
+                            <span class="action-row-due">Due @record.ActionDueDate.Value.ToLocalTime().ToString("MMM d, yyyy")</span>
+                        }
+                    </div>
+                    <QIcon Name="chevron-right" />
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { margin-bottom: 24px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .empty-state .rzi { font-size: 64px; margin-bottom: 16px; color: var(--qm-primary); }
+    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .empty-state p { margin: 0; }
+
+    .action-list { display: flex; flex-direction: column; gap: 10px; }
+    .action-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); cursor: pointer; transition: all 0.15s ease; }
+    .action-row:hover { border-color: var(--qm-primary); box-shadow: var(--qm-shadow-md); }
+    .action-row--overdue { border-left: 3px solid var(--qm-danger, #dc2626); }
+
+    .action-row-marker { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
+    .action-row-body { flex: 1; min-width: 0; }
+    .action-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
+    .action-row-desc { margin: 4px 0; font-size: 13px; color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .action-row-due { font-size: 12px; color: var(--qm-text-muted); }
+
+    .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .status-chip--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
+    .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .status-chip--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+
+    .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); font-weight: 700; font-size: 10px; text-transform: uppercase; }
+</style>
+
+@code {
+    private Guid branchId;
+    private bool isLoading = true;
+    private List<WelfareRecordDto> actions = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            await BranchState.InitializeAsync();
+            branchId = BranchState.CurrentBranchId;
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare-records/my-actions");
+            if (response.IsSuccessStatusCode)
+            {
+                actions = await response.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load your actions: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string CaseTypeIcon(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "trophy-fill",
+        WelfareCaseType.Behavior => "exclamation-triangle-fill",
+        WelfareCaseType.Welfare => "shield-fill-check",
+        _ => "clipboard2-pulse-fill"
+    };
+}

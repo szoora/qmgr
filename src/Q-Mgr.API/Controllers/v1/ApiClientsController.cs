@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.DTOs;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
@@ -20,6 +21,7 @@ namespace QMgr.API.Controllers.v1;
 [ApiController]
 [Route("api/v1/api-clients")]
 [Authorize]
+[RequireModule(ModuleCodes.IntegrationsApi)]
 public class ApiClientsController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;

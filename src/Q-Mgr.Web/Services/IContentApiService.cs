@@ -122,17 +122,8 @@ public class ContentApiService : IContentApiService
             // link externally instead) rather than swallowing it — callers' catch blocks show
             // ex.Message directly in a toast, so a generic "Upload failed." here would hide the
             // one piece of information (why, and what to do about it) the user actually needs.
-            var errorBody = await response.Content.ReadAsStringAsync();
-            var message = errorBody;
-            try
-            {
-                var parsed = System.Text.Json.JsonDocument.Parse(errorBody);
-                if (parsed.RootElement.TryGetProperty("message", out var msgProp))
-                    message = msgProp.GetString() ?? errorBody;
-            }
-            catch (System.Text.Json.JsonException) { /* not JSON, fall back to the raw body */ }
-
-            _logger.LogWarning("Media upload failed ({StatusCode}): {Error}", response.StatusCode, errorBody);
+            var message = await ApiErrorService.GetErrorMessageAsync(response);
+            _logger.LogWarning("Media upload failed ({StatusCode}): {Error}", response.StatusCode, message);
             throw new InvalidOperationException(message);
         }
         catch (InvalidOperationException)

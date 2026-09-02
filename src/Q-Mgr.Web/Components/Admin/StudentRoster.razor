@@ -7,10 +7,13 @@
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
 
 <PageTitle>Student Roster - Q-Mgr</PageTitle>
 
@@ -104,6 +107,14 @@
                         }
                     </span>
                     <span class="roster-actions">
+                        @if (canLogWelfare)
+                        {
+                            <QButton Icon="journal-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
+                        }
+                        @if (canViewWelfare)
+                        {
+                            <QButton Icon="clipboard2-pulse" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))" Title="View welfare timeline" />
+                        }
                         <QButton Icon="person-vcard-fill" Size="sm" Variant="ghost" OnClick="@(() => PrintStudentIdCard(s))" Title="Print Student Visitation Card (all guardians)" />
                         <QButton Icon="person-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
                         <QButton Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenEditStudentModal(s))" Title="Edit" />
@@ -318,6 +329,54 @@
     </FooterContent>
 </QModal>
 
+@* ---------------- Quick-Log Welfare Record (mobile bottom-sheet) ---------------- *@
+@*
+    The sheet is a normal-flow CHILD of the backdrop, centered/bottom-aligned via the backdrop's
+    own flexbox (exactly QModal's proven pattern) rather than position:fixed + transform on the
+    sheet itself. A `transform` on the sheet - even a resting `translateY(0)` - creates a new CSS
+    containing block for any `position:fixed` descendant, which breaks QSelect's dropdown (it
+    computes viewport coordinates via JS assuming nothing between it and the viewport is
+    transformed). Found live: the Category dropdown rendered detached in a screen corner until
+    this was restructured.
+*@
+<div class="qm-welfare-sheet-backdrop @(showQuickLogModal ? "qm-welfare-sheet-backdrop--open" : "")" @onclick="@(() => showQuickLogModal = false)">
+    <div class="qm-welfare-sheet" @onclick="@(() => {})" @onclick:stopPropagation="true">
+        <div class="qm-welfare-sheet-handle"></div>
+        <div class="qm-welfare-sheet-header">
+            <h3>Log Record — @quickLogStudent?.FullName</h3>
+            <QButton Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => showQuickLogModal = false)" />
+        </div>
+        <div class="qm-welfare-sheet-body">
+            <div class="qm-welfare-form-group">
+                <label>Case Type *</label>
+                <div class="qm-welfare-case-type-tabs">
+                    @foreach (var ct in new[] { QMgr.Domain.Enums.WelfareCaseType.Achievement, QMgr.Domain.Enums.WelfareCaseType.Behavior, QMgr.Domain.Enums.WelfareCaseType.Welfare })
+                    {
+                        <button type="button" class="qm-welfare-case-tab qm-welfare-case-tab--@ct.ToString().ToLowerInvariant() @(quickLogModel.CaseType == ct ? "active" : "")"
+                                @onclick="@(() => SelectQuickLogCaseType(ct))">
+                            @ct
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="qm-welfare-form-group">
+                <QSelect TValue="Guid" TItem="WelfareCategoryDto" Value="@quickLogModel.CategoryId" ValueChanged="@OnQuickLogCategorySelected"
+                         Items="@quickLogCategories.Where(c => c.CaseType == quickLogModel.CaseType)" TextSelector="@(x => x.Name)" ValueSelector="@(x => x.Id)"
+                         Label="Category" Required="true" HasError="@quickLogCategoryError" ErrorMessage="Select a category" />
+            </div>
+            <div class="qm-welfare-form-group">
+                <QInput TValue="string" @bind-Value="@quickLogModel.Description" Type="textarea" Label="What happened?" Rows="3"
+                        Placeholder="Minimum 10 characters" Required="true" MaxLength="2000"
+                        HasError="@quickLogDescriptionError" ErrorMessage="Describe what happened (10-2000 characters)" />
+            </div>
+        </div>
+        <div class="qm-welfare-sheet-footer">
+            <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showQuickLogModal = false)" />
+            <QButton Text="Save Record" Icon="check-lg" Variant="primary" OnClick="@SaveQuickLog" />
+        </div>
+    </div>
+</div>
+
 <style>
     .roster-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
@@ -399,6 +458,56 @@
         .roster-header { display: none; }
         .import-preview-row { grid-template-columns: 1fr 1fr; }
         .import-log-row { grid-template-columns: 1fr; }
+    }
+
+    /* Quick-log welfare record - mobile-first bottom sheet (slides up from the bottom on phones,
+       reads as a centered panel on wider screens) rather than a third styling mechanism; uses the
+       same --qm-* tokens as the rest of this file's inline style block.
+
+       The sheet is centered/bottom-aligned via the BACKDROP's own flexbox (the same pattern
+       QModal already uses successfully) rather than position:fixed + transform on the sheet
+       itself. A `transform` on the sheet - even a resting `translateY(0)` - creates a new CSS
+       containing block for any position:fixed descendant, which breaks QSelect's own dropdown
+       (it computes viewport coordinates via JS on the assumption that nothing between it and the
+       viewport is transformed). Found live: the Category dropdown rendered detached in a corner
+       of the screen until this was restructured - the sheet no longer uses position:fixed or
+       transform at all, on either breakpoint. */
+    .qm-welfare-sheet-backdrop {
+        position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 1000;
+        display: flex; align-items: flex-end; justify-content: center;
+        opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+    }
+    .qm-welfare-sheet-backdrop--open { opacity: 1; pointer-events: auto; }
+
+    .qm-welfare-sheet {
+        width: 100%; background: var(--qm-bg-card); border-top: 1px solid var(--qm-border);
+        border-radius: 16px 16px 0 0; max-height: 85vh; display: flex; flex-direction: column;
+        box-shadow: var(--qm-shadow-lg, 0 -4px 24px rgba(0,0,0,0.2));
+    }
+
+    .qm-welfare-sheet-handle { width: 40px; height: 4px; background: var(--qm-border); border-radius: 999px; margin: 10px auto 0; flex-shrink: 0; }
+    .qm-welfare-sheet-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--qm-border); flex-shrink: 0; }
+    .qm-welfare-sheet-header h3 { margin: 0; font-size: 16px; color: var(--qm-text-primary); }
+    .qm-welfare-sheet-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+    .qm-welfare-sheet-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--qm-border); background: var(--qm-bg-elevated); flex-shrink: 0; }
+
+    .qm-welfare-form-group { margin-bottom: 16px; }
+    .qm-welfare-form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); }
+
+    .qm-welfare-case-type-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .qm-welfare-case-tab {
+        padding: 10px 8px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated); color: var(--qm-text-secondary); font-size: 12px; font-weight: 600;
+        cursor: pointer; transition: all 0.15s ease;
+    }
+    .qm-welfare-case-tab--achievement.active { background: var(--qm-welfare-achievement, #c99a5b); border-color: var(--qm-welfare-achievement, #c99a5b); color: #fff; }
+    .qm-welfare-case-tab--behavior.active { background: var(--qm-welfare-behavior, #c2624f); border-color: var(--qm-welfare-behavior, #c2624f); color: #fff; }
+    .qm-welfare-case-tab--welfare.active { background: var(--qm-welfare-concern, #5a9c92); border-color: var(--qm-welfare-concern, #5a9c92); color: #fff; }
+
+    @@media (min-width: 640px) {
+        .qm-welfare-sheet-backdrop { align-items: center; }
+        .qm-welfare-sheet { width: 90%; max-width: 480px; border-radius: var(--qm-radius-xl); border-top: 1px solid var(--qm-border); }
+        .qm-welfare-sheet-handle { display: none; }
     }
 </style>
 
@@ -785,6 +894,9 @@
             return;
         }
 
+        canLogWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
+        canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
+
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
 
@@ -985,5 +1097,82 @@
     public async ValueTask DisposeAsync()
     {
         NotificationClient.OnRosterImportProgressReceived -= HandleImportProgress;
+    }
+
+    // ---------------- Quick-Log Welfare Record ----------------
+
+    private bool canLogWelfare, canViewWelfare;
+    private bool showQuickLogModal;
+    private bool quickLogCategoryError, quickLogDescriptionError;
+    private StudentDto? quickLogStudent;
+    private List<WelfareCategoryDto> quickLogCategories = new();
+    private CreateWelfareRecordRequest quickLogModel = new();
+
+    private async Task OpenQuickLogModal(StudentDto s)
+    {
+        quickLogStudent = s;
+        quickLogModel = new CreateWelfareRecordRequest { StudentId = s.Id, CaseType = QMgr.Domain.Enums.WelfareCaseType.Achievement, Tier = QMgr.Domain.Enums.WelfareTier.Low };
+        quickLogCategoryError = quickLogDescriptionError = false;
+
+        if (!quickLogCategories.Any())
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
+            if (response.IsSuccessStatusCode)
+                quickLogCategories = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+        }
+
+        showQuickLogModal = true;
+    }
+
+    private void SelectQuickLogCaseType(QMgr.Domain.Enums.WelfareCaseType caseType)
+    {
+        quickLogModel.CaseType = caseType;
+        quickLogModel.CategoryId = Guid.Empty;
+    }
+
+    private void OnQuickLogCategorySelected(Guid categoryId)
+    {
+        quickLogModel.CategoryId = categoryId;
+        var category = quickLogCategories.FirstOrDefault(c => c.Id == categoryId);
+        if (category != null)
+        {
+            quickLogModel.Tier = category.DefaultTier;
+            quickLogModel.Points = category.DefaultPoints;
+        }
+    }
+
+    private async Task SaveQuickLog()
+    {
+        quickLogCategoryError = quickLogModel.CategoryId == Guid.Empty;
+        var description = (quickLogModel.Description ?? "").Trim();
+        quickLogDescriptionError = description.Length < 10 || description.Length > 2000;
+
+        if (quickLogCategoryError || quickLogDescriptionError)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please fix the highlighted fields");
+            return;
+        }
+
+        try
+        {
+            quickLogModel.Description = description;
+            quickLogModel.OccurredAt = DateTime.Now;
+
+            var response = await Http.PostAsJsonAsync($"api/v1/branches/{branchId}/welfare-records", quickLogModel, JsonOptions);
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", $"Record logged for {quickLogStudent?.FullName}");
+                showQuickLogModal = false;
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save record: {ex.Message}");
+        }
     }
 }

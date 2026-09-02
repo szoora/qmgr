@@ -1,8 +1,9 @@
 @page "/register"
-@layout KioskLayout
+@layout PublicLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 @using System.Text.Json
-@using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
 @inject IHttpClientFactory HttpClientFactory
@@ -11,486 +12,437 @@
 
 <PageTitle>Register Your Organization - Q-Mgr</PageTitle>
 
-<div class="register-page">
-    <div class="register-container">
-        <!-- Left Panel - Branding -->
-        <div class="register-branding">
-            <AmbientBackground Contained="true" />
-            <div class="branding-content">
-                <img src="/images/icon-512.svg" alt="Q-Mgr" class="brand-logo" />
-                <h1>Q-Mgr</h1>
-                <p class="tagline">Smart Queue Management Platform</p>
-
-                <div class="features-list">
-                    <div class="feature-item">
-                        <span class="feature-icon">&#10003;</span>
-                        <span>Reduce customer wait times by up to 50%</span>
-                    </div>
-                    <div class="feature-item">
-                        <span class="feature-icon">&#10003;</span>
-                        <span>Real-time queue monitoring & analytics</span>
-                    </div>
-                    <div class="feature-item">
-                        <span class="feature-icon">&#10003;</span>
-                        <span>Multi-branch support</span>
-                    </div>
-                    <div class="feature-item">
-                        <span class="feature-icon">&#10003;</span>
-                        <span>Customer notifications via SMS & email</span>
-                    </div>
-                    <div class="feature-item">
-                        <span class="feature-icon">&#10003;</span>
-                        <span>Digital signage integration</span>
-                    </div>
+<div class="login-container">
+    <AmbientBackground />
+    <div class="login-card wide @(isSubmitting ? "loading" : "")">
+        <div class="login-header">
+            <div class="logo-wrapper">
+                <div class="logo-circle">
+                    <QIcon Name="people-fill" Size="32" />
                 </div>
-
-                <p class="trial-note">Start your @trialDays-day free trial.</p>
             </div>
+            <h1>Create Your Account</h1>
+            <p>Start your @trialDays-day free trial &mdash; no card required</p>
         </div>
 
-        <!-- Right Panel - Registration Form -->
-        <div class="register-form-panel">
-            <div class="form-header">
-                <h2>Create Your Account</h2>
-                <p>Get started with Q-Mgr in minutes</p>
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="auth-alert auth-alert-danger auth-animate-in">
+                <div class="auth-alert-icon">
+                    <QIcon Name="exclamation-circle-fill" />
+                </div>
+                <div class="auth-alert-content">
+                    <strong>Registration failed</strong>
+                    <p>@errorMessage</p>
+                </div>
+                <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
+                    <QIcon Name="x" />
+                </button>
+            </div>
+        }
+
+        @if (registrationSuccess)
+        {
+            <div class="success-panel">
+                <div class="logo-circle success-icon">
+                    <QIcon Name="check-lg" Size="32" />
+                </div>
+                <h2>Registration successful!</h2>
+                <p>Your organization <strong>@formData.OrganizationName</strong> has been created.</p>
+                @if (requiresVerification && emailSent)
+                {
+                    <div class="auth-alert auth-alert-success auth-animate-in">
+                        <div class="auth-alert-icon"><QIcon Name="envelope-check-fill" /></div>
+                        <div class="auth-alert-content">
+                            <p>A verification email has been sent to <strong>@formData.Email</strong>. Check your inbox to activate your account.</p>
+                        </div>
+                    </div>
+                }
+                else if (requiresVerification && !emailSent)
+                {
+                    <div class="auth-alert auth-alert-danger auth-animate-in">
+                        <div class="auth-alert-icon"><QIcon Name="exclamation-circle-fill" /></div>
+                        <div class="auth-alert-content">
+                            <p>Your account was created, but we couldn't send a verification email to <strong>@formData.Email</strong> right now.</p>
+                        </div>
+                    </div>
+                    @if (resendComplete)
+                    {
+                        <p class="verify-hint">A new verification email is on its way &mdash; check your inbox in a few minutes.</p>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn-login" @onclick="ResendVerificationEmail" disabled="@isResending">
+                            @if (isResending)
+                            {
+                                <span class="auth-spinner"></span>
+                                <span>Sending...</span>
+                            }
+                            else
+                            {
+                                <span>Resend Verification Email</span>
+                            }
+                        </button>
+                    }
+                }
+                <button type="button" class="btn-login" @onclick="GoToLogin">
+                    <QIcon Name="box-arrow-in-right" Size="18" />
+                    <span>Go to Login</span>
+                </button>
+            </div>
+        }
+        else
+        {
+            <div class="step-indicator">
+                <div class="step @(currentStep >= 1 ? "active" : "") @(currentStep > 1 ? "completed" : "")">
+                    <span class="step-number">1</span>
+                    <span class="step-label">Organization</span>
+                </div>
+                <div class="step-line @(currentStep > 1 ? "completed" : "")"></div>
+                <div class="step @(currentStep >= 2 ? "active" : "") @(currentStep > 2 ? "completed" : "")">
+                    <span class="step-number">2</span>
+                    <span class="step-label">Modules</span>
+                </div>
+                <div class="step-line @(currentStep > 2 ? "completed" : "")"></div>
+                <div class="step @(currentStep >= 3 ? "active" : "") @(currentStep > 3 ? "completed" : "")">
+                    <span class="step-number">3</span>
+                    <span class="step-label">Admin Account</span>
+                </div>
+                <div class="step-line @(currentStep > 3 ? "completed" : "")"></div>
+                <div class="step @(currentStep >= 4 ? "active" : "")">
+                    <span class="step-number">4</span>
+                    <span class="step-label">Confirm</span>
+                </div>
             </div>
 
-            @if (!string.IsNullOrEmpty(errorMessage))
-            {
-                <div class="alert alert-danger">
-                    <span class="alert-icon">&#9888;</span>
-                    @errorMessage
-                </div>
-            }
+            <EditForm Model="formData" OnValidSubmit="HandleSubmit">
+                <DataAnnotationsValidator />
 
-            @if (registrationSuccess)
-            {
-                <div class="success-panel">
-                    <div class="success-icon">&#10003;</div>
-                    <h3>Registration Successful!</h3>
-                    <p>Your organization <strong>@formData.OrganizationName</strong> has been created.</p>
-                    @if (requiresVerification && emailSent)
-                    {
-                        <p class="verification-note">
-                            A verification email has been sent to <strong>@formData.Email</strong>.
-                            Please check your inbox and verify your email to activate your account.
-                        </p>
-                    }
-                    else if (requiresVerification && !emailSent)
-                    {
-                        <p class="verification-note verification-warning">
-                            Your account was created, but we couldn't send a verification email to
-                            <strong>@formData.Email</strong> right now.
-                        </p>
-                        @if (resendComplete)
+                @if (currentStep == 1)
+                {
+                    <div class="form-step">
+                        <div class="form-group">
+                            <label for="orgName"><QIcon Name="building" Size="16" /><span>Organization Name *</span></label>
+                            <div class="input-wrapper">
+                                <input type="text" id="orgName" @bind="formData.OrganizationName"
+                                       placeholder="e.g., SACC Software Limited" class="form-control" />
+                            </div>
+                            <ValidationMessage For="@(() => formData.OrganizationName)" class="validation-message" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="industry"><QIcon Name="tags" Size="16" /><span>Industry Type</span></label>
+                            @* BUG FIX: these option values used to be free-text words ("healthcare",
+                               "banking", etc.) that didn't match any QMgr.Domain.Enums.IndustryType
+                               member name. RegisterOrganizationCommandHandler does
+                               Enum.TryParse<IndustryType>(request.IndustryType, ...) — a failed parse
+                               silently falls back to IndustryType.General, so almost every industry
+                               selection here (all except the two that happened to coincidentally
+                               match, "government" and "telecom") was seeding the wrong default
+                               service types for a brand-new org. Caught live while walking through
+                               registration and checking what actually got seeded in the database.
+                               Values now match the real enum member names; Pharmacy — a supported
+                               backend industry type with its own default service types — previously
+                               had no UI option at all and is added below. *@
+                            <select id="industry" @bind="formData.IndustryType" class="form-control">
+                                <option value="">Select your industry</option>
+                                <option value="Hospital">Healthcare</option>
+                                <option value="Bank">Banking &amp; Finance</option>
+                                <option value="Pharmacy">Pharmacy</option>
+                                <option value="Government">Government</option>
+                                <option value="ElectronicsShop">Retail</option>
+                                <option value="Telecom">Telecommunications</option>
+                                <option value="Restaurant">Hospitality &amp; Food Service</option>
+                                <option value="General">Other</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="contactPhone"><QIcon Name="telephone" Size="16" /><span>Organization Phone</span></label>
+                            <input type="tel" id="contactPhone" @bind="formData.ContactPhone"
+                                   placeholder="0753404044" class="form-control" />
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-login" @onclick="NextStep"
+                                    disabled="@(!CanProceedStep1())">
+                                <span>Next Step</span>
+                                <QIcon Name="arrow-right" Size="18" />
+                            </button>
+                        </div>
+                    </div>
+                }
+
+                @if (currentStep == 2)
+                {
+                    <div class="form-step">
+                        <div class="form-group">
+                            <label><QIcon Name="grid-3x3-gap-fill" Size="16" /><span>Choose your modules *</span></label>
+                            <small class="form-hint">Pick at least one to continue &mdash; you can add the others any time from Billing.</small>
+                        </div>
+
+                        @if (loadingModules)
                         {
-                            <p class="verification-note">
-                                A new verification email is on its way — please check your inbox in a few minutes.
-                            </p>
+                            <p class="form-hint">Loading modules&hellip;</p>
                         }
                         else
                         {
-                            <div class="success-actions">
-                                <button class="btn btn-secondary" @onclick="ResendVerificationEmail" disabled="@isResending">
-                                    @(isResending ? "Sending..." : "Resend Verification Email")
-                                </button>
+                            <div class="module-picker">
+                                @foreach (var module in catalogModules)
+                                {
+                                    <label class="module-card @(selectedModuleCodes.Contains(module.Code) ? "selected" : "")">
+                                        <input type="checkbox" checked="@selectedModuleCodes.Contains(module.Code)"
+                                               @onchange="@((ChangeEventArgs e) => ToggleModule(module.Code, (bool)e.Value!))" />
+                                        <div class="module-card-body">
+                                            <div class="module-card-head">
+                                                <span class="module-name">@module.Name</span>
+                                                <span class="module-price">@FormatPrice(module)</span>
+                                            </div>
+                                            <p class="module-desc">@module.Description</p>
+                                            <span class="module-trial">@module.TrialDays-day free trial, no card required</span>
+                                        </div>
+                                    </label>
+                                }
                             </div>
                         }
-                    }
-                    <div class="success-actions">
-                        <button class="btn btn-primary" @onclick="GoToLogin">
-                            Go to Login
-                        </button>
-                    </div>
-                </div>
-            }
-            else
-            {
-                <EditForm Model="formData" OnValidSubmit="HandleSubmit" class="register-form">
-                    <DataAnnotationsValidator />
 
-                    <!-- Step Indicator -->
-                    <div class="step-indicator">
-                        <div class="step @(currentStep >= 1 ? "active" : "") @(currentStep > 1 ? "completed" : "")">
-                            <span class="step-number">1</span>
-                            <span class="step-label">Organization</span>
-                        </div>
-                        <div class="step-line @(currentStep > 1 ? "completed" : "")"></div>
-                        <div class="step @(currentStep >= 2 ? "active" : "") @(currentStep > 2 ? "completed" : "")">
-                            <span class="step-number">2</span>
-                            <span class="step-label">Admin Account</span>
-                        </div>
-                        <div class="step-line @(currentStep > 2 ? "completed" : "")"></div>
-                        <div class="step @(currentStep >= 3 ? "active" : "")">
-                            <span class="step-number">3</span>
-                            <span class="step-label">Confirm</span>
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" @onclick="PreviousStep">
+                                <QIcon Name="arrow-left" Size="18" />
+                                <span>Back</span>
+                            </button>
+                            <button type="button" class="btn-login" @onclick="NextStep"
+                                    disabled="@(selectedModuleCodes.Count == 0)">
+                                <span>Next Step</span>
+                                <QIcon Name="arrow-right" Size="18" />
+                            </button>
                         </div>
                     </div>
+                }
 
-                    <!-- Step 1: Organization Details -->
-                    @if (currentStep == 1)
-                    {
-                        <div class="form-step">
-                            <div class="form-group">
-                                <label for="orgName">Organization Name *</label>
-                                <input type="text" id="orgName" @bind="formData.OrganizationName"
-                                       @oninput="OnOrganizationNameChanged"
-                                       placeholder="e.g., SACC Software Limited" class="form-control" />
-                                <ValidationMessage For="@(() => formData.OrganizationName)" />
+                @if (currentStep == 3)
+                {
+                    <div class="form-step">
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="firstName"><QIcon Name="person-fill" Size="16" /><span>First Name *</span></label>
+                                <input type="text" id="firstName" @bind="formData.FirstName"
+                                       placeholder="John" class="form-control" />
+                                <ValidationMessage For="@(() => formData.FirstName)" class="validation-message" />
                             </div>
-
-                            <div class="form-group">
-                                <label for="slug">Your URL (Subdomain) *</label>
-                                <div class="slug-input-group">
-                                    <input type="text" id="slug" @bind="formData.Slug"
-                                           @oninput="OnSlugChanged"
-                                           placeholder="sacc" class="form-control slug-input" />
-                                    <span class="slug-suffix">.@baseDomain</span>
-                                </div>
-                                @if (isCheckingSlug)
-                                {
-                                    <span class="slug-status checking">Checking availability...</span>
-                                }
-                                else if (slugAvailable.HasValue)
-                                {
-                                    <span class="slug-status @(slugAvailable.Value ? "available" : "unavailable")">
-                                        @* Razor HTML-escapes C# expression output by default — an HTML entity string
-                                           like "&#10003;" rendered this way shows as literal text, not a checkmark.
-                                           Using the actual Unicode characters sidesteps that entirely. *@
-                                        @(slugAvailable.Value ? "✓ Available" : "✗ Not available")
-                                    </span>
-                                }
-                                <small class="form-hint">This will be your unique URL to access Q-Mgr</small>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="industry">Industry Type</label>
-                                @* BUG FIX: these option values used to be free-text words ("healthcare",
-                                   "banking", etc.) that didn't match any QMgr.Domain.Enums.IndustryType
-                                   member name. RegisterOrganizationCommandHandler does
-                                   Enum.TryParse<IndustryType>(request.IndustryType, ...) — a failed parse
-                                   silently falls back to IndustryType.General, so almost every industry
-                                   selection here (all except the two that happened to coincidentally
-                                   match, "government" and "telecom") was seeding the wrong default
-                                   service types for a brand-new org. Caught live while walking through
-                                   registration and checking what actually got seeded in the database.
-                                   Values now match the real enum member names; Pharmacy — a supported
-                                   backend industry type with its own default service types — previously
-                                   had no UI option at all and is added below. *@
-                                <select id="industry" @bind="formData.IndustryType" class="form-control">
-                                    <option value="">Select your industry</option>
-                                    <option value="Hospital">Healthcare</option>
-                                    <option value="Bank">Banking & Finance</option>
-                                    <option value="Pharmacy">Pharmacy</option>
-                                    <option value="Government">Government</option>
-                                    <option value="ElectronicsShop">Retail</option>
-                                    <option value="Telecom">Telecommunications</option>
-                                    <option value="Restaurant">Hospitality &amp; Food Service</option>
-                                    <option value="General">Other</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="contactPhone">Organization Phone</label>
-                                <input type="tel" id="contactPhone" @bind="formData.ContactPhone"
-                                       placeholder="0753404044" class="form-control" />
-                            </div>
-
-                            <div class="form-actions">
-                                <button type="button" class="btn btn-primary btn-next" @onclick="NextStep"
-                                        disabled="@(!CanProceedStep1())">
-                                    Next Step
-                                </button>
+                            <div class="form-group half">
+                                <label for="lastName"><span>Last Name *</span></label>
+                                <input type="text" id="lastName" @bind="formData.LastName"
+                                       placeholder="Doe" class="form-control" />
+                                <ValidationMessage For="@(() => formData.LastName)" class="validation-message" />
                             </div>
                         </div>
-                    }
 
-                    <!-- Step 2: Admin Account -->
-                    @if (currentStep == 2)
-                    {
-                        <div class="form-step">
-                            <div class="form-row">
-                                <div class="form-group half">
-                                    <label for="firstName">First Name *</label>
-                                    <input type="text" id="firstName" @bind="formData.FirstName"
-                                           placeholder="John" class="form-control" />
-                                    <ValidationMessage For="@(() => formData.FirstName)" />
-                                </div>
-                                <div class="form-group half">
-                                    <label for="lastName">Last Name *</label>
-                                    <input type="text" id="lastName" @bind="formData.LastName"
-                                           placeholder="Doe" class="form-control" />
-                                    <ValidationMessage For="@(() => formData.LastName)" />
-                                </div>
-                            </div>
+                        <div class="form-group">
+                            <label for="email"><QIcon Name="envelope-fill" Size="16" /><span>Email Address *</span></label>
+                            <input type="email" id="email" @bind="formData.Email"
+                                   placeholder="support@getsacc.com" class="form-control" />
+                            <ValidationMessage For="@(() => formData.Email)" class="validation-message" />
+                            <small class="form-hint">This will be your admin login email</small>
+                        </div>
 
-                            <div class="form-group">
-                                <label for="email">Email Address *</label>
-                                <input type="email" id="email" @bind="formData.Email"
-                                       placeholder="support@getsacc.com" class="form-control" />
-                                <ValidationMessage For="@(() => formData.Email)" />
-                                <small class="form-hint">This will be your admin login email</small>
-                            </div>
+                        <div class="form-group">
+                            <label for="phone"><QIcon Name="telephone" Size="16" /><span>Phone Number</span></label>
+                            <input type="tel" id="phone" @bind="formData.Phone"
+                                   placeholder="0753404044" class="form-control" />
+                        </div>
 
-                            <div class="form-group">
-                                <label for="phone">Phone Number</label>
-                                <input type="tel" id="phone" @bind="formData.Phone"
-                                       placeholder="0753404044" class="form-control" />
-                            </div>
-
-                            <div class="form-group">
-                                <label for="password">Password *</label>
-                                <div class="password-input-group">
-                                    <input type="@(showPassword ? "text" : "password")" id="password"
-                                           @bind="formData.Password" @oninput="OnPasswordChanged"
-                                           placeholder="Create a strong password" class="form-control" />
-                                    <button type="button" class="password-toggle" @onclick="TogglePasswordVisibility">
-                                        @(showPassword ? "Hide" : "Show")
-                                    </button>
-                                </div>
-                                <div class="password-strength">
-                                    <div class="strength-bar">
-                                        <div class="strength-fill @passwordStrengthClass" style="width: @(passwordStrength)%"></div>
-                                    </div>
-                                    <span class="strength-text">@passwordStrengthText</span>
-                                </div>
-                                <ValidationMessage For="@(() => formData.Password)" />
-                            </div>
-
-                            <div class="form-group">
-                                <label for="confirmPassword">Confirm Password *</label>
-                                <input type="password" id="confirmPassword" @bind="formData.ConfirmPassword"
-                                       placeholder="Confirm your password" class="form-control" />
-                                <ValidationMessage For="@(() => formData.ConfirmPassword)" />
-                                @if (!string.IsNullOrEmpty(formData.Password) && !string.IsNullOrEmpty(formData.ConfirmPassword)
-                                     && formData.Password != formData.ConfirmPassword)
-                                {
-                                    <span class="validation-error">Passwords do not match</span>
-                                }
-                            </div>
-
-                            <div class="form-actions">
-                                <button type="button" class="btn btn-secondary" @onclick="PreviousStep">
-                                    Back
+                        <div class="form-group">
+                            <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Password *</span></label>
+                            <div class="input-wrapper">
+                                <input type="@(showPassword ? "text" : "password")" id="password"
+                                       @bind="formData.Password" @oninput="OnPasswordChanged"
+                                       placeholder="Create a strong password" class="form-control" />
+                                <button type="button" class="input-toggle" @onclick="TogglePasswordVisibility" tabindex="-1">
+                                    <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
                                 </button>
-                                <button type="button" class="btn btn-primary btn-next" @onclick="NextStep"
-                                        disabled="@(!CanProceedStep2())">
-                                    Next Step
-                                </button>
+                            </div>
+                            <div class="password-strength">
+                                <div class="strength-bar">
+                                    <div class="strength-fill @passwordStrengthClass" style="width: @(passwordStrength)%"></div>
+                                </div>
+                                <span class="strength-text">@passwordStrengthText</span>
+                            </div>
+                            <ValidationMessage For="@(() => formData.Password)" class="validation-message" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="confirmPassword"><QIcon Name="lock-fill" Size="16" /><span>Confirm Password *</span></label>
+                            <input type="password" id="confirmPassword" @bind="formData.ConfirmPassword"
+                                   placeholder="Confirm your password" class="form-control" />
+                            <ValidationMessage For="@(() => formData.ConfirmPassword)" class="validation-message" />
+                            @if (!string.IsNullOrEmpty(formData.Password) && !string.IsNullOrEmpty(formData.ConfirmPassword)
+                                 && formData.Password != formData.ConfirmPassword)
+                            {
+                                <span class="validation-message">Passwords do not match</span>
+                            }
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" @onclick="PreviousStep">
+                                <QIcon Name="arrow-left" Size="18" />
+                                <span>Back</span>
+                            </button>
+                            <button type="button" class="btn-login" @onclick="NextStep"
+                                    disabled="@(!CanProceedStep3())">
+                                <span>Next Step</span>
+                                <QIcon Name="arrow-right" Size="18" />
+                            </button>
+                        </div>
+                    </div>
+                }
+
+                @if (currentStep == 4)
+                {
+                    <div class="form-step">
+                        <div class="summary-section">
+                            <h4>Organization Details</h4>
+                            <div class="summary-row">
+                                <span class="summary-label">Organization:</span>
+                                <span class="summary-value">@formData.OrganizationName</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(formData.IndustryType))
+                            {
+                                <div class="summary-row">
+                                    <span class="summary-label">Industry:</span>
+                                    <span class="summary-value">@formData.IndustryType</span>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="summary-section">
+                            <h4>Modules</h4>
+                            <div class="summary-row">
+                                <span class="summary-label">Selected:</span>
+                                <span class="summary-value">@string.Join(", ", catalogModules.Where(m => selectedModuleCodes.Contains(m.Code)).Select(m => m.Name))</span>
                             </div>
                         </div>
-                    }
 
-                    <!-- Step 3: Confirm & Submit -->
-                    @if (currentStep == 3)
-                    {
-                        <div class="form-step">
-                            <div class="summary-section">
-                                <h4>Organization Details</h4>
-                                <div class="summary-row">
-                                    <span class="summary-label">Organization:</span>
-                                    <span class="summary-value">@formData.OrganizationName</span>
-                                </div>
-                                <div class="summary-row">
-                                    <span class="summary-label">URL:</span>
-                                    <span class="summary-value">@(formData.Slug).@baseDomain</span>
-                                </div>
-                                @if (!string.IsNullOrEmpty(formData.IndustryType))
-                                {
-                                    <div class="summary-row">
-                                        <span class="summary-label">Industry:</span>
-                                        <span class="summary-value">@formData.IndustryType</span>
-                                    </div>
-                                }
+                        <div class="summary-section">
+                            <h4>Admin Account</h4>
+                            <div class="summary-row">
+                                <span class="summary-label">Name:</span>
+                                <span class="summary-value">@formData.FirstName @formData.LastName</span>
                             </div>
-
-                            <div class="summary-section">
-                                <h4>Admin Account</h4>
-                                <div class="summary-row">
-                                    <span class="summary-label">Name:</span>
-                                    <span class="summary-value">@formData.FirstName @formData.LastName</span>
-                                </div>
-                                <div class="summary-row">
-                                    <span class="summary-label">Email:</span>
-                                    <span class="summary-value">@formData.Email</span>
-                                </div>
-                            </div>
-
-                            <div class="form-group terms-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" @bind="formData.AcceptTerms" />
-                                    <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a>
-                                          and <a href="/privacy" target="_blank">Privacy Policy</a></span>
-                                </label>
-                            </div>
-
-                            <div class="form-actions">
-                                <button type="button" class="btn btn-secondary" @onclick="PreviousStep">
-                                    Back
-                                </button>
-                                <button type="submit" class="btn btn-primary btn-submit"
-                                        disabled="@(isSubmitting || !formData.AcceptTerms)">
-                                    @if (isSubmitting)
-                                    {
-                                        <span class="spinner"></span>
-                                        <span>Creating Account...</span>
-                                    }
-                                    else
-                                    {
-                                        <span>Create Account</span>
-                                    }
-                                </button>
+                            <div class="summary-row">
+                                <span class="summary-label">Email:</span>
+                                <span class="summary-value">@formData.Email</span>
                             </div>
                         </div>
-                    }
-                </EditForm>
 
-                <div class="login-link">
-                    Already have an account? <a href="/login">Sign in</a>
-                </div>
-                <div class="powered-by">Powered by SACC Software</div>
-            }
+                        <div class="form-group terms-group">
+                            <label class="checkbox-wrapper">
+                                <input type="checkbox" @bind="formData.AcceptTerms" />
+                                <span class="checkbox-label">I agree to the <a href="/terms" target="_blank">Terms of Service</a>
+                                      and <a href="/privacy" target="_blank">Privacy Policy</a></span>
+                            </label>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn-secondary" @onclick="PreviousStep">
+                                <QIcon Name="arrow-left" Size="18" />
+                                <span>Back</span>
+                            </button>
+                            <button type="submit" class="btn-login"
+                                    disabled="@(isSubmitting || !formData.AcceptTerms)">
+                                @if (isSubmitting)
+                                {
+                                    <span class="auth-spinner"></span>
+                                    <span>Creating Account...</span>
+                                }
+                                else
+                                {
+                                    <QIcon Name="check-lg" Size="18" />
+                                    <span>Create Account</span>
+                                }
+                            </button>
+                        </div>
+                    </div>
+                }
+            </EditForm>
+        }
+
+        <div class="login-footer">
+            <p>
+                Already have an account?
+                <a href="/login" class="link-register">Sign in</a>
+            </p>
+            <div class="footer-links">
+                <a href="/privacy">Privacy Policy</a>
+                <span>•</span>
+                <a href="/terms">Terms of Service</a>
+                <span>•</span>
+                <a href="/support">Support</a>
+            </div>
+            <p class="powered-by">Powered by SACC Software</p>
         </div>
     </div>
 </div>
 
 <style>
-    .register-page {
-        min-height: 100vh;
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 2rem;
+    /* Register-only additions on top of the shared auth-pages.css card/form styles - the step
+       indicator, slug availability, password-strength meter, and summary rows have no Login
+       equivalent, so they stay here rather than bloating the shared file with page-specific CSS. */
+
+    .success-panel {
+        text-align: center;
     }
 
-    .register-container {
-        display: flex;
-        max-width: 1000px;
-        width: 100%;
-        background: #1e1e2d;
-        border-radius: var(--qm-radius-xl);
-        overflow: hidden;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    .success-panel .success-icon {
+        background: var(--qm-success);
     }
 
-    /* Left Panel - Branding */
-    .register-branding {
-        flex: 1;
-        background: linear-gradient(135deg, var(--qm-primary) 0%, var(--qm-primary-dark) 100%);
-        padding: 3rem;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        color: white;
-        position: relative;
-        overflow: hidden;
-    }
-
-    .branding-content {
-        max-width: 320px;
-        position: relative;
-        z-index: 1;
-    }
-
-    .brand-logo {
-        width: 64px;
-        height: 64px;
-        margin-bottom: 1rem;
-    }
-
-    .register-branding h1 {
-        font-size: 2.5rem;
+    .success-panel h2 {
+        font-size: 22px;
         font-weight: 700;
-        margin: 0 0 0.5rem 0;
+        color: var(--qm-text-primary);
+        margin: 16px 0 8px;
     }
 
-    .tagline {
-        font-size: 1.1rem;
-        opacity: 0.9;
-        margin-bottom: 2rem;
+    .success-panel p {
+        color: var(--qm-text-secondary);
+        margin: 0 0 16px;
     }
 
-    .features-list {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        margin-bottom: 2rem;
+    .success-panel .btn-login {
+        margin-top: 12px;
     }
 
-    .feature-item {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        font-size: 0.95rem;
+    .verify-hint {
+        color: var(--qm-text-secondary);
+        font-size: 14px;
     }
 
-    .feature-icon {
-        width: 24px;
-        height: 24px;
-        background: rgba(255, 255, 255, 0.2);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-    }
-
-    .trial-note {
-        font-size: 0.9rem;
-        opacity: 0.8;
-        padding-top: 1rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.2);
-    }
-
-    /* Right Panel - Form */
-    .register-form-panel {
-        flex: 1.2;
-        padding: 3rem;
-        background: #1e1e2d;
-    }
-
-    .form-header {
-        margin-bottom: 2rem;
-    }
-
-    .form-header h2 {
-        font-size: 1.75rem;
-        font-weight: 600;
-        color: #fff;
-        margin: 0 0 0.5rem 0;
-    }
-
-    .form-header p {
-        color: #a0a0a0;
-        margin: 0;
-    }
-
-    /* Step Indicator */
     .step-indicator {
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 2rem;
+        margin-bottom: 28px;
     }
 
     .step {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.4rem;
     }
 
     .step-number {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
         border-radius: 50%;
-        background: #2a2a3d;
-        color: #666;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-muted);
         display: flex;
         align-items: center;
         justify-content: center;
         font-weight: 600;
+        font-size: 14px;
         transition: all 0.3s ease;
     }
 
@@ -505,22 +457,22 @@
     }
 
     .step-label {
-        font-size: 0.75rem;
-        color: #666;
+        font-size: 11px;
+        color: var(--qm-text-muted);
         transition: color 0.3s ease;
     }
 
     .step.active .step-label,
     .step.completed .step-label {
-        color: #fff;
+        color: var(--qm-text-primary);
     }
 
     .step-line {
-        width: 60px;
+        width: 50px;
         height: 2px;
-        background: #2a2a3d;
+        background: var(--qm-bg-elevated);
         margin: 0 0.5rem;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.2rem;
         transition: background 0.3s ease;
     }
 
@@ -528,188 +480,141 @@
         background: var(--qm-success);
     }
 
-    /* Form Styles */
     .form-step {
-        animation: fadeIn 0.3s ease;
+        animation: registerStepFadeIn 0.3s ease;
     }
 
-    @@keyframes fadeIn {
+    @@keyframes registerStepFadeIn {
         from { opacity: 0; transform: translateX(10px); }
         to { opacity: 1; transform: translateX(0); }
     }
 
-    .form-group {
-        margin-bottom: 1.25rem;
+    .form-group label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     .form-row {
         display: flex;
         gap: 1rem;
+        margin-bottom: 0;
     }
 
     .form-group.half {
         flex: 1;
     }
 
-    .form-group label {
-        display: block;
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: #c0c0c0;
-        margin-bottom: 0.5rem;
-    }
+    /* Password-strength meter styles now live in the shared auth-pages.css (ResetPassword.razor
+       reuses the exact same meter). */
 
-    /* Scoped under .register-form-panel so this beats the dashboard's
-       generic .form-group .form-control rule in app.css (same issue
-       fixed in Login.razor — both reuse Bootstrap's class names). */
-    .register-form-panel .form-control {
-        width: 100%;
-        padding: 0.75rem 1rem;
-        background: #2a2a3d;
-        border: 1px solid #3a3a4d;
-        border-radius: var(--qm-radius-lg);
-        color: #fff;
-        font-size: 1rem;
-        transition: all 0.2s ease;
-    }
-
-    .register-form-panel .form-control:focus {
-        outline: none;
-        border-color: var(--qm-primary);
-        box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
-    }
-
-    .register-form-panel .form-control::placeholder {
-        color: #666;
-    }
-
-    .form-hint {
-        display: block;
-        font-size: 0.75rem;
-        color: #666;
-        margin-top: 0.25rem;
-    }
-
-    /* Slug Input */
-    .slug-input-group {
-        display: flex;
-        align-items: center;
-    }
-
-    .slug-input {
-        border-radius: var(--qm-radius-lg) 0 0 var(--qm-radius-lg);
-        border-right: none;
-    }
-
-    .slug-suffix {
-        padding: 0.75rem 1rem;
-        background: #3a3a4d;
-        border: 1px solid #3a3a4d;
-        border-radius: 0 var(--qm-radius-lg) var(--qm-radius-lg) 0;
-        color: #888;
-        font-size: 0.9rem;
-    }
-
-    .slug-status {
-        display: block;
-        font-size: 0.75rem;
-        margin-top: 0.25rem;
-    }
-
-    .slug-status.checking { color: #f59e0b; }
-    .slug-status.available { color: var(--qm-success); }
-    .slug-status.unavailable { color: #ef4444; }
-
-    /* Password Input */
-    .password-input-group {
-        position: relative;
-    }
-
-    .password-toggle {
-        position: absolute;
-        right: 1rem;
-        top: 50%;
-        transform: translateY(-50%);
-        background: none;
-        border: none;
-        color: #666;
-        cursor: pointer;
-        font-size: 0.8rem;
-    }
-
-    .password-strength {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        margin-top: 0.5rem;
-    }
-
-    .strength-bar {
-        flex: 1;
-        height: 4px;
-        background: #2a2a3d;
-        border-radius: var(--qm-radius-sm);
-        overflow: hidden;
-    }
-
-    .strength-fill {
-        height: 100%;
-        transition: all 0.3s ease;
-    }
-
-    .strength-fill.weak { background: #ef4444; }
-    .strength-fill.fair { background: #f59e0b; }
-    .strength-fill.good { background: var(--qm-primary); }
-    .strength-fill.strong { background: var(--qm-success); }
-
-    .strength-text {
-        font-size: 0.75rem;
-        color: #888;
-        min-width: 50px;
-    }
-
-    /* Terms */
     .terms-group {
-        margin-top: 1.5rem;
+        margin-top: 8px;
     }
 
-    .checkbox-label {
+    .terms-group .checkbox-label {
+        align-items: flex-start;
+    }
+
+    .terms-group .checkbox-wrapper {
+        align-items: flex-start;
+    }
+
+    .terms-group a {
+        color: var(--qm-primary);
+    }
+
+    .module-picker {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    @@media (max-width: 600px) {
+        .module-picker {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .module-card {
         display: flex;
         align-items: flex-start;
-        gap: 0.75rem;
-        cursor: pointer;
-        font-size: 0.875rem;
-        color: #a0a0a0;
-    }
-
-    .checkbox-label input[type="checkbox"] {
-        width: 18px;
-        height: 18px;
-        margin-top: 2px;
-    }
-
-    .checkbox-label a {
-        color: var(--qm-primary);
-        text-decoration: none;
-    }
-
-    .checkbox-label a:hover {
-        text-decoration: underline;
-    }
-
-    /* Summary */
-    .summary-section {
-        background: #2a2a3d;
+        gap: 10px;
+        border: 1.5px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        padding: 1.25rem;
-        margin-bottom: 1rem;
+        padding: 14px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+    }
+
+    .module-card:hover {
+        border-color: var(--qm-primary);
+    }
+
+    .module-card.selected {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light, rgba(122, 40, 71, 0.06));
+    }
+
+    .module-card input[type="checkbox"] {
+        margin-top: 3px;
+        accent-color: var(--qm-primary);
+        flex-shrink: 0;
+    }
+
+    .module-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .module-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+    }
+
+    .module-name {
+        font-weight: 700;
+        font-size: 14px;
+        color: var(--qm-text-primary);
+    }
+
+    .module-price {
+        font-size: 12px;
+        color: var(--qm-primary);
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .module-desc {
+        font-size: 12.5px;
+        color: var(--qm-text-secondary);
+        margin: 0;
+        line-height: 1.4;
+    }
+
+    .module-trial {
+        font-size: 11px;
+        color: var(--qm-text-tertiary, var(--qm-text-secondary));
+    }
+
+    .summary-section {
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 16px;
+        margin-bottom: 16px;
     }
 
     .summary-section h4 {
-        font-size: 0.875rem;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 700;
         color: var(--qm-primary);
-        margin: 0 0 1rem 0;
+        margin: 0 0 12px 0;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
@@ -717,203 +622,56 @@
     .summary-row {
         display: flex;
         justify-content: space-between;
-        padding: 0.5rem 0;
-        border-bottom: 1px solid #3a3a4d;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 14px;
     }
 
     .summary-row:last-child {
         border-bottom: none;
+        padding-bottom: 0;
     }
 
     .summary-label {
-        color: #888;
+        color: var(--qm-text-secondary);
     }
 
     .summary-value {
-        color: #fff;
+        color: var(--qm-text-primary);
         font-weight: 500;
     }
 
-    /* Buttons */
     .form-actions {
         display: flex;
-        gap: 1rem;
-        margin-top: 2rem;
+        gap: 12px;
+        margin-top: 24px;
     }
 
-    .btn {
-        padding: 0.875rem 1.5rem;
-        border-radius: var(--qm-radius-lg);
-        font-size: 1rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        border: none;
-    }
-
-    .btn-primary {
-        background: var(--qm-primary);
-        color: white;
+    .form-actions .btn-login {
         flex: 1;
     }
 
-    .btn-primary:hover:not(:disabled) {
-        background: var(--qm-primary-dark);
-    }
-
-    .btn-primary:disabled {
-        background: #3a3a4d;
-        color: #666;
-        cursor: not-allowed;
-    }
-
     .btn-secondary {
-        background: #2a2a3d;
-        color: #c0c0c0;
-        border: 1px solid #3a3a4d;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 14px 20px;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        border: none;
+        border-radius: var(--qm-radius-lg);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
     }
 
     .btn-secondary:hover {
-        background: #3a3a4d;
+        background: var(--qm-border);
     }
 
-    .btn-submit {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-    }
-
-    .spinner {
-        width: 18px;
-        height: 18px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-top-color: white;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-
-    @@keyframes spin {
-        to { transform: rotate(360deg); }
-    }
-
-    /* Alerts */
-    .alert {
-        padding: 1rem;
-        border-radius: var(--qm-radius-lg);
-        margin-bottom: 1.5rem;
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
-
-    .alert-danger {
-        background: rgba(239, 68, 68, 0.15);
-        border: 1px solid rgba(239, 68, 68, 0.3);
-        color: #ef4444;
-    }
-
-    .alert-icon {
-        font-size: 1.25rem;
-    }
-
-    .validation-error {
-        display: block;
-        color: #ef4444;
-        font-size: 0.75rem;
-        margin-top: 0.25rem;
-    }
-
-    /* Success Panel */
-    .success-panel {
-        text-align: center;
-        padding: 2rem;
-    }
-
-    .success-icon {
-        width: 80px;
-        height: 80px;
-        background: var(--qm-success);
-        color: white;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 2.5rem;
-        margin: 0 auto 1.5rem;
-    }
-
-    .success-panel h3 {
-        font-size: 1.5rem;
-        color: #fff;
-        margin: 0 0 1rem 0;
-    }
-
-    .success-panel p {
-        color: #a0a0a0;
-        margin-bottom: 1rem;
-    }
-
-    .verification-note {
-        background: rgba(245, 158, 11, 0.15);
-        border: 1px solid rgba(245, 158, 11, 0.3);
-        border-radius: var(--qm-radius-lg);
-        padding: 1rem;
-        color: #f59e0b;
-        font-size: 0.9rem;
-    }
-
-    .verification-note.verification-warning {
-        background: rgba(239, 68, 68, 0.15);
-        border-color: rgba(239, 68, 68, 0.3);
-        color: #ef4444;
-    }
-
-    .success-actions {
-        margin-top: 2rem;
-    }
-
-    /* Login Link */
-    .login-link {
-        text-align: center;
-        margin-top: 2rem;
-        padding-top: 1.5rem;
-        border-top: 1px solid #2a2a3d;
-        color: #888;
-    }
-
-    .login-link a {
-        color: var(--qm-primary);
-        text-decoration: none;
-        font-weight: 500;
-    }
-
-    .login-link a:hover {
-        text-decoration: underline;
-    }
-
-    .powered-by {
-        text-align: center;
-        margin-top: 0.75rem;
-        font-size: 11px;
-        color: #555;
-        letter-spacing: 0.02em;
-    }
-
-    /* Responsive */
-    @@media (max-width: 768px) {
-        .register-container {
-            flex-direction: column;
-        }
-
-        .register-branding {
-            padding: 2rem;
-        }
-
-        .register-form-panel {
-            padding: 2rem;
-        }
-
+    @@media (max-width: 600px) {
         .form-row {
             flex-direction: column;
             gap: 0;
@@ -924,8 +682,7 @@
         }
 
         .step-line {
-            width: 40px;
-            margin-bottom: 0;
+            width: 32px;
         }
     }
 </style>
@@ -934,8 +691,6 @@
     private RegisterFormData formData = new();
     private int currentStep = 1;
     private bool isSubmitting = false;
-    private bool isCheckingSlug = false;
-    private bool? slugAvailable;
     private string? errorMessage;
     private bool showPassword = false;
     private int passwordStrength = 0;
@@ -946,163 +701,60 @@
     private bool emailSent = false;
     private bool isResending = false;
     private bool resendComplete = false;
-    private System.Timers.Timer? slugCheckTimer;
     private int trialDays = 14; // Overwritten by the real platform setting below; this is only the fallback if that fetch fails.
-
-    // Overwritten by the real platform setting below. Deliberately blank rather than any specific
-    // domain as the fallback — the base domain belongs entirely to Platform Settings, and showing
-    // a guessed value if that fetch fails would be worse than showing nothing.
-    private string baseDomain = "";
+    private List<ModuleCatalogItem> catalogModules = new();
+    private HashSet<string> selectedModuleCodes = new();
+    private bool loadingModules = true;
 
     private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
 
     protected override async Task OnInitializedAsync()
     {
-        slugCheckTimer = new System.Timers.Timer(500);
-        slugCheckTimer.Elapsed += async (sender, e) => await CheckSlugAvailability();
-        slugCheckTimer.AutoReset = false;
-
         try
         {
             var response = await Http.GetFromJsonAsync<TrialInfoResponse>("api/v1/register/trial-info");
             if (response != null)
             {
                 trialDays = response.TrialDays;
-                if (!string.IsNullOrWhiteSpace(response.BaseDomain)) baseDomain = response.BaseDomain;
             }
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Failed to fetch live trial length/base domain, showing fallback values instead");
+            Logger.LogWarning(ex, "Failed to fetch live trial length, showing fallback value instead");
+        }
+
+        try
+        {
+            catalogModules = await Http.GetFromJsonAsync<List<ModuleCatalogItem>>("api/v1/modules") ?? new();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to fetch the module catalog for registration");
+        }
+        finally
+        {
+            loadingModules = false;
         }
     }
 
     private record TrialInfoResponse(int TrialDays, string? BaseDomain);
 
-    // BUG FIX: the previous "should I keep auto-generating?" check compared the OLD slug
-    // (from the prior keystroke) against a slug freshly generated from the NEW full name —
-    // those only ever match on the very first character typed, since the old slug was always
-    // generated from a shorter name prefix. In practice the subdomain field froze after one
-    // keystroke (e.g. typing "Acme Test Clinic" left the subdomain at just "a") — caught live
-    // while walking through registration in the browser. Track manual edits explicitly instead
-    // of trying to infer them from a comparison that could never stay true.
-    private bool slugManuallyEdited = false;
-
-    private void OnOrganizationNameChanged(ChangeEventArgs e)
+    private void ToggleModule(string code, bool isChecked)
     {
-        formData.OrganizationName = e.Value?.ToString() ?? "";
-
-        if (!slugManuallyEdited)
-        {
-            formData.Slug = GenerateSlug(formData.OrganizationName);
-            ResetSlugCheck();
-        }
+        if (isChecked) selectedModuleCodes.Add(code);
+        else selectedModuleCodes.Remove(code);
     }
 
-    private void OnSlugChanged(ChangeEventArgs e)
-    {
-        formData.Slug = e.Value?.ToString() ?? "";
-        slugManuallyEdited = true;
-        ResetSlugCheck();
-    }
-
-    private void ResetSlugCheck()
-    {
-        slugAvailable = null;
-        slugCheckTimer?.Stop();
-
-        if (!string.IsNullOrEmpty(formData.Slug) && formData.Slug.Length >= 3)
-        {
-            isCheckingSlug = true;
-            slugCheckTimer?.Start();
-        }
-    }
-
-    private async Task CheckSlugAvailability()
-    {
-        if (string.IsNullOrEmpty(formData.Slug) || formData.Slug.Length < 3)
-        {
-            isCheckingSlug = false;
-            return;
-        }
-
-        try
-        {
-            var response = await Http.GetAsync($"api/v1/register/check-slug/{formData.Slug}");
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<SlugCheckResponse>();
-                slugAvailable = result?.IsAvailable ?? false;
-            }
-            else
-            {
-                slugAvailable = false;
-            }
-        }
-        catch
-        {
-            slugAvailable = null;
-        }
-        finally
-        {
-            isCheckingSlug = false;
-            await InvokeAsync(StateHasChanged);
-        }
-    }
-
-    private string GenerateSlug(string name)
-    {
-        if (string.IsNullOrEmpty(name)) return "";
-
-        var slug = name.ToLowerInvariant();
-        slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
-        slug = Regex.Replace(slug, @"\s+", "-");
-        slug = Regex.Replace(slug, @"-+", "-");
-        slug = slug.Trim('-');
-
-        return slug.Length > 30 ? slug.Substring(0, 30) : slug;
-    }
+    private static string FormatPrice(ModuleCatalogItem module) =>
+        $"UGX {module.MonthlyPriceUgx:N0}/mo";
 
     private void OnPasswordChanged(ChangeEventArgs e)
     {
         formData.Password = e.Value?.ToString() ?? "";
-        CalculatePasswordStrength();
-    }
-
-    private void CalculatePasswordStrength()
-    {
-        var password = formData.Password ?? "";
-        var score = 0;
-
-        if (password.Length >= 8) score += 25;
-        if (password.Length >= 12) score += 15;
-        if (Regex.IsMatch(password, @"[a-z]")) score += 15;
-        if (Regex.IsMatch(password, @"[A-Z]")) score += 15;
-        if (Regex.IsMatch(password, @"[0-9]")) score += 15;
-        if (Regex.IsMatch(password, @"[^a-zA-Z0-9]")) score += 15;
-
-        passwordStrength = Math.Min(score, 100);
-
-        if (passwordStrength < 30)
-        {
-            passwordStrengthClass = "weak";
-            passwordStrengthText = "Weak";
-        }
-        else if (passwordStrength < 50)
-        {
-            passwordStrengthClass = "fair";
-            passwordStrengthText = "Fair";
-        }
-        else if (passwordStrength < 75)
-        {
-            passwordStrengthClass = "good";
-            passwordStrengthText = "Good";
-        }
-        else
-        {
-            passwordStrengthClass = "strong";
-            passwordStrengthText = "Strong";
-        }
+        var strength = PasswordStrengthHelper.Calculate(formData.Password);
+        passwordStrength = strength.Score;
+        passwordStrengthClass = strength.CssClass;
+        passwordStrengthText = strength.Label;
     }
 
     private void TogglePasswordVisibility()
@@ -1112,13 +764,10 @@
 
     private bool CanProceedStep1()
     {
-        return !string.IsNullOrWhiteSpace(formData.OrganizationName) &&
-               !string.IsNullOrWhiteSpace(formData.Slug) &&
-               formData.Slug.Length >= 3 &&
-               (slugAvailable == true || slugAvailable == null);
+        return !string.IsNullOrWhiteSpace(formData.OrganizationName);
     }
 
-    private bool CanProceedStep2()
+    private bool CanProceedStep3()
     {
         return !string.IsNullOrWhiteSpace(formData.FirstName) &&
                !string.IsNullOrWhiteSpace(formData.LastName) &&
@@ -1130,7 +779,7 @@
 
     private void NextStep()
     {
-        if (currentStep < 3)
+        if (currentStep < 4)
         {
             currentStep++;
         }
@@ -1160,7 +809,9 @@
             var request = new
             {
                 organizationName = formData.OrganizationName,
-                slug = formData.Slug,
+                // No user-facing subdomain picker - Slug is omitted so the API auto-generates a
+                // guaranteed-unique one from organizationName (RegisterOrganizationCommandHandler
+                // already supported this; the picker just never used that path).
                 email = formData.Email,
                 password = formData.Password,
                 confirmPassword = formData.ConfirmPassword,
@@ -1169,7 +820,8 @@
                 phone = formData.Phone,
                 contactPhone = formData.ContactPhone,
                 industryType = formData.IndustryType,
-                acceptTerms = formData.AcceptTerms
+                acceptTerms = formData.AcceptTerms,
+                selectedModuleCodes = selectedModuleCodes.ToList()
             };
 
             var response = await Http.PostAsJsonAsync("api/v1/register", request);
@@ -1225,16 +877,10 @@
         }
     }
 
-    public void Dispose()
-    {
-        slugCheckTimer?.Dispose();
-    }
-
     // Form model
     private class RegisterFormData
     {
         public string OrganizationName { get; set; } = "";
-        public string Slug { get; set; } = "";
         public string Email { get; set; } = "";
         public string Password { get; set; } = "";
         public string ConfirmPassword { get; set; } = "";
@@ -1247,12 +893,6 @@
     }
 
     // API response models
-    private record SlugCheckResponse
-    {
-        public bool IsAvailable { get; init; }
-        public string? Message { get; init; }
-    }
-
     private record RegisterResponse
     {
         public bool Success { get; init; }

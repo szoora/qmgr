@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Mediator;
 using QMgr.Application.DTOs;
 using QMgr.Domain.Enums;
@@ -131,6 +132,7 @@ public class GetTokenQueryHandler : IRequestHandler<GetTokenQuery, TokenDto?>
             },
             ExternalReference = token.ExternalReference,
             ExternalSystem = token.ExternalSystem,
+            Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
             PositionInQueue = position,
             EstimatedWaitMinutes = token.EstimatedWaitMinutes,
             ActualWaitMinutes = token.ActualWaitMinutes,
@@ -182,6 +184,7 @@ public class GetTokenByExternalReferenceQueryHandler : IRequestHandler<GetTokenB
             },
             ExternalReference = token.ExternalReference,
             ExternalSystem = token.ExternalSystem,
+            Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
             PositionInQueue = position,
             EstimatedWaitMinutes = token.EstimatedWaitMinutes,
             ActualWaitMinutes = token.ActualWaitMinutes,
@@ -240,6 +243,7 @@ public class GetTokensByCustomerQueryHandler : IRequestHandler<GetTokensByCustom
                 },
                 ExternalReference = token.ExternalReference,
                 ExternalSystem = token.ExternalSystem,
+                Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
                 PositionInQueue = position,
                 EstimatedWaitMinutes = token.EstimatedWaitMinutes,
                 ActualWaitMinutes = token.ActualWaitMinutes,
@@ -323,6 +327,9 @@ public class GetWaitingTokensQueryHandler : IRequestHandler<GetWaitingTokensQuer
                     AverageServiceTimeMinutes = serviceType.AverageServiceTimeMinutes,
                     Color = serviceType.Color
                 } : null,
+                ExternalReference = token.ExternalReference,
+                ExternalSystem = token.ExternalSystem,
+                Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
                 PositionInQueue = position++,
                 EstimatedWaitMinutes = token.EstimatedWaitMinutes,
                 CreatedAt = token.CreatedAt

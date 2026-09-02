@@ -1,6 +1,8 @@
 using Mediator;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
+using QMgr.Application.Interfaces.Billing;
+using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Platform;
 
 namespace QMgr.Application.Commands.Registration;
@@ -13,17 +15,20 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
     private readonly ITenantProvisioningService _provisioningService;
     private readonly IEmailSender _emailSender;
     private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly IModuleAccessService _moduleAccessService;
     private readonly ILogger<RegisterOrganizationCommandHandler> _logger;
 
     public RegisterOrganizationCommandHandler(
         ITenantProvisioningService provisioningService,
         IEmailSender emailSender,
         IPlatformSettingsService platformSettingsService,
+        IModuleAccessService moduleAccessService,
         ILogger<RegisterOrganizationCommandHandler> logger)
     {
         _provisioningService = provisioningService;
         _emailSender = emailSender;
         _platformSettingsService = platformSettingsService;
+        _moduleAccessService = moduleAccessService;
         _logger = logger;
     }
 
@@ -69,6 +74,23 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             {
                 _logger.LogWarning("Tenant provisioning failed: {Error}", provisionResult.ErrorMessage);
                 return RegisterOrganizationResult.Failed("PROVISIONING_FAILED", provisionResult.ErrorMessage ?? "Failed to create organization.");
+            }
+
+            // Start a no-card trial for every module picked in the registration wizard — the
+            // decision (confirmed with the user) was "customer picks module(s) at signup, real
+            // payment only collected once the trial ends," so nothing is charged here.
+            foreach (var moduleCode in request.SelectedModuleCodes.Distinct())
+            {
+                try
+                {
+                    await _moduleAccessService.StartTrialAsync(provisionResult.OrganizationId, moduleCode);
+                }
+                catch (Exception ex)
+                {
+                    // A bad/unknown module code shouldn't fail the whole registration — the
+                    // organization and admin account already exist at this point.
+                    _logger.LogError(ex, "Failed to start trial for module {ModuleCode} on org {OrgId}", moduleCode, provisionResult.OrganizationId);
+                }
             }
 
             // Send verification email
@@ -148,6 +170,17 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
         if (!request.AcceptTerms)
         {
             return RegisterOrganizationResult.Failed("TERMS_NOT_ACCEPTED", "You must accept the terms and conditions to register.");
+        }
+
+        if (request.SelectedModuleCodes.Count == 0)
+        {
+            return RegisterOrganizationResult.Failed("NO_MODULES_SELECTED", "Select at least one module to continue.");
+        }
+
+        var unknownModule = request.SelectedModuleCodes.FirstOrDefault(m => !ModuleCodes.All.Contains(m));
+        if (unknownModule != null)
+        {
+            return RegisterOrganizationResult.Failed("INVALID_MODULE", $"'{unknownModule}' is not a valid module.");
         }
 
         // Validate slug format if provided

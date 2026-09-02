@@ -61,12 +61,14 @@ builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStat
 builder.Services.AddScoped<IQueueApiService, QueueApiService>();
 builder.Services.AddScoped<IVisitorApiService, VisitorApiService>();
 builder.Services.AddScoped<IStudentApiService, StudentApiService>();
+builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
 builder.Services.AddScoped<ISpotifyApiService, SpotifyApiService>();
 builder.Services.AddScoped<IOrganizationApiService, OrganizationApiService>();
 builder.Services.AddScoped<ISignalRService, SignalRService>();
 builder.Services.AddScoped<IBranchStateService, BranchStateService>();
+builder.Services.AddScoped<IModuleStateService, ModuleStateService>();
 builder.Services.AddScoped<IConnectionMonitorService, ConnectionMonitorService>();
 builder.Services.AddScoped<INotificationClientService, NotificationClientService>();
 builder.Services.AddScoped<INotificationApiService, NotificationApiService>();

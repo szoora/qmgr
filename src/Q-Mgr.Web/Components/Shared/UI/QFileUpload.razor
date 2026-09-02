@@ -1,0 +1,177 @@
+@namespace QMgr.Web.Components.Shared.UI
+@implements IAsyncDisposable
+@inject IJSRuntime JSRuntime
+@inject IAuthService AuthService
+@inject HttpClient Http
+
+@*
+    Shared evidence/attachment upload widget — built once so any future feature needing "attach a
+    file to a record" (the Welfare Ledger's evidence photos/letters today) doesn't re-solve
+    drag-and-drop, size/type limits, and image compression from scratch each time.
+
+    Deliberately bypasses Blazor's <InputFile>/IBrowserFile: this codebase already hit a real,
+    documented bug where OpenReadStream()'s JS-interop-backed stream broke under HttpClient's own
+    retry handling (see docs/TASK_TRACKER.md), and IBrowserFile has no way to hand a file to a
+    Canvas for client-side compression without first buffering it into .NET anyway. A plain
+    <input type="file"> plus a small JS module (wwwroot/js/qFileUpload.js) that compresses and
+    uploads via fetch() directly is simpler and sidesteps both problems at once. Same
+    invisible-overlay drag-and-drop trick MediaLibrary.razor already established (the input IS
+    the drop target — native browser behavior, zero drag-event JS needed).
+*@
+
+<div class="q-file-upload @(HasError ? "q-file-upload--error" : "") @Class">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <label class="q-input__label">
+            @Label
+            @if (Required)
+            {
+                <span class="q-input__required">*</span>
+            }
+        </label>
+    }
+
+    <div class="q-file-upload__dropzone">
+        <input @ref="inputRef" type="file" accept="@Accept" multiple="@Multiple" class="q-file-upload__input" id="@inputId" />
+        <label for="@inputId" class="q-file-upload__prompt">
+            <i class="bi bi-cloud-arrow-up-fill q-file-upload__icon"></i>
+            <span class="q-file-upload__text">Drag a file here, or <strong>browse</strong></span>
+            <span class="q-file-upload__hint">@HintText</span>
+        </label>
+    </div>
+
+    @if (items.Count > 0)
+    {
+        <ul class="q-file-upload__list">
+            @foreach (var item in items)
+            {
+                <li class="q-file-upload__item q-file-upload__item--@item.State.ToString().ToLowerInvariant()">
+                    <i class="bi @(item.State == UploadState.Uploading ? "bi-arrow-repeat q-file-upload__spin" : item.State == UploadState.Done ? "bi-check-circle-fill" : "bi-exclamation-circle-fill")"></i>
+                    <span class="q-file-upload__filename">@item.FileName</span>
+                    <span class="q-file-upload__status">@item.StatusText</span>
+                </li>
+            }
+        </ul>
+    }
+
+    @if (HasError && !string.IsNullOrEmpty(ErrorMessage))
+    {
+        <span class="q-input__error">@ErrorMessage</span>
+    }
+</div>
+
+@code {
+    private ElementReference inputRef;
+    private DotNetObjectReference<QFileUpload>? selfRef;
+    private readonly List<UploadItem> items = new();
+
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public bool Required { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public bool HasError { get; set; }
+    [Parameter] public string? ErrorMessage { get; set; }
+
+    /// <summary>Endpoint the file is POSTed to (multipart, field name "file") — relative to the API's own base URL, matching HttpClient's own convention elsewhere in this app.</summary>
+    [Parameter, EditorRequired] public string UploadUrl { get; set; } = string.Empty;
+
+    [Parameter] public string Accept { get; set; } = "image/*,application/pdf";
+    [Parameter] public bool Multiple { get; set; } = true;
+    [Parameter] public long MaxSizeBytes { get; set; } = 10 * 1024 * 1024;
+    [Parameter] public bool CompressImages { get; set; } = true;
+    [Parameter] public int MaxImageDimension { get; set; } = 1600;
+    [Parameter] public double ImageQuality { get; set; } = 0.8;
+    [Parameter] public string HintText { get; set; } = "Images or PDF, up to 10MB";
+
+    /// <summary>Fires once per file with the raw response body — the caller deserializes into whatever DTO its own endpoint returns (different upload endpoints across the app return different shapes).</summary>
+    [Parameter] public EventCallback<UploadedFileResult> OnUploaded { get; set; }
+    [Parameter] public EventCallback<string> OnError { get; set; }
+
+    private string inputId = $"q-file-{Guid.NewGuid():N}";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        selfRef = DotNetObjectReference.Create(this);
+        var token = await AuthService.GetAccessTokenAsync();
+
+        // The API is a separate origin from this Web app (e.g. :5001 vs :5002 in dev) - the page's
+        // own <base href> resolves to THIS app's origin, not the API's, so building the upload URL
+        // from it silently posted evidence uploads back to the Web server itself (a 405, since Web
+        // has no matching route) instead of the API. Http.BaseAddress is already configured with
+        // the real ApiBaseUrl (see Program.cs) and is what every other page's API calls use - reuse
+        // it here too instead of re-deriving a URL from the DOM.
+        var fullUrl = UploadUrl.StartsWith("http") ? UploadUrl : new Uri(Http.BaseAddress!, UploadUrl).ToString();
+
+        await JSRuntime.InvokeVoidAsync("qFileUpload.init", inputRef, new
+        {
+            uploadUrl = fullUrl,
+            accessToken = token,
+            maxSizeBytes = MaxSizeBytes,
+            compressImages = CompressImages,
+            maxDimension = MaxImageDimension,
+            quality = ImageQuality,
+            dotNetRef = selfRef
+        });
+    }
+
+    [JSInvokable]
+    public Task OnFileTooLarge(string fileName, long sizeBytes)
+    {
+        var mb = MaxSizeBytes / 1024 / 1024;
+        items.Add(new UploadItem { FileName = fileName, State = UploadState.Error, StatusText = $"Exceeds {mb}MB limit" });
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnUploadStarted(string fileName)
+    {
+        items.Add(new UploadItem { FileName = fileName, State = UploadState.Uploading, StatusText = "Uploading…" });
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task OnUploadFinished(string fileName, bool success, int statusCode, string body)
+    {
+        var item = items.LastOrDefault(i => i.FileName == fileName && i.State == UploadState.Uploading);
+        if (item == null)
+        {
+            item = new UploadItem { FileName = fileName };
+            items.Add(item);
+        }
+
+        if (success)
+        {
+            item.State = UploadState.Done;
+            item.StatusText = "Uploaded";
+            await OnUploaded.InvokeAsync(new UploadedFileResult(fileName, body));
+        }
+        else
+        {
+            item.State = UploadState.Error;
+            item.StatusText = ApiErrorService.GetErrorMessageFromBody(body, $"Upload failed ({statusCode})");
+            await OnError.InvokeAsync(item.StatusText);
+        }
+
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        selfRef?.Dispose();
+        await ValueTask.CompletedTask;
+    }
+
+    private enum UploadState { Uploading, Done, Error }
+
+    private class UploadItem
+    {
+        public string FileName { get; set; } = "";
+        public UploadState State { get; set; }
+        public string StatusText { get; set; } = "";
+    }
+
+    public record UploadedFileResult(string FileName, string ResponseBody);
+}

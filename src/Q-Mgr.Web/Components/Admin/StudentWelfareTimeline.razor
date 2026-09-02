@@ -1,0 +1,1014 @@
+@page "/admin/students/{StudentId:guid}/welfare"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IStudentApiService StudentApi
+@inject NavigationManager Navigation
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
+
+<PageTitle>Welfare Timeline - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>@(student?.FullName ?? "Student") — Welfare Timeline</h1>
+            <p class="subtitle">
+                @if (student != null)
+                {
+                    @($"{student.StudentCode ?? "No code"} · {student.ClassName ?? "No class"}")
+                }
+                else
+                {
+                    @:Achievements, behavior and welfare records, oldest to newest, in one place
+                }
+            </p>
+            @if (!isLoading && FinalizedRecords.Any(r => r.Points.HasValue && r.Points.Value != 0))
+            {
+                <div class="points-summary">
+                    <span class="points-summary__item points-summary__item--positive"><QIcon Name="arrow-up-circle-fill" /> +@AchievementPoints achievement</span>
+                    <span class="points-summary__item points-summary__item--negative"><QIcon Name="arrow-down-circle-fill" /> @BehaviorPoints behavior</span>
+                    <span class="points-summary__item points-summary__item--net">Net @(NetPoints > 0 ? "+" : "")@NetPoints</span>
+                </div>
+            }
+        </div>
+        <div class="header-actions">
+            @if (canCreate)
+            {
+                <QButton Text="Log Record" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+            <QButton Text="Back to Roster" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/roster"))" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading timeline...</span>
+        </div>
+    }
+    else if (!records.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="journal-richtext" Size="xl" />
+            <h3>No Records Yet</h3>
+            <p>Nothing has been logged for @(student?.FullName ?? "this student") yet.</p>
+            @if (canCreate)
+            {
+                <QButton Text="Log First Record" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="timeline">
+            @foreach (var record in records)
+            {
+                <div class="timeline-item timeline-item--@record.CaseType.ToString().ToLowerInvariant()">
+                    <div class="timeline-marker" style="background-color: @(record.CategoryColor ?? DefaultCaseColor(record.CaseType))">
+                        <QIcon Name="@CaseTypeIcon(record.CaseType)" />
+                    </div>
+                    <div class="timeline-card @(record.Status == WelfareStatus.Draft ? "timeline-card--draft" : "")">
+                        <div class="timeline-card-header">
+                            <div class="timeline-card-title">
+                                <strong>@record.CategoryName</strong>
+                                <span class="tier-badge tier-badge--@record.Tier.ToString().ToLowerInvariant()">@record.Tier</span>
+                                @if (record.Points.HasValue && record.Points.Value != 0)
+                                {
+                                    <span class="points-badge @(record.Points.Value > 0 ? "points-badge--positive" : "points-badge--negative")">
+                                        @(record.Points.Value > 0 ? "+" : "")@record.Points
+                                    </span>
+                                }
+                                @if (record.Confidential)
+                                {
+                                    <span class="confidential-badge"><QIcon Name="lock-fill" /> Confidential</span>
+                                }
+                                @if (record.Status == WelfareStatus.Draft)
+                                {
+                                    <span class="status-badge status-badge--draft"><QIcon Name="pencil-fill" /> Draft</span>
+                                }
+                                else if (canEdit)
+                                {
+                                    <QSelect TValue="WelfareStatus" TItem="StatusOption" Value="@record.Status" Items="@workflowStatusOptions"
+                                             TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Class="status-select"
+                                             ValueChanged="@(s => ChangeStatus(record, s))" />
+                                }
+                                else
+                                {
+                                    <span class="status-badge status-badge--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
+                                }
+                            </div>
+                            <span class="timeline-date">@record.OccurredAt.ToLocalTime().ToString("MMM d, yyyy · h:mm tt")</span>
+                        </div>
+                        <p class="timeline-description">@record.Description</p>
+                        @if (!string.IsNullOrWhiteSpace(record.Location))
+                        {
+                            <p class="timeline-meta"><QIcon Name="geo-alt-fill" /> @record.Location</p>
+                        }
+                        <p class="timeline-meta">Reported by @record.ReportedByName</p>
+                        @if (record.AdditionalStudentNames.Any())
+                        {
+                            <p class="timeline-meta"><QIcon Name="people-fill" /> Also logged for: @string.Join(", ", record.AdditionalStudentNames)</p>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(record.ActionTaken) || record.AssignedToUserId.HasValue || record.ActionDueDate.HasValue)
+                        {
+                            <div class="action-box">
+                                <QIcon Name="clipboard2-check-fill" />
+                                <div>
+                                    @if (!string.IsNullOrWhiteSpace(record.ActionTaken))
+                                    {
+                                        <span class="action-box-title">@record.ActionTaken</span>
+                                    }
+                                    <span class="action-box-meta">
+                                        @if (record.AssignedToUserId.HasValue)
+                                        {
+                                            @($"Assigned to {record.AssignedToName}")
+                                        }
+                                        @if (record.ActionDueDate.HasValue)
+                                        {
+                                            @($"{(record.AssignedToUserId.HasValue ? " · " : "")}Due {record.ActionDueDate.Value:MMM d, yyyy}")
+                                            @if (record.ActionDueDate.Value < DateTime.UtcNow && record.Status != WelfareStatus.Resolved)
+                                            {
+                                                <span class="overdue-tag">Overdue</span>
+                                            }
+                                        }
+                                    </span>
+                                </div>
+                            </div>
+                        }
+
+                        @if (record.Attachments.Any())
+                        {
+                            <div class="attachment-list">
+                                @foreach (var att in record.Attachments)
+                                {
+                                    <a class="attachment-chip" href="@att.FileUrl" target="_blank" rel="noopener">
+                                        <QIcon Name="@(att.ContentType.StartsWith("image/") ? "image-fill" : "file-earmark-pdf-fill")" />
+                                        @att.FileName
+                                    </a>
+                                }
+                            </div>
+                        }
+
+                        @if (record.Notes.Any())
+                        {
+                            <div class="note-list">
+                                @foreach (var note in record.Notes)
+                                {
+                                    <div class="note-item @(note.Kind == WelfareNoteKind.Statement ? "note-item--statement" : "")">
+                                        @if (note.Kind == WelfareNoteKind.Statement)
+                                        {
+                                            <span class="statement-tag">Statement@(note.IsFinal ? " · Final" : " · Draft")</span>
+                                        }
+                                        <span class="note-author">@(note.Kind == WelfareNoteKind.Statement && !string.IsNullOrWhiteSpace(note.AttributedToName) ? note.AttributedToName : note.AuthorName)</span>
+                                        @if (note.Kind == WelfareNoteKind.Statement && !string.IsNullOrWhiteSpace(note.AttributedToName))
+                                        {
+                                            <span class="note-recorded-by">recorded by @note.AuthorName</span>
+                                        }
+                                        <span class="note-date">@note.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                        <p>@note.Body</p>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (record.Notifications.Any())
+                        {
+                            <div class="notification-list">
+                                @foreach (var n in record.Notifications)
+                                {
+                                    <div class="notification-item @(n.Success ? "notification-item--success" : "notification-item--failed")">
+                                        <QIcon Name="@(n.Success ? "check-circle-fill" : "x-circle-fill")" />
+                                        <span>@n.Channel to @n.GuardianName by @n.SentByName · @n.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="timeline-card-actions">
+                            @if (record.Status == WelfareStatus.Draft && canCreate)
+                            {
+                                <QButton Text="Finalize" Icon="check2-circle" Size="sm" Variant="primary" OnClick="@(() => FinalizeRecord(record))" />
+                            }
+                            @if (record.Status != WelfareStatus.Draft && canEdit)
+                            {
+                                <QButton Text="Add Note" Icon="chat-left-text" Size="sm" Variant="ghost" OnClick="@(() => ShowNoteDialog(record))" />
+                                <QButton Text="Assign Action" Icon="clipboard2-check" Size="sm" Variant="ghost" OnClick="@(() => ShowActionDialog(record))" />
+                            }
+                            @if (record.Status != WelfareStatus.Draft && canNotify && student?.Guardians.Any() == true)
+                            {
+                                <QButton Text="Notify Guardian" Icon="bell-fill" Size="sm" Variant="ghost" OnClick="@(() => ShowNotifyDialog(record))" />
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@* ---------------- Create Record ---------------- *@
+<QModal @bind-Visible="showCreateDialog" Title="Log Welfare Record" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QSelect TValue="WelfareCaseType" TItem="CaseTypeOption" Value="@createModel.CaseType" Items="@caseTypeOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Case Type" Required="true"
+                     ValueChanged="@OnCaseTypeChanged" />
+        </div>
+        <div class="form-group">
+            <QSelect TValue="Guid" TItem="WelfareCategoryDto" Value="@createModel.CategoryId" ValueChanged="@OnCategorySelected"
+                     Items="@FilteredCategories" TextSelector="@(x => x.Name)" ValueSelector="@(x => x.Id)"
+                     Label="Category" Required="true" HasError="@categoryError" ErrorMessage="Select a category" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="WelfareTier" TItem="TierOption" @bind-Value="@createModel.Tier" Items="@tierOptions"
+                         TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Tier" Required="true" />
+            </div>
+            <div class="form-group">
+                <QInput TValue="int?" @bind-Value="@createModel.Points" Type="number" Label="Points" Placeholder="Optional"
+                        HasError="@pointsError" ErrorMessage="@pointsErrorText" />
+            </div>
+        </div>
+        <div class="form-group">
+            <div class="form-row">
+                <QDatePicker @bind-Value="@occurredDateValue" Label="Date" Required="true" />
+                <QDatePicker @bind-Value="@occurredTimeValue" Label="Time" Required="true" ShowTime="true" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@createModel.Description" Type="textarea" Label="Description" Rows="4"
+                    Placeholder="Describe what happened (minimum 10 characters)" MaxLength="2000"
+                    HasError="@descriptionError" ErrorMessage="@descriptionErrorText" Required="true" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@createModel.Location" Label="Location" Placeholder="Optional, e.g., Classroom P.6, Playground" />
+        </div>
+        @if (otherStudents.Any())
+        {
+            <div class="form-group">
+                <label>Also applies to</label>
+                <p class="form-hint" style="margin: 0 0 8px;">Check any other students this same incident also involves — it'll appear on their timeline too.</p>
+                <div class="linked-student-list">
+                    @foreach (var s in otherStudents)
+                    {
+                        <QCheckbox Value="@createModel.AdditionalStudentIds.Contains(s.Id)" Label="@s.FullName"
+                                   ValueChanged="@(v => ToggleLinkedStudent(s.Id, v))" />
+                    }
+                </div>
+            </div>
+        }
+        @if (lateEntryWarning)
+        {
+            <div class="warning-banner">
+                <QIcon Name="exclamation-triangle-fill" />
+                <span>This date is more than 14 days ago. Confirm this is correct before saving.</span>
+                <QCheckbox @bind-Value="@acknowledgeLateEntry" Label="Yes, this is a late entry" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showCreateDialog = false)" />
+        <QButton Text="Save as Draft" Icon="pencil-fill" Variant="ghost" OnClick="@(() => SaveRecord(asDraft: true))" />
+        <QButton Text="Save Record" Icon="check-lg" Variant="primary" OnClick="@(() => SaveRecord(asDraft: false))" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Attach Evidence (shown right after a record is created) ---------------- *@
+<QModal @bind-Visible="showAttachDialog" Title="Attach Evidence (optional)" Size="md">
+    <ChildContent>
+        <p class="form-hint">Attach a photo, PDF, short video, or audio clip as supporting evidence — an apology letter, an incident photo, a recorded statement, or similar. You can skip this and add it later.</p>
+        @if (createdRecordId.HasValue)
+        {
+            <QFileUpload UploadUrl="@($"api/v1/branches/{branchId}/welfare-records/{createdRecordId}/attachments")"
+                         Accept="image/*,application/pdf,video/*,audio/*" Multiple="true" MaxSizeBytes="26214400" HintText="Images, PDF, video, or audio — up to 25MB"
+                         OnUploaded="@OnAttachmentUploaded" OnError="@OnAttachmentError" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Done" Icon="check-lg" Variant="primary" OnClick="@CloseAttachDialog" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Add Note ---------------- *@
+<QModal @bind-Visible="showNoteDialog" Title="@(noteKind == WelfareNoteKind.Statement ? "Add Statement" : "Add Note")" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <label>Type</label>
+            <div class="note-kind-tabs">
+                <button type="button" class="note-kind-tab @(noteKind == WelfareNoteKind.Note ? "active" : "")" @onclick="@(() => noteKind = WelfareNoteKind.Note)">Follow-up Note</button>
+                <button type="button" class="note-kind-tab @(noteKind == WelfareNoteKind.Statement ? "active" : "")" @onclick="@(() => noteKind = WelfareNoteKind.Statement)">Formal Statement</button>
+            </div>
+        </div>
+        @if (noteKind == WelfareNoteKind.Statement)
+        {
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@noteAttributedTo" Label="Statement from" Placeholder="e.g., Jane Student, or a witness's name" />
+            </div>
+        }
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@noteBody" Type="textarea" Label="@(noteKind == WelfareNoteKind.Statement ? "Statement" : "Note")" Rows="4"
+                    Placeholder="Minimum 10 characters" MaxLength="2000" Required="true"
+                    HasError="@noteError" ErrorMessage="Must be between 10 and 2000 characters" />
+        </div>
+        @if (noteKind == WelfareNoteKind.Statement)
+        {
+            <div class="form-group">
+                <QCheckbox @bind-Value="@noteIsFinal" Label="Mark as final (no longer a draft account)" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNoteDialog = false)" />
+        <QButton Text="@(noteKind == WelfareNoteKind.Statement ? "Add Statement" : "Add Note")" Icon="check-lg" Variant="primary" OnClick="@SaveNote" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Assign Action ---------------- *@
+<QModal @bind-Visible="showActionDialog" Title="Assign Follow-up Action" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@actionModel.ActionTaken" Label="Action / Intervention" Placeholder="e.g., Detention, Parental meeting, Restorative conversation" />
+            <p class="form-hint">Common examples: detention, parental meeting, restorative conversation, referral, internal exclusion.</p>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="Guid?" TItem="StaffOption" Value="@actionModel.AssignedToUserId" Items="@staffOptions"
+                         TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)" Label="Assign to" AllowClear="true"
+                         ValueChanged="@(v => actionModel.AssignedToUserId = v)" />
+            </div>
+            <div class="form-group">
+                <QDatePicker @bind-Value="@actionDueDateValue" Label="Due date" />
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showActionDialog = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveAction" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Notify Guardian ---------------- *@
+<QModal @bind-Visible="showNotifyDialog" Title="Notify Guardian" Size="md">
+    <ChildContent>
+        <div class="form-group">
+            <QSelect TValue="Guid" TItem="StudentGuardianDto" Value="@notifyGuardianId" Items="@(student?.Guardians ?? new())"
+                     TextSelector="@(x => $"{x.FullName} ({x.Relationship})")" ValueSelector="@(x => x.Id)"
+                     Label="Guardian" Required="true" ValueChanged="@OnNotifyGuardianChanged" />
+        </div>
+        <div class="form-group">
+            <QSelect TValue="string" TItem="string" Value="@notifyChannel" Items="@notifyChannels"
+                     Label="Channel" Required="true" ValueChanged="@OnNotifyChannelChanged" />
+        </div>
+        @if (isLoadingDraft)
+        {
+            <div class="loading-container"><QSpinner Size="sm" /><span>Preparing message...</span></div>
+        }
+        else if (notifyDraft != null)
+        {
+            @if (!notifyDraft.HasContactInfo)
+            {
+                <div class="warning-banner">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    <span>@notifyDraft.GuardianName has no @(notifyChannel == "Sms" ? "phone number" : "email address") on file.</span>
+                </div>
+            }
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@notifyMessage" Type="textarea" Label="Message" Rows="4" MaxLength="500" Required="true" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNotifyDialog = false)" />
+        <QButton Text="Send" Icon="send-fill" Variant="primary" OnClick="@SendNotification"
+                 Disabled="@(notifyDraft == null || !notifyDraft.HasContactInfo || string.IsNullOrWhiteSpace(notifyMessage))" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .points-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    .points-summary__item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+    .points-summary__item--positive { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .points-summary__item--negative { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
+    .points-summary__item--net { background: var(--qm-bg-secondary); color: var(--qm-text-primary); }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .empty-state .rzi { font-size: 64px; margin-bottom: 16px; color: var(--qm-primary); }
+    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .empty-state p { margin: 0 0 20px; }
+
+    .timeline { display: flex; flex-direction: column; gap: 4px; }
+    .timeline-item { display: flex; gap: 16px; position: relative; padding-bottom: 24px; }
+    .timeline-item::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: 0; width: 2px; background: var(--qm-border); }
+    .timeline-item:last-child::before { display: none; }
+
+    .timeline-marker { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; z-index: 1; }
+    .timeline-marker .rzi { font-size: 18px; }
+
+    .timeline-card { flex: 1; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 16px; min-width: 0; }
+    .timeline-card-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .timeline-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
+    .timeline-date { font-size: 12px; color: var(--qm-text-muted); white-space: nowrap; }
+
+    .tier-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
+    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+
+    .points-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+    .points-badge--positive { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .points-badge--negative { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
+
+    .confidential-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+
+    .timeline-description { margin: 8px 0; color: var(--qm-text-primary); font-size: 14px; line-height: 1.5; }
+    .timeline-meta { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; color: var(--qm-text-muted); }
+
+    .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .attachment-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); color: var(--qm-text-secondary); text-decoration: none; }
+    .attachment-chip:hover { border-color: var(--qm-primary); color: var(--qm-primary); }
+
+    .note-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .note-item { background: var(--qm-bg-elevated); border-radius: var(--qm-radius-md); padding: 8px 12px; font-size: 13px; }
+    .note-author { font-weight: 600; color: var(--qm-text-primary); }
+    .note-date { color: var(--qm-text-muted); font-size: 11px; margin-left: 8px; }
+    .note-item p { margin: 4px 0 0; color: var(--qm-text-secondary); }
+
+    .notification-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .notification-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .notification-item--success { color: #16a34a; }
+    .notification-item--failed { color: var(--qm-danger, #dc2626); }
+
+    .timeline-card-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
+
+    .form-group { margin-bottom: 16px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
+    .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: #d97706; margin-bottom: 16px; }
+
+    .timeline-card--draft { border-style: dashed; opacity: 0.85; }
+
+    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .status-badge--draft { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-badge--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
+    .status-badge--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .status-badge--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-badge--resolved { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .status-select { display: inline-block; width: auto; min-width: 140px; }
+
+    .action-box { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 10px 12px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); font-size: 13px; }
+    .action-box-title { display: block; font-weight: 600; color: var(--qm-text-primary); }
+    .action-box-meta { display: block; color: var(--qm-text-muted); font-size: 12px; margin-top: 2px; }
+    .overdue-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); font-weight: 700; font-size: 10px; text-transform: uppercase; }
+
+    .linked-student-list { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 12px; background: var(--qm-bg-elevated); }
+
+    .note-kind-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .note-kind-tab { padding: 10px 8px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border); background: var(--qm-bg-elevated); color: var(--qm-text-secondary); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }
+    .note-kind-tab.active { background: var(--qm-primary); border-color: var(--qm-primary); color: #fff; }
+
+    .note-item--statement { border-left: 3px solid var(--qm-primary); }
+    .statement-tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--qm-primary); margin-bottom: 4px; }
+    .note-recorded-by { color: var(--qm-text-muted); font-size: 11px; margin-left: 6px; font-style: italic; }
+
+    @@media (max-width: 700px) {
+        .form-row { grid-template-columns: 1fr; }
+        .timeline-item { gap: 10px; }
+        .timeline-marker { width: 32px; height: 32px; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid StudentId { get; set; }
+
+    private Guid branchId;
+    private StudentDto? student;
+    private bool isLoading = true;
+    private bool canCreate, canEdit, canNotify;
+    private List<WelfareRecordDto> records = new();
+    private List<WelfareCategoryDto> categories = new();
+    private List<StudentDto> otherStudents = new();
+    private List<StaffOption> staffOptions = new();
+
+    private IEnumerable<WelfareCategoryDto> FilteredCategories => categories.Where(c => c.CaseType == createModel.CaseType);
+
+    // Drafts are excluded — an unfinished quick-log shouldn't count toward a total until its
+    // author finalizes it (same reasoning FinalizeRecord already applies to validation).
+    private IEnumerable<WelfareRecordDto> FinalizedRecords => records.Where(r => r.Status != WelfareStatus.Draft);
+    private int AchievementPoints => FinalizedRecords.Where(r => r.Points > 0).Sum(r => r.Points ?? 0);
+    private int BehaviorPoints => FinalizedRecords.Where(r => r.Points < 0).Sum(r => r.Points ?? 0);
+    private int NetPoints => AchievementPoints + BehaviorPoints;
+
+    private readonly List<CaseTypeOption> caseTypeOptions = new()
+    {
+        new(WelfareCaseType.Achievement, "Achievement"),
+        new(WelfareCaseType.Behavior, "Behavior"),
+        new(WelfareCaseType.Welfare, "Welfare / Safeguarding")
+    };
+
+    private readonly List<TierOption> tierOptions = new()
+    {
+        new(WelfareTier.Low, "Low"),
+        new(WelfareTier.Medium, "Medium"),
+        new(WelfareTier.High, "High")
+    };
+
+    private readonly List<StatusOption> workflowStatusOptions = new()
+    {
+        new(WelfareStatus.Open, "Open"),
+        new(WelfareStatus.UnderReview, "Under Review"),
+        new(WelfareStatus.ActionTaken, "Action Taken"),
+        new(WelfareStatus.Resolved, "Resolved")
+    };
+
+    private readonly string[] notifyChannels = { "Sms", "Email" };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
+            canEdit = await PermissionService.HasPermissionAsync(Permissions.WelfareEdit);
+            canNotify = await PermissionService.HasPermissionAsync(Permissions.WelfareNotify);
+
+            await BranchState.InitializeAsync();
+            branchId = BranchState.CurrentBranchId;
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            var allStudents = await StudentApi.GetStudentsAsync(branchId, includeInactive: true);
+            student = allStudents.FirstOrDefault(s => s.Id == StudentId);
+            otherStudents = allStudents.Where(s => s.Id != StudentId && s.IsActive).ToList();
+
+            var categoriesResponse = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
+            if (categoriesResponse.IsSuccessStatusCode)
+                categories = await categoriesResponse.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+
+            if (canEdit && !staffOptions.Any())
+            {
+                var usersResponse = await Http.GetAsync($"api/v1/users?branchId={branchId}");
+                if (usersResponse.IsSuccessStatusCode)
+                {
+                    var users = await usersResponse.Content.ReadFromJsonAsync<List<StaffApiUser>>(JsonOptions) ?? new();
+                    staffOptions = users.Where(u => u.IsActive).Select(u => new StaffOption(u.Id, u.FullName)).ToList();
+                }
+            }
+
+            var recordsResponse = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-records");
+            if (recordsResponse.IsSuccessStatusCode)
+            {
+                records = await recordsResponse.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(recordsResponse);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load timeline: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ---------------- Create Record ----------------
+
+    private bool showCreateDialog;
+    private CreateWelfareRecordRequest createModel = new();
+    // Split into separate date/time fields rather than one QDatePicker with ShowTime=true - that
+    // parameter *replaces* the date input with a time-only one (see the component's own doc
+    // comment), so a single field can never let staff pick both a past date and a specific time,
+    // which a welfare record genuinely needs (e.g. logging something noticed a few days late).
+    private DateTime? occurredDateValue = DateTime.Today;
+    private DateTime? occurredTimeValue = DateTime.Now;
+    private bool categoryError, pointsError, descriptionError, lateEntryWarning, acknowledgeLateEntry;
+    private string pointsErrorText = "", descriptionErrorText = "";
+
+    private bool showAttachDialog;
+    private Guid? createdRecordId;
+
+    private void ShowCreateDialog()
+    {
+        createModel = new CreateWelfareRecordRequest { StudentId = StudentId, CaseType = WelfareCaseType.Achievement, Tier = WelfareTier.Low };
+        occurredDateValue = DateTime.Today;
+        occurredTimeValue = DateTime.Now;
+        categoryError = pointsError = descriptionError = lateEntryWarning = acknowledgeLateEntry = false;
+        showCreateDialog = true;
+    }
+
+    private void OnCaseTypeChanged(WelfareCaseType caseType)
+    {
+        createModel.CaseType = caseType;
+        createModel.CategoryId = Guid.Empty;
+    }
+
+    private void OnCategorySelected(Guid categoryId)
+    {
+        createModel.CategoryId = categoryId;
+        var category = categories.FirstOrDefault(c => c.Id == categoryId);
+        if (category != null)
+        {
+            createModel.Tier = category.DefaultTier;
+            createModel.Points = category.DefaultPoints;
+        }
+    }
+
+    private void ToggleLinkedStudent(Guid studentId, bool linked)
+    {
+        if (linked && !createModel.AdditionalStudentIds.Contains(studentId))
+            createModel.AdditionalStudentIds.Add(studentId);
+        else
+            createModel.AdditionalStudentIds.Remove(studentId);
+    }
+
+    private async Task SaveRecord(bool asDraft)
+    {
+        categoryError = createModel.CategoryId == Guid.Empty;
+        var description = (createModel.Description ?? "").Trim();
+        // A draft is allowed to be short/unfinished — the server mirrors this same exemption
+        // (see CreateRecord's SaveAsDraft handling) so client and server never disagree about
+        // what's valid to save as a draft vs. a finished record.
+        descriptionError = !asDraft && (description.Length < 10 || description.Length > 2000);
+        descriptionErrorText = description.Length < 10 ? "Description must be at least 10 characters" : "Description must be under 2000 characters";
+
+        pointsError = false;
+        pointsErrorText = "";
+        if (createModel.Points.HasValue)
+        {
+            var points = createModel.Points.Value;
+            if (createModel.CaseType == WelfareCaseType.Achievement && points < 0) { pointsError = true; pointsErrorText = "Achievement points cannot be negative"; }
+            else if (createModel.CaseType == WelfareCaseType.Behavior && points > 0) { pointsError = true; pointsErrorText = "Behavior points cannot be positive"; }
+            else if (createModel.CaseType == WelfareCaseType.Welfare && points != 0) { pointsError = true; pointsErrorText = "Welfare records cannot carry points"; }
+            else if (Math.Abs(points) > 100) { pointsError = true; pointsErrorText = "Points cannot exceed 100 in magnitude"; }
+        }
+
+        var occurredAt = (occurredDateValue ?? DateTime.Today).Date.Add((occurredTimeValue ?? DateTime.Now).TimeOfDay);
+        lateEntryWarning = !asDraft && occurredAt < DateTime.Now.AddDays(-14) && !acknowledgeLateEntry;
+
+        if (categoryError || descriptionError || pointsError || lateEntryWarning)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please fix the highlighted fields");
+            return;
+        }
+
+        try
+        {
+            createModel.Description = description;
+            createModel.OccurredAt = occurredAt;
+            createModel.SaveAsDraft = asDraft;
+
+            var url = $"api/v1/branches/{branchId}/welfare-records";
+            if (acknowledgeLateEntry) url += "?acknowledgeLateEntry=true";
+
+            var response = await Http.PostAsJsonAsync(url, createModel, JsonOptions);
+            if (response.IsSuccessStatusCode)
+            {
+                var created = await response.Content.ReadFromJsonAsync<WelfareRecordDto>(JsonOptions);
+                NotificationService.Notify(ToastSeverity.Success, "Success", asDraft ? "Draft saved — finalize it from the timeline when ready" : "Record logged");
+                showCreateDialog = false;
+                await LoadData();
+
+                if (created != null)
+                {
+                    createdRecordId = created.Id;
+                    showAttachDialog = true;
+                }
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save record: {ex.Message}");
+        }
+    }
+
+    private Task OnAttachmentUploaded(QFileUpload.UploadedFileResult result)
+    {
+        NotificationService.Notify(ToastSeverity.Success, "Uploaded", $"{result.FileName} attached");
+        return LoadData();
+    }
+
+    private Task OnAttachmentError(string error)
+    {
+        NotificationService.Notify(ToastSeverity.Error, "Upload failed", error);
+        return Task.CompletedTask;
+    }
+
+    private async Task CloseAttachDialog()
+    {
+        showAttachDialog = false;
+        createdRecordId = null;
+        await LoadData();
+    }
+
+    // ---------------- Add Note ----------------
+
+    private bool showNoteDialog, noteError;
+    private WelfareRecordDto? noteTargetRecord;
+    private string noteBody = "";
+    private WelfareNoteKind noteKind = WelfareNoteKind.Note;
+    private string noteAttributedTo = "";
+    private bool noteIsFinal;
+
+    private void ShowNoteDialog(WelfareRecordDto record)
+    {
+        noteTargetRecord = record;
+        noteBody = "";
+        noteError = false;
+        noteKind = WelfareNoteKind.Note;
+        noteAttributedTo = "";
+        noteIsFinal = false;
+        showNoteDialog = true;
+    }
+
+    private async Task SaveNote()
+    {
+        if (noteTargetRecord == null) return;
+        var body = (noteBody ?? "").Trim();
+        noteError = body.Length < 10 || body.Length > 2000;
+        if (noteError)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Must be between 10 and 2000 characters");
+            return;
+        }
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{noteTargetRecord.Id}/notes",
+                new AddWelfareNoteRequest { Body = body, Kind = noteKind, IsFinal = noteIsFinal, AttributedToName = noteAttributedTo }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", noteKind == WelfareNoteKind.Statement ? "Statement added" : "Note added");
+                showNoteDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save: {ex.Message}");
+        }
+    }
+
+    // ---------------- Status, Finalize, Action Assignment ----------------
+
+    private async Task ChangeStatus(WelfareRecordDto record, WelfareStatus newStatus)
+    {
+        if (newStatus == record.Status) return;
+        try
+        {
+            var response = await Http.PatchAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{record.Id}/status",
+                new UpdateWelfareStatusRequest { Status = newStatus }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", $"Status changed to {newStatus}");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to change status: {ex.Message}");
+        }
+    }
+
+    private async Task FinalizeRecord(WelfareRecordDto record)
+    {
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/branches/{branchId}/welfare-records/{record.Id}/finalize", null);
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Draft finalized");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to finalize: {ex.Message}");
+        }
+    }
+
+    private bool showActionDialog;
+    private WelfareRecordDto? actionTargetRecord;
+    private UpdateWelfareActionRequest actionModel = new();
+    private DateTime? actionDueDateValue;
+
+    private void ShowActionDialog(WelfareRecordDto record)
+    {
+        actionTargetRecord = record;
+        actionModel = new UpdateWelfareActionRequest
+        {
+            ActionTaken = record.ActionTaken,
+            AssignedToUserId = record.AssignedToUserId,
+            ActionDueDate = record.ActionDueDate
+        };
+        actionDueDateValue = record.ActionDueDate?.ToLocalTime();
+        showActionDialog = true;
+    }
+
+    private async Task SaveAction()
+    {
+        if (actionTargetRecord == null) return;
+        try
+        {
+            actionModel.ActionDueDate = actionDueDateValue;
+            var response = await Http.PatchAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{actionTargetRecord.Id}/action",
+                actionModel, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Action updated");
+                showActionDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update action: {ex.Message}");
+        }
+    }
+
+    // ---------------- Notify Guardian ----------------
+
+    private bool showNotifyDialog, isLoadingDraft;
+    private WelfareRecordDto? notifyTargetRecord;
+    private Guid notifyGuardianId;
+    private string notifyChannel = "Sms";
+    private string notifyMessage = "";
+    private WelfareNotificationDraftDto? notifyDraft;
+
+    private void ShowNotifyDialog(WelfareRecordDto record)
+    {
+        notifyTargetRecord = record;
+        notifyGuardianId = student?.Guardians.FirstOrDefault()?.Id ?? Guid.Empty;
+        notifyChannel = "Sms";
+        notifyDraft = null;
+        notifyMessage = "";
+        showNotifyDialog = true;
+        _ = LoadNotifyDraft();
+    }
+
+    private void OnNotifyGuardianChanged(Guid guardianId)
+    {
+        notifyGuardianId = guardianId;
+        _ = LoadNotifyDraft();
+    }
+
+    private void OnNotifyChannelChanged(string channel)
+    {
+        notifyChannel = channel;
+        _ = LoadNotifyDraft();
+    }
+
+    private async Task LoadNotifyDraft()
+    {
+        if (notifyTargetRecord == null || notifyGuardianId == Guid.Empty) return;
+
+        isLoadingDraft = true;
+        notifyDraft = null;
+        try
+        {
+            var response = await Http.GetAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{notifyTargetRecord.Id}/notify-draft?guardianLinkId={notifyGuardianId}&channel={notifyChannel}");
+            if (response.IsSuccessStatusCode)
+            {
+                notifyDraft = await response.Content.ReadFromJsonAsync<WelfareNotificationDraftDto>(JsonOptions);
+                notifyMessage = notifyDraft?.SuggestedMessage ?? "";
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        finally
+        {
+            isLoadingDraft = false;
+            // Called fire-and-forget (`_ = LoadNotifyDraft()`) from ShowNotifyDialog/the guardian
+            // and channel change handlers, so there's no awaited call chain back to an event handler
+            // for Blazor to auto-render after - without this, the dialog was found live to freeze on
+            // "Preparing message..." forever even though the API call had already succeeded (200 in
+            // the server log) and notifyDraft/isLoadingDraft were both updated correctly in memory.
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SendNotification()
+    {
+        if (notifyTargetRecord == null) return;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{notifyTargetRecord.Id}/notify",
+                new SendWelfareNotificationRequest { GuardianLinkId = notifyGuardianId, Channel = notifyChannel, Message = notifyMessage },
+                JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Sent", "Guardian notification sent");
+                showNotifyDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to send notification: {ex.Message}");
+        }
+    }
+
+    // ---------------- Display helpers ----------------
+
+    private static string CaseTypeIcon(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "trophy-fill",
+        WelfareCaseType.Behavior => "exclamation-triangle-fill",
+        WelfareCaseType.Welfare => "shield-fill-check",
+        _ => "clipboard2-pulse-fill"
+    };
+
+    private static string DefaultCaseColor(WelfareCaseType caseType) => caseType switch
+    {
+        WelfareCaseType.Achievement => "var(--qm-welfare-achievement, #c99a5b)",
+        WelfareCaseType.Behavior => "var(--qm-welfare-behavior, #c2624f)",
+        WelfareCaseType.Welfare => "var(--qm-welfare-concern, #5a9c92)",
+        _ => "var(--qm-primary)"
+    };
+
+    private record CaseTypeOption(WelfareCaseType Value, string Label);
+    private record TierOption(WelfareTier Value, string Label);
+    private record StatusOption(WelfareStatus Value, string Label);
+    private record StaffOption(Guid Id, string Name);
+
+    /// <summary>
+    /// Minimal shape for deserializing GET api/v1/users — deliberately its own small local record
+    /// rather than referencing UsersController's API-only UserDto (Web can't) or reusing
+    /// UsersSetup.razor's own already-duplicated local UserDto (that's a pre-existing SSoT gap,
+    /// not one to add a third copy to). Only the fields this page actually needs.
+    /// </summary>
+    private record StaffApiUser(Guid Id, string FullName, bool IsActive);
+}

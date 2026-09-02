@@ -42,21 +42,6 @@ public class StudentApiService : IStudentApiService
         _jsonOptions = jsonOptions;
     }
 
-    private async Task<string> ReadProblemTitleAsync(HttpResponseMessage response)
-    {
-        try
-        {
-            var problem = await response.Content.ReadFromJsonAsync<ProblemDetailsLite>(_jsonOptions);
-            return problem?.Title ?? $"Request failed ({(int)response.StatusCode})";
-        }
-        catch
-        {
-            return $"Request failed ({(int)response.StatusCode})";
-        }
-    }
-
-    private record ProblemDetailsLite(string? Title, string? Detail);
-
     public async Task<List<StudentDto>> GetStudentsAsync(Guid branchId, bool includeInactive = false)
     {
         try
@@ -88,7 +73,7 @@ public class StudentApiService : IStudentApiService
     public async Task<StudentDto> CreateStudentAsync(Guid branchId, CreateStudentRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<StudentDto>(_jsonOptions))!;
     }
 
@@ -124,7 +109,7 @@ public class StudentApiService : IStudentApiService
     public async Task<StudentGuardianDto> AddGuardianAsync(Guid branchId, Guid studentId, AddGuardianRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/guardians", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<StudentGuardianDto>(_jsonOptions))!;
     }
 
@@ -145,7 +130,7 @@ public class StudentApiService : IStudentApiService
     public async Task<RosterImportJobDto> StartImportAsync(Guid branchId, StartRosterImportRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/import-jobs", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<RosterImportJobDto>(_jsonOptions))!;
     }
 

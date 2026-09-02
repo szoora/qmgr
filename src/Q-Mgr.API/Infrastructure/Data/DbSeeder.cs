@@ -33,6 +33,10 @@ public class DbSeeder
             // Free-tier (zero entitlements) regardless of what Tier the admin UI shows.
             await SeedSubscriptionsAsync();
 
+            // The modular subscription system's catalog — 4 purchasable SubscriptionPlan rows
+            // keyed by ModuleCodes instead of a TenantTier. See ModuleAccessService.
+            await SeedModulesAsync();
+
             // Check if demo data already exists (exclude platform org)
             var platformOrgId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
             if (await _context.Organizations.AnyAsync(o => o.Id != platformOrgId))
@@ -467,6 +471,89 @@ public class DbSeeder
             });
             changed = true;
             _logger.LogInformation("Seeded {Tier} subscription for organization {OrgName} ({OrgId})", org.Tier, org.Name, org.Id);
+        }
+
+        if (changed)
+            await _context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Idempotently seeds the 4-module catalog that replaces TenantTier for anything built through
+    /// the new modular subscription system (registration's module picker, the self-service
+    /// Modules marketplace, platform admin's Manage Modules panel). Reuses SubscriptionPlan's
+    /// existing shape — see the modular subscription plan for why: it's already exactly right for
+    /// "one purchasable, priced thing," it just meant a tier before and means a module now. `Tier`
+    /// is left at its default (unused by module rows, distinguished by `Code` being a ModuleCodes
+    /// value instead).
+    /// </summary>
+    private async Task SeedModulesAsync()
+    {
+        var modules = new Dictionary<string, TierPlanDefaults>
+        {
+            [ModuleCodes.CoreQueue] = new(
+                Name: "Core Queue Management", Code: ModuleCodes.CoreQueue, ShowAds: false, DedicatedSchema: false,
+                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 10,
+                MaxTokensPerMonth: 20_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 500,
+                MonthlyPriceUsd: 19m, AnnualPriceUsd: 190m, MonthlyPriceUgx: 80_000m, AnnualPriceUgx: 800_000m,
+                Description: "Live queue board, counter terminal, self-service kiosk, customer display, counters, service types, and tokens.",
+                Badge: null, SortOrder: 0),
+            [ModuleCodes.EngagementCommunications] = new(
+                Name: "Engagement & Communications", Code: ModuleCodes.EngagementCommunications, ShowAds: false, DedicatedSchema: false,
+                MaxBranches: 5, MaxDisplays: 10, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
+                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 5_000,
+                MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 120_000m, AnnualPriceUgx: 1_200_000m,
+                Description: "Digital signage, campaign marketing (SMS/WhatsApp/email broadcasts), and customer feedback & surveys.",
+                Badge: "Most Popular", SortOrder: 1),
+            [ModuleCodes.VisitorSafeguarding] = new(
+                Name: "Visitor & Safeguarding", Code: ModuleCodes.VisitorSafeguarding, ShowAds: false, DedicatedSchema: false,
+                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
+                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 2_000,
+                MonthlyPriceUsd: 35m, AnnualPriceUsd: 350m, MonthlyPriceUgx: 150_000m, AnnualPriceUgx: 1_500_000m,
+                Description: "Visitor check-in/out, student roster & visiting-day passes, and the student welfare ledger.",
+                Badge: null, SortOrder: 2),
+            [ModuleCodes.IntegrationsApi] = new(
+                Name: "Integrations & API Access", Code: ModuleCodes.IntegrationsApi, ShowAds: false, DedicatedSchema: false,
+                MaxBranches: 3, MaxDisplays: 1, MaxUsersPerBranch: 5, MaxCountersPerBranch: 2,
+                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 200,
+                MonthlyPriceUsd: 15m, AnnualPriceUsd: 150m, MonthlyPriceUgx: 60_000m, AnnualPriceUgx: 600_000m,
+                Description: "API clients, webhooks, and partner integration adapters (hospital/pharmacy/banking).",
+                Badge: null, SortOrder: 3),
+        };
+
+        var changed = false;
+        foreach (var (code, defaults) in modules)
+        {
+            var existing = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == code);
+            if (existing == null)
+            {
+                _context.SubscriptionPlans.Add(new SubscriptionPlan
+                {
+                    Id = Guid.NewGuid(),
+                    Name = defaults.Name,
+                    Code = defaults.Code,
+                    Description = defaults.Description,
+                    ShowAds = defaults.ShowAds,
+                    RequiresDedicatedSchema = defaults.DedicatedSchema,
+                    IsPublic = true,
+                    SortOrder = defaults.SortOrder,
+                    Badge = defaults.Badge,
+                    TrialDays = 14,
+                    MonthlyPriceUsd = defaults.MonthlyPriceUsd,
+                    AnnualPriceUsd = defaults.AnnualPriceUsd,
+                    MonthlyPriceUgx = defaults.MonthlyPriceUgx,
+                    AnnualPriceUgx = defaults.AnnualPriceUgx,
+                    MaxBranches = defaults.MaxBranches,
+                    MaxDisplays = defaults.MaxDisplays,
+                    MaxUsersPerBranch = defaults.MaxUsersPerBranch,
+                    MaxCountersPerBranch = defaults.MaxCountersPerBranch,
+                    MaxTokensPerMonth = defaults.MaxTokensPerMonth,
+                    MaxApiCallsPerMonth = defaults.MaxApiCallsPerMonth,
+                    MaxStorageMb = defaults.MaxStorageMb,
+                    CreatedAt = DateTime.UtcNow
+                });
+                changed = true;
+                _logger.LogInformation("Seeded {ModuleName} module into the catalog", defaults.Name);
+            }
         }
 
         if (changed)

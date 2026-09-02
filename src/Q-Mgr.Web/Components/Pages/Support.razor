@@ -1,8 +1,10 @@
 @page "/support"
-@layout KioskLayout
+@layout PublicLayout
 @using Microsoft.AspNetCore.Authorization
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
+@inject HttpClient Http
+@inject IConfiguration Configuration
 
 <PageTitle>Support - Q-Mgr</PageTitle>
 
@@ -29,30 +31,26 @@
                 actually build and run Q-Mgr, and we aim to get back to you within one business day.
             </p>
 
+            @* One real inbox, not four fake departments - it used to list General/Billing/Security
+               as separate "teams" that all pointed at this exact same address, which read as
+               bigger (and less honest) than the small support@getsacc.com team actually is. *@
+            <div class="doc-contact-single">
+                <div class="doc-contact-icon"><QIcon Name="envelope-fill" /></div>
+                <h3>Email us</h3>
+                <p>One inbox, read by the people who actually build and run Q-Mgr.</p>
+                <a href="mailto:support@getsacc.com" class="doc-contact-email">support@getsacc.com</a>
+                <ul class="doc-contact-hints">
+                    <li><strong>Billing question?</strong> Mention your organization name so we can find your account fast.</li>
+                    <li><strong>Found a security issue?</strong> Put "Security disclosure" in the subject line - we prioritize those.</li>
+                </ul>
+            </div>
+
             <div class="doc-contact-grid">
-                <div class="doc-contact-tile">
-                    <div class="doc-contact-icon"><QIcon Name="envelope-fill" /></div>
-                    <h3>General &amp; Technical Support</h3>
-                    <p>Something's not working, or you're not sure how to do something.</p>
-                    <a href="mailto:support@getsacc.com">support@getsacc.com</a>
-                </div>
-                <div class="doc-contact-tile">
-                    <div class="doc-contact-icon"><QIcon Name="credit-card-fill" /></div>
-                    <h3>Billing &amp; Plans</h3>
-                    <p>Questions about your subscription, an invoice, or upgrading.</p>
-                    <a href="mailto:support@getsacc.com?subject=Billing question">support@getsacc.com</a>
-                </div>
-                <div class="doc-contact-tile">
-                    <div class="doc-contact-icon"><QIcon Name="shield-lock-fill" /></div>
-                    <h3>Security Reports</h3>
-                    <p>Found a vulnerability? Please tell us before anyone else.</p>
-                    <a href="mailto:support@getsacc.com?subject=Security disclosure">support@getsacc.com</a>
-                </div>
                 <div class="doc-contact-tile">
                     <div class="doc-contact-icon"><QIcon Name="code-slash" /></div>
                     <h3>API &amp; Integrations</h3>
                     <p>Building on top of Q-Mgr, or connecting an external system.</p>
-                    <a href="/api/docs" target="_blank">View API documentation</a>
+                    <a href="@ApiDocsUrl" target="_blank">View API documentation</a>
                 </div>
             </div>
 
@@ -132,3 +130,14 @@
         <p class="doc-copyright">&copy; 2026 SACC Software Limited. All rights reserved.</p>
     </div>
 </div>
+
+@code {
+    // BUG FIX: this used to be a bare relative "/api/docs", which resolves against the Web
+    // app's own origin - a different process/port than the API that actually serves API docs.
+    // ApiPublicUrl (distinct from ApiBaseUrl, which is an internal-only loopback address in
+    // production - see MainLayout.razor/build-linux.ps1) is the real public API origin.
+    // This page is anonymous, so there's no access token to attach - the docs route now requires
+    // login (Program.cs), so an anonymous visitor clicking this correctly gets turned away rather
+    // than reaching internal API documentation before signing in.
+    private string ApiDocsUrl => new Uri(new Uri(Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString()), "/api/docs/").ToString();
+}

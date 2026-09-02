@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
+using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
@@ -20,6 +21,7 @@ public class BillingJobs
     private readonly ITenantProvisioningService _provisioningService;
     private readonly INotificationService _notificationService;
     private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly IModuleAccessService _moduleAccessService;
     private readonly ILogger<BillingJobs> _logger;
 
     public BillingJobs(
@@ -29,6 +31,7 @@ public class BillingJobs
         ITenantProvisioningService provisioningService,
         INotificationService notificationService,
         IPlatformSettingsService platformSettingsService,
+        IModuleAccessService moduleAccessService,
         ILogger<BillingJobs> logger)
     {
         _dbContext = dbContext;
@@ -37,6 +40,7 @@ public class BillingJobs
         _provisioningService = provisioningService;
         _notificationService = notificationService;
         _platformSettingsService = platformSettingsService;
+        _moduleAccessService = moduleAccessService;
         _logger = logger;
     }
 
@@ -140,6 +144,134 @@ public class BillingJobs
         await _dbContext.SaveChangesAsync();
         _logger.LogInformation("Completed expiring trials check. Warned: {Warned}, Expired: {Expired}",
             expiringTrials.Count, expiredTrials.Count);
+    }
+
+    /// <summary>
+    /// Same warn-then-lock shape as CheckExpiringTrialsAsync above, but for the modular
+    /// subscription system's per-module trials (OrganizationModule.TrialEndsAt) instead of the
+    /// legacy single Organization.TrialEndsAt. Deliberately does NOT attempt to auto-charge on
+    /// expiry the way a saved-card gateway could — Mobile Money collection needs the customer to
+    /// approve on their own phone in real time, so it can't be silently billed in the background.
+    /// Flipping to PastDue is enough on its own: IModuleAccessService only treats Active/Trialing
+    /// as "active," so the module locks out immediately without any separate gating change.
+    /// </summary>
+    [AutomaticRetry(Attempts = 3)]
+    public async Task CheckExpiringModuleTrialsAsync()
+    {
+        _logger.LogInformation("Starting check for expiring module trials");
+
+        var baseDomain = await GetBaseDomainAsync();
+        var now = DateTime.UtcNow;
+        var warningThreshold = now.AddDays(3);
+
+        var expiringSoon = await _dbContext.OrganizationModules
+            .Include(om => om.Module)
+            .Include(om => om.Organization)
+            .Where(om => om.Status == OrganizationModuleStatus.Trialing &&
+                         om.TrialEndsAt != null &&
+                         om.TrialEndsAt <= warningThreshold &&
+                         om.TrialEndsAt > now)
+            .ToListAsync();
+
+        var warned = 0;
+        foreach (var om in expiringSoon)
+        {
+            try
+            {
+                var daysLeft = Math.Max(1, (om.TrialEndsAt!.Value - now).Days);
+                var moduleName = om.Module?.Name ?? "a module";
+
+                await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    OrganizationId = om.OrganizationId,
+                    Title = $"{moduleName} trial ending soon",
+                    Message = $"Your trial of {moduleName} ends in {daysLeft} day{(daysLeft == 1 ? "" : "s")}. Add a payment method from Billing to keep using it.",
+                    Type = NotificationType.SystemAlert,
+                    Priority = NotificationPriority.Normal,
+                    Channels = NotificationChannel.InApp,
+                    ActionUrl = "/billing/modules",
+                    IconClass = "clock-history"
+                });
+
+                if (om.Organization != null)
+                {
+                    await _notificationService.SendEmailAsync(
+                        om.OrganizationId,
+                        om.Organization.EffectiveBillingEmail,
+                        $"Your {moduleName} trial expires in {daysLeft} days",
+                        GetModuleTrialExpiringEmailBody(om.Organization.Name, moduleName, daysLeft, om.Organization.Slug, baseDomain),
+                        true);
+                }
+
+                warned++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send module-trial-expiring reminder for OrganizationModule {Id}", om.Id);
+            }
+        }
+
+        var expired = await _dbContext.OrganizationModules
+            .Include(om => om.Module)
+            .Include(om => om.Organization)
+            .Where(om => om.Status == OrganizationModuleStatus.Trialing &&
+                         om.TrialEndsAt != null &&
+                         om.TrialEndsAt <= now)
+            .ToListAsync();
+
+        var lockedOut = 0;
+        foreach (var om in expired)
+        {
+            try
+            {
+                om.Status = OrganizationModuleStatus.PastDue;
+                _dbContext.OrganizationModules.Update(om);
+
+                var moduleName = om.Module?.Name ?? "a module";
+                await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    OrganizationId = om.OrganizationId,
+                    Title = $"{moduleName} trial has ended",
+                    Message = $"Your trial of {moduleName} has ended and is now locked. Add it back any time from Billing.",
+                    Type = NotificationType.SystemAlert,
+                    Priority = NotificationPriority.High,
+                    Channels = NotificationChannel.InApp,
+                    ActionUrl = "/billing/modules",
+                    IconClass = "lock-fill"
+                });
+
+                if (om.Organization != null)
+                {
+                    await _notificationService.SendEmailAsync(
+                        om.OrganizationId,
+                        om.Organization.EffectiveBillingEmail,
+                        $"Your {moduleName} trial has ended",
+                        GetModuleTrialExpiredEmailBody(om.Organization.Name, moduleName, om.Organization.Slug, baseDomain),
+                        true);
+                }
+
+                lockedOut++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to lock expired module trial for OrganizationModule {Id}", om.Id);
+            }
+        }
+
+        if (lockedOut > 0)
+        {
+            await _dbContext.SaveChangesAsync();
+
+            // Without this, IModuleAccessService's 5-minute IDistributedCache would keep serving
+            // the pre-lock "active" answer to nav gating and [RequireModule] for up to 5 more
+            // minutes after the DB row already says PastDue.
+            foreach (var orgId in expired.Select(om => om.OrganizationId).Distinct())
+            {
+                await _moduleAccessService.InvalidateCacheAsync(orgId);
+            }
+        }
+
+        _logger.LogInformation("Module trial expiry check: Warned {Warned}, Locked {Locked}", warned, lockedOut);
     }
 
     /// <summary>
@@ -493,6 +625,48 @@ public class BillingJobs
 </html>";
     }
 
+    private static string GetModuleTrialExpiringEmailBody(string orgName, string moduleName, int daysLeft, string slug, string baseDomain)
+    {
+        return $@"
+<!DOCTYPE html>
+<html>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+        <h1 style='color: #2563eb;'>Your {moduleName} trial is ending soon</h1>
+        <p>Hi,</p>
+        <p>Your trial of <strong>{moduleName}</strong> for <strong>{orgName}</strong> ends in <strong>{daysLeft} day{(daysLeft == 1 ? "" : "s")}</strong>.</p>
+        <p>To keep using it without interruption, add a Mobile Money number from Billing:</p>
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='https://{slug}.{baseDomain}/billing/modules' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Manage Modules</a>
+        </div>
+        <p>Your other modules and data are unaffected.</p>
+        <p>Best regards,<br>The Q-Mgr Team</p>
+    </div>
+</body>
+</html>";
+    }
+
+    private static string GetModuleTrialExpiredEmailBody(string orgName, string moduleName, string slug, string baseDomain)
+    {
+        return $@"
+<!DOCTYPE html>
+<html>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+        <h1 style='color: #dc2626;'>Your {moduleName} trial has ended</h1>
+        <p>Hi,</p>
+        <p>The trial of <strong>{moduleName}</strong> for <strong>{orgName}</strong> has ended and is now locked.</p>
+        <p>Your other modules keep working normally. Add {moduleName} back any time from Billing:</p>
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='https://{slug}.{baseDomain}/billing/modules' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Manage Modules</a>
+        </div>
+        <p>Your data for this module is safe and will be available again once you add it back.</p>
+        <p>Best regards,<br>The Q-Mgr Team</p>
+    </div>
+</body>
+</html>";
+    }
+
     private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string slug, string baseDomain)
     {
         return $@"
@@ -626,6 +800,12 @@ public static class BillingJobsRegistration
         RecurringJob.AddOrUpdate<BillingJobs>(
             "check-expiring-trials",
             job => job.CheckExpiringTrialsAsync(),
+            "0 9 * * *");
+
+        // Check expiring module trials (modular subscription system) - Daily at 9 AM UTC
+        RecurringJob.AddOrUpdate<BillingJobs>(
+            "check-expiring-module-trials",
+            job => job.CheckExpiringModuleTrialsAsync(),
             "0 9 * * *");
 
         // Aggregate usage metrics - Every hour

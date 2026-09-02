@@ -2,6 +2,7 @@ using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using QMgr.API.Authorization;
+using QMgr.Filters;
 using QMgr.Application.Commands.Queue;
 using QMgr.Application.DTOs;
 using QMgr.Domain.Constants;
@@ -12,6 +13,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/counters")]
 [Authorize]
 [RequirePermission(Permissions.QueueManage)]
+[RequireModule(ModuleCodes.CoreQueue)]
 [Produces("application/json")]
 public class CountersController : ControllerBase
 {

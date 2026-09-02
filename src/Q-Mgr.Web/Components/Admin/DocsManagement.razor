@@ -1,0 +1,426 @@
+@page "/admin/docs"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+
+<PageTitle>Docs Management - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Docs Management</h1>
+            <p class="subtitle">Getting-started guides shown publicly at /docs — no login required to read them</p>
+        </div>
+        @if (canManage)
+        {
+            <QButton Text="New Article" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading articles...</span>
+        </div>
+    }
+    else if (!articles.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="journal-richtext" Size="xl" />
+            <h3>No Articles Yet</h3>
+            <p>Write your first getting-started guide</p>
+            @if (canManage)
+            {
+                <QButton Text="New Article" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="docs-grid">
+            @foreach (var article in articles)
+            {
+                <div class="doc-card-admin">
+                    <div class="doc-card-header">
+                        <span class="status-badge status-@article.Status.ToString().ToLowerInvariant()">@article.Status</span>
+                        @if (article.Industry.HasValue)
+                        {
+                            <span class="industry-badge">@article.Industry</span>
+                        }
+                        <div class="doc-card-actions">
+                            @if (canManage)
+                            {
+                                <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(article))" Title="Edit" />
+                                <QButton Icon="trash-fill" Variant="ghost" Size="sm" Class="text-danger" OnClick="@(() => DeleteArticle(article))" Title="Delete" />
+                            }
+                        </div>
+                    </div>
+                    <h4>@article.Title</h4>
+                    <p class="doc-card-summary">@(article.Summary ?? "No summary")</p>
+                    <div class="doc-card-footer">
+                        <span class="doc-stat"><QIcon Name="link-45deg" />/docs/@article.Slug</span>
+                        @if (article.UpdatedAt.HasValue)
+                        {
+                            <span class="doc-stat">Updated @article.UpdatedAt.Value.ToString("MMM d")</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editingArticle == null ? "New Article" : "Edit Article")" Size="lg">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Title" Label="Title *" Placeholder="e.g., Getting Started: Electronics & Retail Shops" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@formData.Slug" Label="URL Slug" Placeholder="auto-generated from title if left blank" />
+            </div>
+            <div class="form-group">
+                <label>Industry</label>
+                <select class="form-control" @bind="formData.IndustryValue">
+                    <option value="">General (all industries)</option>
+                    <option value="Hospital">Healthcare</option>
+                    <option value="Bank">Banking &amp; Finance</option>
+                    <option value="Pharmacy">Pharmacy</option>
+                    <option value="Government">Government</option>
+                    <option value="ElectronicsShop">Retail</option>
+                    <option value="Telecom">Telecommunications</option>
+                    <option value="Restaurant">Hospitality &amp; Food Service</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.Summary" Type="textarea" Label="Summary" Placeholder="One or two sentences shown on the /docs listing" Rows="2" />
+        </div>
+        <div class="form-group">
+            <label>Cover Image (optional)</label>
+            @if (!string.IsNullOrEmpty(formData.CoverImageUrl))
+            {
+                <div class="cover-preview">
+                    <img src="@formData.CoverImageUrl" alt="Cover" />
+                    <QButton Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => formData.CoverImageUrl = null)" Title="Remove" />
+                </div>
+            }
+            else
+            {
+                <InputFile OnChange="HandleCoverImageSelected" accept="image/*" class="file-input" id="coverImageInput" />
+                <label for="coverImageInput" class="browse-btn">@(isUploadingCover ? "Uploading..." : "Choose Image")</label>
+            }
+        </div>
+        <div class="form-group">
+            <label>Body *</label>
+            <RadzenHtmlEditor @bind-Value="@formData.BodyHtml" style="height: 420px" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Status</label>
+                <select class="form-control" @bind="formData.Status">
+                    <option value="@DocArticleStatus.Draft">Draft</option>
+                    <option value="@DocArticleStatus.Published">Published</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@formData.DisplayOrder" Type="number" Label="Display Order" Min="0" />
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showDialog = false)" />
+        <QButton Text="@(editingArticle == null ? "Create" : "Save")" Icon="@(editingArticle == null ? "plus-lg" : "check-lg")" Variant="primary" OnClick="@SaveArticle" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .loading-container, .empty-state {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        padding: 60px 20px; color: var(--qm-text-muted);
+        background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border);
+    }
+    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .empty-state p { margin: 0 0 20px; }
+
+    .docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+    .doc-card-admin {
+        background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-xl);
+        padding: 16px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .doc-card-admin:hover { box-shadow: var(--qm-shadow-md); border-color: var(--qm-primary); }
+    .doc-card-header { display: flex; align-items: center; gap: 8px; }
+    .doc-card-actions { margin-left: auto; display: flex; gap: 2px; }
+    .status-badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: var(--qm-radius-md); }
+    .status-draft { background: var(--qm-bg-elevated); color: var(--qm-text-muted); }
+    .status-published { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .industry-badge { font-size: 11px; padding: 2px 8px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+    .doc-card-admin h4 { margin: 0; font-size: 15px; color: var(--qm-text-primary); }
+    .doc-card-summary { margin: 0; font-size: 13px; color: var(--qm-text-muted); flex: 1; }
+    .doc-card-footer { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--qm-text-muted); }
+    .doc-stat { display: flex; align-items: center; gap: 4px; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-control {
+        width: 100%; padding: 8px 12px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated); color: var(--qm-text-primary);
+    }
+    .cover-preview { position: relative; display: inline-block; }
+    .cover-preview img { max-width: 240px; max-height: 120px; border-radius: var(--qm-radius-md); display: block; }
+    .browse-btn {
+        display: inline-block; padding: 8px 16px; border-radius: var(--qm-radius-md);
+        border: 1px dashed var(--qm-border); cursor: pointer; color: var(--qm-text-secondary);
+    }
+    .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+</style>
+
+@code {
+    private List<DocArticleDto> articles = new();
+    private bool isLoading = true;
+    private bool showDialog = false;
+    private bool canManage = false;
+    private bool isUploadingCover = false;
+    private DocArticleDto? editingArticle;
+    private ArticleFormData formData = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!await PermissionService.HasPermissionAsync(Permissions.PlatformDocsView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            canManage = await PermissionService.HasPermissionAsync(Permissions.PlatformDocsManage);
+
+            await LoadData();
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            var response = await Http.GetAsync("api/v1/docs/admin");
+            if (response.IsSuccessStatusCode)
+            {
+                articles = await response.Content.ReadFromJsonAsync<List<DocArticleDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load articles: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowAddDialog()
+    {
+        editingArticle = null;
+        formData = new ArticleFormData();
+        showDialog = true;
+    }
+
+    private async Task ShowEditDialog(DocArticleDto article)
+    {
+        editingArticle = article;
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/docs/admin/{article.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                var detail = await response.Content.ReadFromJsonAsync<DocArticleDetailDto>(JsonOptions);
+                if (detail != null)
+                {
+                    formData = new ArticleFormData
+                    {
+                        Title = detail.Title,
+                        Slug = detail.Slug,
+                        Summary = detail.Summary,
+                        BodyHtml = detail.BodyHtml,
+                        CoverImageUrl = detail.CoverImageUrl,
+                        IndustryValue = detail.Industry?.ToString() ?? "",
+                        Status = detail.Status,
+                        DisplayOrder = detail.DisplayOrder
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load article: {ex.Message}");
+            return;
+        }
+        showDialog = true;
+    }
+
+    private async Task HandleCoverImageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        const long maxSize = 5 * 1024 * 1024;
+        if (file.Size > maxSize)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "File Too Large", "Cover image must be 5MB or smaller.");
+            return;
+        }
+
+        isUploadingCover = true;
+        StateHasChanged();
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            await using var stream = file.OpenReadStream(maxSize);
+            using var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+            content.Add(streamContent, "file", file.Name);
+
+            var response = await Http.PostAsync("api/v1/docs/admin/cover-image/upload", content);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+                formData.CoverImageUrl = result.GetProperty("url").GetString();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to upload cover image: {ex.Message}");
+        }
+        finally
+        {
+            isUploadingCover = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveArticle()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Title) || string.IsNullOrWhiteSpace(formData.BodyHtml))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "Title and Body are required");
+            return;
+        }
+
+        try
+        {
+            IndustryType? industry = string.IsNullOrEmpty(formData.IndustryValue)
+                ? null
+                : Enum.Parse<IndustryType>(formData.IndustryValue);
+
+            HttpResponseMessage response;
+            if (editingArticle == null)
+            {
+                var request = new CreateDocArticleRequest
+                {
+                    Title = formData.Title,
+                    Slug = string.IsNullOrWhiteSpace(formData.Slug) ? null : formData.Slug,
+                    Summary = formData.Summary,
+                    BodyHtml = formData.BodyHtml,
+                    CoverImageUrl = formData.CoverImageUrl,
+                    Industry = industry,
+                    Status = formData.Status,
+                    DisplayOrder = formData.DisplayOrder
+                };
+                response = await Http.PostAsJsonAsync("api/v1/docs", request, JsonOptions);
+            }
+            else
+            {
+                var request = new UpdateDocArticleRequest
+                {
+                    Title = formData.Title,
+                    Slug = string.IsNullOrWhiteSpace(formData.Slug) ? null : formData.Slug,
+                    Summary = formData.Summary,
+                    BodyHtml = formData.BodyHtml,
+                    CoverImageUrl = formData.CoverImageUrl,
+                    Industry = industry,
+                    Status = formData.Status,
+                    DisplayOrder = formData.DisplayOrder
+                };
+                response = await Http.PutAsJsonAsync($"api/v1/docs/{editingArticle.Id}", request, JsonOptions);
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success",
+                    editingArticle == null ? "Article created" : "Article updated");
+                showDialog = false;
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save article: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteArticle(DocArticleDto article)
+    {
+        try
+        {
+            var response = await Http.DeleteAsync($"api/v1/docs/{article.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Success", "Article deleted");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete article: {ex.Message}");
+        }
+    }
+
+    private class ArticleFormData
+    {
+        public string Title { get; set; } = "";
+        public string Slug { get; set; } = "";
+        public string? Summary { get; set; }
+        public string BodyHtml { get; set; } = "";
+        public string? CoverImageUrl { get; set; }
+        public string IndustryValue { get; set; } = "";
+        public DocArticleStatus Status { get; set; } = DocArticleStatus.Draft;
+        public int DisplayOrder { get; set; } = 0;
+    }
+}

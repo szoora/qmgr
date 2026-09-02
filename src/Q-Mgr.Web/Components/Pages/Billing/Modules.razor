@@ -1,0 +1,439 @@
+@page "/billing/modules"
+@using QMgr.Application.DTOs
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IToastService NotificationService
+@inject NavigationManager Navigation
+
+<PageTitle>Modules - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-left">
+        <h1>
+            <QIcon Name="grid-3x3-gap-fill" Size="32" />
+            Modules
+        </h1>
+        <div class="breadcrumb">
+            <a href="/billing/overview">Billing</a>
+            <span>/</span>
+            <span>Modules</span>
+        </div>
+        <p class="page-subtitle">Add or remove functional modules for your organization. Payment is collected via Mobile Money.</p>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="webster-spinner"></div>
+        <span class="loading-text">Loading modules...</span>
+    </div>
+}
+else
+{
+    <div class="modules-grid">
+        @foreach (var module in catalog)
+        {
+            var status = mine.FirstOrDefault(m => m.ModuleCode == module.Code);
+            var purchased = status?.Purchased ?? false;
+            <div class="module-marketplace-card @(purchased ? "owned" : "")">
+                <div class="module-marketplace-head">
+                    <h3>@module.Name</h3>
+                    @if (purchased)
+                    {
+                        <span class="status-pill @(status!.Status?.ToLower())">@status.Status</span>
+                    }
+                    else
+                    {
+                        <span class="status-pill not-purchased">Not purchased</span>
+                    }
+                </div>
+                <p class="module-marketplace-desc">@module.Description</p>
+                <div class="module-marketplace-price">UGX @module.MonthlyPriceUgx.ToString("N0")/mo <span class="muted">or UGX @module.AnnualPriceUgx.ToString("N0")/yr</span></div>
+
+                @if (purchased)
+                {
+                    @if (status!.TrialEndsAt.HasValue)
+                    {
+                        <p class="trial-note"><QIcon Name="clock-history" Size="14" /> Trial ends @status.TrialEndsAt.Value.ToString("MMM d, yyyy")</p>
+                    }
+                    @if (status.GrantedByPlatformAdmin)
+                    {
+                        <p class="trial-note"><QIcon Name="shield-check" Size="14" /> Granted by platform admin</p>
+                    }
+                    <QButton Text="Remove Module" Icon="trash" Variant="outline-danger" OnClick="@(() => OpenRemoveConfirm(module.Code, module.Name))" />
+                }
+                else
+                {
+                    <QButton Text="Add Module" Icon="plus-circle" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
+                }
+            </div>
+        }
+    </div>
+}
+
+<!-- Purchase Modal -->
+<QModal Visible="@showPurchaseModal" VisibleChanged="@((bool v) => showPurchaseModal = v)" Title="@($"Add {purchaseTarget?.Name}")" Icon="grid-3x3-gap-fill" Size="md">
+    <ChildContent>
+        @if (purchaseTarget != null)
+        {
+            <p>@purchaseTarget.Description</p>
+            <div class="form-group">
+                <label>Billing cycle</label>
+                <select class="form-control" @bind="purchaseBillingCycle">
+                    <option value="Monthly">Monthly — UGX @purchaseTarget.MonthlyPriceUgx.ToString("N0")</option>
+                    <option value="Annual">Annual — UGX @purchaseTarget.AnnualPriceUgx.ToString("N0")</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Payment method</label>
+                <div class="payment-method-toggle">
+                    <button type="button" class="@(paymentMethod == "MobileMoney" ? "active" : "")" @onclick="@(() => paymentMethod = "MobileMoney")" disabled="@purchaseInProgress">
+                        <QIcon Name="phone" Size="16" /> Mobile Money
+                    </button>
+                    <button type="button" class="@(paymentMethod == "Card" ? "active" : "")" @onclick="@(() => paymentMethod = "Card")" disabled="@purchaseInProgress">
+                        <QIcon Name="credit-card" Size="16" /> Card
+                    </button>
+                </div>
+            </div>
+            @if (paymentMethod == "MobileMoney")
+            {
+                <div class="form-group">
+                    <label>Mobile Money phone number</label>
+                    <input class="form-control" @bind="purchasePhone" placeholder="0770 000 000" />
+                </div>
+            }
+            else
+            {
+                <p class="card-note">You'll be redirected to Stripe's secure checkout to enter your card details.</p>
+            }
+            @if (purchaseInProgress)
+            {
+                <div class="purchase-status">
+                    <div class="webster-spinner small"></div>
+                    <span>@purchaseStatusMessage</span>
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showPurchaseModal = false)" Disabled="@purchaseInProgress" />
+        @if (paymentMethod == "MobileMoney")
+        {
+            <QButton Text="Confirm & Pay" Icon="check-lg" Variant="primary" OnClick="ConfirmPurchase" Disabled="@(purchaseInProgress || string.IsNullOrWhiteSpace(purchasePhone))" />
+        }
+        else
+        {
+            <QButton Text="Continue to Checkout" Icon="credit-card" Variant="primary" OnClick="ConfirmCardPurchase" Disabled="@purchaseInProgress" />
+        }
+    </FooterContent>
+</QModal>
+
+<!-- Remove Confirm Modal -->
+<QModal Visible="@showRemoveModal" VisibleChanged="@((bool v) => showRemoveModal = v)" Title="@($"Remove {removeTargetName}?")" Icon="exclamation-triangle" Size="sm">
+    <ChildContent>
+        <p>Removing this module immediately hides its features from your navigation. You can add it back any time from this page.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showRemoveModal = false)" />
+        <QButton Text="Remove" Icon="trash" Variant="danger" OnClick="ConfirmRemove" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .page-subtitle { color: var(--qm-text-secondary); margin-top: 4px; }
+
+    .modules-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        margin-top: 20px;
+    }
+
+    .module-marketplace-card {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .module-marketplace-card.owned {
+        border-color: var(--qm-primary);
+    }
+
+    .module-marketplace-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .module-marketplace-head h3 {
+        font-size: 16px;
+        margin: 0;
+    }
+
+    .status-pill {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 3px 9px;
+        border-radius: 100px;
+        white-space: nowrap;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+    }
+
+    .status-pill.active { background: rgba(34, 197, 94, 0.15); color: #16a34a; }
+    .status-pill.trialing { background: rgba(122, 40, 71, 0.12); color: var(--qm-primary); }
+    .status-pill.pastdue { background: rgba(234, 179, 8, 0.15); color: #a16207; }
+    .status-pill.not-purchased { background: var(--qm-bg-elevated); color: var(--qm-text-tertiary, var(--qm-text-secondary)); }
+
+    .module-marketplace-desc {
+        font-size: 13.5px;
+        color: var(--qm-text-secondary);
+        margin: 0;
+        flex-grow: 1;
+    }
+
+    .module-marketplace-price {
+        font-weight: 700;
+        font-size: 15px;
+    }
+
+    .module-marketplace-price .muted {
+        font-weight: 400;
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+    }
+
+    .trial-note {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+    }
+
+    .purchase-status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+        font-size: 13.5px;
+        color: var(--qm-text-secondary);
+    }
+
+    .payment-method-toggle {
+        display: flex;
+        gap: 8px;
+    }
+
+    .payment-method-toggle button {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 13.5px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .payment-method-toggle button.active {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light, rgba(122, 40, 71, 0.1));
+        color: var(--qm-primary);
+        font-weight: 600;
+    }
+
+    .card-note {
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+        margin: 0;
+    }
+
+    .webster-spinner.small {
+        width: 18px;
+        height: 18px;
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private List<ModuleCatalogItem> catalog = new();
+    private List<OrganizationModuleStatusDto> mine = new();
+
+    private bool showPurchaseModal = false;
+    private ModuleCatalogItem? purchaseTarget;
+    private string purchaseBillingCycle = "Monthly";
+    private string paymentMethod = "MobileMoney";
+    private string purchasePhone = "";
+    private bool purchaseInProgress = false;
+    private string purchaseStatusMessage = "";
+
+    private bool showRemoveModal = false;
+    private string removeTargetCode = "";
+    private string removeTargetName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+
+        // Returning from Stripe Checkout (see ModulesController.PurchaseModuleCard's successUrl/
+        // cancelUrl) — the module itself is activated by the webhook, not this redirect, so this
+        // is purely a "tell the customer what happened" step; LoadAsync above already reflects
+        // reality by the time the customer is back (webhook typically lands before the redirect).
+        var uri = new Uri(Navigation.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var checkoutResult = query["checkout"];
+        if (checkoutResult == "success")
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Payment complete", "Your module is now active.");
+            Navigation.NavigateTo("/billing/modules", replace: true);
+        }
+        else if (checkoutResult == "cancelled")
+        {
+            NotificationService.Notify(ToastSeverity.Info, "Checkout cancelled", "No charge was made.");
+            Navigation.NavigateTo("/billing/modules", replace: true);
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        catalog = await ModuleApi.GetCatalogAsync();
+        mine = await ModuleApi.GetMineAsync();
+        isLoading = false;
+    }
+
+    private void OpenPurchaseModal(ModuleCatalogItem module)
+    {
+        purchaseTarget = module;
+        purchaseBillingCycle = "Monthly";
+        paymentMethod = "MobileMoney";
+        purchasePhone = "";
+        purchaseInProgress = false;
+        showPurchaseModal = true;
+    }
+
+    private async Task ConfirmCardPurchase()
+    {
+        if (purchaseTarget == null) return;
+        purchaseInProgress = true;
+        purchaseStatusMessage = "Contacting Stripe...";
+        StateHasChanged();
+
+        try
+        {
+            var result = await ModuleApi.PurchaseWithCardAsync(purchaseTarget.Code, purchaseBillingCycle);
+
+            if (result.RequiresCheckout && !string.IsNullOrEmpty(result.CheckoutUrl))
+            {
+                Navigation.NavigateTo(result.CheckoutUrl, forceLoad: true);
+                return;
+            }
+
+            // Joined an existing card subscription — already active, no redirect needed.
+            NotificationService.Notify(ToastSeverity.Success, "Module added", result.Message ?? $"{purchaseTarget.Name} is now active.");
+            showPurchaseModal = false;
+            await LoadAsync();
+            await ModuleState.RefreshAsync(ModuleApi);
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not add module", ex.Message);
+            purchaseInProgress = false;
+        }
+    }
+
+    private async Task ConfirmPurchase()
+    {
+        if (purchaseTarget == null) return;
+        purchaseInProgress = true;
+        purchaseStatusMessage = "Initiating payment...";
+        StateHasChanged();
+
+        try
+        {
+            var result = await ModuleApi.PurchaseAsync(purchaseTarget.Code, purchasePhone, purchaseBillingCycle);
+
+            if (result.Simulated)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Module added", result.Message);
+                showPurchaseModal = false;
+                await LoadAsync();
+                await ModuleState.RefreshAsync(ModuleApi);
+                return;
+            }
+
+            purchaseStatusMessage = "Check your phone to confirm the payment...";
+            StateHasChanged();
+
+            // Poll for confirmation — mirrors the pattern already used elsewhere for mobile
+            // money (a real gateway needs the customer to approve on their handset).
+            var attempts = 0;
+            while (attempts < 30)
+            {
+                await Task.Delay(2000);
+                var status = await ModuleApi.CheckPurchaseStatusAsync(result.TransactionId!);
+                if (status == "Succeeded")
+                {
+                    NotificationService.Notify(ToastSeverity.Success, "Module added", $"{purchaseTarget.Name} is now active.");
+                    showPurchaseModal = false;
+                    await LoadAsync();
+                    await ModuleState.RefreshAsync(ModuleApi);
+                    return;
+                }
+                if (status is "Failed" or "Cancelled" or "Expired")
+                {
+                    NotificationService.Notify(ToastSeverity.Error, "Payment not completed", $"Payment status: {status}");
+                    purchaseInProgress = false;
+                    return;
+                }
+                attempts++;
+            }
+
+            NotificationService.Notify(ToastSeverity.Warning, "Still waiting", "Payment confirmation is taking longer than expected. Check Invoices shortly.");
+            purchaseInProgress = false;
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not add module", ex.Message);
+            purchaseInProgress = false;
+        }
+    }
+
+    private void OpenRemoveConfirm(string code, string name)
+    {
+        removeTargetCode = code;
+        removeTargetName = name;
+        showRemoveModal = true;
+    }
+
+    private async Task ConfirmRemove()
+    {
+        try
+        {
+            await ModuleApi.RemoveModuleAsync(removeTargetCode, null);
+            NotificationService.Notify(ToastSeverity.Success, "Module removed", $"{removeTargetName} has been removed.");
+            showRemoveModal = false;
+            await LoadAsync();
+            await ModuleState.RefreshAsync(ModuleApi);
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not remove module", ex.Message);
+        }
+    }
+}

@@ -1,0 +1,410 @@
+@page "/admin/welfare-reports"
+@using System.Text.Json
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+
+<PageTitle>Welfare Reports - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Welfare Reports</h1>
+            <p class="subtitle">Dashboard overview and searchable records across the whole branch.</p>
+        </div>
+    </div>
+
+    <div class="tab-strip">
+        <button type="button" class="tab-btn @(activeTab == "dashboard" ? "active" : "")" @onclick="@(() => SwitchTab("dashboard"))">Dashboard</button>
+        <button type="button" class="tab-btn @(activeTab == "search" ? "active" : "")" @onclick="@(() => SwitchTab("search"))">Search &amp; Export</button>
+    </div>
+
+    @if (activeTab == "dashboard")
+    {
+        <div class="filter-bar">
+            <QDatePicker @bind-Value="@dashboardFrom" Label="From" />
+            <QDatePicker @bind-Value="@dashboardTo" Label="To" />
+            <QButton Text="Apply" Icon="funnel-fill" Variant="secondary" OnClick="@LoadSummary" />
+        </div>
+
+        @if (isLoadingSummary)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /><span>Loading dashboard...</span></div>
+        }
+        else if (summary != null)
+        {
+            <div class="stat-cards">
+                <div class="stat-card"><span class="stat-value">@summary.TotalRecords</span><span class="stat-label">Total Records</span></div>
+                <div class="stat-card"><span class="stat-value">@summary.OpenActionsCount</span><span class="stat-label">Open / In Progress</span></div>
+                <div class="stat-card stat-card--danger"><span class="stat-value">@summary.OverdueActionsCount</span><span class="stat-label">Overdue Actions</span></div>
+            </div>
+
+            <div class="report-columns">
+                <div class="report-panel">
+                    <h3>By Category</h3>
+                    @if (!summary.ByCategory.Any())
+                    {
+                        <p class="form-hint">No records in this range.</p>
+                    }
+                    else
+                    {
+                        <div class="bar-list">
+                            @foreach (var c in summary.ByCategory)
+                            {
+                                <div class="bar-row">
+                                    <span class="bar-label">@c.CategoryName <em>(@c.CaseType)</em></span>
+                                    <div class="bar-track"><div class="bar-fill" style="width: @(BarWidth(c.Count, summary.ByCategory.Max(x => x.Count)))%"></div></div>
+                                    <span class="bar-count">@c.Count</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="report-panel">
+                    <h3>By Staff (Consistency Check)</h3>
+                    <p class="form-hint">Who's logging what, and how often — a school's own process-consistency check, not an evaluation of any one student group.</p>
+                    @if (!summary.ByStaff.Any())
+                    {
+                        <p class="form-hint">No records in this range.</p>
+                    }
+                    else
+                    {
+                        <div class="bar-list">
+                            @foreach (var s in summary.ByStaff)
+                            {
+                                <div class="bar-row">
+                                    <span class="bar-label">@s.StaffName</span>
+                                    <div class="bar-track"><div class="bar-fill bar-fill--teal" style="width: @(BarWidth(s.Count, summary.ByStaff.Max(x => x.Count)))%"></div></div>
+                                    <span class="bar-count">@s.Count</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="filter-bar filter-bar--wrap">
+            <input class="search-input" value="@searchKeyword" @oninput="@(e => searchKeyword = e.Value?.ToString() ?? "")" placeholder="Search description or action taken..." />
+            <QDatePicker @bind-Value="@searchFrom" Label="From" />
+            <QDatePicker @bind-Value="@searchTo" Label="To" />
+            <QSelect TValue="WelfareCaseType?" TItem="(string Label, WelfareCaseType? Value)" Value="@searchCaseType" Items="@caseTypeFilterOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Case Type" ValueChanged="@(v => searchCaseType = v)" />
+            <QSelect TValue="WelfareStatus?" TItem="(string Label, WelfareStatus? Value)" Value="@searchStatus" Items="@statusFilterOptions"
+                     TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Status" ValueChanged="@(v => searchStatus = v)" />
+            <QButton Text="Search" Icon="search" Variant="primary" OnClick="@LoadSearch" />
+            <QButton Text="@($"Export CSV ({searchResults.Count})")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@(!searchResults.Any())" />
+        </div>
+
+        @if (isLoadingSearch)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /><span>Searching...</span></div>
+        }
+        else if (!searchResults.Any())
+        {
+            <div class="empty-state">
+                <QIcon Name="search" Size="xl" />
+                <h3>No matching records</h3>
+                <p>Try widening the date range or clearing a filter.</p>
+            </div>
+        }
+        else
+        {
+            <div class="results-table">
+                <div class="results-row results-header">
+                    <span>Student</span><span>Category</span><span>Tier</span><span>Status</span><span>Occurred</span><span>Reported By</span><span></span>
+                </div>
+                @foreach (var r in searchResults)
+                {
+                    <div class="results-row">
+                        <span class="results-student">@r.StudentName</span>
+                        <span>@r.CategoryName</span>
+                        <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
+                        <span class="status-chip status-chip--@r.Status.ToString().ToLowerInvariant()">@r.Status</span>
+                        <span>@r.OccurredAt.ToLocalTime().ToString("MMM d, yyyy")</span>
+                        <span>@r.ReportedByName</span>
+                        <span class="results-actions">
+                            <QButton Icon="eye-fill" Size="sm" Variant="ghost" Title="View timeline" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{r.StudentId}/welfare"))" />
+                            <QButton Icon="printer-fill" Size="sm" Variant="ghost" Title="Print incident pack" OnClick="@(() => PrintRecord(r))" />
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .admin-page { padding: 0; }
+    .page-header { margin-bottom: 16px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    .tab-strip { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); margin-bottom: 20px; }
+    .tab-btn { padding: 10px 18px; border: none; background: none; color: var(--qm-text-muted); font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }
+    .tab-btn.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); }
+
+    .filter-bar { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-bar--wrap { align-items: center; }
+    .search-input { flex: 1; min-width: 220px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); align-self: stretch; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .empty-state .rzi { font-size: 64px; margin-bottom: 16px; color: var(--qm-primary); }
+    .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
+    .empty-state p { margin: 0; }
+
+    .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .stat-card { display: flex; flex-direction: column; gap: 4px; padding: 18px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); }
+    .stat-value { font-size: 28px; font-weight: 700; color: var(--qm-text-primary); }
+    .stat-label { font-size: 12px; color: var(--qm-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+    .stat-card--danger .stat-value { color: var(--qm-danger, #dc2626); }
+
+    .report-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+    .report-panel { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 18px; }
+    .report-panel h3 { margin: 0 0 12px; font-size: 15px; color: var(--qm-text-primary); }
+    .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 10px; }
+
+    .bar-list { display: flex; flex-direction: column; gap: 10px; }
+    .bar-row { display: grid; grid-template-columns: 1fr 2fr auto; align-items: center; gap: 10px; }
+    .bar-label { font-size: 13px; color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-label em { color: var(--qm-text-muted); font-style: normal; }
+    .bar-track { height: 8px; background: var(--qm-bg-secondary); border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--qm-primary); border-radius: 999px; }
+    .bar-fill--teal { background: var(--qm-welfare-concern, #2f5a54); }
+    .bar-count { font-size: 13px; font-weight: 700; color: var(--qm-text-primary); text-align: right; }
+
+    .results-table { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; }
+    .results-row { display: grid; grid-template-columns: 1.3fr 1.3fr 0.8fr 1fr 1fr 1.2fr auto; gap: 10px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .results-row:last-child { border-bottom: none; }
+    .results-header { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
+    .results-student { font-weight: 600; color: var(--qm-text-primary); }
+    .results-actions { display: flex; gap: 4px; justify-self: end; }
+
+    .tier-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
+    .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
+    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+
+    .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
+    .status-chip--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
+    .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .status-chip--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-chip--resolved { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+
+    @@media (max-width: 900px) {
+        .results-row { grid-template-columns: 1fr 1fr; }
+        .results-header { display: none; }
+    }
+</style>
+
+@code {
+    private Guid branchId;
+    private string activeTab = "dashboard";
+
+    // ---------------- Dashboard ----------------
+    private bool isLoadingSummary;
+    private DateTime? dashboardFrom;
+    private DateTime? dashboardTo;
+    private WelfareSummaryDto? summary;
+
+    // ---------------- Search ----------------
+    private bool isLoadingSearch;
+    private string searchKeyword = "";
+    private DateTime? searchFrom;
+    private DateTime? searchTo;
+    private WelfareCaseType? searchCaseType;
+    private WelfareStatus? searchStatus;
+    private List<WelfareRecordDto> searchResults = new();
+
+    private readonly List<(string Label, WelfareCaseType? Value)> caseTypeFilterOptions = new()
+    {
+        ("All Case Types", null),
+        ("Achievement", WelfareCaseType.Achievement),
+        ("Behavior", WelfareCaseType.Behavior),
+        ("Welfare", WelfareCaseType.Welfare)
+    };
+
+    private readonly List<(string Label, WelfareStatus? Value)> statusFilterOptions = new()
+    {
+        ("All Statuses", null),
+        ("Open", WelfareStatus.Open),
+        ("Under Review", WelfareStatus.UnderReview),
+        ("Action Taken", WelfareStatus.ActionTaken),
+        ("Resolved", WelfareStatus.Resolved)
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView))
+            {
+                Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            await BranchState.InitializeAsync();
+            branchId = BranchState.CurrentBranchId;
+
+            await LoadSummary();
+            StateHasChanged();
+        }
+    }
+
+    private void SwitchTab(string tab)
+    {
+        activeTab = tab;
+        if (tab == "search" && !searchResults.Any() && !isLoadingSearch)
+            _ = LoadSearch();
+    }
+
+    private async Task LoadSummary()
+    {
+        isLoadingSummary = true;
+        try
+        {
+            var url = $"api/v1/branches/{branchId}/welfare/summary";
+            var query = new List<string>();
+            if (dashboardFrom.HasValue) query.Add($"dateFrom={dashboardFrom:yyyy-MM-dd}");
+            if (dashboardTo.HasValue) query.Add($"dateTo={dashboardTo:yyyy-MM-dd}");
+            if (query.Any()) url += "?" + string.Join("&", query);
+
+            var response = await Http.GetAsync(url);
+            if (response.IsSuccessStatusCode)
+                summary = await response.Content.ReadFromJsonAsync<WelfareSummaryDto>(JsonOptions);
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load dashboard: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingSummary = false;
+        }
+    }
+
+    private static int BarWidth(int count, int max) => max <= 0 ? 0 : Math.Max(4, (int)(count * 100.0 / max));
+
+    private async Task LoadSearch()
+    {
+        isLoadingSearch = true;
+        try
+        {
+            var query = new List<string>();
+            if (!string.IsNullOrWhiteSpace(searchKeyword)) query.Add($"keyword={Uri.EscapeDataString(searchKeyword)}");
+            if (searchFrom.HasValue) query.Add($"dateFrom={searchFrom:yyyy-MM-dd}");
+            if (searchTo.HasValue) query.Add($"dateTo={searchTo:yyyy-MM-dd}");
+            if (searchCaseType.HasValue) query.Add($"caseType={searchCaseType}");
+            if (searchStatus.HasValue) query.Add($"status={searchStatus}");
+
+            var url = $"api/v1/branches/{branchId}/welfare-records";
+            if (query.Any()) url += "?" + string.Join("&", query);
+
+            var response = await Http.GetAsync(url);
+            if (response.IsSuccessStatusCode)
+                searchResults = await response.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Search failed: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingSearch = false;
+            // Called fire-and-forget from SwitchTab (`_ = LoadSearch()`), so there's no awaited
+            // chain back to that event handler for Blazor to auto-render after it completes — same
+            // gotcha as StudentWelfareTimeline's notify-draft flow, fixed the same way.
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        var lines = new List<string> { "Student,Category,CaseType,Tier,Points,Status,OccurredAt,ReportedBy,ActionTaken,AssignedTo,DueDate,Description" };
+        foreach (var r in searchResults)
+        {
+            lines.Add(string.Join(",", new[]
+            {
+                CsvField(r.StudentName), CsvField(r.CategoryName), CsvField(r.CaseType.ToString()), CsvField(r.Tier.ToString()),
+                CsvField(r.Points?.ToString() ?? ""), CsvField(r.Status.ToString()), CsvField(r.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")),
+                CsvField(r.ReportedByName), CsvField(r.ActionTaken ?? ""), CsvField(r.AssignedToName ?? ""),
+                CsvField(r.ActionDueDate?.ToLocalTime().ToString("yyyy-MM-dd") ?? ""), CsvField(r.Description)
+            }));
+        }
+        var csv = string.Join("\n", lines);
+        var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+        await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"welfare-records-{DateTime.Now:yyyyMMdd-HHmm}.csv");
+    }
+
+    private static string CsvField(string value) => "\"" + (value ?? "").Replace("\"", "\"\"") + "\"";
+
+    private async Task PrintRecord(WelfareRecordDto r)
+    {
+        var notesHtml = r.Notes.Any()
+            ? string.Join("", r.Notes.Select(n => $"""
+                <div class="note">
+                    <strong>{System.Net.WebUtility.HtmlEncode(n.Kind == WelfareNoteKind.Statement ? (n.AttributedToName ?? n.AuthorName) : n.AuthorName)}</strong>
+                    <span class="meta">{(n.Kind == WelfareNoteKind.Statement ? "Statement · " : "")}{n.CreatedAt.ToLocalTime():MMM d, yyyy h:mm tt}</span>
+                    <p>{System.Net.WebUtility.HtmlEncode(n.Body)}</p>
+                </div>
+                """))
+            : "<p class=\"muted\">No notes or statements on file.</p>";
+
+        var attachmentsHtml = r.Attachments.Any()
+            ? "<ul>" + string.Join("", r.Attachments.Select(a => $"<li>{System.Net.WebUtility.HtmlEncode(a.FileName)}</li>")) + "</ul>"
+            : "<p class=\"muted\">No attachments.</p>";
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Welfare Record - {{System.Net.WebUtility.HtmlEncode(r.StudentName)}}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 24px; color: #222; }
+                    h1 { font-size: 18px; margin-bottom: 2px; }
+                    .meta-line { color: #666; font-size: 12px; margin-bottom: 16px; }
+                    .field { margin-bottom: 10px; }
+                    .field label { display: block; font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: .03em; }
+                    .note { border-left: 3px solid #8c2f52; padding: 6px 10px; margin-bottom: 8px; background: #faf9f7; }
+                    .note .meta { color: #888; font-size: 11px; margin-left: 8px; }
+                    .muted { color: #999; font-style: italic; }
+                    h2 { font-size: 14px; margin-top: 24px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+                </style>
+            </head>
+            <body>
+                <h1>{{System.Net.WebUtility.HtmlEncode(r.StudentName)}} — {{System.Net.WebUtility.HtmlEncode(r.CategoryName)}}</h1>
+                <div class="meta-line">{{r.CaseType}} · {{r.Tier}} tier · {{r.Status}} · Occurred {{r.OccurredAt.ToLocalTime():MMM d, yyyy h:mm tt}}</div>
+                <div class="field"><label>Description</label>{{System.Net.WebUtility.HtmlEncode(r.Description)}}</div>
+                {{(string.IsNullOrWhiteSpace(r.Location) ? "" : $"""<div class="field"><label>Location</label>{System.Net.WebUtility.HtmlEncode(r.Location)}</div>""")}}
+                <div class="field"><label>Reported By</label>{{System.Net.WebUtility.HtmlEncode(r.ReportedByName)}}</div>
+                {{(string.IsNullOrWhiteSpace(r.ActionTaken) ? "" : $"""<div class="field"><label>Action Taken</label>{System.Net.WebUtility.HtmlEncode(r.ActionTaken)}</div>""")}}
+                <h2>Notes &amp; Statements</h2>
+                {{notesHtml}}
+                <h2>Attachments</h2>
+                {{attachmentsHtml}}
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        await JS.InvokeAsync<object>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
+    }
+}

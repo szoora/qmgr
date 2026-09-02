@@ -6,6 +6,254 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-09-02 — supersedes all handovers below as the "read first" entry, though they're still accurate for what they cover)
+
+**This session built the entire Modular Subscription System from scratch** — the user's request to
+retire the single flat `Tier` and sell 4 independent, individually-priced functional modules
+instead (Core Queue Management / Engagement & Communications / Visitor & Safeguarding /
+Integrations & API Access). Full design plan, decisions, and rationale live in the "Modular
+Subscription System" plan this session produced (published as a Claude artifact; the local plan
+file was at `purring-gliding-stardust.md` under the user's Claude config, not in this repo). Key
+decisions the user made explicitly (all worth knowing before touching this area again): no card at
+registration (payment only at trial end), Core Queue Management is a true peer module — not
+mandatory, `TenantTier` is retired entirely in favor of modules, Mobile Money is the priority
+payment rail (not Stripe), and an unpurchased module is **fully invisible** in the tenant's own nav
+(no locked/upsell nav items) — the only discovery surface is a numeric badge on the Billing nav
+item, with Platform Admin bypassing all of this.
+
+**What's built and working (verified via a live Chrome E2E test registering an org and purchasing
+all 4 modules progressively, plus this session's follow-up hardening work):**
+- Schema: `OrganizationModule` join entity (`Domain/Entities/Billing/OrganizationModule.cs`),
+  `OrganizationModuleStatus` enum, `SubscriptionPlan` rows repurposed as the 4-module catalog
+  (`DbSeeder.SeedModulesAsync`), migration `AddOrganizationModules` applied to local dev DB.
+- `ModuleCodes` constants moved to `Q-Mgr.Shared` (canonical, both API/Web reference it) —
+  `core-queue` / `engagement-communications` / `visitor-safeguarding` / `integrations-api`.
+- `IModuleAccessService`/`ModuleAccessService` — the authoritative grant/revoke/activate service,
+  cached like `IFeatureFlagService` (5-min TTL). `[RequireModule]` attribute swept across ~15
+  controllers alongside the existing `[RequirePermission]`.
+- Registration wizard's module-picker step, self-service Modules marketplace
+  (`/billing/modules`), Platform Admin's "Manage Modules" grant/revoke UI on `Tenants.razor`.
+- Nav fully restructured in `MainLayout.razor`: Visitor & Safeguarding and Integrations & API each
+  consolidated into one gated group (previously scattered across 2-3 spots each); an
+  event-driven `IModuleStateService` keeps the Billing badge count live across navigation without
+  needing a full page reload (fixes a real stale-badge bug found live during E2E).
+- **Mobile Money module billing** (`ModulesController.PurchaseModule`) — real self-service
+  purchase flow, with a dev-mode simulation fallback when no gateway is configured locally.
+- **Trial-expiry job** — `BillingJobs.CheckExpiringModuleTrialsAsync`, daily Hangfire recurring
+  job, warns at 3 days via in-app notification + email, locks to `PastDue` + invalidates the
+  module cache at actual expiry.
+- **Tenant migration script** — `SuperAdminController.MigrateLegacyTenantsToModules`, dry-run
+  capable and idempotent, grandfathers existing paid-tier orgs onto all 4 modules at no new
+  charge. **Not yet run against the production DB — needs explicit review before that happens,**
+  per the plan's own migration section.
+- **Multi-item Stripe billing (finished this session, previously left mid-flight):**
+  `IStripeService`/`StripeService` gained `CreateMultiItemSubscriptionAsync`,
+  `AddSubscriptionItemAsync`, `RemoveSubscriptionItemAsync`, `CreateModuleCheckoutSessionAsync` —
+  one shared multi-item Stripe subscription per org (distinct from the legacy single-item tier
+  flow, which is untouched). `ModulesController.PurchaseModuleCard` (`POST
+  {moduleCode}/purchase-card`) is the new card-purchase endpoint: first Stripe-paid module
+  redirects to a Checkout Session (collects the card + creates the shared subscription together);
+  every module after that joins the same subscription directly via `AddSubscriptionItemAsync`
+  (Stripe bills the saved payment method automatically, no redirect). `BillingController.
+  StripeWebhook` now acts on `checkout.session.completed` for a module purchase — activates the
+  module and persists the Stripe IDs, instead of the previous no-op. `Modules.razor` got a
+  Mobile-Money/Card payment-method toggle in its purchase modal.
+  **Design note worth remembering**: `Organization.StripeCustomerId` (a pre-existing column,
+  shared with the legacy tier billing flow) is reused directly for the module system's customer
+  ID — `IModuleAccessService.GetStripeModuleBillingAsync`/`SetStripeModuleBillingAsync` only keep
+  the shared subscription ID in the `Organization.Settings` JSON blob (`ModuleBillingSettings`
+  record), since `Subscription.PlanId` is a required FK to a legacy tier plan and a pure
+  module-system org has no `Subscription` row at all to hang it on otherwise. This was a genuine
+  mid-session correction — the first draft duplicated the customer ID into the JSON blob before
+  the pre-existing column was found via grep; don't reintroduce that duplication.
+  **Not yet done and can't be finished in this environment**: no real Stripe test-mode keys are
+  configured locally, so the checkout-session / webhook / multi-item-add code paths are
+  code-reviewed-correct and compile clean but have **not been live-verified against a real Stripe
+  account**. Before relying on this in production: set real `StripePriceIdMonthly`/
+  `StripePriceIdAnnual` values on the 4 seeded module rows (currently `null` — card purchase
+  returns a clean `STRIPE_NOT_CONFIGURED` 400 until then, by design, not a bug) and run a real
+  Stripe test-mode checkout + webhook replay end to end.
+- **Standardisation**: the recurring DTO-duplication bug class (see this file's `CLAUDE.md`
+  companion) was swept again — `ModuleCatalogItem`/`OrganizationModuleStatusDto` now live solely
+  in `Q-Mgr.Shared`. `ApiErrorService` is now the single canonical Web-side error parser
+  (`ApiErrorMessage.cs` deleted, every `.ReadApiErrorMessageAsync()` call site repointed).
+
+**Known gaps / what the next session should treat as still open:**
+1. **Nothing from this session has been committed** — `git status` shows the full modular
+   subscription system (new files + edits across ~40 files) sitting uncommitted in the working
+   tree. Confirm with the user before committing/pushing; don't assume silence means go-ahead.
+2. Stripe test-mode live verification (above) — the one piece of "production readiness" that
+   fundamentally cannot be completed in this environment without real Stripe credentials.
+3. The tenant migration script needs an explicit human review + approval before ever running
+   against the production DB — this was a deliberate plan requirement, not an oversight.
+4. Dev servers were left stopped at the end of this session — restart both (API + Web) and
+   re-verify the full flow live (registration → module picker → trial → purchase → nav
+   gating → Platform Admin grant/revoke) before treating this as done, since the last live E2E
+   pass predates this session's Stripe/migration/nav-reorg/standardisation work.
+5. A full dedicated "production readiness" review pass (beyond the fixes folded in above) has not
+   been separately performed this session — worth a deliberate look at things like: rate limiting
+   on the new `/api/v1/modules/*` endpoints, whether the trial-expiry job's email templates were
+   proofread against real branding, and whether `ModulesController`/`BillingController`'s new
+   endpoints need any additional input validation beyond what's already there.
+
+---
+
+## 🧭 SESSION HANDOVER (written 2026-09-01, after Phase 68 — supersedes all handovers below as the "read first" entry, though they're still accurate for what they cover)
+
+**Phase 68 (latest)**: closed the two items the Welfare plan's own Phase 2/3 text had named but
+never actually scheduled into a build — found during a full plan-vs-implementation audit requested
+this session. (1) **Overdue-action reminders**: new `WelfareRecord.ReminderSentAt` nullable column
+(migration `AddWelfareReminderSentAt`) + `WelfareReminderJob` (Hangfire, hourly,
+`welfare-overdue-action-reminders`) sweeps every open/assigned/past-due record and pushes an in-app
+notification via the existing `INotificationService.CreateInAppNotificationAsync` — no new
+notification table, re-notifies at most once per 24h per record via the new column so an ignored
+assignment keeps nagging instead of going silent after one try. (2) **Per-student point totals**:
+zero backend change — `StudentWelfareTimeline.razor` already loads every visible record with its
+`Points`, so the achievement/behavior/net totals are a client-side computed property over the
+existing list (drafts excluded). Both verified live: Hangfire dashboard confirms the recurring job
+registered with the right cron/method; the browser shows "+25 achievement / -5 behavior / Net +20"
+correctly excluding an in-progress draft record. Did NOT force-trigger the job against production
+data — Hangfire's "Trigger now" fires a native `confirm()` dialog this session's browser tooling
+can't safely dismiss, and the registration + code review were sufficient given no record in the
+dev DB is currently actually overdue.
+
+**Read this one first, it's app-wide, not Welfare-specific**: Phase 67 found and fixed a real bug
+in the shared `QSelect.razor` component (used everywhere in this app) — any dropdown that needs
+to open *upward* (near the bottom of a modal, a short viewport, or a real mobile screen) rendered
+as an invisible 1-2px sliver instead of showing its options, because the inline positioning style
+never reset the stylesheet's default `top` value, so `top` and `bottom` fought each other and
+collapsed the element's height. One-line fix in `ToggleDropdown`; regression-checked on two
+unrelated pages. Also: `resize_window` does not work in this session's browser-automation
+tooling — confirmed via `window.innerWidth` staying unchanged after a "successful" resize, on
+both an existing and a freshly-created tab. Use a same-origin `<iframe>` for real mobile-width CSS
+testing instead (it has a genuinely independent `contentWindow.innerWidth`), but be aware that
+technique runs a *second* Blazor Server circuit and can produce misleading results for anything
+that depends on JS-computed values like `window.innerHeight` — cross-check with the
+`Object.defineProperty(window, 'innerHeight', ...)` override technique (single real circuit, no
+iframe) before trusting an iframe-only finding, exactly as this phase did.
+
+Same day, later session on top of Phase 61 (mobile nav/theme/branch-dropdown/API-docs/Support
+fixes), Phase 62/63 (account-page redesign, Forgot/Reset Password, an `InputText` binding bug), and
+Phase 64 (production build, a global CSS leak fix, two production-only API-docs bugs). This
+session's own new work is the **Student Welfare Ledger** — a brand-new feature (achievements,
+behavior incidents, welfare/safeguarding concerns logged against a roster student, with guardian
+notification) researched, planned, its MVP built (Phase 65), then extended the same session with
+case workflow, action assignment, drafts, multi-student incidents, statements, and a
+dashboard/search/export reporting surface (Phase 66) — all live-verified in an actual browser, not
+just curl, which caught real bugs at every stage curl testing structurally could not have (CSS
+containing-block issues, a wrong-origin upload URL, and — twice — a missing re-render after a
+fire-and-forget async call, the second time caught by proactively grepping for the same pattern
+rather than waiting to trip over it again). Full detail in **Phase 66** below (which itself
+extends Phase 65 — read both). **Also decided mid-session and now a standing project
+convention**: prefer widening an existing table/field over adding a new one — see `CLAUDE.md`'s
+matching section before proposing new schema for anything.
+
+### Things the next session needs to know immediately
+- **`wwwroot/css/auth-pages.css` must stay fully scoped under `.login-container`.** It's loaded
+  globally (`App.razor`), and several of its class names (`.form-group`, `.user-avatar`,
+  `.footer-links`, ...) collide with existing dashboard-wide rules in `layout.css`/`app.css`. It
+  previously had zero scoping and silently broke the real dashboard header avatar size and the
+  admin forms' label styling app-wide — caught from a user screenshot, not by any of this
+  session's own automated testing. If you add anything to this file, prefix every selector with
+  `.login-container ` — don't add a bare class name "for convenience."
+- **The API docs route (`/api/docs`, `/openapi/*`) now requires login in every environment**
+  (moved out of the `IsDevelopment()`-only block, `.RequireAuthorization()` added to both). A
+  plain browser navigation carries no JWT, so the query-string `?access_token=` mechanism already
+  used for SignalR hub negotiation (`ServiceExtensions.cs`) was extended to cover these two routes
+  too. **Always link to the trailing-slash form** (`/api/docs/`, not `/api/docs`) — Scalar
+  redirects the no-slash form to add the trailing slash, and that redirect drops the query string
+  entirely, silently de-authenticating the follow-up request.
+- **New distinct config value `ApiPublicUrl`**, separate from `ApiBaseUrl` — `ApiBaseUrl` is (in
+  production) an internal-loopback address (`http://127.0.0.1:$ApiPort`) meant only for Web's own
+  server-side HTTP calls to the API; a browser can never reach it. `ApiPublicUrl` is the real
+  public hostname, used only for building human-facing links (the API Documentation link).
+  Confirmed live via curl end-to-end (401 with no token, 200 with one, trailing-slash avoids the
+  redirect, the embedded OpenAPI-fetch URL also carries the token) — **not yet re-verified in an
+  actual browser**, the Chrome extension was disconnected (the user's own screen recorder had it)
+  for the rest of this session.
+- **nginx needs a new `/openapi/` location block** (added to `build-linux.ps1`'s generated
+  config) — Scalar's OpenAPI JSON is served at a separate top-level path from `/api/docs`, not
+  nested under `/api/`, so without this it would have silently 404'd against Web in production.
+- A production build was run this session: `scripts/deploy/dist/qmgr-0.1.0-20260901.1118.tar.gz`
+  (ports 8586/8587, commit `6ca9060`) — **predates the CSS-leak and API-docs-auth fixes in Phase
+  64**, so don't ship that specific tarball; rebuild first.
+
+### Things the next session needs to know immediately
+- **New `PublicLayout.razor`** now serves every branch-agnostic public page (Login, Register,
+  Forgot/Reset Password, Support, Terms, Privacy, VerifyEmail, Docs, DocsArticle, Unsubscribe).
+  `KioskLayout` is now reserved for genuinely branch-branded customer-facing screens only
+  (KioskMode, FeedbackEntry, FeedbackPage, CustomerDisplay). Don't put a new public/account page
+  on `KioskLayout` — it does a real per-branch branding HTTP fetch on every load that these pages
+  don't need and that was the actual root cause of the reported "login page flashes" symptom.
+- **New shared `wwwroot/css/auth-pages.css`** is the single source of truth for the "auth card"
+  look (Login/Register/Forgot/Reset all use its `.login-container`/`.login-card`/`.form-group`
+  etc. classes) — don't reintroduce a page-local copy of these rules, extend the shared file
+  instead, the way Register's own `<style>` block only holds its step-indicator/summary-row
+  extras.
+- **Real self-service password reset now exists** (`POST /api/v1/auth/forgot-password` +
+  `/reset-password`, `ForgotPassword.razor`/`ResetPassword.razor`) — new `User.PasswordResetToken`
+  /`PasswordResetTokenExpiry` columns, migration `AddUserPasswordResetToken`. No real SMTP in this
+  dev environment, so the email itself was never actually seen — verified via server logs
+  ("Password reset requested for ...") and the negative/error paths via curl and the real UI
+  instead.
+- **Found and fixed a genuine Blazor gotcha while testing the new Reset Password page live**:
+  never combine `@bind-Value` with an explicit `@oninput` on an `InputText` component — the
+  component's own internal binding already owns that DOM event, so the extra handler collides
+  with it and the bound C# value silently stops following what the user types (validation kept
+  firing against a stale value even though the field visibly showed the right text). Use
+  `@bind-Value:after="SomeParameterlessMethod"` instead. `Register.razor`'s equivalent password
+  field is fine — it's a plain `<input @bind="..." @oninput="...">`, not an `InputText`, and plain
+  elements don't have this conflict. Worth grepping for this exact `InputText` + `@oninput`
+  combination if it's ever copy-pasted elsewhere.
+- **Register's subdomain/slug picker was removed from the UI** (kept only on the backend, which
+  already auto-generates a unique one from the org name — `RegisterOrganizationCommandHandler`
+  already supported `Slug` being omitted, the picker just never used that path). This was a
+  deliberate, explicit user decision after discussing that the live deployment
+  (`qmgr.cashbook.ug`) uses single-host path-based routing, not real per-tenant subdomains — the
+  field never did anything for an actual customer day-to-day.
+
+Picked up the pending items from the previous session's handoff (branch dropdown bug, Dashboard onboarding-wizard bug) plus a fresh batch of user-reported issues: mobile nav, default theme, and bespoke docs content. Full detail in **Phase 61** below. Two things found opportunistically while fixing the reported items turned out to be more serious than the original report:
+
+- **`RolesController` had a real, previously-unknown cross-tenant IDOR** — `GetRoles` had zero organization filter at all (any tenant Admin saw every other tenant's custom roles), and `GetRole`/`UpdateRole`/`UpdateRolePermissions`/`ToggleRole`/`DeleteRole` had no ownership check either (any tenant Admin could read or mutate another tenant's custom role by GUID). Same bug shape as the Phase 10/11/13d/17 IDORs from earlier sessions. Fixed.
+- **The current dev DB is a fresh one seeded 2026-08-31** — the `teststaff@getsacc.com` account referenced in the previous handover does not exist here; used the real seeded `agent1@qmgr.demo` / `agent123` Staff account for verification instead. Don't assume accounts/data named in older tracker entries still exist without checking first.
+
+## 🧭 SESSION HANDOVER (written 2026-08-31, after Phase 24 — supersedes the 2026-08-26 handover below as the "read first" entry, though that entry is still accurate for what it covers)
+
+**This was a different kind of session** — not the usual bug-sweep-in-Blazor pattern the rest of this
+tracker follows. Two real chunks of work, full detail in **Phase 23** (production deployment
+infrastructure) and **Phase 24** (new Docs/Getting-Started CMS feature) below. Read those before
+touching either area again — several of the bugs found were genuinely non-obvious (a stale file
+from a *different* product silently running instead of Q-Mgr's own install script; a config-
+preservation mechanism that was correct for one file and silently wrong for its sibling).
+
+### Things the next session needs to know immediately
+
+- **Q-Mgr now has a real production deployment pipeline** at `scripts/deploy/` (`Common.ps1`,
+  `build-linux.ps1`, generated `install.sh`, `README.md`) — this didn't exist before this session.
+  It deploys to a real server: `74.208.201.32` (`qmgr.cashbook.ug`), SSH port `2285`, a **heavily
+  shared VPS** also running ERP, CashBook, evolweb, evol-api, evol-ui, docmgr, `must`, maryhill,
+  and MSSQL. **Always run `ss -tlnp` on the actual server before picking ports for a new build** —
+  this box's other apps claim ports independently of Q-Mgr and it has bitten this exact session
+  twice already. Current confirmed-working ports: **API 8586, Web 8587**.
+- **Production login works and is confirmed live**: `support@getsacc.com` / `admin` (SuperAdmin),
+  verified end-to-end in a real browser against `https://qmgr.cashbook.ug` — real dashboard, real
+  data, no console errors. Getting here took fixing several real, non-obvious deploy-time bugs;
+  see Phase 23 before assuming any of those mechanisms (config preservation, `AllowedHosts`, the
+  weak-password guard) still work the way they used to.
+- **The Docs CMS (Phase 24) is verified working locally, but production deployment of that
+  specific build was NOT confirmed complete when this session ended.** The package
+  (`qmgr-0.1.0-20260831.2218.tar.gz`) was built and handed off with deploy instructions; check
+  whether `install.sh` was actually run against it on the server before assuming `/docs` and
+  `/admin/docs` are live in production.
+- **Local dev servers may still be running** from this session (API on `:5001`/`:5000`, Web on
+  `:5002`, both `ASPNETCORE_ENVIRONMENT=Development`) — check `Get-CimInstance Win32_Process
+  -Filter "Name='dotnet.exe'"` before assuming a clean slate or starting new ones on the same ports.
+- **A real onboarding guide now exists**: `docs/onboarding/Q-Mgr-Electronics-Shop-Getting-Started.pdf`
+  (also seeded as the first live Docs CMS article, Retail/`ElectronicsShop` industry). Useful
+  reference content if more industry guides get written.
+- **version.json is still at `0.1.0`** — this session did several real production builds but never
+  bumped it; consider whether it should move before the next deploy.
+
 ## 🧭 SESSION HANDOVER (written 2026-08-26, after Phase 58 — supersedes the Phase 57 handover below as the "read first" entry, though that entry is still accurate for what it covers)
 
 **Gap note, same pattern as the Phase 57 entry below**: 13 commits (`9e1860d`..`2c563f3` in `git log`)
@@ -146,6 +394,706 @@ Built incrementally across several user requests in the same session:
 - The lookup QR codes on both the guardian pass and the student card are plain informational
   strings (`ROSTER:{guardianId}:{studentId}` / `STUDENT:{studentId}`), not wired to any scan
   endpoint — explicitly out of scope so far and labeled as such on the printed cards themselves.
+
+---
+
+## Phase 61 — Cleared the Phase 58 follow-up list, mobile nav/theme fixes, bespoke docs content, and a real IDOR found opportunistically
+
+- [x] **Mobile sidebar now closes itself after navigation.** `MainLayout.razor`'s sidebar
+  overlay (mobile CSS shows it full-screen below 993px) previously only opened/closed via the
+  hamburger button — tapping any actual nav link left it covering the page it had just
+  navigated to. Added `CollapseSidebarOnMobile()` (checks `window.innerWidth <= 992` via a new
+  `wwwroot/js/layout.js` helper) wired to every real navigational `<a>` in the sidebar (~45
+  links). Also starts collapsed on first load on a phone/tablet viewport instead of defaulting
+  open and covering the page — same root cause, `sidebarExpanded` defaulted to `true`
+  unconditionally with no viewport check at all.
+- [x] **Default theme changed from dark to light**, per explicit request — `MainLayout.razor`'s
+  `currentTheme` field default (`"dark"` → `"light"`) plus the matching `<meta name="theme-color">`
+  in `App.razor`. Only changes the *default* for a session with no saved preference; the
+  dark/light toggle and `qm-theme.css`'s `[data-theme="light"]` overrides already existed and
+  are unchanged. Per this file's "Known theme gaps" section, light-mode CSS coverage across the
+  app was already flagged as inconsistent in places — flipping the default makes any remaining
+  gaps more visible day-to-day; a full page-by-page light-mode audit was not done this session.
+- [x] **Fixed the Phase 58 follow-up: "Add User" Branch dropdown empty for a SuperAdmin
+  session.** Root cause confirmed, not assumed: SuperAdmin's own tenant context is the Platform
+  org, which structurally has zero branches, and `BranchesController.GetBranches` always
+  filtered by the caller's own tenant context with no override — unlike `UsersController.CreateUser`,
+  which already accepted an explicit `OrganizationId` for SuperAdmin. Added a matching
+  `organizationId` query-param override to `GetBranches`, honored only when the caller is
+  SuperAdmin (verified live: a non-SuperAdmin's attempt to override is silently ignored, still
+  scoped to their own org). `UsersSetup.razor`'s Add User dialog now shows an Organization
+  picker for SuperAdmin only (populated from the existing `GET api/v1/admin/tenants`), reloads
+  the Branch dropdown for the chosen org, and sends `OrganizationId` on create. Branch select is
+  disabled with a "Select an organization first" placeholder until one is picked, instead of
+  silently looking broken. Edit-mode (reassigning an existing user's branch) was left as-is —
+  out of scope, since the reported gap was specifically about creating a new user.
+- [x] **Fixed the Phase 58 follow-up: Dashboard's "create your first branch" wizard misreading a
+  403 as "zero branches."** Confirmed live via curl with the real seeded Staff account
+  (`agent1@qmgr.demo`, no `branches.view`): `GET /api/v1/branches` → `403`, and
+  `MainLayout.razor`'s `LoadBranches()` silently did nothing on any non-success response,
+  leaving `availableBranches` empty and telling `BranchStateService` there were zero branches —
+  which `Dashboard.razor` reads as "org has no branches at all." Fixed by falling back to
+  `GET api/v1/profile` (self-scoped, needs no special permission, already returns
+  `AssignedBranchId`/`AssignedBranchName`) specifically on a `403`, and treating that as the
+  user's one available branch. Verified live via curl end-to-end with the real Staff account.
+- [x] **Found and fixed a real, previously-unknown cross-tenant IDOR in `RolesController`**
+  while touching the adjacent Role dropdown code above — not part of the original ask, but the
+  same bug shape this codebase has repeatedly found and fixed (Phase 10/11/13d/17). `GetRoles`
+  had **zero** organization filter — any tenant Admin viewing Users & Roles, or just opening the
+  Add User role dropdown, saw every other tenant's custom-created roles (name, permission/user
+  counts) mixed into the list. Worse: `GetRole`, `UpdateRole`, `UpdateRolePermissions`,
+  `ToggleRole`, and `DeleteRole` all fetched by `roleId` alone with **no ownership check at
+  all** — any tenant Admin with `roles.edit` could read or mutate another tenant's custom role
+  (including its full permission grant) just by knowing/guessing its GUID, which the also-broken
+  list endpoint would have handed them anyway. Fixed with the same pattern as
+  `BranchesController`/`TokensController`: `GetRoles` now filters to system roles
+  (`OrganizationId == null`) plus the caller's own org, unless SuperAdmin; the 5 mutating/detail
+  endpoints now 404 (not 403, so existence isn't leaked) on a role outside the caller's org via a
+  new shared `RoleOutOfScope()` helper. Verified live via curl as a real Tenant Admin
+  (`admin@qmgr.demo`): role list now shows only the 5 system roles, all correctly tagged
+  `isSystem: true`.
+- [x] **Docs CMS "Getting Started: Electronics & Retail Shops" article rewritten** — the existing
+  seeded body was a single flat paragraph with no structure, no icons, and no product branding.
+  Replaced with a step-by-step guide using the exact same Bootstrap Icons this app's own sidebar
+  nav uses for each referenced feature (`bi-person-plus-fill` for Users, `bi-building` for
+  Branches, `bi-tags-fill` for Service Types, `bi-door-open-fill` for Counters, `bi-hand-index-thumb-fill`/
+  `bi-display-fill`/`bi-tv-fill` for the Kiosk/Counter Terminal/Customer Display trio,
+  `bi-megaphone-fill` for Digital Signage, `bi-braces` for API Clients) rather than generic
+  decorative icons or emoji, written in a direct second-person tone for a real shop owner, and
+  explicitly attributed to and closing with a real support contact for SACC Software Limited
+  (`/support`, `support@getsacc.com`) — matching the `© SACC Software Limited` footer already on
+  `DocsArticle.razor`. Updated live via `PUT /api/v1/docs/{id}` against the running dev API, not
+  just edited as a local file (the content lives in the DB, there's no seed script for it).
+  Verified via a fresh `GET /api/v1/docs/{slug}` read after the update.
+- [x] **Kept `teststaff@getsacc.com` per explicit instruction** (more RBAC testing may still use
+  it) — but it doesn't exist in this session's dev DB, which was reseeded fresh on 2026-08-31; see
+  the handover note above. Did not recreate it since the equivalent, already-real
+  `agent1@qmgr.demo` Staff account covered every test needed this session.
+- [!] **Live browser verification for the mobile-nav and theme-default changes could not be
+  completed this session** — the Chrome extension reported disconnected for the whole session
+  despite the user confirming it was connected on their end (same intermittent issue noted in
+  several earlier sessions' Phase 5/13/16 entries). Verified instead via `dotnet build` (0
+  errors) for the Razor/JS changes and direct `curl` against the running dev servers for every
+  backend-observable behavior (branch org-override, Staff 403 fallback, Roles org-scoping, Docs
+  content). The mobile-nav-collapse and default-light-theme changes specifically have **not**
+  been visually confirmed in an actual browser — worth a live spot-check next session, or by the
+  user directly, before considering them fully closed.
+- [x] **Follow-up same day, live in Chrome: mobile-nav-collapse and default-light-theme from this
+  phase were spot-checked and confirmed working** — see Phase 63 below (the Chrome extension
+  reconnected later in the day).
+
+## Phase 62 — Account-page family: diagnosed the login "refresh" flash, unified Login/Register, built self-service password reset, fixed API docs and Support duplication
+
+- [x] **Root-caused the reported "login page seems to refresh multiple times" symptom, live, not
+  guessed.** `KioskLayout` (shared by Login, Register, Support, Terms, Privacy, VerifyEmail, Docs,
+  DocsArticle) does a real async server-side HTTP fetch of a *hardcoded demo branch's* whitelabel
+  branding on every single page load, then flips `data-theme` and injects `--qm-primary`/etc.
+  color overrides via inline `style` **after** the first paint — a genuine post-render re-render
+  on every load. Confirmed live via `GET /api/v1/branches/{demoBranchId}/branding` →
+  `displayTheme: "dark"`, which happens to match `KioskLayout`'s own pre-fetch default (`"dark"`)
+  in this specific dev DB — which is exactly why no visible flash was ever caught in earlier
+  screenshots: the bug is real, just coincidentally invisible here. None of those 8 pages
+  actually need per-branch branding — that's meant only for genuinely branch-branded
+  customer-facing screens (Kiosk, Customer Display, Feedback entry/page).
+- [x] **Fixed at the root**: new `Components/Layout/PublicLayout.razor` — no async branding
+  fetch, static `data-theme="light"`, nothing more. Migrated all 9 branch-agnostic pages
+  (`Login`/`Register`/`Support`/`Terms`/`Privacy`/`VerifyEmail`/`Docs`/`DocsArticle`/`Unsubscribe`)
+  onto it. `KioskLayout` itself is untouched and still used correctly by `KioskMode`,
+  `FeedbackEntry`, `FeedbackPage` — the pages that legitimately need per-branch branding.
+- [x] **Also disabled prerendering** (`@rendermode @(new InteractiveServerRenderMode(prerender:
+  false))`) on `Login`/`Register`/`ForgotPassword`/`ResetPassword` specifically — these do an
+  auth-state check (Login redirects an already-authenticated visitor with `forceLoad: true`) that
+  can otherwise paint the wrong content once during the throwaway static-prerender pass before
+  the real interactive circuit corrects it, a second, independent source of "flash on load"
+  distinct from the KioskLayout branding fetch above.
+- [x] **Register.razor rebuilt to match Login's design exactly** (the user's specific complaint:
+  "unnecessary left panel, totally different from login") — replaced the two-panel dark-gradient
+  marketing layout with the same single centered `.login-card` shell Login uses, keeping the
+  existing 3-step wizard content (org details / admin account / confirm) and all of its working
+  logic (slug-generation-turned-removal, see below; password-strength meter; live email/org
+  validation) untouched functionally, only re-skinned.
+- [x] **New shared `wwwroot/css/auth-pages.css`** extracted from Login's previously-inline
+  ~450-line `<style>` block — `.login-container`/`.login-card`/`.form-group`/`.btn-login`/alert/
+  spinner/footer rules now live in one file referenced from `App.razor`, used identically by
+  Login, Register, and the two new password-reset pages below. Renamed the page-local `.alert`/
+  `.spinner-border` classes to `.auth-alert`/`.auth-spinner` since this CSS is now loaded
+  globally (not scoped to one page's `<style>`) and those generic names collide with Bootstrap's
+  own classes used everywhere else in the app. Also extracted the password-strength-meter CSS
+  (`.password-strength`/`.strength-bar`/`.strength-fill`) into the shared file and the
+  score-calculation logic into a new `Services/PasswordStrengthHelper.cs` static helper, since
+  both Register and the new ResetPassword page need the identical meter.
+- [x] **Built the real self-service "Forgot password" feature** (explicit user choice over
+  hiding the dead link) — Login and Support both already linked to a `/forgot-password` page that
+  didn't exist anywhere in the codebase; there was no backend support at all.
+  - New `User.PasswordResetToken`/`PasswordResetTokenExpiry` columns (migration
+    `AddUserPasswordResetToken`), same raw-random-value convention as the existing `RefreshToken`
+    field (`RandomNumberGenerator`-based, not hashed) rather than inventing a new scheme.
+  - `POST /api/v1/auth/forgot-password` — always returns the same generic success message
+    whether or not the email matches a real account (same "don't leak which emails are
+    registered" convention as the existing `ResendVerificationCommandHandler`), 1-hour token
+    expiry, reuses the existing `IEmailSender`/`IPlatformSettingsService` (for the base URL)
+    exactly the way the registration-verification email already does.
+  - `POST /api/v1/auth/reset-password` — validates token match + expiry (generic "invalid or
+    expired" message either way, doesn't distinguish "no such account" from "wrong/expired
+    token"), runs the new password through the existing `IPasswordValidationService`, and — since
+    a password reset should force re-login everywhere — also clears the user's existing
+    `RefreshToken`/`RefreshTokenExpiry` and any lockout state.
+  - New `ForgotPassword.razor` (`/forgot-password`) and `ResetPassword.razor` (`/reset-password`,
+    reads `email`+`token` from the query string) pages, both in the shared auth-card style.
+  - Naming note: had to rename the new self-service request DTO to `SelfServiceResetPasswordRequest`
+    — `UsersController.cs` already had its own, differently-shaped `ResetPasswordRequest` for the
+    existing *admin-initiated* reset-password endpoint; a plain namespace collision, caught by the
+    compiler immediately.
+- [x] **Found and fixed a real Blazor data-binding bug live while testing the new Reset Password
+  page** — not a testing-tool artifact, root-caused properly: `ResetPassword.razor`'s
+  `<InputText @bind-Value="model.NewPassword" @oninput="OnPasswordChanged">` combined the
+  component's own two-way binding with an explicit `@oninput` handler on the exact same DOM
+  event `InputText` already owns internally for that binding. The two collided — the DOM visibly
+  showed whatever was typed, but the bound `model.NewPassword` C# field stopped following it, so
+  submitting correctly-matching, correctly-long passwords still failed both the "8 characters
+  minimum" and "passwords match" checks. Confirmed via the real UI (typed a valid 12-character
+  password in both fields, got both validation errors simultaneously) before fixing, and
+  confirmed clean after. Fixed with `@bind-Value:after="OnPasswordChanged"` (the officially
+  correct pattern for "also do something when a bound value changes" without touching the
+  binding's own event), and changed `OnPasswordChanged` from a `ChangeEventArgs`-typed handler to
+  a parameterless one that just reads `model.NewPassword` directly. `Register.razor`'s password
+  field is a plain `<input @bind="..." @oninput="...">`, not an `InputText` component, and plain
+  elements don't have this conflict (`@bind` defaults to `onchange`, `@oninput` is a genuinely
+  independent DOM event) — confirmed unaffected, left as-is.
+- [x] **Removed the Register subdomain/slug picker from the UI entirely**, per explicit user
+  decision after discussing that it never does anything for a real customer on the current
+  single-host deployment (`qmgr.cashbook.ug` uses path-based nginx routing, not per-tenant
+  wildcard subdomains — confirmed by re-reading Phase 23's own deployment notes rather than
+  assuming). The backend already fully supported omitting `Slug` entirely
+  (`TenantProvisioningService.ProvisionTenantAsync` auto-generates a guaranteed-unique one from
+  the organization name via the already-existing `GenerateUniqueSlugAsync`) — the UI picker had
+  simply never used that path. Removed the entire slug-availability-checking machinery from
+  `Register.razor` (debounce timer, `check-slug` polling, manual slug generation/edit-tracking)
+  along with the step-3 summary's now-nonexistent "URL:" row and the CSS for the now-gone
+  suffix/status indicators.
+- [x] **Fixed "the API documentation is non-existent."** Root cause: `Scalar` was mapped at its
+  own default `/scalar` prefix on the **API** (port 5001), while all 3 Web-app links pointed at a
+  bare relative `/api/docs` — wrong host (that path resolves against the Web app's own origin, a
+  different process/port entirely) *and* wrong path (nothing was ever mapped at `/api/docs` on
+  either server). Fixed by mapping Scalar explicitly at `app.MapScalarApiReference("/api/docs")`
+  and changing the 3 Web links (`MainLayout.razor` ×2, `Support.razor` ×1) to build an absolute
+  URL from the existing, already-injected `HttpClient.BaseAddress` (which Program.cs already
+  points at the real API origin) instead of a bare relative path. Verified live: the link now
+  opens a real, fully-rendered Scalar API reference in a new tab.
+- [x] **Fixed the Support page's "duplication of the contacts"** — 4 tiles (General/Billing/
+  Security/API) previously all pointed at the exact same `support@getsacc.com` address dressed up
+  as separate "departments," which read as bigger/less honest than the actual small team behind
+  it. Replaced with one real "Email us" block plus two short inline hints (mention your org for
+  billing, put "Security disclosure" in the subject line), and kept the API & Integrations tile
+  separate since it's a genuinely different destination once the link above was fixed.
+- [x] **Verified everything live in Chrome, end-to-end, once the extension reconnected mid-session**
+  — see Phase 63.
+
+## Phase 63 — Live Chrome verification of Phase 61 and Phase 62
+
+- [x] **Phase 61's mobile-nav-collapse and default-light-theme fixes**, left unverified visually
+  at the end of that phase (Chrome extension disconnected all session), confirmed working once
+  the extension reconnected: fresh `/login` load renders in light mode by default with no dark
+  flash, and a full login → dashboard walkthrough (`admin@qmgr.demo`) also rendered light by
+  default with the sidebar/header correctly styled.
+- [x] **Login**: fresh load renders once, no visible flash; full two-step identify→password→
+  dashboard flow completed successfully end-to-end in a real browser.
+- [x] **Register**: visually confirmed identical to Login (same card, header, logo, footer,
+  button styling); stepped through all 3 steps live (organization details with no subdomain
+  field, admin account with working password-strength meter showing "Strong", confirm/summary
+  step) — the wizard's own step-to-step navigation and field rendering all work correctly
+  post-redesign.
+- [x] **Support**: confirmed the single honest "Email us" block replaced the 4 duplicate tiles,
+  and the "View API documentation" link opens a real, fully-rendered Scalar reference at
+  `https://localhost:5001/api/docs/` in a new tab (not a 404).
+- [x] **Forgot/Reset password, full round trip**: submitted `/forgot-password` with a real seeded
+  email (`admin@qmgr.demo`) → correct generic success message shown, confirmed server-side via
+  the API log line "Password reset requested for admin@qmgr.demo" (no real SMTP in this dev
+  environment, so the actual email was never observed — the token-generation and logging side was
+  verified instead). Loaded `/reset-password` with no query params → correct "Invalid link"
+  state; with a (deliberately fake, to test the negative path without DB tooling to fetch a real
+  token) email+token → correct form, correct live password-strength meter once the `InputText`
+  binding bug above was fixed, and a real submitted request correctly came back "This reset link
+  is invalid or has expired" from the live API — confirming the full client→server→error-display
+  pipeline, not just the endpoint in isolation.
+- [x] **Not independently re-verified this pass**: the actual *successful* reset-password path
+  (a real, valid token exchanged for a working new password) — this machine has no `psql`/DB
+  client installed (a pre-existing, previously-documented gap) to fetch a genuine token out of the
+  `Users.PasswordResetToken` column directly, and there's no SMTP configured to receive the real
+  email. The code was reviewed carefully against the same patterns already proven live elsewhere
+  in `AuthController` (BCrypt hashing, the same token-comparison shape as `RefreshToken`), and
+  every other branch of the same endpoint (missing fields, mismatched confirmation, invalid/
+  expired token) was verified live — but the one happy-path branch is verified by code review only,
+  not by an actual observed successful reset. Worth a real end-to-end pass (with SMTP configured,
+  or DB access to read the token directly) before fully trusting this in production.
+
+## Phase 64 — Production build, then a real global CSS leak and two production-only API-docs bugs found from a user screenshot
+
+- [x] **Ran a real production build**: `scripts/deploy/dist/qmgr-0.1.0-20260901.1118.tar.gz`
+  (108 MB, ports 8586 API / 8587 Web, commit `6ca9060`, DB password left on the safe
+  `__SET_ON_SERVER__` placeholder — never handled the real production secret in this session).
+  This only produces the local package; nothing was deployed to `qmgr.cashbook.ug` (no SSH access
+  from this session). **Superseded by the fixes below — don't ship this specific tarball.**
+- [x] **Found and fixed a real global CSS leak from a user-provided screenshot** (the dashboard
+  header's own avatar circle rendering wrong) — the user asked "did you see that avatar when
+  testing?" and flagged "the project is having some css leaks... all design should be tenant
+  scoped token based." Root cause: Phase 62's new `wwwroot/css/auth-pages.css` is loaded globally
+  in `App.razor`, but its selectors were written unscoped (`.form-group`, `.user-avatar`,
+  `.footer-links`, `.form-row`, `.validation-message`, ...) — several of those exact class names
+  already exist with *different* rules in `layout.css`/`app.css` for the real dashboard header and
+  admin forms. Since `auth-pages.css` loads last in `<head>`, its rules won equal-specificity ties
+  app-wide: the dashboard header's `.user-avatar` (meant to be a small 34px circle, `layout.css`)
+  was silently overridden by the auth pages' own 80px big-avatar rule, and the dashboard's
+  `.form-group label` uppercase/muted styling was overridden by the auth pages' own label style,
+  on *every* admin page in the app, not just Login/Register. Verified the collision precisely via
+  grep (`layout.css:303 .user-avatar`, `layout.css:803 .footer-links`, `app.css:796 .form-group`)
+  before fixing, not just assumed.
+  - **Fixed by prefixing every single selector in `auth-pages.css` with `.login-container`**
+    (the one wrapper class present on every page that uses this file, and nowhere else in the
+    app) — this makes the whole class of "generic name happens to collide" leak structurally
+    impossible for this file going forward, regardless of what any other stylesheet chooses to
+    name things.
+  - **Also addressed the "tenant scoped token based" half of the request**: replaced every
+    hardcoded hex color in `auth-pages.css` and in `Register.razor`'s own `<style>` block
+    (`#1a1a1a`, `#6c757d`, `#e0e0e0`, `#f0f0f0`, `#999`, `#e9ecef`, `#f5f5f5`, `#555`, `#dc3545`,
+    `#f59e0b`) with the equivalent `--qm-*` design tokens (`--qm-text-primary`,
+    `--qm-text-secondary`, `--qm-border`, `--qm-bg-elevated`, `--qm-text-muted`, `--qm-danger`,
+    `--qm-warning`), matching `qm-theme.css`'s light-theme values closely enough to be visually
+    identical while now actually being part of the token system rather than independently
+    hardcoded numbers that could drift from it.
+  - Verified the fix by curling the actually-served CSS file and confirming every rule (63 total)
+    carries the `.login-container` prefix — not yet re-confirmed with a live browser screenshot,
+    the Chrome extension was disconnected for the rest of this session (the user's own screen
+    recorder had a concurrent claim on it).
+- [x] **Found and fixed two real, production-only bugs in the API-docs link**, both raised
+  directly by the user ("the api doc is opening 127.0.0.1 even in prod... should be protected and
+  accessible only to logged in users"):
+  1. **Wrong host in production.** `MainLayout.razor`/`Support.razor` built the docs link from
+     `ApiBaseUrl`/`Http.BaseAddress` — correct in dev (`https://localhost:5001`, directly
+     browser-reachable), but in production `ApiBaseUrl` is deliberately the *internal-loopback*
+     address (`http://127.0.0.1:$ApiPort`) used only for Web's own server-side HTTP calls to the
+     API (see Phase 23) — a browser can never reach that. Fixed by adding a **distinct** new
+     config value, `ApiPublicUrl`: same as `ApiBaseUrl` in dev (both `appsettings.json` and
+     `appsettings.Development.json`), but set to the real public hostname
+     (`https://$HostName`) in `build-linux.ps1`'s generated production config — a genuinely
+     different value from `ApiBaseUrl` for the first time.
+  2. **No authentication gate at all.** `MapScalarApiReference`/`MapOpenApi` were previously wide
+     open to anyone who found the link (and only registered in `Development` at that — would have
+     404'd in real production regardless of the host bug above). Fixed: both moved out of the
+     `IsDevelopment()` block (available in every environment now, as the user wants) and gated
+     with `.RequireAuthorization()`. Since this app's whole auth model is JWT-in-localStorage, not
+     cookies, a plain browser navigation carries no `Authorization` header at all — extended the
+     *already-existing* `OnMessageReceived` query-string-token mechanism (previously scoped to
+     `/hubs` only, for SignalR's own benefit) to also cover `/api/docs` and `/openapi`, and
+     `MainLayout.razor` now appends the current user's real access token as `?access_token=` when
+     building the link. `Support.razor`'s link (anonymous page, no session to draw from) correctly
+     has no token and will 401 for a truly anonymous visitor, which is the intended behavior.
+  - **Found and fixed a third, layered bug while verifying this live via curl**: Scalar 302-
+    redirects the no-trailing-slash form (`/api/docs`) to the canonical `/api/docs/`, and that
+    redirect **drops the query string entirely** — so the browser's automatic follow-up request
+    arrived with no token and 401'd, even though the *first* request had authenticated
+    successfully. Fixed by linking directly to the trailing-slash form everywhere, sidestepping
+    the redirect (and the dropped token) entirely.
+  - **Found and fixed a fourth, related gap**: Scalar's own page makes a *second*, separate
+    browser fetch after loading — to `/openapi/v1.json`, to get the actual OpenAPI document to
+    render. That fetch is a fresh request with no token of its own. Fixed using
+    `MapScalarApiReference`'s per-`HttpContext` options overload: read the `access_token` back out
+    of the *current* request's own query string and bake it into `ScalarOptions.OpenApiRoutePattern`
+    for that render, so the embedded fetch URL Scalar's page ships to the browser already carries
+    the same token.
+  - **Found and fixed nginx never routing `/openapi/*` to the API at all**: the existing
+    path-based routing table only proxied `/api/`, `/hubs/`, and `/api-health` to the API —
+    `/openapi/v1.json` is a separate top-level path, not nested under `/api/`, so it would have
+    silently fallen through to the catch-all `location /` (Web) and 404'd in production even after
+    every fix above. Added a dedicated `location /openapi/` block to `build-linux.ps1`'s generated
+    nginx config, matching the existing `/api/` block's proxy settings exactly.
+  - **Verified the entire chain live via curl, end-to-end**: no token → `401` on both
+    `/api/docs/` and `/openapi/v1.json`; with a real token → `200` on both, no redirect via the
+    trailing-slash form, and the HTML Scalar actually serves back was grepped to confirm the
+    embedded OpenAPI-fetch URL carries the same token. **Not yet re-verified in an actual
+    browser** (Chrome extension disconnected all session) — worth a real click-through next
+    session before considering this fully closed.
+- [!] **The production build from earlier in this session predates all of the above fixes** — if
+  it or anything built before this phase was already deployed anywhere, it should be rebuilt and
+  redeployed; the CSS leak and the wide-open API docs were both present in it.
+
+## Phase 67 — App-wide `QSelect` bug: an upward-opening dropdown collapsed to an invisible sliver, found via aggressive mobile-simulated re-testing after the user said "i did not see the e2e" a second time
+
+The user asked for a *more* aggressive e2e pass plus real mobile-responsiveness testing after
+Phase 66's browser verification. Two real environment constraints surfaced immediately, both
+handled honestly rather than papered over:
+
+- [!] **`resize_window` does not actually resize the browser's rendering viewport in this
+  session** — confirmed by checking `window.innerWidth` directly after a "successful" resize
+  call (stayed at 1920 regardless of the requested size, tried twice, on both an existing tab and
+  a freshly-created one). This is an environment/tooling limitation of the current Claude-in-
+  Chrome session, not something fixable from the app side — flagging it here so a future session
+  doesn't waste time re-trying the same call expecting a different result.
+- [x] **Worked around it with a genuinely valid technique, not a fake one**: a same-origin
+  `<iframe>` injected into the loaded page has its *own real* `contentWindow.innerWidth` — CSS
+  media queries inside it evaluate against that real narrower width, unlike anything JS can fake
+  for the top-level window. Confirmed the roster's existing `@media (max-width:900px)` table→card
+  breakpoint and the new quick-log bottom-sheet's mobile layout (slide-up-from-bottom, drag
+  handle, large touch-target case-type tabs) all render correctly at a real 374px width this way.
+
+**Then found a real, app-wide bug this same technique surfaced** — tapping the Category field
+inside the mobile sheet showed a dropdown that opened but displayed nothing, just an empty
+"Select..." box. Investigated rather than dismissed:
+- First reproduction (via the iframe) showed the exact same `bottom: 285.953125px` computed value
+  for two different case types with different trigger positions — a red flag that the nested-
+  iframe technique might itself be the cause (two simultaneous Blazor Server circuits, one per
+  frame, is not how a real phone ever loads this app), so the finding wasn't taken at face value.
+- **Reproduced it cleanly a second way, with zero iframe involvement**, to settle the question:
+  on the real single top-level circuit, temporarily overrode `window.innerHeight` via
+  `Object.defineProperty` to force the exact geometry that makes a dropdown need to open upward,
+  then let the actual production JS run for real. Same collapse, deterministically, every time —
+  confirming this is a genuine bug in `QSelect.razor`, not a testing artifact.
+- **Root cause**: `q-components.css`'s default rule for `.q-select__dropdown` sets
+  `top: calc(100% + 4px)`. `QSelect.razor`'s `ToggleDropdown` sets an inline `style` to reposition
+  the dropdown when it needs to open *upward* — but that inline style only ever set
+  `position`/`left`/`width`/`bottom`, never `top`. Since an inline `style` attribute only
+  overrides the specific properties it names, the stylesheet's `top: calc(100% + 4px)` kept
+  applying *simultaneously* with the newly-set `bottom` value. With both `top` and `bottom`
+  pinned to definite values, a `position: fixed` element's height is forced to whatever gap is
+  left between them instead of sizing to its content — in this geometry, that gap collapsed to
+  1-2 pixels, rendering the entire option list invisible even though it was correctly present in
+  the DOM the whole time.
+- **This is app-wide, not Welfare-specific** — every `QSelect` anywhere in the app that ever needs
+  to open upward (any select near the bottom of a modal, a short viewport, or a real mobile
+  screen) was silently broken the same way. The Welfare Ledger's new mobile bottom sheet just
+  happened to be the first place a select trigger regularly sits low enough on a short viewport
+  to hit this path during normal use, which is how this got noticed now rather than earlier.
+- [x] **Fixed** by explicitly setting the opposite property to `auto` in both branches of
+  `ToggleDropdown` (`top: auto` when opening downward doesn't matter since it wasn't the buggy
+  branch, but is set defensively for symmetry; `top: auto` is the one that actually matters, in
+  the upward-opening branch) — one line changed, no CSS file touched.
+- [x] **Verified fixed with the exact same deterministic reproduction** (the `window.innerHeight`
+  override, no iframe) — the option list now renders as a normal, fully visible, clickable box;
+  clicked it, the value populated correctly, and a full create-record save completed successfully
+  end-to-end afterward. **Regression-checked on two other pages** (`StudentRoster.razor`'s normal
+  desktop-width quick-log dropdown, and `WelfareCategoriesSetup.razor`'s Case Type dropdown) to
+  confirm the ordinary downward-opening path — the overwhelming majority of this app's `QSelect`
+  usages — still renders identically to before the fix.
+- [x] **Also confirmed two things left unverified in Phase 66 actually do work**: found a real,
+  correctly-formatted CSV file in the Downloads folder from the earlier Search & Export test
+  (proper headers, quoting, and all action/assignee/due-date fields populated on the one record
+  that has them) and — via this session's console log — the print-pack popup firing
+  `"Printing with method: browser"` with no errors, matching `StudentRoster.razor`'s
+  already-proven print pipeline. Neither needed a fix; both were just unobservable through the
+  browser-automation tooling's own tab-group scope in the previous verification pass.
+- [x] **Recorded a GIF of this session's testing and downloaded it** (`welfare-ledger-mobile-
+  bug-fix-e2e.gif`, ~7.6MB, 50 frames — the recorder's per-recording cap) as visible evidence for
+  the user, per their explicit request to actually see the testing happen rather than take a
+  written summary on faith.
+
+## Phase 66 — Student Welfare Ledger Phases 2–4: case workflow, action assignment, drafts, multi-student incidents, statements, dashboard/search/export — all built and live-verified same session
+
+Same-session follow-on to Phase 65's MVP: the user asked to fold a colleague's independent
+requirements brief into the plan (own write-up below this phase), then explicitly said "yes,
+build all of Phases 2-4 now." Built end-to-end — schema, controller, and three frontend
+pages/pages-sections — then live-verified every piece in Chrome, not just curl, per the user's
+own standing expectation from Phase 65's "i did not see the e2e" correction.
+
+- [x] **Schema kept deliberately minimal, per explicit user instruction mid-session** ("limit
+  creation of unnecessary tables and fields, priotise enhancement and improvement... if
+  absolutely necessary, new tables or fields can be created"). One migration
+  (`AddWelfareWorkflowAndStatements`), zero new tables:
+  - `WelfareRecord` gains three nullable columns — `ActionTaken` (text), `AssignedToUserId`
+    (uuid, no FK navigation, same as every other `*UserId` column in this controller),
+    `ActionDueDate` (timestamptz) — instead of a new admin-managed intervention-type table
+    mirroring categories. Also `AdditionalStudentIds` (`uuid[]`, native Postgres array) for
+    linking a record to other students' timelines, instead of a join table — the actual need is
+    "also show this on these other timelines," not per-student metadata.
+  - `WelfareStatus` enum gains `Draft = 4` (appended, not inserted — this enum is stored as a
+    plain int with no `HasConversion`, so inserting would silently reinterpret every existing
+    stored value).
+  - `WelfareNote` gains `Kind` (new `WelfareNoteKind` enum: Note/Statement), `IsFinal` (bool),
+    `AttributedToName` (text, nullable — a witness usually isn't a Q-Mgr user, so this is a name,
+    not a user FK) — a statement is a marked variant of the existing append-only note thread, not
+    a new entity.
+  - This decision is now recorded as a standing project convention, not a one-off: see
+    `CLAUDE.md`'s new "prefer enhancing an existing table/field over adding a new one" section
+    and the `Student Welfare Ledger` artifact's own §05 subsection on the same rule.
+- [x] **`WelfareController` grew by ~9 endpoints, zero new permissions** — every new capability
+  reuses one of the 7 permissions already seeded in Phase 65:
+  - `POST .../finalize` — turns a Draft into Open, re-running the description-length and
+    late-entry checks `CreateRecord` skipped for it. Restricted to the draft's own author (or
+    SuperAdmin) — a draft is invisible to anyone else, enforced in `GetStudentRecords`/`GetRecord`
+    too, not just at the finalize endpoint.
+  - `PATCH .../action` — sets `ActionTaken`/`AssignedToUserId`/`ActionDueDate`; fires an in-app
+    notification to a newly-assigned staff member via the *existing*
+    `INotificationService.CreateInAppNotificationAsync` pipe (already injected into this
+    controller) — no new notification mechanism, exactly as the plan's Phase 2 promised.
+  - `PATCH .../status` — the real Open→UnderReview→ActionTaken→Resolved transitions (MVP shipped
+    the enum but every record started and ended Resolved); explicitly rejects `Draft` as a
+    settable value, since a record only leaves Draft via `/finalize`.
+  - `GET .../welfare-records/my-actions` — a caller's own open, non-draft assigned records,
+    gated at the plain `welfare.view` Staff already has (not `reports.view`), since this
+    surfaces the caller's own responsibilities, not the branch's whole ledger.
+  - `GET .../welfare-records` (branch-wide search: keyword/date range/case type/status/tier/
+    student) and `GET .../welfare/summary` (dashboard aggregates: totals, open/overdue counts,
+    by-category, by-staff) — both gated at `welfare.reports.view` (Manager/Admin only), since
+    seeing every student's non-confidential record in one searchable list is a materially bigger
+    exposure than navigating to one student at a time, and this Manager-facing search/filter *is*
+    the plan's "escalation path" — no separate escalation endpoint was built.
+  - `CreateRecord` now defaults new (non-draft) records to `Open` instead of always `Resolved`,
+    since Phase 2 makes the workflow real; also validates and stores `AdditionalStudentIds`,
+    and skips description-length/late-entry checks when `SaveAsDraft` is set.
+  - `AllowedAttachmentMimePrefixes` extended to `video/`/`audio/`; `MaxAttachmentSizeBytes` bumped
+    10MB→25MB with an explicit comment that going further needs a real capacity conversation
+    first (local disk, no CDN tier).
+- [x] **Two real bugs found and fixed via curl before any browser testing even started**:
+  1. `ActionDueDate` writes 400'd with the exact `DateTimeConverterResolver`/
+     `DbUpdateException` this project's own `TASK_TRACKER.md` (Phase 59) already documents —
+     `System.Text.Json` deserializes a bare date string as `DateTimeKind.Unspecified`, and Npgsql
+     rejects writing that to a `timestamptz` column. Fixed the same way Phase 59 did:
+     `DateTime.SpecifyKind(value, DateTimeKind.Utc)`, not `ToUniversalTime()` (which would shift
+     the clock time for what is really just a calendar date).
+  2. `UpdateStatus`'s record fetch was missing `.Include(r => r.Student).Include(r => r.Category)`
+     — the response came back with empty `studentName`/`categoryName` strings. Caught by reading
+     my own curl output, not assumed correct.
+  3. `GetStudentRecords`'s query only ever matched `r.StudentId == studentId` — the new
+     `AdditionalStudentIds` column was completely ignored, so a record linked to a second student
+     never actually appeared on *that* student's timeline, defeating the whole point of the
+     column. Caught by testing the feature from the second student's own page, not just the
+     primary one. Fixed by adding `|| r.AdditionalStudentIds.Contains(studentId)` to the query.
+- [x] **`StudentWelfareTimeline.razor` grew substantially**: status badge/dropdown per record
+  (hidden for Drafts, which show a dashed-border card, a "Draft" badge, and a "Finalize" button
+  instead); an action-assignment box (action text, assignee, due date, an "Overdue" tag when
+  past due and still open) with a new "Assign Action" dialog backed by a `GET api/v1/users?
+  branchId=` staff picker; "Also logged for: X, Y" when `AdditionalStudentIds` is set; a "Save as
+  Draft" button alongside "Save Record" plus an "Also applies to" checkbox list of other branch
+  students in the create form; the Add Note dialog gained a Note/Statement toggle (statement mode
+  adds a "Statement From" name field and a "Mark as final" checkbox); `QFileUpload`'s `Accept`
+  widened to include video/audio.
+  - **Used a local `StaffApiUser`/`StaffOption` shape for the staff picker deliberately, not
+    `UsersController`'s own `UserDto`** (Web can't reference an API-only type) **and deliberately
+    not `UsersSetup.razor`'s own already-duplicated local `UserDto`** (a pre-existing SSoT gap
+    from an earlier session, not one to add a third copy to) — a small page-local record with
+    only the two fields this page needs, matching this file's own established convention for
+    `CaseTypeOption`/`TierOption`.
+- [x] **Two new pages**: `WelfareOpenActions.razor` (`/admin/welfare-my-actions`, gated
+  `welfare.view`) — a simple "what do I still owe" list, overdue-first, clicking through to the
+  student's timeline. `WelfareReports.razor` (`/admin/welfare-reports`, gated
+  `welfare.reports.view`) — Dashboard tab (stat cards + by-category/by-staff bar charts) and
+  Search & Export tab (filterable results table, CSV export built client-side from the already-
+  loaded results rather than a new server export endpoint, and a per-record "print incident pack"
+  reusing the exact `QMgrPrint` JS pipeline `StudentRoster.razor`'s card printing already proved
+  out — no new print mechanism). Both combined into one page with tabs rather than two separate
+  pages, to keep the new nav surface as small as the schema was kept.
+- [x] **Three new nav entries** under Administration (`Welfare Categories`, `My Welfare Actions`,
+  `Welfare Reports`) — no new nav group, folded into the existing section `Welfare Categories`
+  already lived in from Phase 65.
+- [x] **Backend fully curl-verified end-to-end** before any browser testing: draft creation with
+  a 1-character description, finalize validation (rejects a too-short draft, matching the exact
+  wording CreateRecord itself uses), status transitions (including the Draft-is-not-a-settable-
+  status guard), action assignment with an in-app notification fired to a different user (not the
+  assigner), Staff-vs-Admin permission boundaries on the reports-gated endpoints (Staff correctly
+  403s on `/welfare-records` search), and multi-student linking appearing correctly on the second
+  student's own chronology after the bug above was fixed.
+- [x] **Live Chrome verification, not stopped at curl** — logged in as Demo Organization's real
+  Admin, and found **one more real bug curl couldn't have caught**: `WelfareReports.razor`'s
+  Search & Export tab froze forever on "Searching..." the first time it loaded — the *exact same*
+  fire-and-forget-without-`StateHasChanged()` gotcha Phase 65 already found and fixed in
+  `LoadNotifyDraft`. `SwitchTab` calls `LoadSearch()` fire-and-forget (`_ = LoadSearch()`) so the
+  tab can render before the fetch completes; nothing told Blazor to re-render once it did. Fixed
+  identically: `await InvokeAsync(StateHasChanged)` in `LoadSearch`'s `finally` block. **Then
+  proactively grepped every file touched this session for the same `_ = ` pattern** rather than
+  waiting to trip over another instance — found only the two already-fixed occurrences (this one
+  and Phase 65's `LoadNotifyDraft`) and one already-resolved historical comment in
+  `StudentRoster.razor`; nothing else needed the same fix.
+  - Verified live and working after that fix: the Dashboard tab's stat cards and bar charts; the
+    Search tab's results table and filters; the create-record dialog's "Also applies to" list and
+    both Save buttons; a full draft → finalize-rejected (too short) → assign-action (with the
+    live staff dropdown and a real due-date entered digit-by-digit into the native date input) →
+    status-dropdown-to-UnderReview cycle on real records; the Add Note dialog's Note/Statement
+    toggle switching its own title, fields, and button text live.
+  - **Not independently re-verified beyond "no console error, no visible failure"**: CSV export's
+    actual downloaded file contents (the download itself isn't observable through this session's
+    browser-automation tooling) and the print-pack popup window (opens via `window.open`, which
+    this tooling also can't observe as a trackable tab) — both use exactly the same
+    already-proven mechanisms as existing features elsewhere in this app (`VisitorReport.razor`'s
+    CSV pattern, `StudentRoster.razor`'s print pattern respectively), so treated as working by
+    code-parity rather than independently re-clicked-through.
+- [ ] **Deferred, matching Phase 65's own Phase-4-onward scope, not silently dropped**:
+  automated overdue-action reminders (a scheduled sweep, as opposed to the notification that
+  already fires the moment an action is assigned) would need a new recurring Hangfire job — not
+  built this session, since it touches shared background-job infrastructure this session hadn't
+  otherwise verified; consent tracking / subject-access-request tooling (flagged in the
+  colleague-brief comparison as a data-protection posture decision, not a code decision, still
+  pending that conversation with the user).
+
+## Phase 65 — Student Welfare Ledger: new feature, researched, planned, and its MVP built end-to-end (backend fully curl-verified, frontend compile-verified only — Chrome extension disconnected all session)
+
+Requested feature: a modern student behavior/discipline/welfare tracking tool built on top of the
+existing student roster (Phase 58's school-visiting-day feature). Researched PBIS, CPOMS/MyConcern
+(UK safeguarding software), and FERPA record-keeping norms first, then wrote a phased plan
+(published as an artifact) before writing any code — the user then explicitly asked for a
+component-reuse/validation/CSS-token addendum to that plan, and finally asked to "implement the
+MVP phase... word per word." This phase is that implementation.
+
+- [x] **Backend domain model** — 5 new entities under `Q-Mgr.API/Domain/Entities/Welfare/`
+  (`WelfareCategory`, `WelfareRecord`, `WelfareAttachment`, `WelfareNote`, `WelfareNotification`),
+  2 new shared enums (`WelfareCaseType`: Achievement/Behavior/Welfare, `WelfareTier`:
+  Low/Medium/High) plus `WelfareStatus` (schema exists for a Phase 2 case-workflow; MVP always
+  writes `Resolved`, no workflow yet). Migration `AddStudentWelfareLedger` applied cleanly —
+  verified `qmgr` schema-qualification, cascade deletes, and FK indexes by reading the generated
+  migration before applying it (see this file's own standing raw-SQL/schema-qualification lesson).
+  `WelfareRecord`/`WelfareCategory` etc. are branch/org-scoped with **no** global EF query filter,
+  matching the existing `Student`/`Visitor`/`Counter` precedent — ownership is verified manually in
+  every controller action (`VerifyBranchOwnership`), not by a DbContext-level filter.
+- [x] **7 new permissions** (`welfare.view/create/edit/notify/confidential.view/categories.manage/
+  reports.view`) seeded into RBAC — Admin/SuperAdmin get all 7 via the existing wildcard; Manager
+  gets everything except `confidential.view` (an Admin can grant it to a custom role if a school
+  wants a Manager to see safeguarding-tier records — deliberately not on by default); Staff gets
+  view/create/notify only, no edit or category management. Verified via the actual seed log (22
+  new role-permission mappings — matches 7+7+5+3 exactly) and via curl as both a Staff and an Admin
+  session (Staff correctly sees 1 non-confidential record where Admin sees 3).
+- [x] **`WelfareController`** (direct-DbContext, ~600 lines — matches `StudentsController`'s
+  architecture, not the Mediator/CQRS pipeline reserved elsewhere in this app) — category CRUD,
+  the student chronology endpoint, record creation with a full validation chain (student/category
+  existence and active-status, description 10-2000 chars, occurred-date can't be in the future,
+  a "late entry" guard requiring an explicit `acknowledgeLateEntry=true` past 14 days, points-sign
+  validation per case type), notes, evidence-attachment upload (reuses the existing
+  `IMediaStorageService`, same MIME/size allow-list pattern as `VisitorsController`'s photo
+  upload), and a guardian-notification flow that always returns an editable draft first — nothing
+  sends automatically.
+  - **The one rule genuinely worth re-reading before touching this controller**:
+    `Confidential` on a `Welfare`-case-type record is **100% server-derived**
+    (`request.CaseType == WelfareCaseType.Welfare`) and never trusted from the client, and a
+    confidential record a caller lacks `welfare.confidential.view` for 404s exactly like a
+    cross-tenant record does — never a 403, so a Staff member can't even infer a hidden record
+    exists. `CanViewConfidentialAsync()` does a direct DB role-permission query rather than reading
+    a JWT claim, because — as this file's own SSoT-duplication history should have made obvious
+    before writing the first draft — this app's permissions are resolved by DB lookup
+    (`PermissionAuthorizationHandler`), not carried as JWT claims at all. Got this wrong on the
+    first pass (assumed claims), caught it by actually reading that handler before shipping.
+  - **Two smaller real bugs also found and fixed while curl-verifying this controller, not left as
+    "probably fine"**: the guardian-notification draft message used `record.Student.FullName`
+    twice instead of the branch name (fixed by including `Branch` and using `record.Branch?.Name`);
+    and `SentByName` on a sent notification read `ClaimTypes.Name` (which is this app's *username*
+    claim, not the display name — same trap as everything else in this codebase that's tried to
+    read a display name from a claim instead of the DB). Both fixed to match `ReportedByName`/
+    `AuthorName`'s existing DB-lookup pattern.
+  - **A third gap found this session while re-verifying the endpoint contract before building the
+    frontend**: `WelfareNotificationDto.GuardianName` in the chronology response was hardcoded to
+    `""` in the original MapToDto ("resolved client-side isn't needed today" — it was, the UI needs
+    it to render "SMS to Jane Doe by..."). Fixed with a `ResolveGuardianNamesAsync` helper
+    (`VisitorProfiles` lookup by the notification's `GuardianVisitorProfileId`, same shape as the
+    existing `ResolveUserNamesAsync`) — confirmed via curl the field now returns the real guardian
+    name instead of an empty string against the same test record from the original verification
+    pass.
+- [x] **Shared component extensions** (used, not duplicated, by every Welfare page below):
+  `QDatePicker`/`QCheckbox` gained `Label`/`Required`/`HasError`/`ErrorMessage` parameters matching
+  `QInput`'s existing convention (verified non-breaking against every existing caller — none of
+  them pass the new params, so behavior is unchanged for them); a new `QFileUpload` component +
+  `qFileUpload.js` for evidence attachments — deliberately bypasses Blazor's `<InputFile>`/
+  `IBrowserFile` (a previously-documented bug in this codebase broke `OpenReadStream()`'s
+  JS-interop stream under HttpClient's retry handling) in favor of a plain `<input type=file>` plus
+  a JS module that does Canvas-based client-side image compression (no server-side image library —
+  this project's standing "no new server dependencies" rule) and an authenticated `fetch()` upload.
+  3 new `--qm-welfare-*` color tokens added to `qm-theme.css` (both themes) rather than reusing
+  `--qm-primary` for category color-coding.
+- [x] **`WelfareCategoriesSetup.razor`** (`/admin/welfare-categories`) — admin CRUD for categories,
+  built to match `ServiceTypesSetup.razor`'s established shell (`.admin-page`/`.page-header`
+  structure, `OnAfterRenderAsync`-timed permission check so localStorage tokens are loaded first,
+  direct `HttpClient` calls, `QModal` create/edit dialog) rather than inventing a new pattern.
+  Grouped by case type, client-side mirrors the same points-sign validation the backend already
+  enforces so a bad value is caught before the round-trip, not just after a 400.
+- [x] **`StudentWelfareTimeline.razor`** (`/admin/students/{StudentId}/welfare`) — the per-student
+  reverse-chronological view every case type shares (the CPOMS lesson from the research phase: the
+  *pattern across categories* over time is the point, not three separate siloed lists). Create-
+  record form, add-note, evidence upload (via the new `QFileUpload`, wired to the record's own
+  attachment endpoint immediately after creation), and the guardian-notification review dialog
+  (fetches the server's suggested draft, lets staff edit it, shows a "no phone/email on file"
+  warning before the send button is even enabled — never a silent no-op).
+- [x] **Student Roster integration** — 2 new per-row action buttons (quick-log, permission-gated on
+  `welfare.create`; view-timeline, gated on `welfare.view`) plus a quick-log `QModal` styled as a
+  mobile-first bottom sheet (slides up from the bottom under 640px, reads as a centered dialog
+  above it) using new `qm-welfare-*`-prefixed classes added to the file's *existing* inline
+  `<style>` block — per the plan's explicit reuse mandate, this file doesn't get a second styling
+  mechanism just for one new feature.
+  - **A real Razor parser bug hit and fixed while writing this**: a CSS comment inside that
+    `<style>` block containing the literal text `<style>` (describing the block itself) made
+    Razor's HTML tokenizer think a second, nested `<style>` tag had opened, producing an "unclosed
+    tag" compile error with no useful line-level explanation of *why*. Fixed by rewording the
+    comment to avoid literal angle-bracket tag names — worth remembering if a future inline
+    `<style>` block's own explanatory comment ever needs to reference an HTML tag by name.
+- [x] **Nav entry** — "Welfare Categories" added to the Administration submenu in
+  `MainLayout.razor`, gated on `welfare.view`, folded into the existing `CanViewAdminSection`
+  check. The per-student timeline has no top-level nav entry by design — it's reached from the
+  roster's own action buttons, matching how e.g. a single visitor's detail page isn't in the nav
+  either.
+- [x] **Backend verified live via curl end-to-end** against real seeded test data (a "Test Student
+  One" with categories, an Achievement record with a note and a notification, and two Welfare-tier
+  confidential records) — category listing, chronology listing (with the corrected guardian name),
+  Staff-vs-Admin confidential-record visibility, and all three .razor pages' initial server render
+  (no exception, no 500) were all confirmed this session. Both API (`:5001`) and Web (`:5002`) dev
+  servers were rebuilt and restarted clean after these changes specifically to rule out a stale
+  binary masking a real bug.
+- [x] **Live Chrome click-through done later the same session** (the user explicitly asked "i did
+  not see the e2e" after this phase was first written up as curl-verified-only) — logged in as the
+  Demo Organization's real Admin account (`admin@qmgr.demo`, not SuperAdmin, since SuperAdmin's own
+  "Platform Administration" org has no branches to test against), then drove every new/changed
+  surface for real: category create (case-type switch, live points-hint text, color picker),
+  roster quick-log (case-type tabs, category select, save), the timeline's full create-record →
+  attach-evidence → add-note → notify-guardian chain, and the late-entry guard's client-side warning
+  banner + acknowledge checkbox. **Found and fixed three real bugs this pass, none of which curl
+  testing could have caught** (curl bypasses the browser entirely, and two of these three are
+  browser/CSS-specific):
+  1. **QSelect's dropdown rendered detached in a screen corner instead of under its trigger**,
+     inside the roster's new quick-log bottom sheet specifically. Root cause: QSelect positions its
+     dropdown via `position: fixed` with coordinates computed in JS from the trigger's own screen
+     position — this only works if nothing between the trigger and the viewport has a CSS
+     `transform`, which creates a new *containing block* for `position: fixed` descendants (even a
+     no-op `translateY(0)` counts, not just non-identity transforms). The quick-log sheet's own
+     open/close slide animation used exactly such a transform. Fixed by restructuring the sheet to
+     be a normal-flow child of its backdrop, centered/bottom-aligned via the **backdrop's own
+     flexbox** (`align-items: flex-end` on mobile, `center` on desktop) — the same pattern `QModal`
+     already used successfully elsewhere in this app — rather than `position: fixed` +
+     `transform` on the sheet itself. No transform anywhere in the sheet's CSS now, on either
+     breakpoint.
+  2. **Evidence-attachment uploads 405'd every time** (`QFileUpload.razor`). Root cause: it derived
+     the upload URL from the current page's own `<base href>` via a JS `eval`, which resolves to
+     *this Web app's own origin* (`:5002` in dev) — but the API is a genuinely separate origin
+     (`:5001` in dev, distinct `ApiPublicUrl`/`ApiBaseUrl` config, see Phase 64) — so every upload
+     silently POSTed back to the Web server itself, which has no matching route, hence 405. Fixed
+     by injecting the same `HttpClient` every other page already uses and reading its
+     `BaseAddress` (already correctly wired to `ApiBaseUrl` in `Program.cs`) instead of re-deriving
+     a URL from the DOM. Verified live: a real PNG uploaded, compressed client-side, and appeared
+     as a persisted attachment chip on page reload.
+  3. **"Notify Guardian" froze forever on "Preparing message..."** even though the API call behind
+     it had already succeeded (confirmed 200 in the server log, response correctly deserialized
+     into `notifyDraft` in memory). Root cause: `ShowNotifyDialog`/the guardian/channel change
+     handlers all call `LoadNotifyDraft()` fire-and-forget (`_ = LoadNotifyDraft()`, needed so the
+     dialog opens immediately rather than waiting on the draft fetch) — but nothing ever told
+     Blazor Server to re-render once that background task completed, since it wasn't part of any
+     awaited event-handler chain. Fixed by adding `await InvokeAsync(StateHasChanged)` at the end
+     of `LoadNotifyDraft()`'s `finally` block. Verified live: draft message resolves and renders
+     correctly (confirming the earlier `record.Branch?.Name` fix too — the message correctly reads
+     "...at Main Branch"), and Send completes with a real notification chip appended to the record.
+  - **Also resolved a false alarm the same way, worth recording so it isn't re-litigated**: the
+    late-entry guard appeared to reject an obviously-past date as "in the future" during testing.
+    Root cause was **the test methodology, not the app** — this Chrome's native `<input
+    type="date">` renders in DD/MM/YYYY locale order, not MM/DD/YYYY, so typing digits in
+    MM/DD/YYYY order silently produced a different, genuinely-future date. Confirmed via a
+    temporary diagnostic log (`occurredAt` + raw JSON right before the POST, removed after
+    diagnosis) showing the server received exactly what was actually typed, correctly. Once
+    retested with the correct digit order, the late-entry banner and `acknowledgeLateEntry`
+    checkbox both worked exactly as designed on the first correct attempt.
+  - **Real, separate gap also found and fixed while testing this**: the "When did this happen?"
+    field used a single `QDatePicker` with `ShowTime="true"` — but that parameter *replaces* the
+    date input with a time-only one (per the component's own doc comment), so staff could never
+    actually pick a past date at all, only adjust the time-of-day on whatever date the dialog
+    happened to open on. This made the late-entry guard's UI-side path completely unreachable
+    before this fix. Fixed by using two separate `QDatePicker` fields (Date, ShowTime=false; Time,
+    ShowTime=true) side by side and combining them into one `DateTime` at save time, without
+    touching `QDatePicker` itself or any of its other existing callers.
+- [ ] **Deferred to a later phase, not part of this MVP**: `WelfareStatus`'s UnderReview/
+  ActionTaken workflow states (schema exists, nothing reads/writes them yet beyond the always-
+  `Resolved` MVP default), a dedicated welfare reports/analytics page (the `welfare.reports.view`
+  permission already exists and is seeded, but no page consumes it yet), and bulk/CSV import of
+  historical welfare records (the roster has this, welfare doesn't).
 
 ---
 
@@ -2400,6 +3348,33 @@ A dedicated agent pass found the true picture is more nuanced than "delete unuse
 - [x] **`IMediaStorageService` — investigated, deliberately left as-is rather than building a low-value implementation**: the interface is real and already cloud-ready, but nothing in the codebase constructs or injects it (`ContentController` writes directly to local disk, bypassing it entirely). Building a local-disk implementation now would have nothing wired to it to actually exercise — no behavior change, nothing new to verify live — so it would be effort spent for the appearance of progress rather than real progress. Left honestly documented as blocked on real cloud credentials rather than padded with an unused class.
 - [x] **Mobile-viewport tooling limitation re-confirmed, not just repeated from an old note**: `resize_window` to 390×844 reports success and the actual OS window visibly changes size, but a `screenshot` immediately after and `window.innerWidth` read via `javascript_tool` both still show the full 1568/1920px desktop viewport. Retried once to rule out a one-off glitch — same result both times. This is a genuine environment/tooling gap, not something worth retrying differently again.
 - [x] Full solution rebuild after all of the above: 0 errors (33 pre-existing warnings, all unrelated to this session's changes). Both dev servers restarted and re-verified listening before live-testing.
+
+## Phase 23 — Built Q-Mgr's production deployment scripts from scratch and took the first real deploy live on `qmgr.cashbook.ug`, fixing every real bug the actual deploy surfaced
+- [x] **Built `scripts/deploy/{Common.ps1,build-linux.ps1,README.md}` + a generated `install.sh`**, mirroring the proven conventions in `E:\ERP\scripts\deploy\` and `E:\CRM\scripts\nginx\` per explicit instruction, adapted for Q-Mgr's real differences: two processes (API + Blazor Server Web) instead of one monolith, single-host path-based nginx routing (not ERP's wildcard-subdomain SaaS pattern), shared-schema tenancy (no catalog DB / manual DB-creation step — `DatabaseInitializer` auto-creates and migrates on first boot).
+- [x] **`Invoke-CleanArtefacts` was unconditionally force-killing every process literally named `dotnet.exe` on the machine, every clean, before checking if anything was actually locked** — found live when it silently failed against this session's own running dev servers rather than actually killing them (luck, not correctness). Fixed twice: first scoped the kill fallback to just `MSBuild`/`VBCSCompiler` (headless build workers, never a real running app), then found the *real* fix — clean only needs to touch `bin/$Configuration`/`obj/$Configuration` (i.e. `Release`), never the whole `bin`/`obj` tree, so it never contends with a live `dotnet run` (Debug) dev server at all. Verified: ran a full clean production build with both local dev servers (API + Web) still running — zero lock conflicts, dev servers confirmed untouched by PID before and after.
+- [x] **`install.sh` nested one folder too deep (`server/install.sh`) caused a real incident, not just a theoretical risk**: both ERP's and CRM's own deploy docs teach `cd /tmp && tar -xzf <pkg> && sudo bash install.sh` from muscle memory. The first real deploy attempt ran exactly that command and silently executed a **stale `install.sh` left over from an earlier ERP deploy** already sitting at `/tmp/install.sh` — Q-Mgr's own script, one folder deeper, was never invoked. Diagnosed live by reading the pasted terminal output's own banner text ("BusinessERP SaaS Install," not Q-Mgr's). Fixed by flattening the package layout (`install.sh`, `deploy-manifest.json`, `api/`, `web/`, `config/` all at the tarball root) and adding a "use a dedicated extraction subdirectory" recommendation to the printed next-steps to prevent recurrence.
+- [x] **nginx `ssl_session_cache shared:SSL:10m` collided with another already-enabled site's own same-named zone at a different size** — nginx refuses to start when two configs declare the same shared-memory zone name with different sizes. Fixed by namespacing the zone (`shared:qmgr_ssl:10m`), matching CRM's own established `CRM_SSL` convention found by reading its build script.
+- [x] **Every "obviously free" port turned out to already be claimed on this box** — `74.208.201.32` runs ERP, CashBook (two instances), evolweb, evol-api, evol-ui, docmgr, `must`, maryhill, and MSSQL, all independently binding ports in the 8500s/8580s. Hit real collisions twice (8581 = CashBook's `cbpro.service`; 8582 = `evolweb.service`) before doing a full `ss -tlnp` audit and settling on the confirmed-free, sequential pair **API 8586 / Web 8587** (also flipped the script's own default ordering to API-first/Web=API+1, and added a standing "always re-check `ss -tlnp` before every deploy, not just the first" note to the README, since this box's ports move independently of Q-Mgr).
+- [x] **`install.sh`'s own `systemctl is-active` status check corrupted its output**: `$(cmd || echo fallback)` runs the fallback echo *in addition to* `cmd`'s own stdout whenever the state isn't exactly `"active"` (real states like `"activating"`/`"failed"` still print, and still exit non-zero) — concatenating both into one garbled two-line string (`"activating\ninactive"`). Fixed by moving `|| true` inside the substitution instead, so only the real state is ever captured. This bug had briefly looked like a real service crash on two separate deploys before being traced to the display logic itself, not the underlying service.
+- [x] **The actual root cause of "No account found with this email address" on every login attempt, found live via user E2E testing in the connected Chrome browser**: `Q-Mgr.Web`'s `appsettings.Production.json` (containing `ApiBaseUrl`) was being preserved across every redeploy by the same "protect operator-edited config" logic correctly used for the API's real secrets — but Web's file has no operator-owned values at all (`ApiBaseUrl`/`Logging`/`AllowedHosts` are all build-computed), so after several redeploys changed `-ApiPort`, Web kept silently calling a stale, now-wrong port. Fixed by dropping Web from the preserve/restore logic entirely — its config is now always installed fresh from whatever build is currently being deployed; only the API's file (real DB password, real JWT secret) is still preserved.
+- [x] **A second, layered bug behind the same symptom**: even after fixing the stale port, login still failed identically. Root-caused via the API's own logs showing *zero* matches for `AuthController`'s "identification failed" warning — meaning the request never reached the controller at all. `Q-Mgr.API`'s `AllowedHosts` was locked to the public hostname (`qmgr.cashbook.ug`), but `Q-Mgr.Web`'s own internal `HttpClient` calls the API directly via `http://127.0.0.1:$ApiPort` — a different Host header, silently rejected by ASP.NET Core's built-in host-filtering middleware with a 400 *before* any controller code runs, which `AuthService.IdentifyUserAsync` was (reasonably, but unhelpfully for diagnosis) treating identically to a genuine "no such user." Fixed: API's `AllowedHosts` set to `"*"` — nginx is the real public boundary here (API only ever binds `127.0.0.1`), so the restriction added no real protection while breaking all of Web's own legitimate internal traffic.
+- [x] **`Program.cs`'s weak-password guard was hard-blocking startup entirely** the moment the DB password happened to be `postgres` (a real, if poor, credential choice already in use) — downgraded from a thrown `InvalidOperationException` to a `Log.Warning`, per explicit instruction: on this specific deployment (Postgres bound `127.0.0.1`-only, config file root/www-data-only on an access-controlled VPS), the check wasn't stopping a real attacker, only blocking a legitimate deploy. The "connection string not configured at all" guard above it was left untouched (still a real, valid check).
+- [x] **Did NOT rotate the shared `postgres` superuser's password to unblock this**, despite it being the fastest fix — that account is used by every other unrelated service on this box (ERP, CashBook, etc.); a dedicated `qmgr_app` Postgres role was used instead (`CREATE ROLE ... WITH LOGIN CREATEDB`), and the build script's own `-PgUser` default was corrected back to `qmgr_app` after a brief, wrong detour through defaulting to the shared `postgres` account.
+- [x] **Full production deploy confirmed live end-to-end**, not just "install.sh exited 0": logged in as SuperAdmin (`support@getsacc.com`/`admin`) against `https://qmgr.cashbook.ug` in the connected Chrome browser, landed on a real Platform Dashboard with real data, navigated into Users & Roles and saw the real seeded row. Console/network clean (the only console errors were unrelated Chrome-extension noise, not the app).
+- [x] **Also fixed, found opportunistically while on this page**: `MainLayout.razor`'s loading-screen spinner sat visibly beside the logo instead of below it — `.loading-logo` (an `<img>`, inline by default) and the Bootstrap `.spinner-border` (inline-block by default) were both inline-level inside a `text-align:center` container, so the `mt-3` margin meant to stack them never took effect. Fixed with `display:block; margin:0 auto` on the logo.
+
+## Phase 24 — Docs / Getting-Started guides CMS: new platform-owned content feature, planned and built end-to-end, verified live locally
+- [x] **Context**: user asked for a step-by-step Q-Mgr onboarding guide for an electronics/retail shop (written, published as an artifact, exported to `docs/onboarding/Q-Mgr-Electronics-Shop-Getting-Started.pdf`), then asked whether a real in-app docs section should exist, then asked to plan a proper CMS for it. Planned via `EnterPlanMode` with 3 parallel Explore agents (Content/Signage CMS architecture, public-page/RBAC patterns, admin CRUD conventions) + 1 Plan agent, all findings spot-checked against the real files before the plan was finalized — not taken on trust.
+- [x] **Modeled `DocArticle` on `PlatformSetting`, not on the existing Content/Signage module** — the Content module (`MediaContent`/`Playlist`/`Campaign`/`DisplayZone`) is entirely media-file-scheduling-specific with no rich-text body field anywhere in it; extending it would have meant bolting document semantics onto an already 1100+ line controller built for a different problem. New entity instead: `src/Q-Mgr.API/Domain/Entities/Docs/DocArticle.cs` — **no `OrganizationId`**, same platform-owned/non-tenant-filtered pattern as `PlatformSetting`, tagged with the *existing* `IndustryType` enum (already used by `Register.razor`'s industry dropdown) rather than a new taxonomy. `Title`/`Slug`(unique)/`Summary`/`BodyHtml`/`CoverImageUrl`/`Industry`(nullable)/`Status`(Draft|Published)/`DisplayOrder`/`PublishedAt`.
+- [x] **First use of `RadzenHtmlEditor` anywhere in the codebase** — Radzen.Blazor was already a referenced package (v11.2.5) but completely unused; no rich-text editor existed in the app at all before this. Wired into the new admin page with zero extra plumbing needed (`AddRadzenComponents()`, the global `Radzen`/`Radzen.Blazor` usings, and the required CSS/JS were all already present from the package reference).
+- [x] **Two new RBAC permissions (`platform.docs.view`/`platform.docs.manage`), gated SuperAdmin-only by construction, not by a special-case check** — added to `Permissions.cs` (API), `RbacSeeder.cs`'s actually-consumed `AllPermissions` list, and `IPermissionService.cs` (Web's local mirror, since Web only references `Q-Mgr.Shared`, not the API project). No `SystemRoles` array edits needed: `SuperAdmin`'s permission set is `AllPermissions.Select(...)` (picks up new codes automatically) and `Admin`'s own filter already excludes anything starting with `"platform."` (confirmed at `RbacSeeder.cs:231` before relying on it) — the exact mechanism that guarantees a tenant Admin can never get these two permissions without further code changes.
+- [x] **New `DocsController.cs`** (`api/v1/docs`) rather than bolting onto `ContentController` — public `GET /docs` (published only, optional `?industry=`) and `GET /docs/{slug}` (404s identically for "missing" and "exists but draft," never leaking draft existence) both `[AllowAnonymous]`; admin list/detail/create/update/delete/slug-check/cover-image-upload all behind the two new permissions. Cover image upload reuses the existing generic `IMediaStorageService` (no signage-specific coupling in its interface, confirmed before reusing it) but skips the org storage-quota check `ContentController` applies, since this content isn't tenant-billed.
+- [x] **New admin page `src/Q-Mgr.Web/Components/Admin/DocsManagement.razor`** (`/admin/docs`), copying `ServiceTypesSetup.razor`'s established pattern exactly (`HttpClient` called directly, no typed API service layer; manual card grid, not `RadzenDataGrid`; one shared `QModal` for create/edit; permission check in `OnAfterRenderAsync` not `OnInitializedAsync`, since auth tokens load from localStorage post-render) with branch-scoping dropped entirely (not applicable — this content has no branch concept). Added one new `<li>` under `MainLayout.razor`'s existing "Platform Admin" nav section, no new permission-loading code needed since that whole section is already SuperAdmin-gated.
+- [x] **Two new public pages**, `Docs.razor` (`/docs`) and `DocsArticle.razor` (`/docs/{Slug}`), both `@layout KioskLayout` + `@attribute [AllowAnonymous]` — the exact pattern `Register`/`Login`/`Terms`/`Privacy`/`Support` already use, reusing the existing `doc-page`/`doc-shell`/`doc-card` CSS shell from `wwwroot/css/doc-page.css` rather than inventing new styling. `BodyHtml` rendered via `@((MarkupString)article.BodyHtml)` — trusted content, since only a `platform.docs.manage`-holding SuperAdmin can ever author it, consistent with the app's existing `MarkupString` usage elsewhere (flagged as a spot to add an HTML sanitizer later if stricter defense-in-depth is ever wanted, not treated as a blocker now).
+- [x] **Verified live end-to-end against local dev, not just "it compiles"**: migration (`doc_articles`, `qmgr` schema, correct indexes) applied cleanly; boot log showed `"Seeded 2 new permissions"` / `"Seeded 2 new role-permission mappings"` confirming the additive RBAC seeding actually ran; created the first real article as SuperAdmin through the real admin UI (title, auto-generated slug, Retail industry, rich-text body via `RadzenHtmlEditor`, Published) — confirmed saved correctly via a direct API query, not just a success toast. Confirmed public read at both `/docs` and `/docs/{slug}` with no login involved. Confirmed a real tenant Admin (not SuperAdmin) sees no "Platform Admin" nav section at all, and a direct navigation to `/admin/docs` correctly redirects to `/unauthorized`.
+- [x] **One live false alarm during verification, resolved without over-reacting**: the newly-created article's body appeared completely blank on the public article page's screenshot. Before assuming a real rendering bug, checked the actual stored value via a direct `curl` to the API (body was saved correctly) and the live DOM via `get_page_text` (body was rendering correctly, in full) — the screenshot tool itself simply failed to paint that specific region, a known quirk with this session's `RadzenHtmlEditor`/iframe screenshots, not a real defect in the feature.
+- [x] **Deferred, not forgotten**: an "explore other guides" cross-link from `Support.razor`'s footer into `/docs` was considered but not added (kept the change surface to what the plan actually specified); draft-vs-published filtering on the public endpoints was verified by code review + the same access-control mechanism proven live for the permission gate, not independently re-tested with a second live draft article.
+- [x] **Rebuilt and repackaged for production** (`qmgr-0.1.0-20260831.2218.tar.gz`) after both Phase 23's deployment fixes and this feature were complete — **deployment of this specific build to `qmgr.cashbook.ug` had not yet been confirmed complete as of this session's end.** The next session should check whether `install.sh` was actually run against this package before assuming the Docs CMS is live in production; local verification (above) is solid, production verification is not yet done.
 
 ## ✅ Environment blocker — RESOLVED
 `.NET 10 SDK` was found gutted mid-session (`NETSDK1045` errors despite building fine all session). Traced the cause to a Visual Studio Installer update running live on the machine at the time — waited for it to finish rather than fighting it with a concurrent install, then repaired via `winget install Microsoft.DotNet.SDK.10` → `10.0.400`. Full detail folded into the Phase 8 upgrade section above (which also covers the `PermissionGuard` Export-button fix that was pending verification when this hit — confirmed compiling and working once the SDK was fixed).

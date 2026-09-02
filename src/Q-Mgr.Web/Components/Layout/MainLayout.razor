@@ -15,10 +15,14 @@
 @using Blazored.LocalStorage
 @using Microsoft.AspNetCore.Components.Authorization
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Services
 @inject ILocalStorageService LocalStorage
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @inject IAppInitializationService AppInit
+@inject IConfiguration Configuration
 
 @* Show loading state until authentication is determined *@
 @if (!authChecked)
@@ -43,6 +47,8 @@
                 text-align: center;
             }
             .loading-logo {
+                display: block;
+                margin: 0 auto;
                 width: 80px;
                 height: 80px;
             }
@@ -61,7 +67,7 @@ else
             <button class="sidebar-toggle" @onclick="ToggleSidebar">
                 <i class="bi bi-list"></i>
             </button>
-            <a href="/" class="brand">
+            <a href="/" @onclick="CollapseSidebarOnMobile" class="brand">
                 <span class="brand-logo">
                     <img src="/images/icon-512@(currentTheme == "light" ? "-light" : "").svg" alt="Q-Mgr" />
                 </span>
@@ -108,7 +114,7 @@ else
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item" href="profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
                     <li><a class="dropdown-item" href="admin/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
-                    <li><a class="dropdown-item" href="/api/docs" target="_blank"><i class="bi bi-book me-2"></i>API Documentation</a></li>
+                    <li><a class="dropdown-item" href="@ApiDocsUrl" target="_blank"><i class="bi bi-book me-2"></i>API Documentation</a></li>
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item text-danger" href="#" @onclick="Logout" @onclick:preventDefault><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
                 </ul>
@@ -123,7 +129,7 @@ else
                 @if (canViewDashboard)
                 {
                     <li class="nav-item">
-                        <a href="/" class="nav-link @(IsActive("/") ? "active" : "")">
+                        <a href="/" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/") ? "active" : "")">
                             <i class="bi bi-speedometer2"></i>
                             <span>Dashboard</span>
                         </a>
@@ -131,7 +137,7 @@ else
                 }
 
                 <!-- Queue Management -->
-                @if (canViewQueue || canManageQueue)
+                @if ((canViewQueue || canManageQueue) && HasModule(ModuleCodes.CoreQueue))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("queue") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("queue"))" @onclick:preventDefault>
@@ -140,33 +146,62 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="queue/board" class="@(IsActive("/queue/board") ? "active" : "")"><i class="bi bi-view-list"></i>Live Queue Board</a></li>
+                            <li><a href="queue/board" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/board") ? "active" : "")"><i class="bi bi-view-list"></i>Live Queue Board</a></li>
                             @if (canManageQueue)
                             {
-                                <li><a href="queue/counter" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
+                                <li><a href="queue/counter" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
                             }
-                            <li><a href="queue/kiosk" class="@(IsActive("/queue/kiosk") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
-                            <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" class="@(IsActive("/queue/display") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
+                            <li><a href="queue/kiosk" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/kiosk") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
+                            <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/display") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
                         </ul>
                     </li>
                 }
 
-                <!-- Visitor Management -->
-                @if (canViewVisitors)
+                <!-- Visitor & Safeguarding (Visitor Management + the Welfare Ledger — one module,
+                     was 2 scattered nav homes before: a standalone Visitor Management item, and
+                     3 Welfare pages buried inside Administration) -->
+                @if ((canViewVisitors || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.VisitorSafeguarding))
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("visitor-safeguarding") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("visitor-safeguarding"))" @onclick:preventDefault>
+                            <i class="bi bi-person-badge"></i>
+                            <span>Visitor & Safeguarding</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            @if (canViewVisitors)
+                            {
+                                <li><a href="admin/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitor Management</a></li>
+                            }
+                            @if (canViewWelfare)
+                            {
+                                <li><a href="admin/welfare-categories" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/welfare-categories") ? "active" : "")"><i class="bi bi-clipboard2-pulse"></i>Welfare Categories</a></li>
+                                <li><a href="admin/welfare-my-actions" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/welfare-my-actions") ? "active" : "")"><i class="bi bi-check2-circle"></i>My Welfare Actions</a></li>
+                            }
+                            @if (canViewWelfareReports)
+                            {
+                                <li><a href="admin/welfare-reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/welfare-reports") ? "active" : "")"><i class="bi bi-bar-chart-line-fill"></i>Welfare Reports</a></li>
+                            }
+                        </ul>
+                    </li>
+                }
+
+                <!-- Integrations & API Access (was one buried line inside Administration) -->
+                @if (canViewApiClients && HasModule(ModuleCodes.IntegrationsApi))
                 {
                     <li class="nav-item">
-                        <a href="admin/visitors" class="nav-link @(IsActive("/admin/visitors") ? "active" : "")">
-                            <i class="bi bi-person-badge"></i>
-                            <span>Visitor Management</span>
+                        <a href="admin/api-clients" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/admin/api-clients") ? "active" : "")">
+                            <i class="bi bi-braces"></i>
+                            <span>Integrations & API</span>
                         </a>
                     </li>
                 }
 
                 <!-- Campaign Marketing -->
-                @if (canViewMarketing)
+                @if (canViewMarketing && HasModule(ModuleCodes.EngagementCommunications))
                 {
                     <li class="nav-item">
-                        <a href="admin/marketing" class="nav-link @(IsActive("/admin/marketing") ? "active" : "")">
+                        <a href="admin/marketing" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/admin/marketing") ? "active" : "")">
                             <i class="bi bi-megaphone-fill"></i>
                             <span>Campaign Marketing</span>
                         </a>
@@ -174,7 +209,7 @@ else
                 }
 
                 <!-- Digital Signage -->
-                @if (canViewContent)
+                @if (canViewContent && HasModule(ModuleCodes.EngagementCommunications))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("content") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("content"))" @onclick:preventDefault>
@@ -183,12 +218,12 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="content/media" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
-                            <li><a href="content/playlists" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
-                            <li><a href="content/campaigns" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaigns</a></li>
-                            <li><a href="content/zones" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
-                            <li><a href="content/schedules" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
-                            <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" class="@(IsActive("/display/signage") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
+                            <li><a href="content/media" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
+                            <li><a href="content/playlists" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
+                            <li><a href="content/campaigns" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaigns</a></li>
+                            <li><a href="content/zones" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
+                            <li><a href="content/schedules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
+                            <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/display/signage") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
                         </ul>
                     </li>
                 }
@@ -203,16 +238,16 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="reports" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
-                            <li><a href="reports/queue" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
-                            <li><a href="reports/counters" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
-                            @if (canViewFeedback)
+                            <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
+                            <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
+                            <li><a href="reports/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
+                            @if (canViewFeedback && HasModule(ModuleCodes.EngagementCommunications))
                             {
-                                <li><a href="reports/feedback" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Customer Feedback</a></li>
+                                <li><a href="reports/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Customer Feedback</a></li>
                             }
-                            @if (canViewVisitors)
+                            @if (canViewVisitors && HasModule(ModuleCodes.VisitorSafeguarding))
                             {
-                                <li><a href="reports/visitors" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
+                                <li><a href="reports/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
                             }
                         </ul>
                     </li>
@@ -230,47 +265,43 @@ else
                         <ul class="submenu">
                             @if (canViewBranches)
                             {
-                                <li><a href="admin/branches" class="@(IsActive("/admin/branches") ? "active" : "")"><i class="bi bi-building"></i>Branches</a></li>
+                                <li><a href="admin/branches" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branches") ? "active" : "")"><i class="bi bi-building"></i>Branches</a></li>
                             }
                             @if (canViewCounters)
                             {
-                                <li><a href="admin/counters" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
+                                <li><a href="admin/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
                             }
                             @if (canViewServiceTypes)
                             {
-                                <li><a href="admin/service-types" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
+                                <li><a href="admin/service-types" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
                             }
                             @if (canViewUsers || canViewRoles)
                             {
-                                <li><a href="admin/users" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
+                                <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
                             }
                             @if (canViewSettings)
                             {
-                                <li><a href="admin/printer-settings" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
-                                <li><a href="admin/kiosk-settings" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
-                                <li><a href="admin/industry" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
-                                <li><a href="admin/branding-settings" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
+                                <li><a href="admin/printer-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
+                                <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
+                                <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
+                                <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
                             }
-                            @if (canViewApiClients)
+                            @if (canViewFeedback && HasModule(ModuleCodes.EngagementCommunications))
                             {
-                                <li><a href="admin/api-clients" class="@(IsActive("/admin/api-clients") ? "active" : "")"><i class="bi bi-braces"></i>API Clients</a></li>
-                            }
-                            @if (canViewFeedback)
-                            {
-                                <li><a href="admin/feedback" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
+                                <li><a href="admin/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
                             }
                             @if (canViewSettings)
                             {
-                                <li><a href="admin/integrations" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
-                                <li><a href="admin/customer-links" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
+                                <li><a href="admin/integrations" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
+                                <li><a href="admin/customer-links" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
                             }
                             @if (canViewNotifications)
                             {
-                                <li><a href="admin/notification-settings" class="@(IsActive("/admin/notification-settings") ? "active" : "")"><i class="bi bi-bell-fill"></i>Notifications</a></li>
+                                <li><a href="admin/notification-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/notification-settings") ? "active" : "")"><i class="bi bi-bell-fill"></i>Notifications</a></li>
                             }
                             @if (canViewSettings)
                             {
-                                <li><a href="admin/settings" class="@(IsActive("/admin/settings") ? "active" : "")"><i class="bi bi-sliders"></i>System Settings</a></li>
+                                <li><a href="admin/settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/settings") ? "active" : "")"><i class="bi bi-sliders"></i>System Settings</a></li>
                             }
                         </ul>
                     </li>
@@ -283,14 +314,27 @@ else
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("billing"))" @onclick:preventDefault>
                             <i class="bi bi-credit-card"></i>
                             <span>Billing</span>
+                            @if (unpurchasedModuleCount > 0)
+                            {
+                                <span class="nav-badge" title="@unpurchasedModuleCount module(s) available">@unpurchasedModuleCount</span>
+                            }
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="billing/overview" class="@(IsActive("/billing/overview") ? "active" : "")"><i class="bi bi-grid"></i>Overview</a></li>
-                            <li><a href="billing/subscription" class="@(IsActive("/billing/subscription") ? "active" : "")"><i class="bi bi-star"></i>Subscription</a></li>
-                            <li><a href="billing/invoices" class="@(IsActive("/billing/invoices") ? "active" : "")"><i class="bi bi-receipt"></i>Invoices</a></li>
-                            <li><a href="billing/payment-methods" class="@(IsActive("/billing/payment-methods") ? "active" : "")"><i class="bi bi-wallet2"></i>Payment Methods</a></li>
-                            <li><a href="billing/usage" class="@(IsActive("/billing/usage") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Usage & Limits</a></li>
+                            <li><a href="billing/overview" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/overview") ? "active" : "")"><i class="bi bi-grid"></i>Overview</a></li>
+                            <li>
+                                <a href="billing/modules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/modules") ? "active" : "")">
+                                    <i class="bi bi-grid-3x3-gap-fill"></i>Modules
+                                    @if (unpurchasedModuleCount > 0)
+                                    {
+                                        <span class="nav-badge">@unpurchasedModuleCount</span>
+                                    }
+                                </a>
+                            </li>
+                            <li><a href="billing/subscription" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/subscription") ? "active" : "")"><i class="bi bi-star"></i>Legacy Plan (deprecated)</a></li>
+                            <li><a href="billing/invoices" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/invoices") ? "active" : "")"><i class="bi bi-receipt"></i>Invoices</a></li>
+                            <li><a href="billing/payment-methods" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/payment-methods") ? "active" : "")"><i class="bi bi-wallet2"></i>Payment Methods</a></li>
+                            <li><a href="billing/usage" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/billing/usage") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Usage & Limits</a></li>
                         </ul>
                     </li>
                 }
@@ -305,12 +349,13 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="platform/dashboard" class="@(IsActive("/platform/dashboard") ? "active" : "")"><i class="bi bi-speedometer2"></i>Platform Dashboard</a></li>
-                            <li><a href="platform/tenants" class="@(IsActive("/platform/tenants") ? "active" : "")"><i class="bi bi-building"></i>Tenant Management</a></li>
-                            <li><a href="admin/platform-settings" class="@(IsActive("/admin/platform-settings") ? "active" : "")"><i class="bi bi-gear"></i>Platform Settings</a></li>
-                            <li><a href="admin/platform-spotify" class="@(IsActive("/admin/platform-spotify") ? "active" : "")"><i class="bi bi-spotify"></i>Spotify Integration</a></li>
-                            <li><a href="platform/analytics" class="@(IsActive("/platform/analytics") ? "active" : "")"><i class="bi bi-graph-up-arrow"></i>Platform Analytics</a></li>
-                            <li><a href="platform/system-health" class="@(IsActive("/platform/system-health") ? "active" : "")"><i class="bi bi-heart-pulse"></i>System Health</a></li>
+                            <li><a href="platform/dashboard" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/dashboard") ? "active" : "")"><i class="bi bi-speedometer2"></i>Platform Dashboard</a></li>
+                            <li><a href="platform/tenants" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/tenants") ? "active" : "")"><i class="bi bi-building"></i>Tenant Management</a></li>
+                            <li><a href="admin/platform-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-settings") ? "active" : "")"><i class="bi bi-gear"></i>Platform Settings</a></li>
+                            <li><a href="admin/platform-spotify" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/platform-spotify") ? "active" : "")"><i class="bi bi-spotify"></i>Spotify Integration</a></li>
+                            <li><a href="admin/docs" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/docs") ? "active" : "")"><i class="bi bi-journal-richtext"></i>Docs Management</a></li>
+                            <li><a href="platform/analytics" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/analytics") ? "active" : "")"><i class="bi bi-graph-up-arrow"></i>Platform Analytics</a></li>
+                            <li><a href="platform/system-health" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/platform/system-health") ? "active" : "")"><i class="bi bi-heart-pulse"></i>System Health</a></li>
                         </ul>
                     </li>
                 }
@@ -323,7 +368,7 @@ else
                 <i class="bi bi-building"></i>
                 <div class="branch-info">
                     <span class="branch-label">Current Branch</span>
-                    <span class="branch-name">@currentBranch?.Name</span>
+                    <span class="branch-name">@(currentBranch?.Name ?? "Select branch")</span>
                 </div>
                 <i class="bi bi-chevron-expand"></i>
             </div>
@@ -340,37 +385,79 @@ else
         <footer class="qm-footer">
             <span>&copy; @DateTime.Now.Year Q-Mgr Queue Management System</span>
             <div class="footer-links">
-                <a href="/api/docs" target="_blank">API Docs</a>
+                <a href="@ApiDocsUrl" target="_blank">API Docs</a>
                 <span class="version">v1.0.0</span>
             </div>
         </footer>
     </main>
 
     <!-- Branch Selector Modal -->
-    <QModal Visible="@showBranchDialog" VisibleChanged="@((bool v) => showBranchDialog = v)" Title="Select Branch" Icon="building" Size="md" NoPadding="true">
+    <QModal Visible="@showBranchDialog" VisibleChanged="@((bool v) => showBranchDialog = v)" Title="@((isSuperAdmin && selectedSuperAdminOrgId == null) ? "Select Organization" : "Select Branch")" Icon="building" Size="md" NoPadding="true">
         <ChildContent>
-            @if (!availableBranches.Any())
+            @if (isSuperAdmin && selectedSuperAdminOrgId == null)
             {
-                <div class="text-center py-4 text-muted">
-                    <i class="bi bi-building fs-1 d-block mb-2"></i>
-                    <p class="mb-2">No branches available</p>
-                    <small>Please configure branches in Administration &gt; Branches</small>
-                </div>
+                @if (loadingSuperAdminOrgs)
+                {
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-hourglass-split fs-1 d-block mb-2"></i>
+                        <p class="mb-0">Loading organizations...</p>
+                    </div>
+                }
+                else if (!superAdminOrgOptions.Any())
+                {
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-building fs-1 d-block mb-2"></i>
+                        <p class="mb-0">No organizations found</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="branch-list">
+                        @foreach (var org in superAdminOrgOptions)
+                        {
+                            <div class="branch-item" @onclick="() => SelectSuperAdminOrg(org)">
+                                <i class="bi bi-building"></i>
+                                <div class="branch-item-info">
+                                    <span class="branch-item-name">@org.Name</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
             }
             else
             {
-                <div class="branch-list">
-                    @foreach (var branch in availableBranches)
-                    {
-                        <div class="branch-item @(branch.Id == currentBranch?.Id ? "active" : "")" @onclick="() => SelectBranch(branch)">
-                            <i class="bi @(branch.Id == currentBranch?.Id ? "bi-check-circle-fill" : "bi-building")"></i>
-                            <div class="branch-item-info">
-                                <span class="branch-item-name">@branch.Name</span>
-                                <span class="branch-item-address">@branch.Address</span>
+                @if (isSuperAdmin)
+                {
+                    <div class="px-3 pt-3 pb-1">
+                        <button type="button" class="btn btn-link btn-sm p-0" @onclick="ChangeSuperAdminOrg">
+                            <i class="bi bi-arrow-left"></i> Change organization (@selectedSuperAdminOrgName)
+                        </button>
+                    </div>
+                }
+                @if (!availableBranches.Any())
+                {
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-building fs-1 d-block mb-2"></i>
+                        <p class="mb-2">No branches available</p>
+                        <small>Please configure branches in Administration &gt; Branches</small>
+                    </div>
+                }
+                else
+                {
+                    <div class="branch-list">
+                        @foreach (var branch in availableBranches)
+                        {
+                            <div class="branch-item @(branch.Id == currentBranch?.Id ? "active" : "")" @onclick="() => SelectBranch(branch)">
+                                <i class="bi @(branch.Id == currentBranch?.Id ? "bi-check-circle-fill" : "bi-building")"></i>
+                                <div class="branch-item-info">
+                                    <span class="branch-item-name">@branch.Name</span>
+                                    <span class="branch-item-address">@branch.Address</span>
+                                </div>
                             </div>
-                        </div>
-                    }
-                </div>
+                        }
+                    </div>
+                }
             }
         </ChildContent>
     </QModal>
@@ -424,7 +511,7 @@ else
     private bool sidebarExpanded = true;
     private UserInfo? currentUser;
     private bool isSuperAdmin = false;
-    private string currentTheme = "dark";
+    private string currentTheme = "light";
     private DateTime currentDateTime = DateTime.Now;
     private System.Threading.Timer? clockTimer;
     private HashSet<string> expandedMenus = new() { "queue" };
@@ -433,6 +520,15 @@ else
     private BranchInfo? currentBranch;
     private List<BranchInfo> availableBranches = new();
     private bool showBranchDialog = false;
+
+    // SuperAdmin has no branches of their own (their tenant context is the Platform org), so
+    // GET api/v1/branches always comes back empty for them - they pick an organization first,
+    // same pattern as the "Add User" org picker (UsersSetup.razor), then branches are loaded
+    // for that specific org via BranchesController's organizationId override param.
+    private List<OrgOption> superAdminOrgOptions = new();
+    private Guid? selectedSuperAdminOrgId;
+    private string? selectedSuperAdminOrgName;
+    private bool loadingSuperAdminOrgs = false;
 
     // Notifications
     private int notificationCount = 0;
@@ -455,10 +551,22 @@ else
     private bool canViewApiClients = false;
     private bool canViewFeedback = false;
     private bool canViewVisitors = false;
+    private bool canViewWelfare = false;
+    private bool canViewWelfareReports = false;
     private bool canViewMarketing = false;
     private bool canViewBilling = false;
     private bool canViewPlatformAdmin = false;
+
+    // Modular subscription system: which of the 4 modules this org currently has active.
+    // SuperAdmin bypasses this entirely (sees everything, same bypass used everywhere else).
+    // Backed by IModuleStateService (scoped, shared with Modules.razor) rather than local fields,
+    // so a purchase/removal made from the Modules page updates this layout's nav/badge live
+    // instead of staying stale until a full page reload — MainLayout persists across navigation
+    // in Blazor Server and never re-runs OnInitializedAsync on its own.
+    private int unpurchasedModuleCount => ModuleState.UnpurchasedCount;
+    private bool HasModule(string moduleCode) => isSuperAdmin || ModuleState.ActiveModuleCodes.Contains(moduleCode);
     private bool tokensInitialized = false;
+    private string ApiDocsUrl = "/api/docs";
 
     protected override async Task OnInitializedAsync()
     {
@@ -473,12 +581,15 @@ else
 
             // Load permissions for menu visibility
             await LoadPermissionsAsync();
+            await LoadActiveModulesAsync();
 
             // Load branches
             await LoadBranches();
 
             // Load notifications
             await LoadNotifications();
+
+            await BuildApiDocsUrlAsync();
 
             // Mark auth as checked since we already have a user
             authChecked = true;
@@ -512,6 +623,19 @@ else
                 await JSRuntime.InvokeVoidAsync("eval", $"document.documentElement.setAttribute('data-theme', '{currentTheme}')");
             }
             catch { }
+
+            // Start collapsed on a phone/tablet viewport - the sidebar renders as a
+            // full-screen overlay below 993px (see layout.css), so defaulting it open
+            // would cover the page the user is trying to look at on first load.
+            try
+            {
+                if (await JSRuntime.InvokeAsync<bool>("qmgrLayout.isMobileViewport"))
+                {
+                    sidebarExpanded = false;
+                    StateHasChanged();
+                }
+            }
+            catch { }
         }
 
         if (firstRender && !tokensInitialized)
@@ -533,6 +657,7 @@ else
                     await LoadPermissionsAsync();
                     await LoadBranches();
                     await LoadNotifications();
+                    await BuildApiDocsUrlAsync();
 
                     // Mark auth as checked and show the app
                     authChecked = true;
@@ -582,6 +707,29 @@ else
                     Address = b.Address ?? ""
                 }).ToList() ?? new List<BranchInfo>();
             }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                // BUG FIX: a 403 here (e.g. Staff, which has no branches.view permission by
+                // design) previously fell straight through to the code below with
+                // availableBranches still empty, which Dashboard.razor reads as "this
+                // organization has zero branches" and shows the "create your first branch"
+                // onboarding wizard - wrong and confusing for a Staff user whose org already
+                // has branches and who is already assigned to one. Fall back to the caller's
+                // own AssignedBranchId/Name via ProfileController.GetProfile, which - unlike
+                // BranchesController - is self-scoped and needs no special permission.
+                var profileResponse = await Http.GetAsync("api/v1/profile");
+                if (profileResponse.IsSuccessStatusCode)
+                {
+                    var profile = await profileResponse.Content.ReadFromJsonAsync<ProfileBranchDto>(JsonOptions);
+                    if (profile?.AssignedBranchId != null)
+                    {
+                        availableBranches = new List<BranchInfo>
+                        {
+                            new BranchInfo { Id = profile.AssignedBranchId.Value, Name = profile.AssignedBranchName ?? "My Branch" }
+                        };
+                    }
+                }
+            }
         }
         catch
         {
@@ -612,6 +760,12 @@ else
         public string Name { get; init; } = "";
         public string? Address { get; init; }
         public bool IsActive { get; init; }
+    }
+
+    private record ProfileBranchDto
+    {
+        public Guid? AssignedBranchId { get; init; }
+        public string? AssignedBranchName { get; init; }
     }
 
     private async Task LoadNotifications()
@@ -673,14 +827,65 @@ else
         canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
+        canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
+        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
         canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
         canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
         canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
     }
 
+    // An unpurchased module is fully invisible in the nav (per explicit direction — a per-module
+    // "locked" row doesn't scale past a handful of modules). The only nav-level advertising signal
+    // is the count badge on "Billing" below, which opens the Modules marketplace where they're
+    // actually named. SuperAdmin never goes through this at all (HasModule short-circuits true).
+    private bool moduleStateSubscribed = false;
+
+    private async Task LoadActiveModulesAsync()
+    {
+        if (isSuperAdmin) return;
+
+        if (!moduleStateSubscribed)
+        {
+            ModuleState.OnChanged += HandleModuleStateChanged;
+            moduleStateSubscribed = true;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+    }
+
+    private void HandleModuleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    // BUG FIX: this link previously pointed at the API's internal ApiBaseUrl - correct for Web's
+    // own server-side HTTP calls, but that value is an unreachable loopback address (127.0.0.1)
+    // from the *browser's* point of view in production. ApiPublicUrl is a distinct config value
+    // set to the real public hostname (see build-linux.ps1). The API docs route now also requires
+    // login (Program.cs), and a plain browser navigation carries no Authorization header, so the
+    // current access token is appended as ?access_token= - the same query-string mechanism this
+    // app already uses for SignalR hub negotiation.
+    private async Task BuildApiDocsUrlAsync()
+    {
+        try
+        {
+            var publicUrl = Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
+            var token = await AuthService.GetAccessTokenAsync();
+            // Trailing slash deliberate: Scalar 302-redirects "/api/docs" -> "/api/docs/", and
+            // that redirect drops the ?access_token= query string entirely, so the browser's
+            // follow-up request arrives unauthenticated. Requesting the already-canonical
+            // trailing-slash URL sidesteps the redirect (and the dropped token) altogether.
+            var baseDocsUrl = new Uri(new Uri(publicUrl), "/api/docs/").ToString();
+            ApiDocsUrl = string.IsNullOrEmpty(token)
+                ? baseDocsUrl
+                : $"{baseDocsUrl}?access_token={Uri.EscapeDataString(token)}";
+        }
+        catch { }
+    }
+
     // Helper property to check if admin section should be visible
     private bool CanViewAdminSection =>
-        canViewBranches || canViewCounters || canViewServiceTypes ||
+        canViewBranches || canViewCounters || canViewServiceTypes || canViewWelfare || canViewWelfareReports ||
         canViewUsers || canViewRoles || canViewSettings ||
         canViewNotifications || canViewApiClients || canViewFeedback;
 
@@ -765,6 +970,22 @@ else
         sidebarExpanded = !sidebarExpanded;
     }
 
+    // On mobile the sidebar renders as a full-screen overlay (see layout.css's
+    // max-width:576px rules), so it must close itself after a real navigation -
+    // previously only the hamburger button could open/close it, so every tap on a
+    // nav link left the overlay covering the page it just navigated to.
+    private async Task CollapseSidebarOnMobile()
+    {
+        try
+        {
+            if (await JSRuntime.InvokeAsync<bool>("qmgrLayout.isMobileViewport"))
+            {
+                sidebarExpanded = false;
+            }
+        }
+        catch { }
+    }
+
     private async Task ToggleTheme()
     {
         currentTheme = currentTheme == "dark" ? "light" : "dark";
@@ -798,9 +1019,83 @@ else
                (path != "/" && currentPath.StartsWith(path, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void ShowBranchSelector()
+    private async Task ShowBranchSelector()
     {
         showBranchDialog = true;
+        if (isSuperAdmin && selectedSuperAdminOrgId == null)
+        {
+            await LoadSuperAdminOrganizations();
+        }
+    }
+
+    private async Task LoadSuperAdminOrganizations()
+    {
+        if (superAdminOrgOptions.Any()) return;
+        loadingSuperAdminOrgs = true;
+        try
+        {
+            var response = await Http.GetAsync("api/v1/admin/tenants?pageSize=200");
+            if (response.IsSuccessStatusCode)
+            {
+                var paged = await response.Content.ReadFromJsonAsync<PagedResultDto<TenantSummaryDto>>(JsonOptions);
+                superAdminOrgOptions = paged?.Items.Select(o => new OrgOption { Id = o.Id, Name = o.Name }).ToList() ?? new();
+            }
+        }
+        catch
+        {
+            superAdminOrgOptions = new();
+        }
+        loadingSuperAdminOrgs = false;
+    }
+
+    private async Task SelectSuperAdminOrg(OrgOption org)
+    {
+        selectedSuperAdminOrgId = org.Id;
+        selectedSuperAdminOrgName = org.Name;
+        availableBranches = new();
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches?organizationId={org.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                var apiBranches = await response.Content.ReadFromJsonAsync<List<BranchApiDto>>(JsonOptions);
+                availableBranches = apiBranches?.Select(b => new BranchInfo
+                {
+                    Id = b.Id,
+                    Name = b.Name,
+                    Address = b.Address ?? ""
+                }).ToList() ?? new();
+            }
+        }
+        catch
+        {
+            availableBranches = new();
+        }
+        BranchState.SetBranchAvailability(availableBranches.Count);
+    }
+
+    private void ChangeSuperAdminOrg()
+    {
+        selectedSuperAdminOrgId = null;
+        selectedSuperAdminOrgName = null;
+        availableBranches = new();
+    }
+
+    private record OrgOption
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+
+    private record TenantSummaryDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+
+    private record PagedResultDto<T>
+    {
+        public List<T> Items { get; init; } = new();
     }
 
     private async Task SelectBranch(BranchInfo branch)
@@ -900,6 +1195,11 @@ else
         // Unsubscribe from notification events
         NotificationHub.OnNotificationReceived -= HandleNewNotification;
         NotificationHub.OnUnreadCountUpdated -= HandleUnreadCountUpdate;
+
+        if (moduleStateSubscribed)
+        {
+            ModuleState.OnChanged -= HandleModuleStateChanged;
+        }
 
         // Stop the SignalR connection
         await NotificationHub.StopAsync();

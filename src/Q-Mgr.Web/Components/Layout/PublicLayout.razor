@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+
+@* Lightweight layout for generic, tenant-agnostic public pages (sign-in, registration,
+   password reset, support/legal/docs). Deliberately does NOT do KioskLayout's per-branch
+   whitelabel-branding fetch - these pages are shown before any branch/tenant is known (or apply
+   to every tenant equally), so that async lookup was pure overhead and, worse, a real
+   post-first-paint re-render: KioskLayout's fetched branch branding could flip `data-theme` and
+   inject color overrides after the page had already painted, and it was always fetching one
+   hardcoded demo branch's settings regardless of who was actually visiting. Real per-branch
+   branding stays on KioskLayout for the customer-facing screens that are actually reached via a
+   specific branch (Kiosk, Customer Display, Feedback entry/page). *@
+<div class="public-layout" data-theme="light">
+    @Body
+</div>
+
+<ToastHost />
+
+<style>
+    .public-layout {
+        min-height: 100vh;
+    }
+</style>

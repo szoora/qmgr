@@ -24,6 +24,10 @@
             {
                 @Label
             }
+            @if (Required)
+            {
+                <span class="q-checkbox__required">*</span>
+            }
         </span>
     }
 </label>
@@ -48,6 +52,12 @@
     /// Whether the checkbox is disabled
     /// </summary>
     [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Renders the required asterisk next to the label — same convention as QInput/QSelect/
+    /// QDatePicker. Purely visual; actual enforcement is a DataAnnotations/validation concern.
+    /// </summary>
+    [Parameter] public bool Required { get; set; }
 
     /// <summary>
     /// Additional CSS classes

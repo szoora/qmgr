@@ -61,6 +61,72 @@ public class RequireFeatureAttribute : Attribute, IAsyncActionFilter
 }
 
 /// <summary>
+/// Requires one of the four purchasable modules (see <c>ModuleCodes</c>) to be active for the
+/// current tenant. Returns 403 if it isn't — mirrors <see cref="RequireFeatureAttribute"/> exactly
+/// (same response shape, same tenant-resolution check) so it composes freely alongside
+/// <c>[RequirePermission]</c> the same proven way <c>RequireFeatureAttribute</c> already does.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
+public class RequireModuleAttribute : Attribute, IAsyncActionFilter
+{
+    public string ModuleCode { get; }
+    public string? ErrorMessage { get; set; }
+
+    public RequireModuleAttribute(string moduleCode)
+    {
+        ModuleCode = moduleCode;
+    }
+
+    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    {
+        var tenantAccessor = context.HttpContext.RequestServices.GetRequiredService<ITenantContextAccessor>();
+        var moduleAccessService = context.HttpContext.RequestServices.GetRequiredService<QMgr.Application.Interfaces.Billing.IModuleAccessService>();
+
+        var tenantContext = tenantAccessor.TenantContext;
+
+        if (tenantContext == null || !tenantContext.IsResolved)
+        {
+            context.Result = new UnauthorizedObjectResult(new
+            {
+                error = "TENANT_NOT_RESOLVED",
+                message = "Unable to determine tenant context"
+            });
+            return;
+        }
+
+        // SuperAdmin manages every tenant's modules directly — never gated by what any one
+        // tenant happens to have purchased, same bypass used throughout the codebase for
+        // [RequirePermission] and VerifyBranchOwnership.
+        if (QMgr.Domain.Constants.RoleCodes.IsSuperAdmin(tenantContext.UserRole))
+        {
+            await next();
+            return;
+        }
+
+        var isActive = await moduleAccessService.IsModuleActiveAsync(tenantContext.OrganizationId, ModuleCode);
+
+        if (!isActive)
+        {
+            var message = ErrorMessage ?? $"The '{ModuleCode}' module is not active for your organization. Add it from Billing to access this feature.";
+
+            context.Result = new ObjectResult(new
+            {
+                error = "MODULE_NOT_PURCHASED",
+                module = ModuleCode,
+                message,
+                purchaseUrl = "/billing/modules"
+            })
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+            return;
+        }
+
+        await next();
+    }
+}
+
+/// <summary>
 /// Attribute to require a minimum subscription tier.
 /// Returns 403 Forbidden if the current tier is lower than required.
 /// </summary>

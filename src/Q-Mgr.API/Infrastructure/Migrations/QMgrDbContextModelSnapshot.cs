@@ -241,6 +241,70 @@ namespace QMgr.Infrastructure.Migrations
                     b.ToTable("invoices", "qmgr");
                 });
 
+            modelBuilder.Entity("QMgr.Domain.Entities.Billing.OrganizationModule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ActivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AdminNote")
+                        .HasColumnType("text");
+
+                    b.Property<int>("BillingCycle")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CurrentPeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("GrantedByPlatformAdmin")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("ModuleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StripeSubscriptionItemId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("TrialEndsAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModuleId");
+
+                    b.HasIndex("OrganizationId", "ModuleId")
+                        .IsUnique();
+
+                    b.ToTable("organization_modules", "qmgr");
+                });
+
             modelBuilder.Entity("QMgr.Domain.Entities.Billing.Payment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1082,6 +1146,73 @@ namespace QMgr.Infrastructure.Migrations
                     b.ToTable("quotes", "qmgr");
                 });
 
+            modelBuilder.Entity("QMgr.Domain.Entities.Docs.DocArticle", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BodyHtml")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CoverImageUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("Industry")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique()
+                        .HasDatabaseName("idx_doc_articles_slug");
+
+                    b.HasIndex("Status", "DisplayOrder")
+                        .HasDatabaseName("idx_doc_articles_status_order");
+
+                    b.ToTable("doc_articles", "qmgr");
+                });
+
             modelBuilder.Entity("QMgr.Domain.Entities.Identity.Permission", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1267,6 +1398,12 @@ namespace QMgr.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<string>("PasswordResetToken")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("PasswordResetTokenExpiry")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(50)
@@ -3412,6 +3549,273 @@ namespace QMgr.Infrastructure.Migrations
                     b.ToTable("visitor_profiles", "qmgr");
                 });
 
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FileUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("RecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UploadedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecordId");
+
+                    b.ToTable("WelfareAttachments", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareCategory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CaseType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Color")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("DefaultPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DefaultTier")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("WelfareCategories", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AttributedToName")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("AuthorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsFinal")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecordId");
+
+                    b.ToTable("WelfareNotes", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareNotification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Channel")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GuardianVisitorProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("RecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SentByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecordId");
+
+                    b.ToTable("WelfareNotifications", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ActionDueDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ActionTaken")
+                        .HasColumnType("text");
+
+                    b.PrimitiveCollection<Guid[]>("AdditionalStudentIds")
+                        .HasColumnType("uuid[]");
+
+                    b.Property<Guid?>("AssignedToUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CaseType")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Confidential")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Location")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("Points")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReminderSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ReportedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("StudentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Tier")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId");
+
+                    b.HasIndex("CategoryId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("StudentId");
+
+                    b.ToTable("WelfareRecords", "qmgr");
+                });
+
             modelBuilder.Entity("QMgr.Domain.Entities.Billing.AdImpression", b =>
                 {
                     b.HasOne("QMgr.Domain.Entities.Organization.Branch", "Branch")
@@ -3455,6 +3859,25 @@ namespace QMgr.Infrastructure.Migrations
                     b.Navigation("Organization");
 
                     b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Billing.OrganizationModule", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Billing.SubscriptionPlan", "Module")
+                        .WithMany()
+                        .HasForeignKey("ModuleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Module");
+
+                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Billing.Payment", b =>
@@ -4146,6 +4569,85 @@ namespace QMgr.Infrastructure.Migrations
                     b.Navigation("Organization");
                 });
 
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareAttachment", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Welfare.WelfareRecord", "Record")
+                        .WithMany("Attachments")
+                        .HasForeignKey("RecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Record");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareCategory", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareNote", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Welfare.WelfareRecord", "Record")
+                        .WithMany("Notes")
+                        .HasForeignKey("RecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Record");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareNotification", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Welfare.WelfareRecord", "Record")
+                        .WithMany("Notifications")
+                        .HasForeignKey("RecordId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Record");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareRecord", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Organization.Branch", "Branch")
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Welfare.WelfareCategory", "Category")
+                        .WithMany("Records")
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Visitor.Student", "Student")
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Branch");
+
+                    b.Navigation("Category");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("Student");
+                });
+
             modelBuilder.Entity("QMgr.Domain.Entities.Billing.Invoice", b =>
                 {
                     b.Navigation("Payments");
@@ -4277,6 +4779,20 @@ namespace QMgr.Infrastructure.Migrations
             modelBuilder.Entity("QMgr.Domain.Entities.Visitor.VisitorProfile", b =>
                 {
                     b.Navigation("Visits");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareCategory", b =>
+                {
+                    b.Navigation("Records");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.WelfareRecord", b =>
+                {
+                    b.Navigation("Attachments");
+
+                    b.Navigation("Notes");
+
+                    b.Navigation("Notifications");
                 });
 #pragma warning restore 612, 618
         }

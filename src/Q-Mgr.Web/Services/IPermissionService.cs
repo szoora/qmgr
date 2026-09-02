@@ -239,6 +239,15 @@ public static class Permissions
     public const string StudentsView = "students.view";
     public const string StudentsManage = "students.manage";
 
+    // Student Welfare Ledger
+    public const string WelfareView = "welfare.view";
+    public const string WelfareCreate = "welfare.create";
+    public const string WelfareEdit = "welfare.edit";
+    public const string WelfareNotify = "welfare.notify";
+    public const string WelfareConfidentialView = "welfare.confidential.view";
+    public const string WelfareCategoriesManage = "welfare.categories.manage";
+    public const string WelfareReportsView = "welfare.reports.view";
+
     // Marketing
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage";
@@ -276,6 +285,8 @@ public static class Permissions
     public const string PlatformSettingsView = "platform.settings.view";
     public const string PlatformSettingsEdit = "platform.settings.edit";
     public const string PlatformAnalytics = "platform.analytics";
+    public const string PlatformDocsView = "platform.docs.view";
+    public const string PlatformDocsManage = "platform.docs.manage";
 }
 
 /// <summary>

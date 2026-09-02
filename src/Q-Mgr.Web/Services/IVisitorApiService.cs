@@ -111,21 +111,21 @@ public class VisitorApiService : IVisitorApiService
     public async Task<VisitorDto> PreRegisterAsync(Guid branchId, PreRegisterVisitorRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/pre-register", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions))!;
     }
 
     public async Task<VisitorDto> CheckInAsync(Guid branchId, CheckInVisitorRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/checkin", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions))!;
     }
 
     public async Task<VisitorDto> CheckInExistingAsync(Guid branchId, Guid visitorId, CheckInVisitorRequest? request = null)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/{visitorId}/checkin", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions))!;
     }
 
@@ -215,7 +215,7 @@ public class VisitorApiService : IVisitorApiService
     {
         var request = new SetWatchlistRequest { IsWatchlisted = isWatchlisted, Reason = reason };
         var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitor-profiles/{profileId}/watchlist", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
     }
 
     public async Task<bool> DeleteVisitorAsync(Guid branchId, Guid visitorId, string reason)
@@ -252,7 +252,7 @@ public class VisitorApiService : IVisitorApiService
     public async Task<VisitorPassDto> CreatePassAsync(Guid branchId, CreateVisitorPassRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitor-passes", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorPassDto>(_jsonOptions))!;
     }
 
@@ -275,7 +275,7 @@ public class VisitorApiService : IVisitorApiService
     {
         var request = new VisitorScanRequest { Token = token, Direction = direction };
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/scan", request, _jsonOptions);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<VisitorScanResultDto>(_jsonOptions))!;
     }
 
@@ -406,21 +406,4 @@ public class VisitorApiService : IVisitorApiService
         }
     }
 
-    private static async Task<string> ReadProblemTitleAsync(HttpResponseMessage response)
-    {
-        var body = await response.Content.ReadAsStringAsync();
-        try
-        {
-            var parsed = JsonDocument.Parse(body);
-            if (parsed.RootElement.TryGetProperty("title", out var titleProp))
-            {
-                var title = titleProp.GetString() ?? body;
-                if (parsed.RootElement.TryGetProperty("detail", out var detailProp) && detailProp.GetString() is { Length: > 0 } detail)
-                    return $"{title}: {detail}";
-                return title;
-            }
-        }
-        catch (JsonException) { /* not JSON, fall back to the raw body */ }
-        return body;
-    }
 }

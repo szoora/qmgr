@@ -197,6 +197,36 @@ solve a real problem cleanly. Pure client-side libraries loaded via CDN (Bootstr
 page-flip, etc.) are not what this rule is about — those ship to the browser, not the server, and
 have already been added freely throughout this project.
 
+## Standing constraint: prefer enhancing an existing table/field over adding a new one
+
+Decided 2026-09-01 while planning the Student Welfare Ledger's post-MVP phases (see the
+`Student Welfare Ledger` artifact's §05 "Data model: enhance before you add"). The user's own
+framing: "limit creation of unnecessary tables and fields, prioritise enhancement and improvement.
+however if absolutely necessary, new tables or fields can be created." A new nullable column on a
+table that already exists is cheap; a new table is not just a migration — it's a new thing every
+future query, permission check, join, and report has to remember exists.
+
+**Before proposing or building a new table, check whether the actual need fits as:**
+- A new nullable column (or a few) on an existing table — the default choice for a new
+  attribute of something that already has a row (e.g., action-taken/assigned-to/due-date on a
+  `WelfareRecord` rather than a separate actions table).
+- A new enum value on a field that already exists (e.g., a `Draft` status added to an existing
+  status enum, rather than a parallel "is this a draft" table).
+- A native Postgres array/JSON column, when the real need is "also applies to these other rows"
+  without per-row metadata (e.g., linking a few additional students to one record) — cheaper than
+  a join table when nothing beyond the ID list needs to be queried or stored per link.
+
+**Only reach for an actual new table when the shape genuinely can't fit any of the above** — a
+true many-to-many relationship that needs its own attributes per pairing (not just an ID list), or
+a sub-resource with an independent lifecycle an existing row can't represent no matter how many
+columns it grows (e.g., `WelfareAttachment` — a file upload is genuinely its own resource, not an
+attribute of the record it's attached to).
+
+This is a general project convention going forward, not specific to the Welfare Ledger — apply it
+to any new feature's data-model planning, and say so explicitly in the plan (which existing
+table/field is being widened, and why a new table wasn't the first choice) rather than silently
+defaulting to "just add a table" the way a fresh design tends to.
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

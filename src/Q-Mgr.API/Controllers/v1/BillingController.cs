@@ -23,6 +23,7 @@ public class BillingController : ControllerBase
     private readonly IStripeService _stripeService;
     private readonly IMobileMoneyService _mobileMoneyService;
     private readonly IUsageTrackingService _usageTrackingService;
+    private readonly IModuleAccessService _moduleAccessService;
     private readonly ITenantContextAccessor _tenantContextAccessor;
     private readonly IConfiguration _configuration;
     private readonly IPlatformSettingsService _platformSettingsService;
@@ -33,6 +34,7 @@ public class BillingController : ControllerBase
         IStripeService stripeService,
         IMobileMoneyService mobileMoneyService,
         IUsageTrackingService usageTrackingService,
+        IModuleAccessService moduleAccessService,
         ITenantContextAccessor tenantContextAccessor,
         IConfiguration configuration,
         IPlatformSettingsService platformSettingsService,
@@ -42,6 +44,7 @@ public class BillingController : ControllerBase
         _stripeService = stripeService;
         _mobileMoneyService = mobileMoneyService;
         _usageTrackingService = usageTrackingService;
+        _moduleAccessService = moduleAccessService;
         _tenantContextAccessor = tenantContextAccessor;
         _configuration = configuration;
         _platformSettingsService = platformSettingsService;
@@ -781,6 +784,23 @@ public class BillingController : ControllerBase
         }
 
         _logger.LogInformation("Processed Stripe webhook: {EventType}", result.EventType);
+
+        // Module-purchase Checkout Session completed (see StripeService.CreateModuleCheckoutSessionAsync/
+        // HandleWebhookAsync) — the org's first card-paid module. Persist the new shared
+        // customer/subscription IDs and activate the module against its subscription item.
+        if (result.EventType == "checkout.session.completed" && result.ModuleOrganizationId.HasValue && result.ModuleCode != null)
+        {
+            await _moduleAccessService.SetStripeModuleBillingAsync(
+                result.ModuleOrganizationId.Value, result.StripeCustomerId, result.StripeSubscriptionId);
+
+            var cycle = result.ModuleBillingCycle == "Annual" ? BillingCycle.Annual : BillingCycle.Monthly;
+            await _moduleAccessService.ActivateAsync(
+                result.ModuleOrganizationId.Value, result.ModuleCode, cycle, result.NewSubscriptionItemId);
+
+            _logger.LogInformation(
+                "Activated module {ModuleCode} for organization {OrganizationId} via Stripe checkout",
+                result.ModuleCode, result.ModuleOrganizationId);
+        }
 
         // PREVIOUSLY a no-op — see StripeService.HandleWebhookAsync's comment for what that
         // actually meant in practice (a real payment succeeding or failing changed nothing).

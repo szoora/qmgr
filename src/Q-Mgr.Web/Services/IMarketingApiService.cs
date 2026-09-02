@@ -152,7 +152,7 @@ public class MarketingApiService : IMarketingApiService
         if (response.IsSuccessStatusCode)
             return (await response.Content.ReadFromJsonAsync<BroadcastDto>(_jsonOptions))!;
 
-        throw new InvalidOperationException(await ReadProblemTitleAsync(response));
+        throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
     }
 
     public async Task<BroadcastDto?> DeleteBroadcastAttachmentAsync(Guid broadcastId, Guid attachmentId)
@@ -170,16 +170,4 @@ public class MarketingApiService : IMarketingApiService
         }
     }
 
-    private static async Task<string> ReadProblemTitleAsync(HttpResponseMessage response)
-    {
-        var body = await response.Content.ReadAsStringAsync();
-        try
-        {
-            var parsed = JsonDocument.Parse(body);
-            if (parsed.RootElement.TryGetProperty("title", out var titleProp))
-                return titleProp.GetString() ?? body;
-        }
-        catch (JsonException) { /* not JSON, fall back to the raw body */ }
-        return body;
-    }
 }
