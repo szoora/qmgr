@@ -271,8 +271,8 @@ checking remains blocked by the browser tooling's non-functional viewport resize
    set `StripePriceIdMonthly`/`StripePriceIdAnnual` on the 4 module rows, and run a real test-mode
    checkout plus a webhook replay.
 2. **Production is still running the old build — but the package is built and waiting.**
-   `scripts/deploy/dist/qmgr-0.2.0-20260903.1448.tar.gz` (108.6 MB, ports 8586/8587, commit
-   `728d02d`, gitignored) contains everything above. Deploying it is a live-system action that was
+   `scripts/deploy/dist/qmgr-0.2.0-20260903.1518.tar.gz` (108.6 MB, ports 8586/8587, commit
+   `6c674f2`, gitignored) contains everything above. Deploying it is a live-system action that was
    deliberately left for the user's explicit go-ahead. Two things to know before running it:
    the deploy carries **two migrations that have only ever been applied locally**
    (`AddIndustryCategoryConsolidation` from the previous session, `AddStudentConsentAndImportKind`
