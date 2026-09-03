@@ -177,6 +177,54 @@ duplicates; `KioskMode` had a `Dispose()` that never ran (no `@implements IDispo
 punctuation rendering as `â€"` / `â¢`) which are repaired — worth knowing that this can happen, and
 that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
 
+### Subscription gating, added after the first pass on a live report from the user
+
+The user sent a screenshot of production showing the problem plainly: an organization whose
+sidebar had **no Queue Management group at all** was still being offered Counters Setup, Service
+Types, Kiosk Settings, Printer Settings and Customer Links under Administration, plus a dashboard
+of queue statistics with "Open Kiosk" and "Counter Terminal" shortcuts. Their instruction was that
+visibility *and* accessibility must both be gated by RBAC **and** subscription, in the UI and the
+backend, and they suggested a filter or middleware for the backend half.
+
+The cause was that module gating was per-place and therefore partial. Only 12 of 36 controllers
+carried `[RequireModule]`, and in the Blazor app only some feature pages called `HasModule` — the
+entire Administration and Reports nav groups and the dashboard checked permissions alone. Typing
+the URL reached the page, and calling the API directly reached the data.
+
+**`ModuleRouteMap` (`Q-Mgr.Shared/Domain/Constants/`) is now the single declaration** of which
+routes belong to which module, for both projects. Anything not listed is base product available to
+every tenant under RBAC alone: the dashboard shell, Branches, Users & Roles, Industry and Branding
+settings, Notifications, System Settings, Billing, Profile and Docs. Three places read it:
+
+1. **`ModuleAccessMiddleware`** (API, registered after tenant resolution) enforces it for every
+   matched endpoint, so a new route under a mapped prefix is gated whether or not anyone remembers
+   the attribute. `[RequireModule]` stays on the controllers that have it — it states intent where
+   a reader will see it — but is no longer what coverage depends on.
+2. **A navigation guard in `MainLayout`**, so a pasted URL is refused rather than merely hidden,
+   and so removing a module also closes a page the user is already sitting on.
+3. **The sidebar itself**, so what is visible and what is reachable cannot drift apart.
+
+Two decisions worth knowing. **The anonymous kiosk and display endpoints are gated too**: they
+carry no JWT, so the middleware resolves the owning organization from the branch id in the route.
+Without that they were the one way around the gate, and an unpaid tenant's customer-facing screens
+would have kept serving. **The marketing unsubscribe route is deliberately never gated**, because
+an unsubscribe link in already-sent mail has to keep working after a tenant drops the module.
+
+Route matching is per whole segment, so `/admin/welfare` does not cover `/admin/welfare-reports`.
+That is intentional — it stops `/admin/visitors` swallowing an unrelated `/admin/visitors-x` — and
+it means each hyphenated route is listed individually. Checked against 43 cases covering both the
+routes that must be gated and the base-product ones that must not.
+
+The dashboard now shows a module-appropriate landing state naming the tenant's actual modules,
+instead of a grid of zeroes for a product they never bought.
+
+**Verified live** against an organization holding only `core-queue`: visitor, welfare, engagement
+and integrations routes all returned `MODULE_NOT_PURCHASED` while queue routes worked normally.
+With every module set inactive, both the authenticated and the anonymous public queue endpoints
+were refused, while base-product routes and other tenants were unaffected. Note the module cache
+has a five-minute TTL, so a change made directly in the database is not visible until it expires
+or the service invalidates it — going through the app's own grant and revoke paths avoids this.
+
 ### What was verified live (not just compiled)
 
 Both dev servers were run and the following exercised for real against the dev database. Worth
