@@ -46,6 +46,10 @@
     --qm-bg-card: #141414;
     --qm-bg-card-hover: #1f1f1f;
     --qm-bg-elevated: #1a1a1a;
+    /* Subtle secondary surface for table headers, chips and status pills. 25 components
+       already referenced this token with no fallback, so those surfaces rendered with no
+       background at all until it was defined here. */
+    --qm-bg-secondary: #1a1a1a;
     --qm-bg-input: #0a0a0a;
 
     /* Text Colors - High Contrast */
@@ -167,6 +171,7 @@
     --qm-bg-card: #ffffff;
     --qm-bg-card-hover: #f1f5f9;
     --qm-bg-elevated: #f8fafc;
+    --qm-bg-secondary: #eef2f7;
     --qm-bg-input: #ffffff;
 
     /* Text Colors - High Contrast for Light */
