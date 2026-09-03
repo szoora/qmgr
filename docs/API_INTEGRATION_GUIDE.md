@@ -229,6 +229,11 @@ JSON body shown above — back off for that many seconds rather than retrying im
 
 ## Webhooks
 
+> **.NET integrators:** the `QMgr.IntegrationSdk` package ships `QMgrWebhookVerifier`, which does
+> the signing and the constant-time verification described below. Prefer it over reimplementing
+> the HMAC: comparing hex strings with `==` leaks timing, and re-serializing the JSON before
+> hashing changes the very bytes the signature covers.
+
 Webhooks are configured per API client on **Admin → API Clients** (`/admin/api-clients`), and
 require the `integrations-api` module to be active for the organization. Each client has:
 

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Localization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Blazored.LocalStorage;
@@ -26,6 +27,11 @@ builder.Services.AddRadzenComponents();
 // Note: Web project is a UI client only - it calls API via HTTP
 // DO NOT add Application/Infrastructure layers here as it causes conflicts
 // with the API project (duplicate Mediator handlers, database connection conflicts)
+
+// Localization for the customer-facing screens (kiosk, display, queue board, join, ticket status,
+// feedback). Resource keys are the English text, so anything untranslated renders as readable
+// English instead of a key name. See QMgr.Web.Resources.SharedResources.
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
 
 // Add Blazor services
 builder.Services.AddRazorComponents()
@@ -156,7 +162,46 @@ app.UseHttpsRedirection();
 // existed in the (stale, cached) JS — silently killing the Blazor circuit on any
 // page with a data grid. UseStaticFiles has no such cache-busting by default.
 app.MapStaticAssets();
+
+// Culture comes from the cookie the picker below writes; without this the request-localization
+// middleware would leave every circuit on the server's own culture.
+var localizationOptions = new RequestLocalizationOptions()
+    .SetDefaultCulture(QMgr.Web.Services.SupportedCultures.Codes[0])
+    .AddSupportedCultures(QMgr.Web.Services.SupportedCultures.Codes)
+    .AddSupportedUICultures(QMgr.Web.Services.SupportedCultures.Codes);
+localizationOptions.RequestCultureProviders.Insert(0, new CookieRequestCultureProvider
+{
+    CookieName = QMgr.Web.Services.SupportedCultures.CookieName
+});
+app.UseRequestLocalization(localizationOptions);
+
 app.UseAntiforgery();
+
+// Changing language in Blazor Server needs a real HTTP round trip: the already-rendered markup and
+// the localization middleware both have to agree, so the choice is stored in a cookie here and the
+// browser is redirected, starting a fresh circuit in the chosen language.
+app.MapGet("/culture/set", (HttpContext http, string culture, string? redirectUri) =>
+{
+    if (!QMgr.Web.Services.SupportedCultures.IsSupported(culture))
+    {
+        return Results.BadRequest("Unsupported language.");
+    }
+
+    http.Response.Cookies.Append(
+        QMgr.Web.Services.SupportedCultures.CookieName,
+        CookieRequestCultureProvider.MakeCookieValue(new RequestCulture(culture)),
+        new CookieOptions { Expires = DateTimeOffset.UtcNow.AddYears(1), IsEssential = true, Path = "/" });
+
+    // Only ever return to a path on this site: redirectUri arrives from the query string, so
+    // accepting an absolute URL here would make this an open redirect.
+    var target = redirectUri;
+    if (string.IsNullOrWhiteSpace(target) || !target.StartsWith('/') || target.StartsWith("//"))
+    {
+        target = "/";
+    }
+
+    return Results.LocalRedirect(target);
+});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()

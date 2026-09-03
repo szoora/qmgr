@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
+using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
@@ -112,6 +113,394 @@ public class ReportsController : ControllerBase
         {
             StatusCode = StatusCodes.Status403Forbidden
         };
+    }
+
+    // =========================================================================================
+    // JSON reads — the on-screen siblings of the CSV exports below.
+    //
+    // Every figure the Reports pages display comes from one of these four actions, computed from
+    // the same rows over the same range as the matching /export action, so the screen and the
+    // download can never disagree. They are gated on Permissions.ReportsView (weaker than the
+    // exports' ReportsExport) because they carry no customer PII — see FeedbackCommentDto.
+    //
+    // Averages are nullable all the way to the browser: null means "nothing was served/rated in
+    // this range, so there is nothing to average", which the UI renders as an empty state. It is
+    // NOT rounded down to zero — a zero here would read as a measurement ("customers waited no
+    // time at all") when it is in fact an absence of one.
+    // =========================================================================================
+
+    /// <summary>
+    /// Daily queue series plus range totals. Same aggregation as
+    /// <see cref="ExportOverviewReport"/>, including the zero days, so the chart and the CSV
+    /// plot the same line.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/reports/overview")]
+    [RequirePermission(Permissions.ReportsView)]
+    [RequireModule(ModuleCodes.CoreQueue)]
+    public async Task<IActionResult> GetOverviewReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var tokens = await _context.Tokens
+            .AsNoTracking()
+            .Where(t => t.BranchId == branchId && t.CreatedAt >= rangeStart && t.CreatedAt < rangeEndExclusive)
+            .Select(t => new { t.CreatedAt, t.Status, t.ActualWaitMinutes, t.ServiceDurationMinutes })
+            .ToListAsync();
+
+        var counterStatuses = await _context.Counters
+            .AsNoTracking()
+            .Where(c => c.BranchId == branchId)
+            .Select(c => c.Status)
+            .ToListAsync();
+
+        var byDay = tokens.ToLookup(t => DateOnly.FromDateTime(t.CreatedAt));
+        var series = new List<QueueDayStatDto>();
+        for (var day = fromDate; day <= toDate; day = day.AddDays(1))
+        {
+            var rows = byDay[day].ToList();
+            var servedRows = rows.Where(t => t.Status == TokenStatus.Completed).ToList();
+            series.Add(new QueueDayStatDto
+            {
+                Day = day,
+                Issued = rows.Count,
+                Served = servedRows.Count,
+                NoShow = rows.Count(t => t.Status == TokenStatus.NoShow),
+                Cancelled = rows.Count(t => t.Status == TokenStatus.Cancelled),
+                Transferred = rows.Count(t => t.Status == TokenStatus.Transferred),
+                StillOpen = rows.Count(t => t.Status == TokenStatus.Waiting || t.Status == TokenStatus.Called || t.Status == TokenStatus.Serving),
+                AvgWaitMinutes = AverageOrNull(servedRows.Select(t => t.ActualWaitMinutes)),
+                AvgServiceMinutes = AverageOrNull(servedRows.Select(t => t.ServiceDurationMinutes))
+            });
+        }
+
+        var served = tokens.Where(t => t.Status == TokenStatus.Completed).ToList();
+
+        return Ok(new QueueOverviewReportDto
+        {
+            From = fromDate,
+            To = toDate,
+            TotalIssued = tokens.Count,
+            TotalServed = served.Count,
+            TotalNoShow = tokens.Count(t => t.Status == TokenStatus.NoShow),
+            TotalCancelled = tokens.Count(t => t.Status == TokenStatus.Cancelled),
+            TotalTransferred = tokens.Count(t => t.Status == TokenStatus.Transferred),
+            StillOpen = tokens.Count(t => t.Status == TokenStatus.Waiting || t.Status == TokenStatus.Called || t.Status == TokenStatus.Serving),
+            AvgWaitMinutes = AverageOrNull(served.Select(t => t.ActualWaitMinutes)),
+            AvgServiceMinutes = AverageOrNull(served.Select(t => t.ServiceDurationMinutes)),
+            ActiveCounters = counterStatuses.Count(s => s == CounterStatus.Active),
+            TotalCounters = counterStatuses.Count,
+            ByDay = series,
+            ByHour = Enumerable.Range(0, 24)
+                .Select(h => new HourCountDto { Hour = h, Count = tokens.Count(t => t.CreatedAt.Hour == h) })
+                .ToList()
+        });
+    }
+
+    /// <summary>
+    /// Per-counter performance, including a real utilisation figure.
+    ///
+    /// UTILISATION IS DEFINED HERE, once, and the definition travels to the UI as
+    /// <see cref="CounterPerformanceReportDto.UtilisationDefinition"/> so the caption on screen
+    /// can never drift from the arithmetic:
+    ///
+    ///   utilisation % = 100 × total service minutes ÷ active minutes
+    ///
+    /// where <b>total service minutes</b> is the sum of ServiceDurationMinutes over the tokens
+    /// this counter actually completed in the range, and <b>active minutes</b> is the counter's
+    /// own observed working window — for each calendar day, the span from its first recorded
+    /// activity (ServiceStartedAt, else CalledAt, else the token's CreatedAt) to its last
+    /// (ServiceCompletedAt, else the same fallbacks), summed across days, and floored at the
+    /// total service minutes so a single-token day can't produce a nonsensical &gt;100%.
+    ///
+    /// Days on which the counter handled nothing contribute to neither figure — they are not
+    /// counted as idle time, because nothing in the schema records whether the counter was even
+    /// meant to be open. That is also why this is deliberately NOT "share of the working day":
+    /// Counter has no opening/closing times and Branch.OperatingHours is free-form JSON that may
+    /// be absent, so any working-day denominator would be an assumption dressed as a measurement.
+    /// A counter with no activity at all in the range gets a null utilisation, not 0%.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/reports/counters")]
+    [RequirePermission(Permissions.ReportsView)]
+    [RequireModule(ModuleCodes.CoreQueue)]
+    public async Task<IActionResult> GetCounterReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var counters = await _context.Counters
+            .AsNoTracking()
+            .Where(c => c.BranchId == branchId)
+            .OrderBy(c => c.CounterNumber)
+            .Select(c => new
+            {
+                c.Id,
+                c.CounterNumber,
+                c.DisplayName,
+                c.Status,
+                AssignedStaff = c.AssignedUser != null ? (c.AssignedUser.FirstName + " " + c.AssignedUser.LastName) : null,
+                ServiceTypes = c.CounterServiceTypes.Select(cst => cst.ServiceType!.Code).ToList()
+            })
+            .ToListAsync();
+
+        var tokens = await _context.Tokens
+            .AsNoTracking()
+            .Where(t => t.BranchId == branchId && t.CounterId != null && t.CreatedAt >= rangeStart && t.CreatedAt < rangeEndExclusive)
+            .Select(t => new
+            {
+                CounterId = t.CounterId!.Value,
+                t.CreatedAt,
+                t.CalledAt,
+                t.ServiceStartedAt,
+                t.ServiceCompletedAt,
+                t.Status,
+                t.ActualWaitMinutes,
+                t.ServiceDurationMinutes
+            })
+            .ToListAsync();
+
+        var byCounter = tokens.ToLookup(t => t.CounterId);
+
+        var rowsOut = new List<CounterPerformanceDto>();
+        foreach (var c in counters)
+        {
+            var rows = byCounter[c.Id].ToList();
+            var served = rows.Where(t => t.Status == TokenStatus.Completed).ToList();
+            var totalServiceMinutes = served.Sum(t => t.ServiceDurationMinutes ?? 0);
+
+            // Observed working window, per day, summed. See the XML doc above for why this and
+            // not a working-day denominator.
+            var observedMinutes = rows
+                .Select(t => new
+                {
+                    Start = t.ServiceStartedAt ?? t.CalledAt ?? t.CreatedAt,
+                    End = t.ServiceCompletedAt ?? t.ServiceStartedAt ?? t.CalledAt ?? t.CreatedAt
+                })
+                .GroupBy(w => DateOnly.FromDateTime(w.Start))
+                .Sum(g => Math.Max(0d, (g.Max(w => w.End) - g.Min(w => w.Start)).TotalMinutes));
+
+            var activeMinutes = (int)Math.Round(Math.Max(observedMinutes, totalServiceMinutes));
+
+            rowsOut.Add(new CounterPerformanceDto
+            {
+                CounterId = c.Id,
+                CounterNumber = c.CounterNumber,
+                DisplayName = string.IsNullOrWhiteSpace(c.DisplayName) ? $"Counter {c.CounterNumber}" : c.DisplayName!,
+                Status = c.Status,
+                AssignedStaff = string.IsNullOrWhiteSpace(c.AssignedStaff) ? null : c.AssignedStaff!.Trim(),
+                ServiceTypes = c.ServiceTypes,
+                TokensHandled = rows.Count,
+                Served = served.Count,
+                NoShow = rows.Count(t => t.Status == TokenStatus.NoShow),
+                Transferred = rows.Count(t => t.Status == TokenStatus.Transferred),
+                AvgWaitMinutes = AverageOrNull(served.Select(t => t.ActualWaitMinutes)),
+                AvgServiceMinutes = AverageOrNull(served.Select(t => t.ServiceDurationMinutes)),
+                TotalServiceMinutes = totalServiceMinutes,
+                ActiveMinutes = activeMinutes,
+                UtilisationPercent = activeMinutes > 0
+                    ? Math.Round(100.0 * totalServiceMinutes / activeMinutes, 1)
+                    : null
+            });
+        }
+
+        return Ok(new CounterPerformanceReportDto
+        {
+            From = fromDate,
+            To = toDate,
+            Counters = rowsOut,
+            UtilisationDefinition = UtilisationDefinitionText
+        });
+    }
+
+    /// <summary>Per-service-type aggregates — the JSON sibling of <see cref="ExportServiceTypeReport"/>.</summary>
+    [HttpGet("branches/{branchId:guid}/reports/services")]
+    [RequirePermission(Permissions.ReportsView)]
+    [RequireModule(ModuleCodes.CoreQueue)]
+    public async Task<IActionResult> GetServiceTypeReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var serviceTypes = await _context.ServiceTypes
+            .AsNoTracking()
+            .Where(s => s.BranchId == branchId)
+            .OrderBy(s => s.Name)
+            .Select(s => new { s.Id, s.Code, s.Name })
+            .ToListAsync();
+
+        var tokens = await _context.Tokens
+            .AsNoTracking()
+            .Where(t => t.BranchId == branchId && t.CreatedAt >= rangeStart && t.CreatedAt < rangeEndExclusive)
+            .Select(t => new { t.ServiceTypeId, t.Status, t.ActualWaitMinutes, t.ServiceDurationMinutes })
+            .ToListAsync();
+
+        var byService = tokens.ToLookup(t => t.ServiceTypeId);
+
+        var rowsOut = serviceTypes.Select(s =>
+        {
+            var rows = byService[s.Id].ToList();
+            var served = rows.Where(t => t.Status == TokenStatus.Completed).ToList();
+            return new ServiceTypeReportRowDto
+            {
+                ServiceTypeId = s.Id,
+                Code = s.Code,
+                Name = s.Name,
+                Issued = rows.Count,
+                Served = served.Count,
+                NoShow = rows.Count(t => t.Status == TokenStatus.NoShow),
+                Cancelled = rows.Count(t => t.Status == TokenStatus.Cancelled),
+                StillOpen = rows.Count(t => t.Status == TokenStatus.Waiting || t.Status == TokenStatus.Called || t.Status == TokenStatus.Serving),
+                AvgWaitMinutes = AverageOrNull(served.Select(t => t.ActualWaitMinutes)),
+                AvgServiceMinutes = AverageOrNull(served.Select(t => t.ServiceDurationMinutes))
+            };
+        }).ToList();
+
+        return Ok(new ServiceTypeReportDto { From = fromDate, To = toDate, ServiceTypes = rowsOut });
+    }
+
+    /// <summary>
+    /// Feedback aggregates for the range. Gated on the Engagement module, matching
+    /// <see cref="ExportFeedbackReport"/>. Unlike the export, the comment list carries no
+    /// customer name/phone/email — this action only requires ReportsView, and the PII is exactly
+    /// why the export requires the stronger ReportsExport.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/reports/feedback")]
+    [RequirePermission(Permissions.ReportsView)]
+    [RequireModule(ModuleCodes.EngagementCommunications)]
+    public async Task<IActionResult> GetFeedbackReport(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveReportRange(from, to);
+
+        var feedback = await _context.Feedbacks
+            .AsNoTracking()
+            .Where(f => f.BranchId == branchId && f.CreatedAt >= rangeStart && f.CreatedAt < rangeEndExclusive)
+            .Select(f => new
+            {
+                f.Id,
+                f.CreatedAt,
+                f.Rating,
+                f.Comment,
+                f.Category,
+                f.Source,
+                ServiceTypeName = f.ServiceType != null ? f.ServiceType.Name : null,
+                CounterNumber = f.Counter != null ? f.Counter.CounterNumber : null,
+                CounterDisplayName = f.Counter != null ? f.Counter.DisplayName : null,
+                f.TokenDisplayNumber,
+                f.Response,
+                f.RespondedAt
+            })
+            .ToListAsync();
+
+        var total = feedback.Count;
+        var positive = feedback.Count(f => f.Rating >= 4);
+        var neutral = feedback.Count(f => f.Rating == 3);
+        var negative = feedback.Count(f => f.Rating >= 1 && f.Rating <= 2);
+
+        static double Share(int part, int whole) => whole == 0 ? 0 : Math.Round(100.0 * part / whole, 1);
+        static string CounterLabel(string? displayName, string? number) =>
+            !string.IsNullOrWhiteSpace(displayName) ? displayName!
+            : !string.IsNullOrWhiteSpace(number) ? $"Counter {number}"
+            : "Unassigned";
+
+        return Ok(new FeedbackReportDto
+        {
+            From = fromDate,
+            To = toDate,
+            TotalCount = total,
+            AverageRating = total == 0 ? null : Math.Round(feedback.Average(f => (double)f.Rating), 2),
+            PositiveCount = positive,
+            NeutralCount = neutral,
+            NegativeCount = negative,
+            PositivePercent = Share(positive, total),
+            NeutralPercent = Share(neutral, total),
+            NegativePercent = Share(negative, total),
+            Distribution = Enumerable.Range(1, 5).Reverse().Select(stars =>
+            {
+                var count = feedback.Count(f => f.Rating == stars);
+                return new RatingCountDto { Stars = stars, Count = count, Percent = Share(count, total) };
+            }).ToList(),
+            ByDay = feedback
+                .GroupBy(f => DateOnly.FromDateTime(f.CreatedAt))
+                .OrderBy(g => g.Key)
+                .Select(g => new FeedbackDayRatingDto
+                {
+                    Day = g.Key,
+                    Count = g.Count(),
+                    AverageRating = Math.Round(g.Average(f => (double)f.Rating), 2)
+                })
+                .ToList(),
+            ByServiceType = feedback
+                .GroupBy(f => string.IsNullOrWhiteSpace(f.ServiceTypeName) ? "Unspecified" : f.ServiceTypeName!)
+                .OrderByDescending(g => g.Count())
+                .Select(g => new FeedbackBreakdownDto
+                {
+                    Name = g.Key,
+                    Count = g.Count(),
+                    AverageRating = Math.Round(g.Average(f => (double)f.Rating), 2)
+                })
+                .ToList(),
+            ByCounter = feedback
+                .GroupBy(f => CounterLabel(f.CounterDisplayName, f.CounterNumber))
+                .OrderByDescending(g => g.Count())
+                .Select(g => new FeedbackBreakdownDto
+                {
+                    Name = g.Key,
+                    Count = g.Count(),
+                    AverageRating = Math.Round(g.Average(f => (double)f.Rating), 2)
+                })
+                .ToList(),
+            RecentComments = feedback
+                .OrderByDescending(f => f.CreatedAt)
+                .Take(RecentFeedbackLimit)
+                .Select(f => new FeedbackCommentDto
+                {
+                    Id = f.Id,
+                    SubmittedAt = f.CreatedAt,
+                    Rating = f.Rating,
+                    Comment = f.Comment,
+                    Category = f.Category,
+                    Source = f.Source,
+                    ServiceTypeName = f.ServiceTypeName,
+                    CounterName = string.IsNullOrWhiteSpace(f.CounterDisplayName) && string.IsNullOrWhiteSpace(f.CounterNumber)
+                        ? null
+                        : CounterLabel(f.CounterDisplayName, f.CounterNumber),
+                    TokenDisplayNumber = f.TokenDisplayNumber,
+                    HasResponse = !string.IsNullOrWhiteSpace(f.Response),
+                    RespondedAt = f.RespondedAt
+                })
+                .ToList()
+        });
+    }
+
+    /// <summary>How many feedback entries the on-page "Recent Feedback" list carries.</summary>
+    private const int RecentFeedbackLimit = 50;
+
+    /// <summary>
+    /// The utilisation caption shown on the Counter Performance page, kept next to the
+    /// computation in <see cref="GetCounterReport"/> so the two can't drift.
+    /// </summary>
+    private const string UtilisationDefinitionText =
+        "Utilisation = total service minutes ÷ active minutes. Active minutes is each counter's own " +
+        "recorded working window: per day, the span from its first recorded activity (service start, " +
+        "or call time) to its last (service completion), summed across days, and never less than the " +
+        "minutes it actually spent serving. Days on which a counter handled no tokens are excluded " +
+        "from both figures. This is the share of the time a counter was demonstrably open that it " +
+        "spent serving customers — not a share of the working day, because counter opening and " +
+        "closing times are not recorded.";
+
+    private static double? AverageOrNull(IEnumerable<int?> values)
+    {
+        var present = values.Where(v => v.HasValue).Select(v => v!.Value).ToList();
+        return present.Count == 0 ? null : Math.Round(present.Average(), 1);
     }
 
     /// <summary>

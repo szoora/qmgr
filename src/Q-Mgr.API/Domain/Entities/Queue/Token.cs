@@ -38,6 +38,15 @@ public class Token : BaseEntity
     public int? ActualWaitMinutes { get; set; }
     public int? ServiceDurationMinutes { get; set; }
 
+    // Customer notification tracking — guards against notifying the same customer twice for the
+    // same reason (see IQueueCustomerNotifier). Deliberately two nullable columns on the token
+    // itself rather than a separate "sent notifications" table: nothing beyond "which stage was
+    // last sent, and when" needs to be stored or queried per token.
+    // Values: "Issued", "Approaching", "Called" (kept as text rather than an enum so no new
+    // Domain enum type is needed and the column is self-describing in the database).
+    public string? LastNotifiedStage { get; set; }
+    public DateTime? LastNotifiedAt { get; set; }
+
     // Additional data
     public string? Notes { get; set; }
     public string? Metadata { get; set; } // JSON - Flexible field for integration data

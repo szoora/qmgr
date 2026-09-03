@@ -15,9 +15,32 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>QMgr.Integration</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Ship IntelliSense for the meaningful API surface without demanding a doc comment on every
+         DTO property, which would be noise rather than documentation. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!--
+      Packaging metadata. Nothing in this solution references this project, and that is correct:
+      it is built to be handed to a partner. Without these properties `dotnet pack` produced an
+      unusable, undescribed, unversioned package, so "we have an SDK" was not the same as anyone
+      being able to consume one. Version tracks the product's own version.json by hand.
+    -->
     <PackageId>QMgr.IntegrationSdk</PackageId>
+    <Version>0.2.0</Version>
+    <Authors>SACC Software Limited</Authors>
+    <Company>SACC Software Limited</Company>
+    <Product>Q-Mgr Integration SDK</Product>
     <Description>Client SDK for third-party systems (hospital/HIS, banking, pharmacy, etc.) integrating with Q-Mgr's queue API.</Description>
+    <PackageTags>qmgr;queue;queue-management;integration;sdk</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
