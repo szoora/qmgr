@@ -177,6 +177,42 @@ duplicates; `KioskMode` had a `Dispose()` that never ran (no `@implements IDispo
 punctuation rendering as `â€"` / `â¢`) which are repaired — worth knowing that this can happen, and
 that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
 
+### What was verified live (not just compiled)
+
+Both dev servers were run and the following exercised for real against the dev database. Worth
+knowing exactly which claims are evidence-backed, since most of the list above is code review:
+
+- **API-key authentication, all six paths.** Key with no secret → 401 `missing_api_secret`; wrong
+  secret → 401 `invalid_api_key` (same shape as an unknown key, so there is no existence oracle);
+  correct secret in both the two-header and dotted forms → 200; an endpoint with `[Authorize]` but
+  no `[RequirePermission]` → 403 `API_KEY_NOT_ALLOWED`; a scope the key lacks → 403; and the
+  per-client limit → 429 with `Retry-After: 7` and `{"error":"RATE_LIMITED","limit":3,...}`,
+  which then went unlimited when the limit was set to 0. (Test client was created directly in the
+  dev DB with a known BCrypt hash, then deleted.)
+- **Inbound webhooks end to end.** Missing and bad signatures → 401; an unrecognised event → 400
+  listing the supported ones; a valid signature → 202 and a **real token G001 was created**, then a
+  second call cancelled it (verified as `Status = 4` in `qmgr.tokens`). Note the inbound URL is
+  keyed by the API client's record **Id**, not its `ClientId` string.
+- **Password reset happy path — verified for the first time** (previous handovers could only
+  confirm the error branches, since dev SMTP is unconfigured). Read the issued token straight from
+  the database: reset returned 200, the stored password hash actually changed, the token was
+  cleared, and replaying the same token was correctly refused.
+- **Per-tenant branch resolution.** `/display` with no branch shows the new "No branch selected"
+  screen instead of silently using the demo branch; `/display/{realBranchId}` renders the real
+  tenant ("Kampala Electronics Hub · Kampala Main Branch"); the new `/kiosk/branch/{id}` route
+  works; `/feedback?branch={id}` resolves and labels the branch. No console errors on any of them.
+- **Anonymous vs gated endpoints.** `branches/{id}/public` → 200 with real names, 404 for an
+  unknown id; the new PII-free `queue/waiting` → 200; and `tokens/waiting`,
+  `reports/overview/export` and `system-settings` all → 401 without a token.
+- **The migration applied cleanly** and all four new columns exist.
+
+**Not verified live, and why**: anything behind a login. Signing in means entering a password,
+which this assistant will not do — so the authenticated screens (report CSV downloads in the
+browser, the welfare import UI, consent controls, the permissions-changed toast, Counter Terminal
+reconnect, the API-docs route, and the colour sweep on admin pages) are verified by compilation and
+code review only. They are worth a click-through by someone who can sign in. Mobile-breakpoint
+checking remains blocked by the browser tooling's non-functional viewport resize, unchanged.
+
 ### Still open — and why
 
 1. **Stripe remains unverifiable here, by the user's own instruction** ("except for stripe i do not
@@ -186,12 +222,17 @@ that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
    real Stripe test account. Before relying on card payments: set real keys in Platform Settings,
    set `StripePriceIdMonthly`/`StripePriceIdAnnual` on the 4 module rows, and run a real test-mode
    checkout plus a webhook replay.
-2. **Production is still running the old build.** A fresh package needs to be built and deployed;
-   deploying is a live-system action that was deliberately left for the user's explicit go-ahead.
-   Note the deploy now carries **two** migrations that have only been applied locally
+2. **Production is still running the old build — but the package is built and waiting.**
+   `scripts/deploy/dist/qmgr-0.2.0-20260903.1448.tar.gz` (108.6 MB, ports 8586/8587, commit
+   `728d02d`, gitignored) contains everything above. Deploying it is a live-system action that was
+   deliberately left for the user's explicit go-ahead. Two things to know before running it:
+   the deploy carries **two migrations that have only ever been applied locally**
    (`AddIndustryCategoryConsolidation` from the previous session, `AddStudentConsentAndImportKind`
-   from this one) — both are additive, but the industry one rewrites every existing org's
-   `IndustryType` value, so sanity-check that data on the server afterwards.
+   from this one) — both additive, but the industry one rewrites every existing org's
+   `IndustryType`, so sanity-check that data afterwards; and **the API-key change is breaking for
+   any live integrator**, who must start sending the client secret.
+   Also install `postgresql-client` on the server if it isn't there, or the new nightly backup
+   cron will fail (`install.sh` warns about this but does not install it).
 3. **`CounterPerformance.razor` and `CustomerFeedback.razor` still render partly sample/random
    numbers on screen** (pre-existing, predates this session). Their CSV exports are real, which
    makes the mismatch more visible than it was before, not less.
@@ -202,6 +243,15 @@ that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
    welfare-reports user without that permission sees an empty history list rather than an error.
 6. **No automated test coverage** anywhere in this repo, unchanged. Everything above is verified by
    compilation, code review, and (where noted) live browser testing — not by tests.
+7. **Blocked on credentials, same as Stripe**: S3 media storage (code and config path exist, never
+   run against a real bucket), and SMS/email provider credentials for a pilot org. Load testing
+   and a security re-review against real production config also still need the real infrastructure.
+8. **Left alone deliberately**: the four E2E test organizations in the dev database
+   (`kampala-fresh-mart-e2e`, `trial-rule-test-co`, `verify-flow-test-co`, `resend-test-co`) are
+   useful fixtures and deleting tenant data unprompted is not this session's call. The
+   `teststaff@getsacc.com` account and `secondtest` tenant that older entries told the next session
+   to clean up **no longer exist** — that DB was reseeded, so those items are closed by attrition.
+   PDF/PPT slide rendering remains out of scope under the standing no-server-dependencies rule.
 
 ---
 
