@@ -148,6 +148,7 @@ else
                         </a>
                         <ul class="submenu">
                             <li><a href="queue/board" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/board") ? "active" : "")"><i class="bi bi-view-list"></i>Live Queue Board</a></li>
+                            <li><a href="admin/appointments" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/appointments") ? "active" : "")"><i class="bi bi-calendar-check"></i>Appointments</a></li>
                             @if (canManageQueue)
                             {
                                 <li><a href="queue/counter" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
@@ -173,6 +174,10 @@ else
                             @if (canViewVisitors)
                             {
                                 <li><a href="admin/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitor Management</a></li>
+                                <li><a href="admin/visitors/expected" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/expected") ? "active" : "")"><i class="bi bi-calendar-check"></i>Expected Visitors</a></li>
+                                @* Roll-call has to be findable in a hurry, so it earns a top-level row
+                                   rather than living behind a menu on the visitor page. *@
+                                <li><a href="admin/visitors/evacuation" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/evacuation") ? "active" : "")"><i class="bi bi-fire"></i>Evacuation Roll-Call</a></li>
                             }
                             @if (canViewStudents)
                             {

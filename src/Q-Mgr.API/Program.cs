@@ -326,5 +326,6 @@ WebhookJobsRegistration.RegisterRecurringJobs();
 BroadcastJobsRegistration.RegisterRecurringJobs();
 VisitorRetentionJobsRegistration.RegisterRecurringJobs();
 WelfareReminderJobRegistration.RegisterRecurringJobs();
+AppointmentJobsRegistration.RegisterRecurringJobs();
 
 app.Run();
