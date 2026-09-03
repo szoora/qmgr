@@ -51,7 +51,7 @@
 
 [data-theme="light"] .theme-toggle:hover,
 [data-theme="light"] .notification-btn:hover {
-    background: rgba(122, 40, 71, 0.1) !important;
+    background: rgba(var(--qm-primary-rgb), 0.1) !important;
     color: var(--qm-primary) !important;
 }
 
@@ -96,14 +96,14 @@
 }
 
 [data-theme="light"] .rz-panelmenu-item:hover a {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
     color: var(--qm-primary) !important;
 }
 
 [data-theme="light"] .rz-panelmenu-item.rz-state-active a,
 [data-theme="light"] .rz-panelmenu-item-selected a {
     background: var(--qm-gradient-primary) !important;
-    color: white !important;
+    color: var(--qm-text-on-primary) !important;
 }
 
 /* Sidebar Footer & Branch Selector */
@@ -117,7 +117,7 @@
 }
 
 [data-theme="light"] .branch-selector:hover {
-    background: rgba(122, 40, 71, 0.05) !important;
+    background: rgba(var(--qm-primary-rgb), 0.05) !important;
     border-color: var(--qm-primary) !important;
 }
 
@@ -214,7 +214,7 @@
 }
 
 [data-theme="light"] .rz-datatable tbody tr:hover {
-    background: rgba(122, 40, 71, 0.05) !important;
+    background: rgba(var(--qm-primary-rgb), 0.05) !important;
 }
 
 [data-theme="light"] .rz-datatable tbody td {
@@ -234,7 +234,7 @@
 [data-theme="light"] .rz-textbox:focus,
 [data-theme="light"] .rz-dropdown.rz-state-focused {
     border-color: var(--qm-primary) !important;
-    box-shadow: 0 0 0 3px rgba(122, 40, 71, 0.1) !important;
+    box-shadow: 0 0 0 3px rgba(var(--qm-primary-rgb), 0.1) !important;
 }
 
 [data-theme="light"] .rz-dropdown-panel {
@@ -248,7 +248,7 @@
 }
 
 [data-theme="light"] .rz-dropdown-item:hover {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
 }
 
 /* Buttons */
@@ -338,11 +338,11 @@ html[data-theme="light"] .rz-dialog .rz-dialog-close:hover {
 }
 
 [data-theme="light"] .branch-item:hover {
-    background: rgba(122, 40, 71, 0.05) !important;
+    background: rgba(var(--qm-primary-rgb), 0.05) !important;
 }
 
 [data-theme="light"] .branch-item.active {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
     border: 1px solid var(--qm-primary) !important;
 }
 
@@ -378,7 +378,7 @@ html[data-theme="light"] .rz-dialog .rz-dialog-close:hover {
 }
 
 [data-theme="light"] .notification-item.unread {
-    background: rgba(122, 40, 71, 0.05) !important;
+    background: rgba(var(--qm-primary-rgb), 0.05) !important;
 }
 
 [data-theme="light"] .notification-title {
@@ -404,7 +404,7 @@ html[data-theme="light"] .rz-dialog .rz-dialog-close:hover {
 }
 
 [data-theme="light"] .rz-profile-menu-item:hover {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
 }
 
 /* Tabs */
@@ -458,7 +458,7 @@ html[data-theme="light"] .rz-contextmenu-item {
 
 [data-theme="light"] .rz-contextmenu-item:hover,
 html[data-theme="light"] .rz-contextmenu-item:hover {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
 }
 
 /* Radzen Dropdown Panel - often renders at body level */
@@ -476,7 +476,7 @@ html[data-theme="light"] .rz-dropdown-item {
 
 [data-theme="light"] .rz-dropdown-item:hover,
 html[data-theme="light"] .rz-dropdown-item:hover {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
 }
 
 /* Radzen Multiselect/Checkbox in dropdown - light theme */
@@ -515,7 +515,7 @@ html[data-theme="light"] .rz-menu-item {
 
 [data-theme="light"] .rz-menu-item:hover,
 html[data-theme="light"] .rz-menu-item:hover {
-    background: rgba(122, 40, 71, 0.08) !important;
+    background: rgba(var(--qm-primary-rgb), 0.08) !important;
 }
 
 /* Radzen Popup/Overlay */
@@ -528,11 +528,11 @@ html[data-theme="light"] .rz-popup {
 
 /* Scrollbars */
 [data-theme="light"] ::-webkit-scrollbar-track {
-    background: #f1f5f9;
+    background: var(--qm-bg-card-hover);
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--qm-border-hover);
 }
 
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
@@ -663,7 +663,7 @@ html, body {
     left: -100%;
     width: 100%;
     height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(140, 47, 82, 0.1), transparent);
+    background: linear-gradient(90deg, transparent, rgba(var(--qm-primary-rgb), 0.1), transparent);
     transition: left 0.5s ease;
 }
 
@@ -733,7 +733,7 @@ html, body {
 .page-header {
     margin-bottom: 24px;
     padding-bottom: 20px;
-    border-bottom: 1px solid var(--qm-border, rgba(255, 255, 255, 0.08));
+    border-bottom: 1px solid var(--qm-border);
 }
 
 .page-header h1 {
@@ -746,13 +746,13 @@ html, body {
 }
 
 .page-header h1 i {
-    color: var(--qm-primary, #8c2f52);
+    color: var(--qm-primary);
 }
 
 .page-header .subtitle {
     margin: 0;
     font-size: 14px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 @media (max-width: 576px) {
@@ -777,8 +777,8 @@ html, body {
 
 /* Content Cards */
 .content-card {
-    background: var(--qm-bg-card, #1e1e2d);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
     border-radius: 16px;
     padding: 24px;
     margin-bottom: 20px;
@@ -801,7 +801,7 @@ html, body {
     display: block;
     font-size: 13px;
     font-weight: 600;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
     margin-bottom: 8px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -811,18 +811,18 @@ html, body {
 .form-group .form-select {
     width: 100%;
     padding: 12px 16px;
-    background: var(--qm-bg-elevated, #252536);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
     border-radius: 10px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     font-size: 15px;
     transition: all 0.2s ease;
 }
 
 .form-group .form-control:focus,
 .form-group .form-select:focus {
-    border-color: var(--qm-primary, #8c2f52);
-    box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
+    border-color: var(--qm-primary);
+    box-shadow: 0 0 0 3px rgba(var(--qm-primary-rgb), 0.15);
     outline: none;
 }
 
@@ -857,24 +857,24 @@ html, body {
 }
 
 .btn-primary {
-    background: var(--qm-gradient-primary, #8c2f52);
-    color: white;
+    background: var(--qm-gradient-primary);
+    color: var(--qm-text-on-primary);
 }
 
 .btn-primary:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 20px rgba(140, 47, 82, 0.4);
+    box-shadow: 0 4px 20px rgba(var(--qm-primary-rgb), 0.4);
 }
 
 .btn-secondary {
-    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
-    border: 1px solid var(--qm-border, #2d2d3a);
-    color: var(--qm-text-primary, #fff);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-primary);
 }
 
 .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: var(--qm-primary, #8c2f52);
+    background: var(--qm-bg-card-hover);
+    border-color: var(--qm-primary);
 }
 
 @media (max-width: 576px) {
@@ -903,7 +903,7 @@ html, body {
 .data-table td {
     padding: 14px 16px;
     text-align: left;
-    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+    border-bottom: 1px solid var(--qm-border);
 }
 
 .data-table th {
@@ -911,7 +911,7 @@ html, body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 @media (max-width: 768px) {
@@ -979,8 +979,8 @@ html, body {
 .empty-state {
     text-align: center;
     padding: 60px 20px;
-    background: var(--qm-bg-card, #1e1e2d);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
     border-radius: 16px;
 }
 
@@ -991,7 +991,7 @@ html, body {
    its icon up to this same 64px and blowing the whole button out of shape. */
 .empty-state i:not(.q-btn__icon) {
     font-size: 64px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
     opacity: 0.5;
     margin-bottom: 16px;
 }
@@ -999,12 +999,12 @@ html, body {
 .empty-state h3 {
     margin: 0 0 8px;
     font-size: 20px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
 }
 
 .empty-state p {
     margin: 0;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 @media (max-width: 576px) {
@@ -1052,8 +1052,8 @@ html, body {
         bottom: 0;
         left: 0;
         right: 0;
-        background: var(--qm-bg-card, #1e1e2d);
-        border-top: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-card);
+        border-top: 1px solid var(--qm-border);
         padding: 12px 16px;
         padding-bottom: max(12px, env(safe-area-inset-bottom));
         z-index: 100;
@@ -1065,7 +1065,7 @@ html, body {
 .tabs-container {
     display: flex;
     gap: 4px;
-    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+    border-bottom: 1px solid var(--qm-border);
     margin-bottom: 20px;
 }
 
@@ -1073,7 +1073,7 @@ html, body {
     padding: 12px 20px;
     font-size: 14px;
     font-weight: 500;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
     border-bottom: 2px solid transparent;
     cursor: pointer;
     transition: all 0.2s;
@@ -1081,8 +1081,8 @@ html, body {
 }
 
 .tab-item.active {
-    color: var(--qm-primary, #8c2f52);
-    border-color: var(--qm-primary, #8c2f52);
+    color: var(--qm-primary);
+    border-color: var(--qm-primary);
 }
 
 @media (max-width: 576px) {
@@ -1111,10 +1111,10 @@ html, body {
 .search-input-group input {
     width: 100%;
     padding: 12px 16px 12px 44px;
-    background: var(--qm-bg-elevated, #252536);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
     border-radius: 10px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     font-size: 14px;
 }
 
@@ -1123,7 +1123,7 @@ html, body {
     left: 16px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 @media (max-width: 576px) {
@@ -1146,22 +1146,22 @@ html, body {
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    background: var(--qm-gradient-primary, #8c2f52);
-    color: white;
+    background: var(--qm-gradient-primary);
+    color: var(--qm-text-on-primary);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 24px;
     border: none;
     cursor: pointer;
-    box-shadow: 0 4px 20px rgba(140, 47, 82, 0.4);
+    box-shadow: 0 4px 20px rgba(var(--qm-primary-rgb), 0.4);
     transition: all 0.2s ease;
     z-index: 100;
 }
 
 .fab:hover {
     transform: scale(1.1);
-    box-shadow: 0 6px 30px rgba(140, 47, 82, 0.5);
+    box-shadow: 0 6px 30px rgba(var(--qm-primary-rgb), 0.5);
 }
 
 @media (max-width: 576px) {
@@ -1176,7 +1176,7 @@ html, body {
     display: none;
     justify-content: center;
     padding: 16px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 @media (max-width: 768px) {
@@ -1188,9 +1188,9 @@ html, body {
 /* Skeleton Loading - Mobile */
 .skeleton {
     background: linear-gradient(90deg,
-        var(--qm-bg-elevated, #252536) 25%,
-        var(--qm-bg-card, #1e1e2d) 50%,
-        var(--qm-bg-elevated, #252536) 75%);
+        var(--qm-bg-elevated) 25%,
+        var(--qm-bg-card) 50%,
+        var(--qm-bg-elevated) 75%);
     background-size: 200% 100%;
     animation: skeleton-loading 1.5s infinite;
     border-radius: 8px;
@@ -1208,8 +1208,8 @@ html, body {
         bottom: 0;
         left: 0;
         right: 0;
-        background: var(--qm-bg-card, #1e1e2d);
-        border-top: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-card);
+        border-top: 1px solid var(--qm-border);
         border-radius: 20px 20px 0 0;
         padding: 20px;
         padding-bottom: max(20px, env(safe-area-inset-bottom));
@@ -1225,7 +1225,7 @@ html, body {
     .bottom-sheet-handle {
         width: 40px;
         height: 4px;
-        background: var(--qm-border, #2d2d3a);
+        background: var(--qm-border);
         border-radius: 2px;
         margin: 0 auto 16px;
     }
@@ -1237,8 +1237,8 @@ html, body {
    without it present in the DOM, a dropped circuit fails completely silently
    (buttons stop responding, no feedback at all). */
 #blazor-error-ui {
-    background: var(--qm-warning, #d97706);
-    color: #fff;
+    background: var(--qm-warning);
+    color: var(--qm-text-on-primary);
     bottom: 0;
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.25);
     display: none;
@@ -1251,7 +1251,7 @@ html, body {
 }
 
 #blazor-error-ui .reload {
-    color: #fff;
+    color: var(--qm-text-on-primary);
     text-decoration: underline;
     font-weight: 600;
     margin-left: 12px;

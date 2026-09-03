@@ -1,8 +1,12 @@
 @inherits LayoutComponentBase
 @using System.Text.RegularExpressions
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Web.Services
 @inject IOrganizationApiService OrganizationApi
 @inject NavigationManager Navigation
+@inject IBranchStateService BranchState
+@inject AuthenticationStateProvider AuthStateProvider
 
 <div class="display-layout" data-theme="@displayTheme" style="@brandingStyle">
     @Body
@@ -16,31 +20,53 @@
 </style>
 
 @code {
-    // Falls back to the demo branch only when the page's own URL carries no branch
-    // GUID segment (e.g. a bookmarked bare "/display" URL).
-    private static readonly Guid DefaultBranchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private string brandingStyle = string.Empty;
     private string displayTheme = "dark";
 
-    // A @layout component doesn't receive its page's [Parameter] route values directly (the
-    // layout wraps *above* Body in the render tree, so the page can't cascade a value up to it)
-    // — reading the branch GUID back out of the already-resolved page URL is the standard
-    // workaround. Falls back to DefaultBranchId when the current URL has no GUID segment.
-    private Guid ResolveBranchIdFromUrl()
+    // A @layout component doesn't receive its page's [Parameter] route values or
+    // [SupplyParameterFromQuery] values directly (the layout wraps *above* Body in the
+    // render tree, so the page can't cascade a value up to it) — reading the branch back
+    // out of the already-resolved page URL is the standard workaround. Mirrors the pages'
+    // own resolution order (route GUID -> ?branch= -> signed-in user's selected branch) so
+    // the layout brands for the same branch the page renders. Returns null — never a demo
+    // GUID — when nothing resolves; the page itself renders the "no branch" state and this
+    // layout simply skips the branding fetch.
+    private async Task<Guid?> ResolveBranchIdAsync()
     {
-        var path = new Uri(Navigation.Uri).AbsolutePath;
-        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        var uri = new Uri(Navigation.Uri);
+
+        foreach (var segment in uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (Guid.TryParse(segment, out var parsed) && parsed != Guid.Empty)
-                return parsed;
+            if (Guid.TryParse(segment, out var fromPath) && fromPath != Guid.Empty)
+                return fromPath;
         }
-        return DefaultBranchId;
+
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("branch", out var raw)
+            && Guid.TryParse(raw.ToString(), out var fromQuery)
+            && fromQuery != Guid.Empty)
+            return fromQuery;
+
+        // BranchStateService is the *admin's* selected branch (localStorage) — only
+        // meaningful, and only trusted, when someone is actually signed in on this browser.
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated == true)
+        {
+            await BranchState.InitializeAsync();
+            if (BranchState.CurrentBranchId != Guid.Empty)
+                return BranchState.CurrentBranchId;
+        }
+
+        return null;
     }
 
     protected override async Task OnInitializedAsync()
     {
-        var branchId = ResolveBranchIdFromUrl();
-        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId);
+        var branchId = await ResolveBranchIdAsync();
+        if (branchId == null)
+            return; // No branch -> default (dark, unbranded) look; the page shows the guidance state.
+
+        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId.Value);
 
         // Applies regardless of WhitelabelEnabled — dark/light is a basic display
         // preference available on every plan, unlike the colors/logo below.

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Application.Tenant;
+using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Filters;
@@ -23,19 +24,31 @@ public class UsersController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly ILogger<UsersController> _logger;
     private readonly IPasswordValidationService _passwordValidation;
+    private readonly INotificationHubService _notificationHub;
 
     public UsersController(
         QMgrDbContext dbContext,
         ITenantContextAccessor tenantAccessor,
         IMemoryCache cache,
         ILogger<UsersController> logger,
-        IPasswordValidationService passwordValidation)
+        IPasswordValidationService passwordValidation,
+        INotificationHubService notificationHub)
     {
+        _notificationHub = notificationHub;
         _dbContext = dbContext;
         _tenantAccessor = tenantAccessor;
         _cache = cache;
         _logger = logger;
         _passwordValidation = passwordValidation;
+    }
+
+    /// <summary>Pushes a live "your permissions changed" signal to the user's open sessions.
+    /// Best-effort: the server-side cache invalidation is what enforces the change; this only
+    /// makes the client UI catch up without waiting for the next login.</summary>
+    private async Task NotifyPermissionsChangedSafeAsync(Guid userId)
+    {
+        try { await _notificationHub.NotifyPermissionsChangedAsync(userId); }
+        catch (Exception ex) { _logger.LogDebug(ex, "PermissionsChanged push failed for {UserId}", userId); }
     }
 
     /// <summary>
@@ -512,7 +525,10 @@ public class UsersController : ControllerBase
         // outlive a role change by up to CacheDuration (5 min) — most important on
         // downgrade/revocation, where the old set may be more privileged than the new one.
         if (roleChanged)
+        {
             _cache.InvalidateUserPermissions(user.Id);
+            await NotifyPermissionsChangedSafeAsync(user.Id);
+        }
 
         _logger.LogInformation("Updated user: {UserId} - {Username}", user.Id, user.Username);
 
@@ -597,6 +613,7 @@ public class UsersController : ControllerBase
         // cache's TTL — otherwise a just-deactivated user keeps working permission-gated
         // endpoints for up to 5 more minutes on their still-valid JWT.
         _cache.InvalidateUserPermissions(user.Id);
+        await NotifyPermissionsChangedSafeAsync(user.Id);
 
         _logger.LogInformation("Toggled user {UserId} active status to {IsActive}", userId, user.IsActive);
 

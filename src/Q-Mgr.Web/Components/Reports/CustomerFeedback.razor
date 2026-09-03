@@ -4,6 +4,9 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IToastService NotificationService
+@inject IJSRuntime JS
 @using QMgr.Domain.Constants
 
 <PageTitle>Customer Feedback - Q-Mgr</PageTitle>
@@ -110,7 +113,7 @@
     <QCard Class="feedback-list-card">
         <div class="list-header">
             <h4>Recent Feedback</h4>
-            <QButton Text="Export All" Icon="cloud-download-fill" Variant="secondary" Size="sm" />
+            <QButton Text="Export All" Icon="cloud-download-fill" Variant="secondary" Size="sm" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
         </div>
 
         <div class="feedback-list">
@@ -425,6 +428,7 @@
     private string selectedPeriod = "month";
     private string? selectedRating;
     private string? selectedService;
+    private bool isExporting;
 
     private List<string> periods = new() { "today", "week", "month", "quarter", "year" };
     private List<string> ratings = new() { "5 Stars", "4 Stars", "3 Stars", "2 Stars", "1 Star" };
@@ -489,6 +493,60 @@
     {
         // TODO: Implement filtering
         LoadData();
+    }
+
+    /// <summary>
+    /// Downloads the raw feedback log for the selected period from ReportsController — same
+    /// data: URL + downloadDataUrl pattern VisitorReport uses. Exports real Feedback rows for
+    /// the current branch (not the sample list rendered on this page); the Rating / Service
+    /// Type filters are display-only until this page's own data loading is made real.
+    /// </summary>
+    private async Task ExportCsv()
+    {
+        await BranchState.InitializeAsync();
+        var branchId = BranchState.CurrentBranchId;
+        if (branchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.", 4000);
+            return;
+        }
+
+        var (from, to) = ResolvePeriod(selectedPeriod);
+        isExporting = true;
+        try
+        {
+            var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Feedback, branchId, from, to);
+            if (!result.Success)
+            {
+                if (result.IsForbidden)
+                    NotificationService.Notify(ToastSeverity.Warning, "Export not available",
+                        result.ErrorMessage ?? "You don't have permission to export reports, or your plan doesn't include exports.", 6000);
+                else
+                    NotificationService.Notify(ToastSeverity.Error, "Export failed",
+                        result.ErrorMessage ?? "Couldn't export customer feedback. Please try again.", 5000);
+                return;
+            }
+
+            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(result.Csv!);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"customer-feedback-{from:yyyyMMdd}-{to:yyyyMMdd}.csv");
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    private static (DateOnly From, DateOnly To) ResolvePeriod(string period)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return period switch
+        {
+            "today" => (today, today),
+            "week" => (today.AddDays(-6), today),
+            "quarter" => (today.AddDays(-89), today),
+            "year" => (today.AddDays(-364), today),
+            _ => (today.AddDays(-29), today) // "month"
+        };
     }
 
     private string GetBarColor(int stars)

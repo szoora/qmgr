@@ -5,6 +5,7 @@ using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Entities.Platform;
+using QMgr.Infrastructure.Email;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 
@@ -50,10 +51,12 @@ public class BillingJobs
     /// that actually drifted when the platform's real domain changed. Resolved once per job run
     /// (GetSettingsAsync is memory-cached) rather than baked into the template strings.
     /// </summary>
-    private async Task<string> GetBaseDomainAsync()
+    private async Task<string> GetBaseUrlAsync()
     {
+        // Single public host with path-based routing — there is no per-tenant subdomain, so the
+        // old "https://{slug}.{baseDomain}/..." links resolved nowhere on the real deployment.
         var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
-        return saas?.BaseDomain ?? "";
+        return (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd((char)47);
     }
 
     /// <summary>
@@ -65,7 +68,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting check for expiring trials");
 
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
         var now = DateTime.UtcNow;
         var warningThreshold = now.AddDays(3); // Warn 3 days before expiry
 
@@ -88,7 +91,7 @@ public class BillingJobs
                     org.Id,
                     org.EffectiveBillingEmail,
                     $"Your Q-Mgr trial expires in {daysLeft} days",
-                    GetTrialExpiringEmailBody(org.Name, daysLeft, org.Slug, baseDomain),
+                    GetTrialExpiringEmailBody(org.Name, daysLeft, baseUrl),
                     true);
 
                 _logger.LogInformation(
@@ -129,7 +132,7 @@ public class BillingJobs
                         org.Id,
                         org.EffectiveBillingEmail,
                         "Your Q-Mgr trial has ended",
-                        GetTrialExpiredEmailBody(org.Name, org.Slug, baseDomain),
+                        GetTrialExpiredEmailBody(org.Name, baseUrl),
                         true);
                 }
 
@@ -160,7 +163,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting check for expiring module trials");
 
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
         var now = DateTime.UtcNow;
         var warningThreshold = now.AddDays(3);
 
@@ -199,7 +202,7 @@ public class BillingJobs
                         om.OrganizationId,
                         om.Organization.EffectiveBillingEmail,
                         $"Your {moduleName} trial expires in {daysLeft} days",
-                        GetModuleTrialExpiringEmailBody(om.Organization.Name, moduleName, daysLeft, om.Organization.Slug, baseDomain),
+                        GetModuleTrialExpiringEmailBody(om.Organization.Name, moduleName, daysLeft, baseUrl),
                         true);
                 }
 
@@ -246,7 +249,7 @@ public class BillingJobs
                         om.OrganizationId,
                         om.Organization.EffectiveBillingEmail,
                         $"Your {moduleName} trial has ended",
-                        GetModuleTrialExpiredEmailBody(om.Organization.Name, moduleName, om.Organization.Slug, baseDomain),
+                        GetModuleTrialExpiredEmailBody(om.Organization.Name, moduleName, baseUrl),
                         true);
                 }
 
@@ -406,7 +409,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting pending invoice processing");
 
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
         var pendingInvoices = await _dbContext.Invoices
             .Include(i => i.Subscription)
                 .ThenInclude(s => s!.Organization)
@@ -442,9 +445,7 @@ public class BillingJobs
                                 "Payment failed for your Q-Mgr subscription",
                                 GetPaymentFailedEmailBody(
                                     invoice.Subscription.Organization.Name,
-                                    invoice.Total,
-                                    invoice.Subscription.Organization.Slug,
-                                    baseDomain),
+                                    invoice.Total, baseUrl),
                                 true);
                         }
                     }
@@ -471,7 +472,7 @@ public class BillingJobs
     {
         _logger.LogInformation("Starting overdue accounts suspension check");
 
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
         var gracePeriodDays = 7;
         var cutoffDate = DateTime.UtcNow.AddDays(-gracePeriodDays);
 
@@ -498,9 +499,7 @@ public class BillingJobs
                         subscription.Organization.EffectiveBillingEmail,
                         "Your Q-Mgr account has been suspended",
                         GetAccountSuspendedEmailBody(
-                            subscription.Organization.Name,
-                            subscription.Organization.Slug,
-                            baseDomain),
+                            subscription.Organization.Name, baseUrl),
                         true);
 
                     _logger.LogWarning(
@@ -581,133 +580,90 @@ public class BillingJobs
         _logger.LogInformation("Completed monthly usage counter reset for {Count} organizations", activeOrgs.Count);
     }
 
+
     #region Email Templates
 
-    private static string GetTrialExpiringEmailBody(string orgName, int daysLeft, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #2563eb;'>Your trial is ending soon</h1>
-        <p>Hi,</p>
-        <p>Your Q-Mgr trial for <strong>{orgName}</strong> will expire in <strong>{daysLeft} days</strong>.</p>
-        <p>To continue using Q-Mgr without interruption, please subscribe to a plan:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Choose a Plan</a>
-        </div>
-        <p>If you have any questions, our support team is here to help.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetTrialExpiringEmailBody(string orgName, int daysLeft, string baseUrl) =>
+        EmailTemplates.Layout(
+            "Your trial is ending soon",
+            null,
+            new[]
+            {
+                $"Your {EmailTemplates.AppName} trial for {EmailTemplates.B(orgName)} will expire in {EmailTemplates.B($"{daysLeft} day{(daysLeft == 1 ? "" : "s")}")}.",
+                $"To continue using {EmailTemplates.AppName} without interruption, please subscribe to a plan.",
+                "If you have any questions, our support team is here to help."
+            },
+            "Choose a Plan",
+            EmailTemplates.Link(baseUrl, "/billing/plans"));
 
-    private static string GetTrialExpiredEmailBody(string orgName, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #dc2626;'>Your trial has ended</h1>
-        <p>Hi,</p>
-        <p>Your Q-Mgr trial for <strong>{orgName}</strong> has expired.</p>
-        <p>Your account has been temporarily suspended. To restore access, please subscribe to a plan:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Subscribe Now</a>
-        </div>
-        <p>Your data is safe and will be available once you subscribe.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetTrialExpiredEmailBody(string orgName, string baseUrl) =>
+        EmailTemplates.Layout(
+            "Your trial has ended",
+            null,
+            new[]
+            {
+                $"Your {EmailTemplates.AppName} trial for {EmailTemplates.B(orgName)} has expired.",
+                "Your account has been temporarily suspended. To restore access, please subscribe to a plan.",
+                "Your data is safe and will be available once you subscribe."
+            },
+            "Subscribe Now",
+            EmailTemplates.Link(baseUrl, "/billing/plans"),
+            tone: EmailTemplates.Tone.Warning);
 
-    private static string GetModuleTrialExpiringEmailBody(string orgName, string moduleName, int daysLeft, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #2563eb;'>Your {moduleName} trial is ending soon</h1>
-        <p>Hi,</p>
-        <p>Your trial of <strong>{moduleName}</strong> for <strong>{orgName}</strong> ends in <strong>{daysLeft} day{(daysLeft == 1 ? "" : "s")}</strong>.</p>
-        <p>To keep using it without interruption, add a Mobile Money number from Billing:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/modules' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Manage Modules</a>
-        </div>
-        <p>Your other modules and data are unaffected.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetModuleTrialExpiringEmailBody(string orgName, string moduleName, int daysLeft, string baseUrl) =>
+        EmailTemplates.Layout(
+            $"Your {moduleName} trial is ending soon",
+            null,
+            new[]
+            {
+                $"Your trial of {EmailTemplates.B(moduleName)} for {EmailTemplates.B(orgName)} ends in {EmailTemplates.B($"{daysLeft} day{(daysLeft == 1 ? "" : "s")}")}.",
+                "To keep using it without interruption, add a payment method from Billing before the trial ends.",
+                "Your other modules and data are unaffected."
+            },
+            "Manage Modules",
+            EmailTemplates.Link(baseUrl, "/billing/modules"));
 
-    private static string GetModuleTrialExpiredEmailBody(string orgName, string moduleName, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #dc2626;'>Your {moduleName} trial has ended</h1>
-        <p>Hi,</p>
-        <p>The trial of <strong>{moduleName}</strong> for <strong>{orgName}</strong> has ended and is now locked.</p>
-        <p>Your other modules keep working normally. Add {moduleName} back any time from Billing:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/modules' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Manage Modules</a>
-        </div>
-        <p>Your data for this module is safe and will be available again once you add it back.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetModuleTrialExpiredEmailBody(string orgName, string moduleName, string baseUrl) =>
+        EmailTemplates.Layout(
+            $"Your {moduleName} trial has ended",
+            null,
+            new[]
+            {
+                $"The trial of {EmailTemplates.B(moduleName)} for {EmailTemplates.B(orgName)} has ended and the module is now locked.",
+                $"Your other modules keep working normally. Add {EmailTemplates.P(moduleName)} back any time from Billing.",
+                "Your data for this module is safe and will be available again once you add it back."
+            },
+            "Manage Modules",
+            EmailTemplates.Link(baseUrl, "/billing/modules"),
+            tone: EmailTemplates.Tone.Warning);
 
-    private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #dc2626;'>Payment failed</h1>
-        <p>Hi,</p>
-        <p>We were unable to process your payment of <strong>${amount:F2}</strong> for <strong>{orgName}</strong>.</p>
-        <p>Please update your payment method to avoid service interruption:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Update Payment Method</a>
-        </div>
-        <p>If you believe this is an error, please contact our support team.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetPaymentFailedEmailBody(string orgName, decimal amount, string baseUrl) =>
+        EmailTemplates.Layout(
+            "Payment failed",
+            null,
+            new[]
+            {
+                $"We were unable to process your payment of {EmailTemplates.B($"${amount:F2}")} for {EmailTemplates.B(orgName)}.",
+                "Please update your payment method to avoid service interruption.",
+                "If you believe this is an error, please contact our support team."
+            },
+            "Update Payment Method",
+            EmailTemplates.Link(baseUrl, "/billing/payment-methods"),
+            tone: EmailTemplates.Tone.Warning);
 
-    private static string GetAccountSuspendedEmailBody(string orgName, string slug, string baseDomain)
-    {
-        return $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #dc2626;'>Account suspended</h1>
-        <p>Hi,</p>
-        <p>Your Q-Mgr account for <strong>{orgName}</strong> has been suspended due to payment issues.</p>
-        <p>To restore your account, please update your payment method and clear any outstanding balance:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{slug}.{baseDomain}/billing/payment' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Restore Account</a>
-        </div>
-        <p>Your data is being preserved and will be available once payment is received.</p>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>";
-    }
+    private static string GetAccountSuspendedEmailBody(string orgName, string baseUrl) =>
+        EmailTemplates.Layout(
+            "Account suspended",
+            null,
+            new[]
+            {
+                $"Your {EmailTemplates.AppName} account for {EmailTemplates.B(orgName)} has been suspended due to payment issues.",
+                "To restore your account, please update your payment method and clear any outstanding balance.",
+                "Your data is being preserved and will be available once payment is received."
+            },
+            "Restore Account",
+            EmailTemplates.Link(baseUrl, "/billing/payment-methods"),
+            tone: EmailTemplates.Tone.Warning);
 
     #endregion
 
@@ -720,29 +676,23 @@ public class BillingJobs
         int limit)
     {
         var percentage = (int)((double)current / limit * 100);
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
 
         await _notificationService.SendEmailAsync(
             org.Id,
             org.EffectiveBillingEmail,
             $"Usage warning: {percentage}% of {resourceType} limit used",
-            $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #f59e0b;'>Usage Warning</h1>
-        <p>Hi,</p>
-        <p>Your organization <strong>{org.Name}</strong> has used <strong>{percentage}%</strong> of your monthly {resourceType} limit.</p>
-        <p>Current usage: <strong>{current:N0}</strong> / <strong>{limit:N0}</strong></p>
-        <p>To avoid service interruption, consider upgrading your plan:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{org.Slug}.{baseDomain}/billing/plans' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Plan</a>
-        </div>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>",
+            EmailTemplates.Layout(
+                "Usage warning",
+                null,
+                new[]
+                {
+                    $"Your organization {EmailTemplates.B(org.Name)} has used {EmailTemplates.B($"{percentage}%")} of your monthly {EmailTemplates.P(resourceType)} limit.",
+                    $"Current usage: {EmailTemplates.B(current.ToString("N0"))} / {EmailTemplates.B(limit.ToString("N0"))}",
+                    "To avoid service interruption, consider upgrading your plan."
+                },
+                "Upgrade Plan",
+                EmailTemplates.Link(baseUrl, "/billing/plans")),
             true);
 
         _logger.LogInformation(
@@ -756,29 +706,24 @@ public class BillingJobs
         int current,
         int limit)
     {
-        var baseDomain = await GetBaseDomainAsync();
+        var baseUrl = await GetBaseUrlAsync();
 
         await _notificationService.SendEmailAsync(
             org.Id,
             org.EffectiveBillingEmail,
             $"Limit exceeded: {resourceType}",
-            $@"
-<!DOCTYPE html>
-<html>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #dc2626;'>Limit Exceeded</h1>
-        <p>Hi,</p>
-        <p>Your organization <strong>{org.Name}</strong> has exceeded your monthly {resourceType} limit.</p>
-        <p>Current usage: <strong>{current:N0}</strong> / <strong>{limit:N0}</strong></p>
-        <p>Some features may be restricted until your usage resets next month or you upgrade your plan:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='https://{org.Slug}.{baseDomain}/billing/plans' style='background-color: #dc2626; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px;'>Upgrade Now</a>
-        </div>
-        <p>Best regards,<br>The Q-Mgr Team</p>
-    </div>
-</body>
-</html>",
+            EmailTemplates.Layout(
+                "Limit exceeded",
+                null,
+                new[]
+                {
+                    $"Your organization {EmailTemplates.B(org.Name)} has exceeded your monthly {EmailTemplates.P(resourceType)} limit.",
+                    $"Current usage: {EmailTemplates.B(current.ToString("N0"))} / {EmailTemplates.B(limit.ToString("N0"))}",
+                    "Some features may be restricted until your usage resets next month or you upgrade your plan."
+                },
+                "Upgrade Now",
+                EmailTemplates.Link(baseUrl, "/billing/plans"),
+                tone: EmailTemplates.Tone.Warning),
             true);
 
         _logger.LogWarning(

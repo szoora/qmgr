@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Authorization;
 using QMgr.Application.Tenant;
+using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Infrastructure.Data;
@@ -20,17 +21,36 @@ public class RolesController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly ILogger<RolesController> _logger;
+    private readonly INotificationHubService _notificationHub;
 
     public RolesController(
         QMgrDbContext dbContext,
         IMemoryCache cache,
         ITenantContextAccessor tenantAccessor,
-        ILogger<RolesController> logger)
+        ILogger<RolesController> logger,
+        INotificationHubService notificationHub)
     {
+        _notificationHub = notificationHub;
         _dbContext = dbContext;
         _cache = cache;
         _tenantAccessor = tenantAccessor;
         _logger = logger;
+    }
+
+    /// <summary>Drops every affected user's server-side permission cache entry and pushes a
+    /// live "permissions changed" signal so their open sessions refresh immediately.</summary>
+    private async Task InvalidateAndNotifyRoleAsync(Guid roleId)
+    {
+        await _cache.InvalidateRolePermissionsAsync(_dbContext, roleId);
+        var userIds = await _dbContext.Users
+            .Where(u => u.RoleId == roleId && u.IsActive)
+            .Select(u => u.Id)
+            .ToListAsync();
+        foreach (var userId in userIds)
+        {
+            try { await _notificationHub.NotifyPermissionsChangedAsync(userId); }
+            catch (Exception ex) { _logger.LogDebug(ex, "PermissionsChanged push failed for {UserId}", userId); }
+        }
     }
 
     /// <summary>
@@ -325,7 +345,7 @@ public class RolesController : ControllerBase
         await _dbContext.SaveChangesAsync();
 
         // Invalidate permission cache for users with this role
-        await _cache.InvalidateRolePermissionsAsync(_dbContext, roleId);
+        await InvalidateAndNotifyRoleAsync(roleId);
 
         _logger.LogInformation("Updated role: {RoleId} - {RoleCode}", role.Id, role.Code);
 
@@ -412,7 +432,7 @@ public class RolesController : ControllerBase
         await _dbContext.SaveChangesAsync();
 
         // Invalidate permission cache for users with this role
-        await _cache.InvalidateRolePermissionsAsync(_dbContext, roleId);
+        await InvalidateAndNotifyRoleAsync(roleId);
 
         _logger.LogInformation("Updated permissions for role: {RoleId} - {RoleCode}", role.Id, role.Code);
 
@@ -473,6 +493,9 @@ public class RolesController : ControllerBase
         role.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
+
+        // Deactivating a role must revoke its users' cached permissions now, not after the TTL.
+        await InvalidateAndNotifyRoleAsync(roleId);
 
         _logger.LogInformation("Toggled role {RoleId} active status to {IsActive}", roleId, role.IsActive);
 

@@ -29,8 +29,8 @@
 }
 
 .qm-shared-share-dialog {
-    background: var(--qm-bg-card, #1e1e2d);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
     border-radius: 20px;
     width: 100%;
     max-width: 420px;
@@ -49,30 +49,30 @@
     justify-content: space-between;
     align-items: center;
     padding: 20px 24px;
-    border-bottom: 1px solid var(--qm-border, #2d2d3a);
+    border-bottom: 1px solid var(--qm-border);
 }
 
 .qm-shared-share-header h3 {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
 .qm-shared-share-header h3 i {
-    color: var(--qm-primary, #8c2f52);
+    color: var(--qm-primary);
 }
 
 .qm-shared-share-close {
     width: 36px;
     height: 36px;
     border: none;
-    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+    background: var(--qm-bg-elevated);
     border-radius: 10px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -81,8 +81,8 @@
 }
 
 .qm-shared-share-close:hover {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    background: rgba(var(--qm-danger-rgb), 0.2);
+    color: var(--qm-danger);
 }
 
 .qm-shared-share-content {
@@ -99,7 +99,7 @@
     width: 200px;
     height: 200px;
     margin: 0 auto 12px;
-    background: #fff;
+    background: var(--qm-surface-white);
     border-radius: 16px;
     padding: 16px;
     display: flex;
@@ -121,7 +121,7 @@
 .qm-shared-qr-hint {
     margin: 0;
     font-size: 13px;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
 }
 
 /* Link Section */
@@ -133,7 +133,7 @@
     display: block;
     font-size: 12px;
     font-weight: 600;
-    color: var(--qm-text-muted, #a0a0a0);
+    color: var(--qm-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 8px;
@@ -147,10 +147,10 @@
 .qm-shared-link-input {
     flex: 1;
     padding: 12px 16px;
-    background: var(--qm-bg-elevated, #252536);
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
     border-radius: 10px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     font-size: 13px;
     font-family: monospace;
     min-width: 0;
@@ -161,10 +161,10 @@
     align-items: center;
     gap: 6px;
     padding: 12px 16px;
-    background: var(--qm-primary, #8c2f52);
+    background: var(--qm-primary);
     border: none;
     border-radius: 10px;
-    color: white;
+    color: var(--qm-text-on-primary);
     font-weight: 600;
     font-size: 13px;
     cursor: pointer;
@@ -174,11 +174,11 @@
 
 .qm-shared-copy-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(140, 47, 82, 0.3);
+    box-shadow: 0 4px 15px rgba(var(--qm-primary-rgb), 0.3);
 }
 
 .qm-shared-copy-btn.copied {
-    background: var(--qm-success, #16a34a);
+    background: var(--qm-success);
 }
 
 /* Share Buttons */
@@ -198,10 +198,10 @@
     align-items: center;
     gap: 6px;
     padding: 14px 8px;
-    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
     border-radius: 12px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -220,13 +220,13 @@
     border-color: transparent;
 }
 
-.qm-shared-share-btn.native:hover { background: var(--qm-primary); color: white; }
-.qm-shared-share-btn.whatsapp:hover { background: #25D366; color: #fff; }
-.qm-shared-share-btn.telegram:hover { background: #0088cc; color: #fff; }
-.qm-shared-share-btn.twitter:hover { background: #000; color: #fff; }
-.qm-shared-share-btn.facebook:hover { background: #1877F2; color: #fff; }
-.qm-shared-share-btn.email:hover { background: #EA4335; color: #fff; }
-.qm-shared-share-btn.sms:hover { background: #2e242a; color: #fff; }
+.qm-shared-share-btn.native:hover { background: var(--qm-primary); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.whatsapp:hover { background: var(--qm-brand-whatsapp); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.telegram:hover { background: var(--qm-brand-telegram); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.twitter:hover { background: var(--qm-brand-x); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.facebook:hover { background: var(--qm-brand-facebook); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.email:hover { background: var(--qm-brand-google); color: var(--qm-text-on-primary); }
+.qm-shared-share-btn.sms:hover { background: var(--qm-secondary-dark); color: var(--qm-text-on-primary); }
 
 /* Download Button */
 .qm-shared-download-section {
@@ -238,10 +238,10 @@
     align-items: center;
     gap: 8px;
     padding: 12px 24px;
-    background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
-    border: 1px solid var(--qm-border, #2d2d3a);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
     border-radius: 10px;
-    color: var(--qm-text-primary, #fff);
+    color: var(--qm-text-primary);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -250,7 +250,7 @@
 
 .qm-shared-download-btn:hover {
     background: var(--qm-primary);
-    color: white;
+    color: var(--qm-text-on-primary);
     border-color: transparent;
 }
 
@@ -268,17 +268,17 @@
 }
 
 .qm-shared-connection-indicator.connected {
-    background: rgba(22, 163, 74, 0.15);
+    background: rgba(var(--qm-success-rgb), 0.15);
     color: var(--qm-accent-green);
 }
 
 .qm-shared-connection-indicator.disconnected {
-    background: rgba(220, 38, 38, 0.15);
+    background: rgba(var(--qm-danger-rgb), 0.15);
     color: var(--qm-danger);
 }
 
 .qm-shared-connection-indicator.reconnecting {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
@@ -380,13 +380,13 @@
 }
 
 .qm-shared-confirm-icon.warning {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
 .qm-shared-confirm-icon.danger {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: rgba(var(--qm-danger-rgb), 0.15);
+    color: var(--qm-danger);
 }
 
 .qm-shared-confirm-icon.info {
@@ -429,18 +429,18 @@
 }
 
 .qm-shared-confirm-cancel:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--qm-bg-card-hover);
 }
 
 .qm-shared-confirm-ok {
     background: var(--qm-gradient-primary);
     border: none;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-shared-confirm-ok.danger {
-    background: #ef4444;
-    color: #fff;
+    background: var(--qm-danger);
+    color: var(--qm-text-on-primary);
 }
 
 /* ================================
@@ -495,7 +495,7 @@
 
 .qm-shared-media-btn:hover {
     background: var(--qm-primary);
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-shared-media-progress {
@@ -557,7 +557,7 @@
 }
 
 .qm-shared-playlist-item.active {
-    background: rgba(140, 47, 82, 0.1);
+    background: rgba(var(--qm-primary-rgb), 0.1);
 }
 
 .qm-shared-playlist-item.playing {
@@ -710,16 +710,16 @@
 [data-theme="light"] .qm-shared-share-dialog,
 [data-theme="light"] .qm-shared-confirm-dialog {
     background: var(--qm-bg-card);
-    border-color: #e5e7eb;
+    border-color: var(--qm-border);
 }
 
 [data-theme="light"] .qm-shared-link-input,
 [data-theme="light"] .qm-shared-share-btn,
 [data-theme="light"] .qm-shared-download-btn {
-    background: #f3f4f6;
-    border-color: #e5e7eb;
+    background: var(--qm-bg-elevated);
+    border-color: var(--qm-border);
 }
 
 [data-theme="light"] .qm-shared-link-input {
-    color: #1f2937;
+    color: var(--qm-text-primary);
 }

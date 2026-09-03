@@ -258,8 +258,14 @@ public class ModuleAccessService : IModuleAccessService
         await InvalidateCacheAsync(organizationId);
     }
 
-    public Task InvalidateCacheAsync(Guid organizationId) =>
-        _cache.RemoveAsync($"{CachePrefix}{organizationId}");
+    public async Task InvalidateCacheAsync(Guid organizationId)
+    {
+        await _cache.RemoveAsync($"{CachePrefix}{organizationId}");
+        // Feature flags are now partly derived from purchased modules (FeatureFlagService
+        // .ApplyModuleGrants) and cached separately under "features:" — drop that too so a
+        // purchase/grant/revoke is reflected immediately rather than after its own 5-minute TTL.
+        await _cache.RemoveAsync($"features:{organizationId}");
+    }
 
     public async Task<(string? StripeCustomerId, string? StripeSubscriptionId)> GetStripeModuleBillingAsync(Guid organizationId)
     {

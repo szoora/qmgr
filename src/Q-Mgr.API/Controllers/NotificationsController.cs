@@ -261,7 +261,7 @@ public class NotificationsController : ControllerBase
     /// Get notification settings for an organization
     /// </summary>
     [HttpGet("settings/{organizationId}")]
-    [RequirePermission(Permissions.NotificationsManage)]
+    [RequirePermission(Permissions.NotificationsView)]
     public async Task<ActionResult<NotificationSettingsDto>> GetSettings(
         Guid organizationId,
         CancellationToken cancellationToken = default)

@@ -276,8 +276,8 @@
     }
 
     .waiting-item.vip {
-        border-left-color: #9b59b6;
-        background: rgba(155, 89, 182, 0.1);
+        border-left-color: var(--qm-accent-pink);
+        background: color-mix(in srgb, var(--qm-accent-pink) 10%, var(--qm-bg-card));
     }
 
     .token-number {
@@ -294,7 +294,7 @@
 
     .priority-badge {
         background: var(--qm-warning);
-        color: #000;
+        color: var(--qm-text-dark);
         padding: 2px 8px;
         border-radius: var(--qm-radius-sm);
         font-size: 11px;
@@ -302,8 +302,8 @@
     }
 
     .waiting-item.vip .priority-badge {
-        background: #9b59b6;
-        color: white;
+        background: var(--qm-accent-pink);
+        color: var(--qm-text-on-primary);
     }
 
     .no-counters, .no-waiting {

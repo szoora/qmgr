@@ -1,18 +1,69 @@
 @page "/queue/kiosk"
 @page "/kiosk"
 @page "/kiosk/{IndustryParam}"
+@page "/kiosk/branch/{BranchId:guid}"
+@page "/kiosk/branch/{BranchId:guid}/{IndustryParam}"
 @layout KioskLayout
+@implements IDisposable
+@using Microsoft.AspNetCore.Components.Authorization
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using System.Text.Json
 @inject IQueueApiService QueueApi
 @inject IBranchStateService BranchState
+@inject IOrganizationApiService OrganizationApi
+@inject AuthenticationStateProvider AuthStateProvider
 @inject IToastService NotificationService
 @inject HttpClient Http
 @inject IJSRuntime JSRuntime
 @inject JsonSerializerOptions JsonOptions
 @inject NavigationManager Navigation
 
+@*
+    URL scheme (the "/kiosk/branch/…" segment exists because "/kiosk/{IndustryParam}" is a
+    catch-all string route — a bare "/kiosk/{guid}" would be swallowed as an industry name):
+      /kiosk                                   -> signed-in admin only: their selected branch
+      /kiosk/{industry}                        -> same, with an industry-theme preview
+      /kiosk/branch/{branchId}                 -> public, shareable (what Customer Links emits)
+      /kiosk/branch/{branchId}/{industry}      -> public + industry-theme preview
+      /kiosk?branch={branchId}                 -> also accepted (query form)
+*@
+
+@if (branchState != BranchResolveState.Ready)
+{
+    <div class="kiosk-container @GetIndustryClass()">
+        @if (branchState == BranchResolveState.Resolving)
+        {
+            <div class="branch-state">
+                <QSpinner Size="lg" />
+            </div>
+        }
+        else if (branchState == BranchResolveState.NoBranch)
+        {
+            <div class="branch-state">
+                <QIcon Name="geo-alt" />
+                <h1>No branch selected</h1>
+                <p>
+                    Open this screen from <strong>Customer Links</strong> in the admin, or add the
+                    branch ID to the URL: <code>/kiosk/branch/{branchId}</code>
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="branch-state">
+                <QIcon Name="exclamation-triangle" />
+                <h1>This branch link is not valid</h1>
+                <p>
+                    The branch may have been removed or deactivated. Open a fresh link from
+                    <strong>Customer Links</strong> in the admin.
+                </p>
+            </div>
+        }
+    </div>
+}
+else
+{
 <div class="kiosk-container @GetIndustryClass()">
     <!-- Header -->
     <div class="kiosk-header">
@@ -21,7 +72,13 @@
                 <div class="logo-icon">
                     <QIcon Name="@GetIndustryIcon()" />
                 </div>
-                <span class="logo-text">@GetIndustryTitle()</span>
+                <div class="logo-meta">
+                    <span class="logo-text">@GetHeaderTitle()</span>
+                    @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
+                    {
+                        <span class="branch-label">@branchInfo!.Name</span>
+                    }
+                </div>
             </div>
             <div class="header-info">
                 <span class="datetime">@currentDateTime.ToString("dddd, MMMM dd, yyyy")</span>
@@ -80,6 +137,7 @@
         </div>
     </div>
 </div>
+}
 
 <!-- Ticket Modal -->
 @if (showTicket)
@@ -431,10 +489,67 @@
         color: #0f0f1a;
     }
 
+    .logo-meta {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
+    }
+
     .logo-text {
         font-size: 32px;
         font-weight: 700;
         letter-spacing: -0.02em;
+    }
+
+    .branch-label {
+        font-size: 15px;
+        font-weight: 500;
+        opacity: 0.75;
+    }
+
+    /* Branch-resolution states (no branch / invalid link / resolving). Token-only so
+       they follow the layout's [data-theme] automatically; sits on the industry gradient. */
+    .branch-state {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 40px;
+        text-align: center;
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+    }
+
+    .branch-state .q-icon {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .branch-state h1 {
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .branch-state p {
+        margin: 0;
+        max-width: 560px;
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--qm-text-secondary);
+    }
+
+    .branch-state code {
+        font-family: var(--qm-font-mono);
+        font-size: 14px;
+        padding: 2px 8px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        color: var(--qm-text-primary);
     }
 
     .header-info {
@@ -1963,34 +2078,81 @@
         (FeedbackCategory.Other, "Other", "three-dots")
     };
 
-    private Guid BranchId => BranchState.CurrentBranchId;
+    [Parameter] public Guid? BranchId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "branch")]
+    public Guid? BranchQuery { get; set; }
+
+    private enum BranchResolveState { Resolving, NoBranch, InvalidBranch, Ready }
+    private BranchResolveState branchState = BranchResolveState.Resolving;
+    private Guid branchId;
+    private BranchPublicDto? branchInfo;
+
+    // Route param -> ?branch= query -> (signed-in admin only) selected branch, else their
+    // org's first active branch -> nothing. Deliberately no demo-GUID fallback: a bare
+    // "/kiosk" on an unauthenticated device renders the guidance state instead of
+    // silently issuing tickets against another tenant's branch.
+    private async Task<Guid?> ResolveBranchIdAsync()
+    {
+        if (BranchId is { } fromRoute && fromRoute != Guid.Empty)
+            return fromRoute;
+
+        if (BranchQuery is { } fromQuery && fromQuery != Guid.Empty)
+            return fromQuery;
+
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated != true)
+            return null;
+
+        await BranchState.InitializeAsync();
+        if (BranchState.CurrentBranchId != Guid.Empty)
+            return BranchState.CurrentBranchId;
+
+        // Signed in but no branch selected yet: auto-select the first active branch
+        // (authenticated GET api/v1/branches — only meaningful for a signed-in user).
+        try
+        {
+            var response = await Http.GetAsync("api/v1/branches");
+            if (response.IsSuccessStatusCode)
+            {
+                var branches = await response.Content.ReadFromJsonAsync<List<BranchApiDto>>(JsonOptions);
+                var firstBranch = branches?.FirstOrDefault(b => b.IsActive);
+                if (firstBranch != null)
+                {
+                    await BranchState.SetBranchAsync(firstBranch.Id, firstBranch.Name);
+                    return firstBranch.Id;
+                }
+            }
+        }
+        catch
+        {
+            // Unable to load branches - falls through to the "no branch" state
+        }
+
+        return null;
+    }
+
+    private string GetHeaderTitle() =>
+        !string.IsNullOrWhiteSpace(branchInfo?.OrganizationName) ? branchInfo!.OrganizationName : GetIndustryTitle();
 
     protected override async Task OnInitializedAsync()
     {
-        // Initialize branch state
-        await BranchState.InitializeAsync();
-
-        // If no branch is configured, auto-select the first available branch
-        if (BranchState.CurrentBranchId == Guid.Empty)
+        var resolved = await ResolveBranchIdAsync();
+        if (resolved == null)
         {
-            try
-            {
-                var response = await Http.GetAsync("api/v1/branches");
-                if (response.IsSuccessStatusCode)
-                {
-                    var branches = await response.Content.ReadFromJsonAsync<List<BranchApiDto>>(JsonOptions);
-                    var firstBranch = branches?.FirstOrDefault(b => b.IsActive);
-                    if (firstBranch != null)
-                    {
-                        await BranchState.SetBranchAsync(firstBranch.Id, firstBranch.Name);
-                    }
-                }
-            }
-            catch
-            {
-                // Unable to load branches - will show error when trying to create token
-            }
+            branchState = BranchResolveState.NoBranch;
+            return;
         }
+
+        branchId = resolved.Value;
+        branchInfo = await OrganizationApi.GetBranchPublicAsync(branchId);
+        if (branchInfo == null)
+        {
+            branchState = BranchResolveState.InvalidBranch;
+            return;
+        }
+
+        branchState = BranchResolveState.Ready;
 
         // Industry is configured by admin in Organization settings
         // URL parameter is only for admin preview/testing purposes
@@ -2019,7 +2181,7 @@
     {
         try
         {
-            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/kiosk-settings");
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/kiosk-settings");
             if (response.IsSuccessStatusCode)
             {
                 kioskSettings = await response.Content.ReadFromJsonAsync<KioskSettingsDto>(JsonOptions);
@@ -2080,7 +2242,7 @@
 
     private async Task LoadServiceTypes()
     {
-        var status = await QueueApi.GetQueueStatusAsync(BranchId);
+        var status = await QueueApi.GetQueueStatusAsync(branchId);
         serviceTypes = status?.ServiceTypes ?? new();
     }
 
@@ -2112,13 +2274,13 @@
         if (selectedService == null) return;
 
         // Check if branch is configured
-        if (BranchId == Guid.Empty)
+        if (branchId == Guid.Empty)
         {
             NotificationService.Notify(ToastSeverity.Error, "Configuration Error", "No branch configured. Please contact administrator.");
             return;
         }
 
-        generatedToken = await QueueApi.CreateTokenAsync(BranchId, selectedService.Code,
+        generatedToken = await QueueApi.CreateTokenAsync(branchId, selectedService.Code,
             new CustomerDto { Name = customerName, Phone = customerPhone });
 
         if (generatedToken != null)
@@ -2130,7 +2292,7 @@
             try
             {
                 var feedbackResponse = await Http.PostAsync(
-                    $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback-link",
+                    $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback-link",
                     null);
 
                 if (feedbackResponse.IsSuccessStatusCode)
@@ -2163,7 +2325,7 @@
         try
         {
             // Get printer settings to check if auto-print is enabled
-            var settingsResponse = await Http.GetAsync($"api/v1/branches/{BranchId}/printer-settings");
+            var settingsResponse = await Http.GetAsync($"api/v1/branches/{branchId}/printer-settings");
             if (settingsResponse.IsSuccessStatusCode)
             {
                 var settings = await settingsResponse.Content.ReadFromJsonAsync<PrinterSettingsResponse>(JsonOptions);
@@ -2193,7 +2355,7 @@
         try
         {
             // Get print data from API
-            var response = await Http.GetAsync($"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/print-data");
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/print-data");
 
             if (!response.IsSuccessStatusCode)
             {
@@ -2397,7 +2559,7 @@
             };
 
             var response = await Http.PostAsJsonAsync(
-                $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback",
+                $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback",
                 request, JsonOptions);
 
             if (response.IsSuccessStatusCode)
@@ -2429,7 +2591,7 @@
         try
         {
             var response = await Http.PostAsync(
-                $"api/v1/branches/{BranchId}/tokens/{generatedToken.Id}/feedback-link",
+                $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback-link",
                 null);
 
             if (response.IsSuccessStatusCode)

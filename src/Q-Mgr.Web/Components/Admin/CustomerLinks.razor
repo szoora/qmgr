@@ -100,23 +100,23 @@
                 </div>
             </div>
 
-            <!-- Ticket Status Card -->
-            <div class="link-card status">
+            <!-- Full-Screen Signage Card -->
+            <div class="link-card signage">
                 <div class="card-icon">
-                    <i class="bi bi-ticket-detailed"></i>
+                    <i class="bi bi-fullscreen"></i>
                 </div>
                 <div class="card-content">
-                    <h3>Ticket Status Check</h3>
-                    <p>Let customers check their ticket status and position in the queue.</p>
+                    <h3>Full-Screen Signage</h3>
+                    <p>Content-only signage screen (playlists, campaigns, banner) with no queue panel.</p>
                     <div class="link-preview">
-                        <code>@GetStatusUrl()</code>
+                        <code>@GetSignageUrl()</code>
                     </div>
                 </div>
                 <div class="card-actions">
-                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetStatusUrl()))">
+                    <button class="btn-preview" @onclick="@(() => PreviewLink(GetSignageUrl()))">
                         <i class="bi bi-eye"></i> Preview
                     </button>
-                    <button class="btn-share" @onclick="@(() => ShareStatus())">
+                    <button class="btn-share" @onclick="@(() => ShareSignage())">
                         <i class="bi bi-share"></i> Share
                     </button>
                 </div>
@@ -242,7 +242,7 @@
         color: var(--qm-success);
     }
 
-    .link-card.status .card-icon {
+    .link-card.signage .card-icon {
         background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
         color: var(--qm-warning);
     }
@@ -473,10 +473,20 @@
         return $"{uri.Scheme}://{uri.Authority}";
     }
 
-    private string GetKioskUrl() => $"{GetBaseUrl()}/kiosk?branch={selectedBranchId}";
+    // Route-parameter form of each public URL — the pages resolve the branch as
+    // route param -> ?branch= -> (signed-in only) selected branch, with no demo fallback.
+    // Kiosk needs the "/branch/" segment because "/kiosk/{IndustryParam}" is a string
+    // catch-all that would otherwise swallow a bare GUID as an industry name.
+    // Feedback stays query-form: FeedbackEntry (/feedback) only reads ?branch= to label
+    // the page; the form itself is keyed by a per-ticket code (/feedback/{code}).
+    // There is no ticket-status link: no anonymous per-ticket lookup endpoint exists
+    // (QueueController exposes only branch-level status/wait-time; TokensController is
+    // [Authorize]), so that card was dropped rather than pointing at a route that
+    // doesn't exist.
+    private string GetKioskUrl() => $"{GetBaseUrl()}/kiosk/branch/{selectedBranchId}";
     private string GetFeedbackUrl() => $"{GetBaseUrl()}/feedback?branch={selectedBranchId}";
-    private string GetDisplayUrl() => $"{GetBaseUrl()}/display?branch={selectedBranchId}";
-    private string GetStatusUrl() => $"{GetBaseUrl()}/ticket-status?branch={selectedBranchId}";
+    private string GetDisplayUrl() => $"{GetBaseUrl()}/display/{selectedBranchId}";
+    private string GetSignageUrl() => $"{GetBaseUrl()}/display/signage/{selectedBranchId}";
 
     private void PreviewLink(string url)
     {
@@ -487,7 +497,7 @@
     private void ShareKiosk() => ShareLink(GetKioskUrl(), "Self-Service Kiosk", "Join our queue from your phone!");
     private void ShareFeedback() => ShareLink(GetFeedbackUrl(), "Customer Feedback", "Share your feedback with us!");
     private void ShareDisplay() => ShareLink(GetDisplayUrl(), "Queue Display", "View live queue status");
-    private void ShareStatus() => ShareLink(GetStatusUrl(), "Check Ticket Status", "Check your queue position");
+    private void ShareSignage() => ShareLink(GetSignageUrl(), "Full-Screen Signage", "Content-only signage screen");
 
     private void ShareLink(string url, string title, string description)
     {
@@ -512,7 +522,7 @@
         var links = $"Self-Service Kiosk: {GetKioskUrl()}\n" +
                     $"Customer Feedback: {GetFeedbackUrl()}\n" +
                     $"Queue Display: {GetDisplayUrl()}\n" +
-                    $"Ticket Status: {GetStatusUrl()}";
+                    $"Full-Screen Signage: {GetSignageUrl()}";
 
         try
         {

@@ -103,7 +103,10 @@ public class CampaignsController : ControllerBase
                 StartDate = c.StartDate,
                 EndDate = c.EndDate,
                 IsActive = c.IsActive,
-                CreatedAt = c.CreatedAt
+                CreatedAt = c.CreatedAt,
+                // Correlated subquery in the same SELECT (EF translates the DbSet reference
+                // inline) — one round-trip for the whole list, not N+1.
+                TotalImpressions = _dbContext.CampaignImpressions.Count(i => i.CampaignId == c.Id)
             })
             .ToListAsync();
 
@@ -230,4 +233,185 @@ public class CampaignsController : ControllerBase
 
         return NoContent();
     }
+
+    #region Impression stats
+
+    /// <summary>Inclusive day span an impression report may cover.</summary>
+    private const int MaxStatsRangeDays = 366;
+
+    /// <summary>
+    /// Impression report for one campaign: daily series, per-media and per-branch breakdowns.
+    /// Defaults to the trailing 30 days; the range is capped at 366 days (the From date is
+    /// pulled forward if a wider one is asked for — the returned From/To reflect what was
+    /// actually applied). Follows VisitorsController.GetVisitorReport's model: pull the
+    /// minimal projection for the range, aggregate in memory.
+    /// </summary>
+    [HttpGet("campaigns/{campaignId:guid}/stats")]
+    [RequirePermission(Permissions.ContentView)]
+    [ProducesResponseType(typeof(CampaignStatsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetCampaignStats(Guid campaignId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var (error, stats) = await BuildCampaignStatsAsync(campaignId, from, to);
+        if (error != null) return error;
+        return Ok(stats);
+    }
+
+    /// <summary>
+    /// Same report as GetCampaignStats as a CSV download: a Day,Impressions section, a blank
+    /// line, a Media,Impressions section, a blank line, then Branch,Impressions. Gated on
+    /// ReportsExport like the visitor log export — it's a file export, not an on-screen view.
+    /// </summary>
+    [HttpGet("campaigns/{campaignId:guid}/stats/export")]
+    [RequirePermission(Permissions.ReportsExport)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportCampaignStats(Guid campaignId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var (error, stats) = await BuildCampaignStatsAsync(campaignId, from, to);
+        if (error != null) return error;
+
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine("Day,Impressions");
+        foreach (var d in stats!.Daily)
+            csv.AppendLine($"{d.Day:yyyy-MM-dd},{d.Count}");
+
+        csv.AppendLine();
+        csv.AppendLine("Media,Impressions");
+        foreach (var m in stats.ByMedia)
+            csv.AppendLine($"{CsvField(m.Title)},{m.Count}");
+
+        csv.AppendLine();
+        csv.AppendLine("Branch,Impressions");
+        foreach (var b in stats.ByBranch)
+            csv.AppendLine($"{CsvField(b.BranchName)},{b.Count}");
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv.ToString());
+        return File(bytes, "text/csv", $"campaign-{Slugify(stats.CampaignName)}-impressions.csv");
+    }
+
+    private async Task<(IActionResult? Error, CampaignStatsDto? Stats)> BuildCampaignStatsAsync(Guid campaignId, DateOnly? from, DateOnly? to)
+    {
+        var campaign = await _dbContext.Campaigns.FindAsync(campaignId);
+        if (campaign == null)
+            return (NotFound(), null);
+
+        var branchError = await VerifyBranchOwnership(campaign.BranchId);
+        if (branchError != null) return (branchError, null);
+
+        var (fromDate, toDate, rangeStart, rangeEndExclusive) = ResolveStatsRange(from, to);
+
+        var rows = await _dbContext.CampaignImpressions
+            .Where(i => i.CampaignId == campaignId && i.CreatedAt >= rangeStart && i.CreatedAt < rangeEndExclusive)
+            .Select(i => new { i.MediaContentId, i.BranchId, i.CreatedAt })
+            .ToListAsync();
+
+        var mediaIds = rows.Select(r => r.MediaContentId).Distinct().ToList();
+        var mediaNames = mediaIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _dbContext.MediaContents
+                .Where(m => mediaIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.Name })
+                .ToDictionaryAsync(m => m.Id, m => m.Name);
+
+        var branchIds = rows.Select(r => r.BranchId).Distinct().ToList();
+        var branchNames = branchIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _dbContext.Branches
+                .Where(b => branchIds.Contains(b.Id))
+                .Select(b => new { b.Id, b.Name })
+                .ToDictionaryAsync(b => b.Id, b => b.Name);
+
+        // Zero-fill every day in the range so the daily series is a continuous line and the
+        // CSV reads as a complete calendar, not just the days that happened to have traffic.
+        var countsByDay = rows
+            .GroupBy(r => DateOnly.FromDateTime(r.CreatedAt))
+            .ToDictionary(g => g.Key, g => g.Count());
+        var daily = new List<DayCountDto>();
+        for (var day = fromDate; day <= toDate; day = day.AddDays(1))
+            daily.Add(new DayCountDto { Day = day, Count = countsByDay.GetValueOrDefault(day) });
+
+        var stats = new CampaignStatsDto
+        {
+            CampaignId = campaign.Id,
+            CampaignName = campaign.Name,
+            From = fromDate,
+            To = toDate,
+            TotalImpressions = rows.Count,
+            UniqueMediaItems = mediaIds.Count,
+            Daily = daily,
+            ByMedia = rows
+                .GroupBy(r => r.MediaContentId)
+                .Select(g => new CampaignMediaImpressionsDto
+                {
+                    MediaContentId = g.Key,
+                    Title = mediaNames.TryGetValue(g.Key, out var name) ? name : "(removed media)",
+                    Count = g.Count()
+                })
+                .OrderByDescending(m => m.Count)
+                .ThenBy(m => m.Title)
+                .ToList(),
+            ByBranch = rows
+                .GroupBy(r => r.BranchId)
+                .Select(g => new CampaignBranchImpressionsDto
+                {
+                    BranchId = g.Key,
+                    BranchName = branchNames.TryGetValue(g.Key, out var name) ? name : "(removed branch)",
+                    Count = g.Count()
+                })
+                .OrderByDescending(b => b.Count)
+                .ThenBy(b => b.BranchName)
+                .ToList()
+        };
+
+        return (null, stats);
+    }
+
+    private static (DateOnly From, DateOnly To, DateTime RangeStart, DateTime RangeEndExclusive) ResolveStatsRange(DateOnly? from, DateOnly? to)
+    {
+        var toDate = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var fromDate = from ?? toDate.AddDays(-29); // default: trailing 30 days inclusive
+        if (fromDate > toDate) (fromDate, toDate) = (toDate, fromDate);
+        if (toDate.DayNumber - fromDate.DayNumber >= MaxStatsRangeDays)
+            fromDate = toDate.AddDays(-(MaxStatsRangeDays - 1));
+
+        // Npgsql rejects Kind=Unspecified DateTimes against "timestamp with time zone" columns —
+        // DateOnly.ToDateTime always produces Unspecified, so stamp UTC explicitly (same as
+        // VisitorsController.ResolveReportRange).
+        var rangeStart = DateTime.SpecifyKind(fromDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var rangeEndExclusive = DateTime.SpecifyKind(toDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddDays(1);
+        return (fromDate, toDate, rangeStart, rangeEndExclusive);
+    }
+
+    private static string CsvField(string value)
+    {
+        return value.Contains(',') || value.Contains('"') || value.Contains('\n')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+    }
+
+    /// <summary>ASCII-only, dash-separated, max 40 chars — safe as a download filename.</summary>
+    private static string Slugify(string name)
+    {
+        var sb = new System.Text.StringBuilder();
+        var lastWasDash = true;
+        foreach (var ch in name.ToLowerInvariant())
+        {
+            if (ch < 128 && char.IsLetterOrDigit(ch))
+            {
+                sb.Append(ch);
+                lastWasDash = false;
+            }
+            else if (!lastWasDash)
+            {
+                sb.Append('-');
+                lastWasDash = true;
+            }
+            if (sb.Length >= 40) break;
+        }
+        var slug = sb.ToString().Trim('-');
+        return slug.Length > 0 ? slug : "campaign";
+    }
+
+    #endregion
 }

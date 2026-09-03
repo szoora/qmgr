@@ -183,3 +183,30 @@ public record SendWelfareNotificationRequest
     public string Channel { get; set; } = "Sms";
     public string Message { get; set; } = string.Empty;
 }
+
+/// <summary>
+/// One flat row of a historical welfare-ledger import, as parsed client-side from an uploaded
+/// Excel/CSV (rosterImport.js, kind "welfare") — every field is the raw cell text, deliberately
+/// left as strings so the background processor (RosterImportProcessorJob) does all parsing and
+/// validation server-side and logs a per-row reason for anything it rejects, the same way the
+/// roster import does. Category is matched by name within the organization and case type — a
+/// name that doesn't exist fails the row rather than silently creating a category nobody chose.
+/// </summary>
+public record WelfareImportRow
+{
+    public string? StudentCode { get; init; }
+    public string? CaseType { get; init; }
+    public string? Category { get; init; }
+    public string? OccurredAt { get; init; }
+    public string? Description { get; init; }
+    public string? Points { get; init; }
+    public string? Tier { get; init; }
+    public string? ActionTaken { get; init; }
+    public string? Status { get; init; }
+}
+
+public record StartWelfareImportRequest
+{
+    public string? SourceFileName { get; init; }
+    public List<WelfareImportRow> Rows { get; init; } = new();
+}

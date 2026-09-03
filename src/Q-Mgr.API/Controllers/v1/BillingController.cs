@@ -395,9 +395,17 @@ public class BillingController : ControllerBase
         if (subscription == null || string.IsNullOrEmpty(subscription.StripeCustomerId))
             return BadRequest(new { message = "No Stripe customer found" });
 
-        var success = await _stripeService.SetDefaultPaymentMethodAsync(subscription.StripeCustomerId, paymentMethodId);
-        if (!success)
-            return NotFound(new { message = "Payment method not found" });
+        try
+        {
+            var success = await _stripeService.SetDefaultPaymentMethodAsync(subscription.StripeCustomerId, paymentMethodId);
+            if (!success)
+                return NotFound(new { message = "Payment method not found" });
+        }
+        catch (Stripe.StripeException ex)
+        {
+            // Previously swallowed into a misleading 404 — surface the gateway's own message.
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = $"Stripe rejected the request: {ex.StripeError?.Message ?? ex.Message}" });
+        }
 
         return Ok(new { message = "Default payment method updated" });
     }
@@ -413,9 +421,16 @@ public class BillingController : ControllerBase
         if (subscription == null || string.IsNullOrEmpty(subscription.StripeCustomerId))
             return BadRequest(new { message = "No Stripe customer found" });
 
-        var success = await _stripeService.RemovePaymentMethodAsync(subscription.StripeCustomerId, paymentMethodId);
-        if (!success)
-            return NotFound(new { message = "Payment method not found" });
+        try
+        {
+            var success = await _stripeService.RemovePaymentMethodAsync(subscription.StripeCustomerId, paymentMethodId);
+            if (!success)
+                return NotFound(new { message = "Payment method not found" });
+        }
+        catch (Stripe.StripeException ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = $"Stripe rejected the request: {ex.StripeError?.Message ?? ex.Message}" });
+        }
 
         return NoContent();
     }

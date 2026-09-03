@@ -20,6 +20,14 @@
        this, so every one of those silently fell back to its literal default
        (indigo 99,102,241) regardless of the app's actual brand color. */
     --qm-primary-rgb: 140, 47, 82;
+    /* Text placed on a solid --qm-primary / status-color fill. Same in both themes —
+       the fill is always saturated enough for white text — but tokenised so no
+       component has to hardcode `color: white` (which reads as an unthemed literal
+       in audits and can't be tuned centrally if the fill ever changes). */
+    --qm-text-on-primary: #ffffff;
+    /* Literal white surface that must stay white regardless of theme (QR-code quiet
+       zone, print-preview paper). Not a themed background — use --qm-bg-card for that. */
+    --qm-surface-white: #ffffff;
 
     /* Secondary Accent - Warm Charcoal */
     --qm-secondary: #47393f;
@@ -51,6 +59,29 @@
     --qm-warning: #f59e0b;
     --qm-danger: #dc2626;
     --qm-info: #8c2f52;
+    /* Bare R,G,B triples of the four status colors (same role as --qm-primary-rgb) so
+       tinted backgrounds can be written rgba(var(--qm-success-rgb), 0.12) instead of a
+       hardcoded rgba(16,185,129,…) that ignores the theme's actual status color. */
+    --qm-success-rgb: 22, 163, 74;
+    --qm-warning-rgb: 245, 158, 11;
+    --qm-danger-rgb: 220, 38, 38;
+    --qm-info-rgb: 140, 47, 82;
+
+    /* Third-party brand colors (share targets / media providers). These are fixed by
+       the brands themselves and deliberately identical in both themes — defined once
+       here so ShareDialog/MediaLibrary don't each carry their own hex copies. */
+    --qm-brand-whatsapp: #25d366;
+    --qm-brand-facebook: #1877f2;
+    --qm-brand-telegram: #0088cc;
+    --qm-brand-google: #ea4335;
+    --qm-brand-linkedin: #0a66c2;
+    --qm-brand-x: #000000;
+    --qm-brand-youtube: #ff0000;
+    --qm-brand-vimeo: #1ab7ea;
+    --qm-brand-spotify: #1ed760;
+    --qm-brand-soundcloud: #ff5500;
+    --qm-brand-gdrive: #4285f4;
+    --qm-brand-office: #d83b01;
 
     /* Student Welfare Ledger — three case-type accents, deliberately distinct from
        success/warning/danger (those are semantic status colors, not category identity; a
@@ -117,6 +148,8 @@
     --qm-primary-light: rgba(122, 40, 71, 0.1);
     --qm-primary-glow: rgba(122, 40, 71, 0.3);
     --qm-primary-rgb: 122, 40, 71;
+    --qm-text-on-primary: #ffffff;
+    --qm-surface-white: #ffffff;
 
     /* Secondary Accent - warm charcoal */
     --qm-secondary: #3a2e33;
@@ -148,6 +181,10 @@
     --qm-warning: #f59e0b;
     --qm-danger: #ef4444;
     --qm-info: #7a2847;
+    --qm-success-rgb: 16, 185, 129;
+    --qm-warning-rgb: 245, 158, 11;
+    --qm-danger-rgb: 239, 68, 68;
+    --qm-info-rgb: 122, 40, 71;
 
     /* Student Welfare Ledger — darker than the dark-theme values above for contrast on a
        light background; same three hues (gold/clay/teal), not a different palette per theme. */

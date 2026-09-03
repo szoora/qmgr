@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Common;
 
 namespace QMgr.Domain.Entities.Visitor;
@@ -24,6 +25,16 @@ public class Student : BaseEntity
     public string? ClassName { get; set; }
 
     public bool IsActive { get; set; } = true;
+
+    // Data-processing consent (the guardian/student agreeing to the school holding this welfare
+    // and visiting-day data about them) — recorded here on the Student row rather than in a
+    // separate consent-log table, since a single "currently given / not given, by whom, when,
+    // with what caveat" is all anyone has asked for. Withdrawing consent clears all three.
+    public DateTime? DataConsentGivenAt { get; set; }
+    public Guid? DataConsentRecordedByUserId { get; set; }
+
+    [MaxLength(500)]
+    public string? DataConsentNotes { get; set; }
 
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }

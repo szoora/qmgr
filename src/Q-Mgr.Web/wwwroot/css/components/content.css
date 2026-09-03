@@ -247,7 +247,7 @@
 .qm-content-browse-btn {
     padding: 12px 28px;
     background: var(--qm-gradient-primary);
-    color: white;
+    color: var(--qm-text-on-primary);
     border-radius: 10px;
     font-weight: 600;
     cursor: pointer;
@@ -439,7 +439,7 @@
 }
 
 .qm-content-url-dialog .required {
-    color: #ef4444;
+    color: var(--qm-danger);
 }
 
 .qm-content-url-dialog .optional {
@@ -461,7 +461,7 @@
 .qm-content-url-dialog .form-control:focus,
 .qm-content-url-dialog .form-select:focus {
     border-color: var(--qm-primary);
-    box-shadow: 0 0 0 3px rgba(140, 47, 82, 0.15);
+    box-shadow: 0 0 0 3px rgba(var(--qm-primary-rgb), 0.15);
     outline: none;
 }
 
@@ -497,32 +497,32 @@
 }
 
 .qm-content-platform-badge.youtube {
-    background: rgba(255, 0, 0, 0.15);
-    color: #ff4444;
+    background: color-mix(in srgb, var(--qm-brand-youtube) 15%, transparent);
+    color: var(--qm-brand-youtube);
 }
 
 .qm-content-platform-badge.vimeo {
-    background: rgba(26, 183, 234, 0.15);
-    color: #1ab7ea;
+    background: color-mix(in srgb, var(--qm-brand-vimeo) 15%, transparent);
+    color: var(--qm-brand-vimeo);
 }
 
 .qm-content-platform-badge.google {
-    background: rgba(66, 133, 244, 0.15);
-    color: #4285f4;
+    background: color-mix(in srgb, var(--qm-brand-gdrive) 15%, transparent);
+    color: var(--qm-brand-gdrive);
 }
 
 .qm-content-platform-badge.spotify {
-    background: rgba(30, 215, 96, 0.15);
-    color: #1ed760;
+    background: color-mix(in srgb, var(--qm-brand-spotify) 15%, transparent);
+    color: var(--qm-brand-spotify);
 }
 
 .qm-content-platform-badge.soundcloud {
-    background: rgba(255, 85, 0, 0.15);
-    color: #ff5500;
+    background: color-mix(in srgb, var(--qm-brand-soundcloud) 15%, transparent);
+    color: var(--qm-brand-soundcloud);
 }
 
 .qm-content-platform-badge.direct {
-    background: rgba(140, 47, 82, 0.15);
+    background: rgba(var(--qm-primary-rgb), 0.15);
     color: var(--qm-primary);
 }
 
@@ -589,7 +589,7 @@
     align-items: center;
     gap: 4px;
     padding: 3px 8px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--qm-bg-elevated);
     border-radius: 4px;
     color: var(--qm-text-secondary);
 }
@@ -640,7 +640,7 @@
 
 .qm-content-playlist-icon .rzi {
     font-size: 28px;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-content-playlist-info {
@@ -751,13 +751,13 @@
 }
 
 .qm-content-zone-status.active {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    background: rgba(var(--qm-success-rgb), 0.15);
+    color: var(--qm-success);
 }
 
 .qm-content-zone-status.inactive {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+    background: rgba(var(--qm-danger-rgb), 0.15);
+    color: var(--qm-danger);
 }
 
 .qm-content-zone-preview {
@@ -884,7 +884,7 @@
 
 .qm-content-schedule-day.active {
     background: var(--qm-primary);
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-content-schedule-actions {
@@ -988,7 +988,7 @@
 
 .qm-content-close-btn:hover .rzi,
 .qm-content-close-btn:hover i {
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-content-close-btn .rzi,

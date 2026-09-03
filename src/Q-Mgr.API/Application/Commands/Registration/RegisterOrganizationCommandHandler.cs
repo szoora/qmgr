@@ -4,6 +4,7 @@ using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Platform;
+using QMgr.Infrastructure.Email;
 
 namespace QMgr.Application.Commands.Registration;
 
@@ -257,37 +258,18 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             var verificationUrl = $"{baseUrl}/verify?org={organizationId}&token={verificationToken}";
 
             var subject = "Verify your Q-Mgr account";
-            var htmlBody = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <title>Verify your email</title>
-</head>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #2563eb;'>Welcome to Q-Mgr!</h1>
-        <p>Hi {firstName},</p>
-        <p>Thank you for registering with Q-Mgr. To complete your registration and activate your account, please verify your email address by clicking the button below:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='{verificationUrl}' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;'>Verify Email Address</a>
-        </div>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style='word-break: break-all; color: #666;'>{verificationUrl}</p>
-        <p>This link will expire in 24 hours.</p>
-        <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;'>
-        <p style='color: #666; font-size: 14px;'>
-            Your organization URL will be: <strong>https://{slug}.qmgr.app</strong>
-        </p>
-        <p style='color: #666; font-size: 14px;'>
-            If you didn't create this account, you can safely ignore this email.
-        </p>
-        <p style='color: #999; font-size: 12px;'>
-            &copy; Q-Mgr - Queue Management System
-        </p>
-    </div>
-</body>
-</html>";
+            var htmlBody = EmailTemplates.Layout(
+                $"Welcome to {EmailTemplates.AppName}!",
+                firstName,
+                new[]
+                {
+                    $"Thank you for registering with {EmailTemplates.AppName}. To complete your registration and activate your account, please verify your email address by clicking the button below.",
+                    "This link will expire in 24 hours."
+                },
+                "Verify Email Address",
+                verificationUrl,
+                footerNote: $"You can sign in any time at {EmailTemplates.B(baseUrl)}. If you didn't create this account, you can safely ignore this email.",
+                showLinkFallback: true);
 
             return await _emailSender.SendAsync(
                 email,

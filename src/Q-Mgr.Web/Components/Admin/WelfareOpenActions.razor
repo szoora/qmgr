@@ -42,7 +42,7 @@
             {
                 var isOverdue = record.ActionDueDate.HasValue && record.ActionDueDate.Value < DateTime.UtcNow;
                 <div class="action-row @(isOverdue ? "action-row--overdue" : "")" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{record.StudentId}/welfare"))">
-                    <div class="action-row-marker" style="background-color: @(record.CategoryColor ?? "#8c2f52")">
+                    <div class="action-row-marker" style="background-color: @(record.CategoryColor ?? "var(--qm-primary)")">
                         <QIcon Name="@CaseTypeIcon(record.CaseType)" />
                     </div>
                     <div class="action-row-body">
@@ -81,20 +81,20 @@
     .action-list { display: flex; flex-direction: column; gap: 10px; }
     .action-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); cursor: pointer; transition: all 0.15s ease; }
     .action-row:hover { border-color: var(--qm-primary); box-shadow: var(--qm-shadow-md); }
-    .action-row--overdue { border-left: 3px solid var(--qm-danger, #dc2626); }
+    .action-row--overdue { border-left: 3px solid var(--qm-danger); }
 
-    .action-row-marker { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
+    .action-row-marker { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--qm-text-on-primary); flex-shrink: 0; }
     .action-row-body { flex: 1; min-width: 0; }
     .action-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
     .action-row-desc { margin: 4px 0; font-size: 13px; color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .action-row-due { font-size: 12px; color: var(--qm-text-muted); }
 
     .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
-    .status-chip--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
-    .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-    .status-chip--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-chip--open { background: color-mix(in srgb, var(--qm-welfare-concern) 12%, transparent); color: var(--qm-welfare-concern); }
+    .status-chip--underreview { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-accent-orange); }
+    .status-chip--actiontaken { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
 
-    .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); font-weight: 700; font-size: 10px; text-transform: uppercase; }
+    .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); font-weight: 700; font-size: 10px; text-transform: uppercase; }
 </style>
 
 @code {

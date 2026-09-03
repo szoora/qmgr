@@ -15,6 +15,13 @@ public interface ISignalRService
     event Action<Guid>? OnPlaylistUpdated;
     event Action<Guid>? OnDisplayBannerUpdated;
 
+    /// <summary>
+    /// Fired after the queue hub connection comes back following a drop. Pages holding live
+    /// state (Counter Terminal) reconcile from the server on this, since any TokenCalled /
+    /// TokenCompleted broadcasts during the outage were missed.
+    /// </summary>
+    event Action? OnReconnected;
+
     Task ConnectAsync(Guid branchId);
     Task DisconnectAsync();
     bool IsConnected { get; }
@@ -35,6 +42,7 @@ public class SignalRService : ISignalRService, IAsyncDisposable
     public event Action<CounterStatusDto>? OnCounterStatusChanged;
     public event Action<Guid>? OnPlaylistUpdated;
     public event Action<Guid>? OnDisplayBannerUpdated;
+    public event Action? OnReconnected;
 
     public bool IsConnected => _hubConnection?.State == HubConnectionState.Connected;
 
@@ -69,15 +77,25 @@ public class SignalRService : ISignalRService, IAsyncDisposable
             OnTokenCreated?.Invoke(token);
         });
 
-        _hubConnection.On<TokenDto>("TokenCalled", token =>
+        // The server sends a TokenCalledNotification { tokenId, displayNumber, counterNumber,
+        // customerName, waitTimeMinutes } here, not a full TokenDto — read it as JSON and project
+        // the fields that exist. (Binding straight to TokenDto silently produced Id = Guid.Empty.)
+        _hubConnection.On<System.Text.Json.JsonElement>("TokenCalled", data =>
         {
+            var token = new TokenDto
+            {
+                Id = TryGuid(data, "tokenId"),
+                DisplayNumber = TryString(data, "displayNumber") ?? string.Empty
+            };
             _logger.LogDebug("Token called: {TokenId}", token.Id);
             OnTokenCalled?.Invoke(token);
         });
 
-        _hubConnection.On<object>("TokenCompleted", data =>
+        // Previously read via reflection on a JsonElement, which never finds a property and threw
+        // inside the handler — so OnTokenCompleted never actually fired.
+        _hubConnection.On<System.Text.Json.JsonElement>("TokenCompleted", data =>
         {
-            var tokenId = Guid.Parse(data.GetType().GetProperty("tokenId")?.GetValue(data)?.ToString() ?? "");
+            var tokenId = TryGuid(data, "tokenId");
             _logger.LogDebug("Token completed: {TokenId}", tokenId);
             OnTokenCompleted?.Invoke(tokenId);
         });
@@ -94,11 +112,27 @@ public class SignalRService : ISignalRService, IAsyncDisposable
             OnCounterStatusChanged?.Invoke(counter);
         });
 
+        _hubConnection.Reconnected += async connectionId =>
+        {
+            _logger.LogInformation("SignalR queue hub reconnected ({ConnectionId}); re-subscribing to branch {BranchId}", connectionId, branchId);
+            try
+            {
+                // Group membership does not survive a reconnect — re-join before telling listeners.
+                await _hubConnection.InvokeAsync("SubscribeToBranch", branchId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Re-subscribing to branch after reconnect failed");
+            }
+            OnReconnected?.Invoke();
+        };
+
         _hubConnection.Closed += async (error) =>
         {
             _logger.LogWarning(error, "SignalR connection closed");
             await Task.Delay(5000);
             await ConnectAsync(branchId);
+            OnReconnected?.Invoke();
         };
 
         try
@@ -115,6 +149,14 @@ public class SignalRService : ISignalRService, IAsyncDisposable
 
         await ConnectDisplayHubAsync(branchId);
     }
+
+    private static Guid TryGuid(System.Text.Json.JsonElement data, string name) =>
+        data.ValueKind == System.Text.Json.JsonValueKind.Object
+        && data.TryGetProperty(name, out var p) && p.TryGetGuid(out var g) ? g : Guid.Empty;
+
+    private static string? TryString(System.Text.Json.JsonElement data, string name) =>
+        data.ValueKind == System.Text.Json.JsonValueKind.Object
+        && data.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String ? p.GetString() : null;
 
     private async Task ConnectDisplayHubAsync(Guid branchId)
     {

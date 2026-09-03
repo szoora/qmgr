@@ -15,6 +15,12 @@ public interface IAuthService
     Task<string?> GetAccessTokenAsync();
     Task<bool> IsAuthenticatedAsync();
     Task<string?> RefreshTokenAsync();
+
+    /// <summary>
+    /// Re-fetches the signed-in user (incl. role and permissions) from GET api/v1/auth/me and
+    /// replaces the stored copy. Returns null when not signed in or the call fails.
+    /// </summary>
+    Task<UserInfo?> RefreshCurrentUserAsync();
 }
 
 public record IdentifyUserResponse
@@ -156,6 +162,36 @@ public class AuthService : IAuthService
         }
         catch
         {
+            return null;
+        }
+    }
+
+    public async Task<UserInfo?> RefreshCurrentUserAsync()
+    {
+        try
+        {
+            var token = await GetAccessTokenAsync();
+            if (string.IsNullOrEmpty(token)) return null;
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/v1/auth/me");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Refreshing current user failed with {StatusCode}", response.StatusCode);
+                return null;
+            }
+
+            var user = await response.Content.ReadFromJsonAsync<UserInfo>(_jsonOptions);
+            if (user == null) return null;
+
+            await _localStorage.SetItemAsync(UserInfoKey, user);
+            _tokenStorage.UserInfo = user;
+            return user;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Refreshing current user failed");
             return null;
         }
     }

@@ -116,8 +116,8 @@
     }
 
     .share-dialog {
-        background: var(--qm-bg-card, #1e1e2d);
-        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-xl);
         width: 100%;
         max-width: 420px;
@@ -136,30 +136,30 @@
         justify-content: space-between;
         align-items: center;
         padding: 20px 24px;
-        border-bottom: 1px solid var(--qm-border, #2d2d3a);
+        border-bottom: 1px solid var(--qm-border);
     }
 
     .share-header h3 {
         margin: 0;
         font-size: 18px;
         font-weight: 600;
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         display: flex;
         align-items: center;
         gap: 10px;
     }
 
     .share-header h3 i {
-        color: var(--qm-primary, #8c2f52);
+        color: var(--qm-primary);
     }
 
     .close-btn {
         width: 36px;
         height: 36px;
         border: none;
-        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
+        background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-lg);
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
         cursor: pointer;
         transition: all 0.2s;
         display: flex;
@@ -186,7 +186,7 @@
         width: 180px;
         height: 180px;
         margin: 0 auto 12px;
-        background: #fff;
+        background: var(--qm-surface-white);
         border-radius: var(--qm-radius-xl);
         padding: 12px;
         display: flex;
@@ -208,7 +208,7 @@
     .qr-hint {
         margin: 0;
         font-size: 13px;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
     }
 
     /* Link Section */
@@ -220,7 +220,7 @@
         display: block;
         font-size: 12px;
         font-weight: 600;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 8px;
@@ -234,10 +234,10 @@
     .link-input {
         flex: 1;
         padding: 12px 16px;
-        background: var(--qm-bg-elevated, #252536);
-        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         font-size: 13px;
         font-family: monospace;
         min-width: 0;
@@ -248,10 +248,10 @@
         align-items: center;
         gap: 6px;
         padding: 12px 16px;
-        background: var(--qm-primary, #8c2f52);
+        background: var(--qm-primary);
         border: none;
         border-radius: var(--qm-radius-lg);
-        color: white;
+        color: var(--qm-text-on-primary);
         font-weight: 600;
         font-size: 13px;
         cursor: pointer;
@@ -265,7 +265,7 @@
     }
 
     .copy-btn.copied {
-        background: var(--qm-success, #16a34a);
+        background: var(--qm-success);
     }
 
     /* Share Buttons */
@@ -285,10 +285,10 @@
         align-items: center;
         gap: 6px;
         padding: 14px 8px;
-        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
-        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-xl);
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         cursor: pointer;
         transition: all 0.2s;
     }
@@ -307,13 +307,13 @@
         border-color: transparent;
     }
 
-    .share-btn.native:hover { background: var(--qm-primary); color: white; }
-    .share-btn.whatsapp:hover { background: #25D366; color: #fff; }
-    .share-btn.telegram:hover { background: #0088cc; color: #fff; }
-    .share-btn.twitter:hover { background: #000; color: #fff; }
-    .share-btn.facebook:hover { background: #1877F2; color: #fff; }
-    .share-btn.email:hover { background: #EA4335; color: #fff; }
-    .share-btn.sms:hover { background: #2e242a; color: #fff; }
+    .share-btn.native:hover { background: var(--qm-primary); color: var(--qm-text-on-primary); }
+    .share-btn.whatsapp:hover { background: var(--qm-brand-whatsapp); color: var(--qm-text-on-primary); }
+    .share-btn.telegram:hover { background: var(--qm-brand-telegram); color: var(--qm-text-on-primary); }
+    .share-btn.twitter:hover { background: var(--qm-brand-x); color: var(--qm-text-on-primary); }
+    .share-btn.facebook:hover { background: var(--qm-brand-facebook); color: var(--qm-text-on-primary); }
+    .share-btn.email:hover { background: var(--qm-brand-google); color: var(--qm-text-on-primary); }
+    .share-btn.sms:hover { background: var(--qm-secondary-dark); color: var(--qm-text-on-primary); }
 
     /* Download Button */
     .download-section {
@@ -325,10 +325,10 @@
         align-items: center;
         gap: 8px;
         padding: 12px 24px;
-        background: var(--qm-bg-elevated, rgba(255,255,255,0.05));
-        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         font-size: 14px;
         font-weight: 500;
         cursor: pointer;
@@ -337,7 +337,7 @@
 
     .download-qr-btn:hover {
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-color: transparent;
     }
 

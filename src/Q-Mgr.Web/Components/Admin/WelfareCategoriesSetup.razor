@@ -59,7 +59,7 @@
                 {
                     <div class="category-card @(category.IsActive ? "" : "category-card--inactive")">
                         <div class="category-header">
-                            <div class="category-swatch" style="background-color: @(category.Color ?? "#8c2f52")"></div>
+                            <div class="category-swatch" style="background-color: @(category.Color ?? "var(--qm-primary)")"></div>
                             <div class="category-actions">
                                 @if (canManage)
                                 {
@@ -295,7 +295,7 @@
 
     .category-stat--muted {
         text-transform: none;
-        color: var(--qm-danger, #ef4444);
+        color: var(--qm-danger);
     }
 
     .category-stat .rzi {

@@ -71,7 +71,7 @@
 
 .qm-admin-settings-nav-item:hover {
     color: var(--qm-text-primary);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--qm-bg-card-hover);
 }
 
 .qm-admin-settings-nav-item.active {
@@ -336,22 +336,22 @@
 }
 
 .qm-admin-link-card.kiosk .qm-admin-link-card-icon {
-    background: rgba(140, 47, 82, 0.2);
+    background: rgba(var(--qm-primary-rgb), 0.2);
     color: var(--qm-primary);
 }
 
 .qm-admin-link-card.feedback .qm-admin-link-card-icon {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+    background: rgba(var(--qm-danger-rgb), 0.15);
+    color: var(--qm-danger);
 }
 
 .qm-admin-link-card.display .qm-admin-link-card-icon {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    background: rgba(var(--qm-success-rgb), 0.15);
+    color: var(--qm-success);
 }
 
 .qm-admin-link-card.status .qm-admin-link-card-icon {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
@@ -411,14 +411,14 @@
 }
 
 .qm-admin-btn-preview:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--qm-bg-card-hover);
     border-color: var(--qm-primary);
 }
 
 .qm-admin-btn-share {
-    background: var(--qm-gradient-primary, #8c2f52);
+    background: var(--qm-gradient-primary);
     border: none;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-admin-btn-share:hover {
@@ -468,7 +468,7 @@
 }
 
 .qm-admin-action-btn:hover {
-    background: rgba(140, 47, 82, 0.1);
+    background: rgba(var(--qm-primary-rgb), 0.1);
     border-color: var(--qm-primary);
 }
 
@@ -516,7 +516,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--qm-text-on-primary);
     font-weight: 600;
     font-size: 14px;
 }
@@ -532,8 +532,8 @@
 }
 
 .qm-admin-role-badge.admin {
-    background: rgba(38, 55, 74, 0.15);
-    color: #a78bfa;
+    background: var(--qm-secondary-light);
+    color: var(--qm-primary);
 }
 
 .qm-admin-role-badge.manager {
@@ -542,8 +542,8 @@
 }
 
 .qm-admin-role-badge.operator {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    background: rgba(var(--qm-success-rgb), 0.15);
+    color: var(--qm-success);
 }
 
 /* ================================
@@ -603,17 +603,17 @@
 }
 
 .qm-admin-counter-status.online {
-    background: rgba(22, 163, 74, 0.15);
+    background: rgba(var(--qm-success-rgb), 0.15);
     color: var(--qm-accent-green);
 }
 
 .qm-admin-counter-status.offline {
-    background: rgba(220, 38, 38, 0.15);
+    background: rgba(var(--qm-danger-rgb), 0.15);
     color: var(--qm-danger);
 }
 
 .qm-admin-counter-status.busy {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
@@ -666,7 +666,7 @@
 
 .qm-admin-industry-card.selected {
     border-color: var(--qm-primary);
-    background: rgba(140, 47, 82, 0.05);
+    background: rgba(var(--qm-primary-rgb), 0.05);
 }
 
 /* ================================
@@ -704,12 +704,12 @@
 }
 
 .qm-admin-integration-status.connected {
-    background: rgba(22, 163, 74, 0.15);
+    background: rgba(var(--qm-success-rgb), 0.15);
     color: var(--qm-accent-green);
 }
 
 .qm-admin-integration-status.disconnected {
-    background: rgba(220, 38, 38, 0.15);
+    background: rgba(var(--qm-danger-rgb), 0.15);
     color: var(--qm-danger);
 }
 

@@ -9,6 +9,8 @@ public interface IQueueApiService
 {
     Task<QueueStatusDto?> GetQueueStatusAsync(Guid branchId);
     Task<List<TokenDto>> GetWaitingTokensAsync(Guid branchId, Guid? serviceTypeId = null);
+    /// <summary>Anonymous, PII-free waiting list for public display screens.</summary>
+    Task<List<TokenDto>> GetPublicWaitingTokensAsync(Guid branchId, int limit = 50);
     Task<TokenDto?> GetTokenAsync(Guid tokenId);
     Task<TokenDto?> CreateTokenAsync(Guid branchId, string serviceTypeCode, CustomerDto? customer);
     Task<TokenDto?> CallNextTokenAsync(Guid counterId);
@@ -19,6 +21,36 @@ public interface IQueueApiService
     Task<TokenDto?> TransferTokenAsync(Guid fromCounterId, Guid tokenId, Guid toCounterId, string? reason);
     Task<List<CounterDto>> GetCountersAsync(Guid branchId);
     Task<List<ServiceTypeDto>> GetServiceTypesAsync(Guid branchId);
+
+    /// <summary>
+    /// CSV exports from ReportsController. <paramref name="report"/> is one of the
+    /// <see cref="ReportExportKind"/> constants. Unlike most methods on this service, a failure
+    /// is NOT collapsed to null: a 403 here is a real, user-actionable answer (missing
+    /// reports.export permission, or the module/feature isn't purchased) that the page must show
+    /// as a toast, not a silent nothing-happened.
+    /// </summary>
+    Task<ReportExportResult> ExportReportCsvAsync(string report, Guid branchId, DateOnly from, DateOnly to);
+}
+
+/// <summary>URL segments for <see cref="IQueueApiService.ExportReportCsvAsync"/>.</summary>
+public static class ReportExportKind
+{
+    public const string Overview = "overview";
+    public const string Counters = "counters";
+    public const string Services = "services";
+    public const string Feedback = "feedback";
+}
+
+/// <summary>
+/// Outcome of a CSV export call. <see cref="Csv"/> is non-null on success; otherwise
+/// <see cref="StatusCode"/> and <see cref="ErrorMessage"/> (the API's own <c>message</c> /
+/// <c>detail</c> when it sent one) describe why. Web-only — never crosses the API boundary, so it
+/// deliberately does not live in Q-Mgr.Shared.
+/// </summary>
+public record ReportExportResult(string? Csv, int StatusCode, string? ErrorMessage)
+{
+    public bool Success => Csv != null;
+    public bool IsForbidden => StatusCode == 403;
 }
 
 public class QueueApiService : IQueueApiService
@@ -60,6 +92,19 @@ public class QueueApiService : IQueueApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get waiting tokens");
+            return new();
+        }
+    }
+
+    public async Task<List<TokenDto>> GetPublicWaitingTokensAsync(Guid branchId, int limit = 50)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<List<TokenDto>>($"api/v1/branches/{branchId}/queue/waiting?limit={limit}", _jsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get public waiting tokens");
             return new();
         }
     }
@@ -245,6 +290,46 @@ public class QueueApiService : IQueueApiService
         {
             _logger.LogError(ex, "Failed to get service types");
             return new();
+        }
+    }
+
+    public async Task<ReportExportResult> ExportReportCsvAsync(string report, Guid branchId, DateOnly from, DateOnly to)
+    {
+        try
+        {
+            var url = $"api/v1/branches/{branchId}/reports/{report}/export?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+            var response = await _httpClient.GetAsync(url);
+            if (response.IsSuccessStatusCode)
+                return new ReportExportResult(await response.Content.ReadAsStringAsync(), (int)response.StatusCode, null);
+
+            // Both RequireFeature/RequireModule ({ error, message, ... }) and ProblemDetails
+            // ({ title, detail, ... }) bodies are possible — pull whichever human-readable
+            // field is present rather than assuming one shape.
+            string? message = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var key in new[] { "message", "detail", "title" })
+                    {
+                        if (doc.RootElement.TryGetProperty(key, out var el) && el.ValueKind == JsonValueKind.String)
+                        {
+                            message = el.GetString();
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (JsonException) { /* empty or non-JSON error body — fall back to a generic message */ }
+
+            _logger.LogWarning("Report export '{Report}' for branch {BranchId} returned {StatusCode}: {Message}", report, branchId, (int)response.StatusCode, message);
+            return new ReportExportResult(null, (int)response.StatusCode, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export report '{Report}' for branch {BranchId}", report, branchId);
+            return new ReportExportResult(null, 0, "Unable to reach the server.");
         }
     }
 }

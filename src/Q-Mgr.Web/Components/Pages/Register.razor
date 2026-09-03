@@ -9,6 +9,7 @@
 @inject IHttpClientFactory HttpClientFactory
 @inject NavigationManager Navigation
 @inject ILogger<Register> Logger
+@inject IAuthService AuthService
 
 <PageTitle>Register Your Organization - Q-Mgr</PageTitle>
 
@@ -701,6 +702,21 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // A signed-in user has no business on the sign-up form (and a second org can't be
+        // created from inside an existing session) — send them to the app, same as Login does.
+        try
+        {
+            if (await AuthService.IsAuthenticatedAsync())
+            {
+                Navigation.NavigateTo("/", forceLoad: true);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Auth check on /register failed; showing the form");
+        }
+
         try
         {
             var response = await Http.GetFromJsonAsync<TrialInfoResponse>("api/v1/register/trial-info");

@@ -1,5 +1,6 @@
 @page "/admin/integrations"
 @using System.Text.Json
+@using QMgr.Application.DTOs
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
@@ -63,38 +64,52 @@
 
     <div class="webhooks-section">
         <div class="section-header">
-            <h2>Webhooks</h2>
+            <div>
+                <h2>Webhooks</h2>
+                <p class="section-subtitle">Outbound event subscriptions are configured per API client. Each client also gets a signed inbound endpoint.</p>
+            </div>
             <QButton Text="Add Webhook" Icon="plus-lg" Size="sm" OnClick="@AddWebhook" />
         </div>
         <div class="webhooks-list">
-            @foreach (var webhook in webhooks)
+            @if (webhooksLoading)
             {
-                <div class="webhook-item">
-                    <div class="webhook-info">
-                        <span class="webhook-url">@webhook.Url</span>
-                        <div class="webhook-events">
-                            @foreach (var evt in webhook.Events)
-                            {
-                                <span class="event-tag">@evt</span>
-                            }
+                <div class="empty-webhooks"><QSpinner Size="md" /></div>
+            }
+            else
+            {
+                @foreach (var webhook in webhooks)
+                {
+                    <div class="webhook-item">
+                        <div class="webhook-info">
+                            <span class="webhook-name">@webhook.Name</span>
+                            <span class="webhook-url">@webhook.Url</span>
+                            <div class="webhook-events">
+                                @foreach (var evt in webhook.Events)
+                                {
+                                    <span class="event-tag">@evt</span>
+                                }
+                                @if (!webhook.Events.Any())
+                                {
+                                    <span class="event-tag muted">no events selected</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="webhook-status">
+                            <QBadge Variant="@(webhook.IsActive ? "success" : "secondary")"
+                                    Text="@(webhook.IsActive ? "Active" : "Inactive")" Size="sm" />
+                        </div>
+                        <div class="webhook-actions">
+                            <QButton Text="Manage" Icon="gear-fill" Variant="ghost" Size="sm" OnClick="@ManageWebhooks" />
                         </div>
                     </div>
-                    <div class="webhook-status">
-                        <QBadge Variant="@(webhook.IsActive ? "success" : "secondary")"
-                                Text="@(webhook.IsActive ? "Active" : "Inactive")" Size="sm" />
+                }
+                @if (!webhooks.Any())
+                {
+                    <div class="empty-webhooks">
+                        <QIcon Name="arrow-repeat" />
+                        <p>@(webhooksUnavailableReason ?? "No webhooks configured")</p>
                     </div>
-                    <div class="webhook-actions">
-                        <QButton Icon="pencil-fill" Variant="ghost" Size="sm" />
-                        <QButton Icon="trash-fill" Variant="ghost" Size="sm" OnClick="@(() => webhooks.Remove(webhook))" />
-                    </div>
-                </div>
-            }
-            @if (!webhooks.Any())
-            {
-                <div class="empty-webhooks">
-                    <QIcon Name="arrow-repeat" />
-                    <p>No webhooks configured</p>
-                </div>
+                }
             }
         </div>
     </div>
@@ -201,8 +216,12 @@
     }
 
     .section-header h2 { margin: 0; font-size: 18px; color: var(--qm-text-primary); }
+    .section-subtitle { margin: 4px 0 0; font-size: 12px; color: var(--qm-text-muted); }
 
     .webhooks-list { display: flex; flex-direction: column; gap: 12px; }
+
+    .webhook-name { display: block; font-weight: 600; font-size: 13px; color: var(--qm-text-primary); margin-bottom: 2px; }
+    .event-tag.muted { background: var(--qm-bg-card); color: var(--qm-text-muted); }
 
     .webhook-item {
         display: flex;
@@ -248,6 +267,8 @@
 @code {
     private List<IntegrationInfo> integrations = new();
     private List<WebhookInfo> webhooks = new();
+    private bool webhooksLoading = true;
+    private string? webhooksUnavailableReason;
 
     protected override async Task OnInitializedAsync()
     {
@@ -273,8 +294,55 @@
             new() { Name = "Banking Core System", Description = "Connect to core banking for customer identification", Icon = "bank", Color = "#47393f", IsConnected = false, IsBuilt = false, Features = new() { "Customer Lookup", "Account Verification", "Service Routing" } }
         };
 
-        // No real webhook subscriptions exist yet — an empty list (not fabricated sample rows) is the honest state.
-        webhooks = new List<WebhookInfo>();
+        // Webhook subscriptions live on API clients (ApiClient.WebhookUrl/WebhookEvents) —
+        // this section is a read-only view of them; /admin/api-clients is where they're edited.
+        await LoadWebhooks();
+    }
+
+    private async Task LoadWebhooks()
+    {
+        webhooksLoading = true;
+        try
+        {
+            var response = await Http.GetAsync("api/v1/api-clients");
+            if (response.IsSuccessStatusCode)
+            {
+                var clients = await response.Content.ReadFromJsonAsync<List<ApiClientDto>>(JsonOptions) ?? new();
+                webhooks = clients
+                    .Where(c => !string.IsNullOrEmpty(c.WebhookUrl))
+                    .Select(c => new WebhookInfo
+                    {
+                        Id = c.Id,
+                        Name = c.Name,
+                        Url = c.WebhookUrl!,
+                        Events = c.WebhookEvents,
+                        IsActive = c.IsActive
+                    })
+                    .ToList();
+                webhooksUnavailableReason = null;
+            }
+            else if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.PaymentRequired)
+            {
+                // Either the Integrations API module isn't active for this organization or the
+                // user lacks the api-clients permission — both mean "nothing to show here".
+                webhooks = new();
+                webhooksUnavailableReason = "Webhooks require the Integrations API module and API client permissions.";
+            }
+            else
+            {
+                webhooks = new();
+                webhooksUnavailableReason = $"Couldn't load webhooks ({(int)response.StatusCode}).";
+            }
+        }
+        catch (Exception ex)
+        {
+            webhooks = new();
+            webhooksUnavailableReason = $"Couldn't load webhooks: {ex.Message}";
+        }
+        finally
+        {
+            webhooksLoading = false;
+        }
     }
 
     private async Task<(bool SmsEnabled, bool EmailEnabled, bool TelegramEnabled, bool WhatsAppEnabled)> LoadNotificationChannelState()
@@ -329,10 +397,11 @@
         Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/notification-settings");
     }
 
-    private void AddWebhook()
-    {
-        NotificationService.Notify(ToastSeverity.Info, "Not Yet Available", "Webhook subscriptions haven't been built yet.");
-    }
+    // Webhooks are a property of an API client, so both "add" and "manage" land on the API
+    // Clients page (route verified: ApiClientsSetup.razor's @page "/admin/api-clients").
+    private void AddWebhook() => Navigation.NavigateTo("/admin/api-clients");
+
+    private void ManageWebhooks() => Navigation.NavigateTo("/admin/api-clients");
 
     private class NotificationChannelState
     {
@@ -356,6 +425,8 @@
 
     private class WebhookInfo
     {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
         public string Url { get; set; } = "";
         public List<string> Events { get; set; } = new();
         public bool IsActive { get; set; }

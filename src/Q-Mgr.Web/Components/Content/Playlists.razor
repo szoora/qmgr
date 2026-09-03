@@ -235,7 +235,7 @@
 
     .playlist-icon .rzi {
         font-size: 28px;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .playlist-info {
@@ -349,7 +349,7 @@
     private PlaylistEditModel editModel = new();
     private Guid? editingId;
 
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
     private List<string> scheduleTypes = new() { "always", "scheduled", "conditional" };
     private List<string> transitionTypes = new() { "fade", "slide", "none" };

@@ -11,6 +11,7 @@ using QMgr.Application.Tenant;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Domain.Interfaces;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Email;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -589,31 +590,18 @@ public class AuthController : ControllerBase
         var resetUrl = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(toEmail)}&token={Uri.EscapeDataString(token)}";
 
         var subject = "Reset your Q-Mgr password";
-        var htmlBody = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <title>Reset your password</title>
-</head>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #7a2847;'>Reset your password</h1>
-        <p>Hi {firstName},</p>
-        <p>We received a request to reset the password on your Q-Mgr account. Click the button below to choose a new one:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='{resetUrl}' style='background-color: #7a2847; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;'>Reset Password</a>
-        </div>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style='word-break: break-all; color: #666;'>{resetUrl}</p>
-        <p>This link will expire in 1 hour.</p>
-        <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;'>
-        <p style='color: #666; font-size: 14px;'>
-            If you didn't request this, you can safely ignore this email - your password will not be changed.
-        </p>
-    </div>
-</body>
-</html>";
+        var htmlBody = EmailTemplates.Layout(
+            "Reset your password",
+            firstName,
+            new[]
+            {
+                $"We received a request to reset the password on your {EmailTemplates.AppName} account. Click the button below to choose a new one.",
+                "This link will expire in 1 hour."
+            },
+            "Reset Password",
+            resetUrl,
+            footerNote: "If you didn't request this, you can safely ignore this email; your password will not be changed.",
+            showLinkFallback: true);
 
         await _emailSender.SendAsync(toEmail, subject, htmlBody);
     }

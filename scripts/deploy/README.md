@@ -152,6 +152,48 @@ migration plus RBAC/SuperAdmin/demo seeding automatically on first boot. Confirm
 Postgres role in the connection string has `CREATEDB` for a true first install against a
 brand-new Postgres instance; after that first boot it no longer needs that privilege.
 
+## Database backups
+
+`install.sh` installs two scripts outside the rsync'd app directories (so upgrades never remove
+them) and a cron entry:
+
+```
+/var/www/sites/qmgr/bin/qmgr-backup-db.sh    nightly pg_dump (custom format), 30-day retention
+/var/www/sites/qmgr/bin/qmgr-restore-db.sh   restore a dump — over the live DB, or as a drill
+/etc/cron.d/qmgr-backup                       02:30 daily -> /var/backups/qmgr, log /var/log/qmgr/backup.log
+```
+
+Both scripts read the connection string from the server's own
+`api/appsettings.Production.json` at run time, so there is no second copy of the DB password
+anywhere. Each successful dump also writes `api/logs/last-backup.marker`, which is what the
+Platform > System Health page shows as "Last Backup".
+
+`pg_dump`/`pg_restore` must exist on the server (`apt-get install -y postgresql-client`);
+`install.sh` warns if they don't.
+
+**Run one backup and one restore drill right after the first install** — an untested backup is
+not a backup:
+
+```bash
+sudo bash /var/www/sites/qmgr/bin/qmgr-backup-db.sh
+ls -la /var/backups/qmgr/
+sudo bash /var/www/sites/qmgr/bin/qmgr-restore-db.sh /var/backups/qmgr/qmgr-<stamp>.dump --drill
+# prints table/organization counts from the restored copy (qmgr_restore_drill), live DB untouched
+psql -U postgres -d postgres -c 'DROP DATABASE "qmgr_restore_drill";'
+```
+
+A real restore over the live database stops both services first and asks you to type the
+database name to confirm:
+
+```bash
+sudo bash /var/www/sites/qmgr/bin/qmgr-restore-db.sh /var/backups/qmgr/qmgr-<stamp>.dump
+```
+
+Override the location or retention with `QMGR_BACKUP_DIR` / `QMGR_BACKUP_RETENTION_DAYS` in
+the cron line if the defaults don't suit the box. Copy `/var/backups/qmgr` off-server (rsync,
+object storage) on whatever schedule your recovery objective needs; the scripts deliberately
+only cover the on-box dump.
+
 ## Runtime layout on the server
 
 ```

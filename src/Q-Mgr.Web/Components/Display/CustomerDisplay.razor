@@ -3,21 +3,59 @@
 @page "/display"
 @page "/display/{BranchId:guid}"
 @layout DisplayLayout
+@using Microsoft.AspNetCore.Components.Authorization
 @using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Services
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
+@inject IOrganizationApiService OrganizationApi
+@inject IBranchStateService BranchState
+@inject AuthenticationStateProvider AuthStateProvider
 @implements IDisposable
 
+@if (branchState == BranchResolveState.Resolving)
+{
+    <div class="branch-state">
+        <QSpinner Size="lg" />
+    </div>
+}
+else if (branchState == BranchResolveState.NoBranch)
+{
+    <div class="branch-state">
+        <QIcon Name="geo-alt" />
+        <h1>No branch selected</h1>
+        <p>
+            Open this screen from <strong>Customer Links</strong> in the admin, or add the
+            branch ID to the URL: <code>/display/{branchId}</code>
+        </p>
+    </div>
+}
+else if (branchState == BranchResolveState.InvalidBranch)
+{
+    <div class="branch-state">
+        <QIcon Name="exclamation-triangle" />
+        <h1>This branch link is not valid</h1>
+        <p>
+            The branch may have been removed or deactivated. Open a fresh link from
+            <strong>Customer Links</strong> in the admin.
+        </p>
+    </div>
+}
+else
+{
 <div class="customer-display">
     <!-- Header -->
     <div class="display-header">
         <div class="header-left">
             <div class="logo">
                 <QIcon Name="collection-fill" />
-                <span>Q-Mgr</span>
+                <span>@(string.IsNullOrWhiteSpace(branchInfo?.OrganizationName) ? "Q-Mgr" : branchInfo!.OrganizationName)</span>
             </div>
+            @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
+            {
+                <span class="branch-name">@branchInfo!.Name</span>
+            }
         </div>
         <div class="header-right">
             <div class="datetime">
@@ -103,8 +141,55 @@
         <source src="/sounds/ding.mp3" type="audio/mpeg" />
     </audio>
 </div>
+}
 
 <style>
+    /* Branch-resolution states (no branch / invalid link / resolving). Token-only so
+       they follow the layout's [data-theme] automatically. */
+    .branch-state {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 40px;
+        text-align: center;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+    }
+
+    .branch-state .q-icon {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .branch-state h1 {
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .branch-state p {
+        margin: 0;
+        max-width: 560px;
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--qm-text-secondary);
+    }
+
+    .branch-state code {
+        font-family: var(--qm-font-mono);
+        font-size: 14px;
+        padding: 2px 8px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        color: var(--qm-text-primary);
+    }
+
     .customer-display {
         /* --qm-primary (#8c2f52) is tuned for light dashboard backgrounds — as text
            on this always-dark public display it fails WCAG AA contrast for large
@@ -129,10 +214,24 @@
         border-bottom: 2px solid rgba(140, 47, 82, 0.3);
     }
 
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
     .logo {
         display: flex;
         align-items: center;
         gap: 10px;
+    }
+
+    .branch-name {
+        font-size: 14px;
+        font-weight: 500;
+        padding-left: 14px;
+        border-left: 1px solid rgba(255, 255, 255, 0.2);
+        opacity: 0.8;
     }
 
     .logo .q-icon {
@@ -420,6 +519,10 @@
         color: #1e293b;
     }
 
+    [data-theme="light"] .branch-name {
+        border-left-color: rgba(0, 0, 0, 0.15);
+    }
+
     [data-theme="light"] .main-column {
         border-right: 1px solid rgba(0, 0, 0, 0.08);
     }
@@ -475,20 +578,59 @@
     private List<ServingItem> currentlyServing = new();
     private List<TokenDto> waitingTokens = new();
     private DateTime currentTime = DateTime.Now;
-    // Falls back to the demo branch only when no {BranchId} route segment is present
-    // (e.g. a bookmarked bare "/display" URL) — see docs/TASK_TRACKER.md.
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId;
+    private BranchPublicDto? branchInfo;
     private System.Threading.Timer? clockTimer;
+
+    private enum BranchResolveState { Resolving, NoBranch, InvalidBranch, Ready }
+    private BranchResolveState branchState = BranchResolveState.Resolving;
 
     [Parameter]
     public Guid? BranchId { get; set; }
 
+    [SupplyParameterFromQuery(Name = "branch")]
+    public Guid? BranchQuery { get; set; }
+
+    // Route param -> ?branch= query -> signed-in user's selected branch -> nothing.
+    // Deliberately no demo-GUID fallback: a bare URL with nothing to go on renders the
+    // guidance state rather than silently showing another tenant's branch.
+    private async Task<Guid?> ResolveBranchIdAsync()
+    {
+        if (BranchId is { } fromRoute && fromRoute != Guid.Empty)
+            return fromRoute;
+
+        if (BranchQuery is { } fromQuery && fromQuery != Guid.Empty)
+            return fromQuery;
+
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated == true)
+        {
+            await BranchState.InitializeAsync();
+            if (BranchState.CurrentBranchId != Guid.Empty)
+                return BranchState.CurrentBranchId;
+        }
+
+        return null;
+    }
+
     protected override async Task OnInitializedAsync()
     {
-        if (BranchId.HasValue && BranchId.Value != Guid.Empty)
+        var resolved = await ResolveBranchIdAsync();
+        if (resolved == null)
         {
-            branchId = BranchId.Value;
+            branchState = BranchResolveState.NoBranch;
+            return;
         }
+
+        branchId = resolved.Value;
+        branchInfo = await OrganizationApi.GetBranchPublicAsync(branchId);
+        if (branchInfo == null)
+        {
+            branchState = BranchResolveState.InvalidBranch;
+            return;
+        }
+
+        branchState = BranchResolveState.Ready;
 
         await LoadQueueData();
         await SignalR.ConnectAsync(branchId);
@@ -521,7 +663,9 @@
                 .ToList();
         }
 
-        waitingTokens = await QueueApi.GetWaitingTokensAsync(branchId);
+        // Anonymous endpoint: a display screen has no login, and the authorised tokens/waiting
+        // route would 401 here and leave the board empty.
+        waitingTokens = await QueueApi.GetPublicWaitingTokensAsync(branchId);
     }
 
     private void HandleTokenCalled(TokenDto token)

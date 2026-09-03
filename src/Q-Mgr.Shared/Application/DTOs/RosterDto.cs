@@ -28,6 +28,19 @@ public record StudentDto
     public bool IsActive { get; init; }
     public int GuardianCount { get; init; }
     public List<StudentGuardianDto> Guardians { get; init; } = new();
+
+    // Data-processing consent — see Student.DataConsentGivenAt. Null GivenAt means not given
+    // (or withdrawn); the roster shows a shield-check vs. a muted shield off this.
+    public DateTime? DataConsentGivenAt { get; init; }
+    public Guid? DataConsentRecordedByUserId { get; init; }
+    public string? DataConsentNotes { get; init; }
+}
+
+/// <summary>PATCH body for a student's data-processing consent. Given=true stamps now + the caller; false clears the whole consent block.</summary>
+public record UpdateStudentConsentRequest
+{
+    public bool Given { get; set; }
+    public string? Notes { get; set; }
 }
 
 public record StudentGuardianDto
@@ -95,6 +108,7 @@ public record RosterImportJobDto
     public Guid BranchId { get; init; }
     public string? SourceFileName { get; init; }
     public string Source { get; init; } = "admin_ui";
+    public RosterImportKind Kind { get; init; } = RosterImportKind.Roster;
     public RosterImportStatus Status { get; init; }
     public int TotalRows { get; init; }
     public int ProcessedRows { get; init; }

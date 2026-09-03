@@ -1,3 +1,4 @@
+using QMgr.Application.DTOs;
 using QMgr.Domain.Entities.Billing;
 using QMgr.Domain.Entities.Organization;
 
@@ -72,7 +73,7 @@ public interface IStripeService
     /// <summary>
     /// Retrieve customer's payment methods
     /// </summary>
-    Task<IEnumerable<PaymentMethodInfo>> GetPaymentMethodsAsync(string customerId);
+    Task<IEnumerable<PaymentMethodDto>> GetPaymentMethodsAsync(string customerId);
 
     /// <summary>
     /// Sets a payment method as the customer's default. Returns false if the payment method
@@ -208,15 +209,6 @@ public record WebhookProcessResult(
 /// <summary>
 /// Payment method information
 /// </summary>
-public record PaymentMethodInfo(
-    string Id,
-    string Type,
-    string? CardBrand,
-    string? CardLast4,
-    int? CardExpMonth,
-    int? CardExpYear,
-    bool IsDefault);
-
 /// <summary>
 /// Result of creating a payment intent
 /// </summary>

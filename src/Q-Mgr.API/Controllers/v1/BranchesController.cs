@@ -107,7 +107,7 @@ public class BranchesController : ControllerBase
             });
 
         var branch = await _dbContext.Branches
-            .Where(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId)
+            .Where(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)))
             .Select(b => new BranchDto
             {
                 Id = b.Id,
@@ -126,6 +126,46 @@ public class BranchesController : ControllerBase
             {
                 Title = "Branch not found",
                 Detail = $"Branch with ID '{branchId}' was not found.",
+                Status = StatusCodes.Status404NotFound
+            });
+
+        return Ok(branch);
+    }
+
+    /// <summary>
+    /// Public identity of a branch (name + owning organization's name) for the
+    /// unauthenticated kiosk / customer-display / signage / feedback pages.
+    /// Anonymous by design — same precedent as OrganizationsController.GetBranchBranding —
+    /// and deliberately exposes only the narrow BranchPublicDto subset. Unlike the branding
+    /// endpoint (which always returns a default so cosmetics never break a screen), this one
+    /// DOES 404 for an unknown or inactive branch: the public pages use it to distinguish a
+    /// valid branch link from a stale/mistyped one, so "not found" is the whole point.
+    /// No tenant check: there is no tenant context on an anonymous request, and Branch has
+    /// no tenant query filter (see QMgrDbContext.ConfigureTenantQueryFilters) — the branch
+    /// GUID itself is the capability, exactly as for the branding/ads-config/queue endpoints.
+    /// </summary>
+    [HttpGet("{branchId:guid}/public")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(BranchPublicDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetBranchPublic(Guid branchId)
+    {
+        var branch = await _dbContext.Branches
+            .Where(b => b.Id == branchId && b.IsActive)
+            .Select(b => new BranchPublicDto
+            {
+                Id = b.Id,
+                Name = b.Name,
+                OrganizationName = b.Organization != null ? b.Organization.Name : string.Empty,
+                IsActive = b.IsActive
+            })
+            .FirstOrDefaultAsync();
+
+        if (branch == null)
+            return NotFound(new ProblemDetails
+            {
+                Title = "Branch not found",
+                Detail = $"Branch with ID '{branchId}' was not found or is not active.",
                 Status = StatusCodes.Status404NotFound
             });
 
@@ -230,7 +270,7 @@ public class BranchesController : ControllerBase
             });
 
         var branch = await _dbContext.Branches
-            .FirstOrDefaultAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .FirstOrDefaultAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (branch == null)
             return NotFound(new ProblemDetails
             {
@@ -301,7 +341,7 @@ public class BranchesController : ControllerBase
             });
 
         var branch = await _dbContext.Branches
-            .FirstOrDefaultAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .FirstOrDefaultAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (branch == null)
             return NotFound(new ProblemDetails
             {
@@ -350,7 +390,7 @@ public class BranchesController : ControllerBase
         var branch = await _dbContext.Branches
             .Include(b => b.Counters)
             .Include(b => b.ServiceTypes)
-            .FirstOrDefaultAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .FirstOrDefaultAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
 
         if (branch == null)
             return NotFound(new ProblemDetails
@@ -406,7 +446,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -481,7 +521,7 @@ public class BranchesController : ControllerBase
             });
 
         var branch = await _dbContext.Branches
-            .FirstOrDefaultAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .FirstOrDefaultAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (branch == null)
             return NotFound(new ProblemDetails
             {
@@ -572,7 +612,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -648,7 +688,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -705,7 +745,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -757,7 +797,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -809,7 +849,7 @@ public class BranchesController : ControllerBase
             });
 
         var branch = await _dbContext.Branches
-            .FirstOrDefaultAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .FirstOrDefaultAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (branch == null)
             return NotFound(new ProblemDetails
             {
@@ -896,7 +936,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {
@@ -972,7 +1012,7 @@ public class BranchesController : ControllerBase
 
         // Verify branch belongs to organization
         var branchExists = await _dbContext.Branches
-            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+            .AnyAsync(b => b.Id == branchId && (b.OrganizationId == tenantContext.OrganizationId || RoleCodes.IsSuperAdmin(tenantContext.UserRole)));
         if (!branchExists)
             return NotFound(new ProblemDetails
             {

@@ -9,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IConfiguration Configuration
 @using QMgr.Domain.Constants
 
 <PageTitle>API Clients - Q-Mgr</PageTitle>
@@ -68,6 +69,36 @@
                                 <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(client.ClientId))" />
                             </div>
                         </div>
+                        <div class="client-webhook">
+                            <label>Outbound webhook</label>
+                            @if (!string.IsNullOrEmpty(client.WebhookUrl))
+                            {
+                                <div class="webhook-url" title="@client.WebhookUrl">
+                                    <QIcon Name="send-fill" /> <span>@client.WebhookUrl</span>
+                                </div>
+                                <div class="webhook-events">
+                                    @foreach (var evt in client.WebhookEvents)
+                                    {
+                                        <span class="event-badge">@evt</span>
+                                    }
+                                    @if (client.WebhookEvents.Count == 0)
+                                    {
+                                        <span class="webhook-muted">No events selected</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="webhook-muted">Not configured</span>
+                            }
+                        </div>
+                        <div class="client-key">
+                            <label>Inbound endpoint @(client.HasWebhookSecret ? "" : "(needs a webhook secret — rotate to create one)")</label>
+                            <div class="key-container">
+                                <code>@InboundEndpointFor(client)</code>
+                                <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(InboundEndpointFor(client)))" />
+                            </div>
+                        </div>
                     </div>
                     <div class="client-stats">
                         <div class="stat">
@@ -95,6 +126,7 @@
                             {
                                 <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => EditClient(client))" />
                                 <QButton Icon="arrow-clockwise" Variant="ghost" Size="sm" OnClick="@(() => RegenerateSecret(client))" Title="Regenerate Secret" />
+                                <QButton Icon="shield-lock-fill" Variant="ghost" Size="sm" OnClick="@(() => RotateWebhookSecret(client))" Title="Rotate webhook secret" />
                             }
                             @if (canDelete)
                             {
@@ -135,6 +167,24 @@
             </div>
         </div>
         <div class="form-group">
+            <QInput TValue="string" @bind-Value="@formData.WebhookUrl" Label="Webhook URL (outbound)" Placeholder="https://your-system.example.com/qmgr/webhook" />
+            <span class="field-hint">Q-Mgr POSTs the selected events here, signed with <code>X-QMgr-Signature</code>. Must be https (http only for localhost). Leave blank for no outbound webhook.</span>
+        </div>
+        <div class="form-group">
+            <label>Webhook events</label>
+            <div class="scopes-grid">
+                @foreach (var evt in availableWebhookEvents)
+                {
+                    <div class="scope-option">
+                        <QCheckbox @bind-Value="@evt.IsSelected" Label="@evt.Name" Disabled="@(string.IsNullOrWhiteSpace(formData.WebhookUrl))" />
+                        <div class="scope-info">
+                            <span class="scope-desc">@evt.Description</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="form-group">
             <QCheckbox @bind-Value="@formData.IsActive" Label="Client is active" />
         </div>
     </ChildContent>
@@ -147,19 +197,33 @@
 <!-- Secret reveal — shown exactly once, right after Create or Regenerate. The plaintext
      secret is never stored or retrievable again after this; only its BCrypt hash is kept
      server-side, matching Stripe/GitHub/AWS-style API key UX. -->
-<QModal @bind-Visible="showSecretDialog" Title="Save Your Client Secret" Icon="shield-lock-fill" Size="md" CloseOnBackdropClick="false">
+<QModal @bind-Visible="showSecretDialog" Title="@(string.IsNullOrEmpty(revealedSecret) ? "Save Your Webhook Secret" : "Save Your Secrets")" Icon="shield-lock-fill" Size="md" CloseOnBackdropClick="false">
     <ChildContent>
         <p class="secret-warning">
             <QIcon Name="exclamation-triangle-fill" />
-            This is the only time this secret will be shown. Copy it now — it cannot be retrieved again later, only regenerated (which invalidates this one).
+            This is the only time these secrets will be shown. Copy them now — they cannot be retrieved again later, only regenerated/rotated (which invalidates the current one).
         </p>
-        <div class="form-group">
-            <label>Client Secret</label>
-            <div class="key-container">
-                <code>@revealedSecret</code>
-                <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(revealedSecret))" />
+        @if (!string.IsNullOrEmpty(revealedSecret))
+        {
+            <div class="form-group">
+                <label>Client Secret</label>
+                <div class="key-container">
+                    <code>@revealedSecret</code>
+                    <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(revealedSecret))" />
+                </div>
             </div>
-        </div>
+        }
+        @if (!string.IsNullOrEmpty(revealedWebhookSecret))
+        {
+            <div class="form-group">
+                <label>Webhook Signing Secret</label>
+                <div class="key-container">
+                    <code>@revealedWebhookSecret</code>
+                    <QButton Icon="clipboard-fill" Variant="ghost" Size="sm" OnClick="@(() => CopyToClipboard(revealedWebhookSecret))" />
+                </div>
+                <span class="field-hint">HMAC-SHA256 key. Verify Q-Mgr's <code>X-QMgr-Signature</code> header with it, and sign calls to the inbound endpoint with it.</span>
+            </div>
+        }
     </ChildContent>
     <FooterContent>
         <QButton Text="I've Copied It" Icon="check-lg" Variant="primary" OnClick="@(() => showSecretDialog = false)" />
@@ -284,6 +348,46 @@
         word-break: break-all;
     }
 
+    .client-webhook { margin-top: 14px; }
+    .client-webhook label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+        margin-bottom: 6px;
+    }
+
+    .webhook-url {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--qm-font-mono);
+        font-size: 12px;
+        color: var(--qm-text-primary);
+        margin-bottom: 6px;
+    }
+
+    .webhook-url span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .webhook-url .q-icon { color: var(--qm-primary); flex-shrink: 0; }
+    .webhook-events { display: flex; gap: 6px; flex-wrap: wrap; }
+    .webhook-muted { font-size: 12px; color: var(--qm-text-muted); }
+
+    .event-badge {
+        padding: 2px 8px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 10px;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        border: 1px solid var(--qm-border);
+        font-weight: 500;
+    }
+
+    .client-body .client-key + .client-key,
+    .client-webhook + .client-key { margin-top: 14px; }
+
+    .field-hint { display: block; margin-top: 6px; font-size: 12px; color: var(--qm-text-muted); }
+    .field-hint code { font-family: var(--qm-font-mono); font-size: 11px; color: var(--qm-primary); }
+
     .secret-warning {
         display: flex;
         align-items: flex-start;
@@ -371,9 +475,11 @@
     private bool showDialog = false;
     private bool showSecretDialog = false;
     private string revealedSecret = "";
+    private string revealedWebhookSecret = "";
     private ApiClientDto? editingClient;
     private ClientFormData formData = new();
     private List<ScopeOption> availableScopes = new();
+    private List<WebhookEventOption> availableWebhookEvents = new();
     private List<string> systemTypes = new() { "hospital_mgmt", "banking", "pharmacy", "school_mgmt", "custom" };
     private bool canCreate = false;
     private bool canEdit = false;
@@ -400,18 +506,69 @@
 
         availableScopes = new List<ScopeOption>
         {
-            new() { Name = "queue:read", Description = "View queue status and statistics" },
-            new() { Name = "queue:write", Description = "Manage queue operations" },
+            new() { Name = "queue:read", Description = "View queue status, counts and wait times" },
+            new() { Name = "queue:write", Description = "Manage queue operations (pause, reorder, reset)" },
+            new() { Name = "token:read", Description = "Look up tokens by id, external reference or customer" },
             new() { Name = "token:create", Description = "Create new tokens" },
-            new() { Name = "token:manage", Description = "Call, complete, and transfer tokens" },
+            new() { Name = "token:manage", Description = "Call, complete, cancel and transfer tokens" },
             new() { Name = "counter:read", Description = "View counter information" },
             new() { Name = "service:read", Description = "View service types" },
             new() { Name = "stats:read", Description = "Access analytics and reports" },
             new() { Name = "roster:read", Description = "View the student/guardian visitor roster" },
-            new() { Name = "roster:write", Description = "Push student/guardian roster updates (e.g. from a School Management Information System)" }
+            new() { Name = "roster:write", Description = "Push student/guardian roster updates (e.g. from a School Management Information System)" },
+            new() { Name = "content:read", Description = "View media, playlists, displays and schedules" },
+            new() { Name = "content:write", Description = "Upload media and manage playlists, displays and schedules" },
+            new() { Name = "settings:write", Description = "Change organization and branch settings" },
+            new() { Name = "visitors:read", Description = "View visitor records and check-in history" },
+            new() { Name = "visitors:write", Description = "Register, check in and check out visitors" },
+            new() { Name = "marketing:read", Description = "View campaigns, audiences and delivery stats" },
+            new() { Name = "marketing:send", Description = "Create and send broadcast campaigns" },
+            new() { Name = "welfare:read", Description = "View student welfare records and reports" },
+            new() { Name = "welfare:write", Description = "Create and update student welfare records" }
         };
 
+        await LoadWebhookEvents();
         await LoadApiClients();
+    }
+
+    /// <summary>
+    /// Subscribable (outbound) events, from the API's canonical catalog so the picker can never
+    /// drift from what WebhookService actually emits. Falls back to the shared static catalog if
+    /// the request fails — same source of truth, just not round-tripped.
+    /// </summary>
+    private async Task LoadWebhookEvents()
+    {
+        IEnumerable<WebhookEventDto>? catalog = null;
+        try
+        {
+            catalog = await Http.GetFromJsonAsync<List<WebhookEventDto>>("api/v1/api-clients/webhook-events", JsonOptions);
+        }
+        catch
+        {
+            // Fall through to the static catalog below.
+        }
+
+        catalog ??= WebhookEventCatalog.All;
+        availableWebhookEvents = catalog
+            .Where(e => string.Equals(e.Direction, "outbound", StringComparison.OrdinalIgnoreCase))
+            .Select(e => new WebhookEventOption { Name = e.Name, Description = e.Description })
+            .ToList();
+    }
+
+    // Same public-base-URL resolution MainLayout uses for the API Documentation link:
+    // ApiPublicUrl is the browser-reachable hostname; Http.BaseAddress is an internal address
+    // that only makes sense from the Web server itself.
+    private string InboundEndpointFor(ApiClientDto client)
+    {
+        try
+        {
+            var publicUrl = Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
+            return new Uri(new Uri(publicUrl), $"/api/v1/webhooks/inbound/{client.Id}").ToString();
+        }
+        catch
+        {
+            return $"/api/v1/webhooks/inbound/{client.Id}";
+        }
     }
 
     private async Task LoadApiClients()
@@ -459,6 +616,7 @@
         editingClient = null;
         formData = new ClientFormData { IsActive = true };
         foreach (var s in availableScopes) s.IsSelected = false;
+        foreach (var e in availableWebhookEvents) e.IsSelected = false;
         showDialog = true;
     }
 
@@ -470,11 +628,21 @@
             Name = client.Name,
             Description = client.Description,
             SystemType = client.SystemType,
-            IsActive = client.IsActive
+            IsActive = client.IsActive,
+            WebhookUrl = client.WebhookUrl
         };
         foreach (var s in availableScopes)
             s.IsSelected = client.Scopes.Contains(s.Name);
+        foreach (var e in availableWebhookEvents)
+            e.IsSelected = client.WebhookEvents.Contains(e.Name, StringComparer.OrdinalIgnoreCase);
         showDialog = true;
+    }
+
+    private void RevealSecrets(string? clientSecret, string? webhookSecret)
+    {
+        revealedSecret = clientSecret ?? "";
+        revealedWebhookSecret = webhookSecret ?? "";
+        showSecretDialog = !string.IsNullOrEmpty(revealedSecret) || !string.IsNullOrEmpty(revealedWebhookSecret);
     }
 
     private async Task SaveClient()
@@ -485,10 +653,25 @@
             return;
         }
 
+        var webhookUrl = string.IsNullOrWhiteSpace(formData.WebhookUrl) ? null : formData.WebhookUrl.Trim();
+        if (webhookUrl != null)
+        {
+            var validHttps = Uri.TryCreate(webhookUrl, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback));
+            if (!validHttps)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "Invalid webhook URL", "Use an absolute https:// URL (http:// is only allowed for localhost).");
+                return;
+            }
+        }
+
         isSaving = true;
         try
         {
             var selectedScopes = availableScopes.Where(s => s.IsSelected).Select(s => s.Name).ToList();
+            var selectedEvents = webhookUrl == null
+                ? new List<string>()
+                : availableWebhookEvents.Where(e => e.IsSelected).Select(e => e.Name).ToList();
 
             if (editingClient == null)
             {
@@ -498,7 +681,9 @@
                     Description = formData.Description,
                     SystemType = formData.SystemType,
                     IsActive = formData.IsActive,
-                    Scopes = selectedScopes
+                    Scopes = selectedScopes,
+                    WebhookUrl = webhookUrl,
+                    WebhookEvents = selectedEvents
                 }, JsonOptions);
 
                 if (response.IsSuccessStatusCode)
@@ -507,15 +692,12 @@
                     showDialog = false;
                     await LoadApiClients();
                     if (reveal != null)
-                    {
-                        revealedSecret = reveal.ClientSecret;
-                        showSecretDialog = true;
-                    }
+                        RevealSecrets(reveal.ClientSecret, reveal.Client.WebhookSecret);
                     NotificationService.Notify(ToastSeverity.Success, "Created", "API client created");
                 }
                 else
                 {
-                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to create API client ({(int)response.StatusCode})");
+                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to create API client ({(int)response.StatusCode}): {await ReadErrorMessage(response)}");
                 }
             }
             else
@@ -526,18 +708,25 @@
                     Description = formData.Description,
                     SystemType = formData.SystemType,
                     IsActive = formData.IsActive,
-                    Scopes = selectedScopes
+                    Scopes = selectedScopes,
+                    WebhookUrl = webhookUrl,
+                    WebhookEvents = selectedEvents
                 }, JsonOptions);
 
                 if (response.IsSuccessStatusCode)
                 {
+                    // The API generates a webhook signing secret the first time a URL is set and
+                    // returns it on this response only — surface it with the same one-time modal.
+                    var updated = await response.Content.ReadFromJsonAsync<ApiClientDto>(JsonOptions);
                     showDialog = false;
                     await LoadApiClients();
+                    if (!string.IsNullOrEmpty(updated?.WebhookSecret))
+                        RevealSecrets(null, updated.WebhookSecret);
                     NotificationService.Notify(ToastSeverity.Success, "Saved", "API client updated");
                 }
                 else
                 {
-                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update API client ({(int)response.StatusCode})");
+                    NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update API client ({(int)response.StatusCode}): {await ReadErrorMessage(response)}");
                 }
             }
         }
@@ -560,10 +749,7 @@
             {
                 var reveal = await response.Content.ReadFromJsonAsync<ApiClientSecretRevealDto>(JsonOptions);
                 if (reveal != null)
-                {
-                    revealedSecret = reveal.ClientSecret;
-                    showSecretDialog = true;
-                }
+                    RevealSecrets(reveal.ClientSecret, null);
                 NotificationService.Notify(ToastSeverity.Warning, "Secret Regenerated", "The previous secret no longer works. Update your applications.");
             }
             else
@@ -574,6 +760,54 @@
         catch (Exception ex)
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to regenerate secret: {ex.Message}");
+        }
+    }
+
+    private async Task RotateWebhookSecret(ApiClientDto client)
+    {
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/api-clients/{client.Id}/webhook-secret/rotate", null);
+            if (response.IsSuccessStatusCode)
+            {
+                var updated = await response.Content.ReadFromJsonAsync<ApiClientDto>(JsonOptions);
+                await LoadApiClients();
+                if (!string.IsNullOrEmpty(updated?.WebhookSecret))
+                    RevealSecrets(null, updated.WebhookSecret);
+                NotificationService.Notify(ToastSeverity.Warning, "Webhook Secret Rotated",
+                    client.HasWebhookSecret
+                        ? "The previous webhook secret no longer verifies. Update the integration on the other side."
+                        : "A webhook signing secret has been created for this client.");
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to rotate webhook secret ({(int)response.StatusCode})");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to rotate webhook secret: {ex.Message}");
+        }
+    }
+
+    private static async Task<string> ReadErrorMessage(HttpResponseMessage response)
+    {
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(body)) return response.ReasonPhrase ?? "";
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (doc.RootElement.TryGetProperty("message", out var message)) return message.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("detail", out var detail)) return detail.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("title", out var title)) return title.GetString() ?? "";
+            }
+            return body.Length > 200 ? body[..200] : body;
+        }
+        catch
+        {
+            return response.ReasonPhrase ?? "";
         }
     }
 
@@ -605,11 +839,19 @@
         public bool IsSelected { get; set; }
     }
 
+    private class WebhookEventOption
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public bool IsSelected { get; set; }
+    }
+
     private class ClientFormData
     {
         public string Name { get; set; } = "";
         public string? Description { get; set; }
         public string? SystemType { get; set; }
         public bool IsActive { get; set; } = true;
+        public string? WebhookUrl { get; set; }
     }
 }

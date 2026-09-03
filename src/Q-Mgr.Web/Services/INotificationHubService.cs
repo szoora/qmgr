@@ -31,6 +31,12 @@ public interface INotificationClientService : IAsyncDisposable
     event Func<RosterImportProgressEvent, Task>? OnRosterImportProgressReceived;
 
     /// <summary>
+    /// Fired when the server reports that this user's role or role permissions changed, so the
+    /// client can re-fetch its permission set instead of showing stale controls until re-login.
+    /// </summary>
+    event Func<Task>? OnPermissionsChanged;
+
+    /// <summary>
     /// Current connection state
     /// </summary>
     HubConnectionState State { get; }

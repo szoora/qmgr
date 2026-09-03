@@ -42,6 +42,8 @@ public interface IContentApiService
     Task<CampaignDto?> UpdateCampaignAsync(Guid campaignId, UpdateCampaignRequest request);
     Task<bool> DeleteCampaignAsync(Guid campaignId);
     Task<bool> RecordCampaignImpressionAsync(Guid campaignId, Guid mediaContentId);
+    Task<CampaignStatsDto?> GetCampaignStatsAsync(Guid campaignId, DateOnly? from = null, DateOnly? to = null);
+    Task<string?> ExportCampaignStatsCsvAsync(Guid campaignId, DateOnly? from = null, DateOnly? to = null);
 }
 
 public class ContentApiService : IContentApiService
@@ -491,6 +493,45 @@ public class ContentApiService : IContentApiService
             _logger.LogError(ex, "Failed to record campaign impression for campaign {CampaignId}", campaignId);
             return false;
         }
+    }
+
+    public async Task<CampaignStatsDto?> GetCampaignStatsAsync(Guid campaignId, DateOnly? from = null, DateOnly? to = null)
+    {
+        try
+        {
+            var url = $"api/v1/campaigns/{campaignId}/stats{BuildRangeQuery(from, to)}";
+            return await _httpClient.GetFromJsonAsync<CampaignStatsDto>(url, _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get impression stats for campaign {CampaignId}", campaignId);
+            return null;
+        }
+    }
+
+    public async Task<string?> ExportCampaignStatsCsvAsync(Guid campaignId, DateOnly? from = null, DateOnly? to = null)
+    {
+        try
+        {
+            var url = $"api/v1/campaigns/{campaignId}/stats/export{BuildRangeQuery(from, to)}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export impression stats for campaign {CampaignId}", campaignId);
+            return null;
+        }
+    }
+
+    /// <summary>Only the range bounds the caller actually set go on the wire; the API defaults the rest.</summary>
+    private static string BuildRangeQuery(DateOnly? from, DateOnly? to)
+    {
+        var parts = new List<string>(2);
+        if (from.HasValue) parts.Add($"from={from.Value:yyyy-MM-dd}");
+        if (to.HasValue) parts.Add($"to={to.Value:yyyy-MM-dd}");
+        return parts.Count == 0 ? string.Empty : "?" + string.Join("&", parts);
     }
 
     #endregion

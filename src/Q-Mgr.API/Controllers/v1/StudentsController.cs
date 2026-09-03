@@ -320,6 +320,264 @@ public class StudentsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Records or withdraws data-processing consent for a student — three nullable columns on
+    /// the Student row (see Student.DataConsentGivenAt), not a consent-log table. Given=true
+    /// stamps now + the caller (re-recording refreshes both); Given=false clears everything,
+    /// including the notes, so "withdrawn" and "never asked" read identically.
+    /// </summary>
+    [HttpPatch("branches/{branchId:guid}/students/{studentId:guid}/consent")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(StudentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateConsent(Guid branchId, Guid studentId, [FromBody] UpdateStudentConsentRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
+            .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        if (notes != null && notes.Length > MaxConsentNotesLength)
+            return BadRequest(new ProblemDetails { Title = $"Consent notes must be {MaxConsentNotesLength} characters or fewer", Status = StatusCodes.Status400BadRequest });
+
+        if (request.Given)
+        {
+            student.DataConsentGivenAt = DateTime.UtcNow;
+            student.DataConsentRecordedByUserId = CurrentUserId();
+            student.DataConsentNotes = notes;
+        }
+        else
+        {
+            student.DataConsentGivenAt = null;
+            student.DataConsentRecordedByUserId = null;
+            student.DataConsentNotes = null;
+        }
+        student.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(MapToDto(student));
+    }
+
+    /// <summary>
+    /// Subject-access-request export: everything this system holds about one student, as a
+    /// single JSON document — the student row (incl. consent), guardians, visiting-day visits,
+    /// and welfare records with their notes/statements, guardian notifications and attachment
+    /// metadata (never file bytes). Requires BOTH students.view and welfare.view (each
+    /// [RequirePermission] is its own policy; ASP.NET Core ANDs them). Confidential (safeguarding)
+    /// records are included only when the caller also holds welfare.confidential.view — the
+    /// same rule as WelfareController's timeline — and drafts are never included (an unfinished
+    /// quick-log isn't a record yet).
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/data-export")]
+    [RequirePermission(Permissions.StudentsView)]
+    [RequirePermission(Permissions.WelfareView)]
+    [Produces("application/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportStudentData(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
+            .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        var canViewConfidential = await CanViewConfidentialAsync();
+        var callerId = CurrentUserId();
+
+        // --- Guardians (active links only — a removed guardian is no longer "held about" this student) ---
+        var guardianLinks = student.Guardians.Where(g => g.IsActive && g.VisitorProfile != null).ToList();
+        var guardianProfileIds = guardianLinks.Select(g => g.VisitorProfileId).Distinct().ToList();
+
+        // --- Visits: any visit filed against this student, plus this student's guardians' own
+        // check-ins that weren't for a *different* student (a sibling's visiting-day visit is
+        // that sibling's data, not this student's). One indexed query on the org's visitor log.
+        var visits = await _context.Visitors
+            .Include(v => v.VisitorProfile)
+            .Where(v => v.OrganizationId == student.OrganizationId && v.DeletedAt == null
+                && (v.StudentId == studentId
+                    || (guardianProfileIds.Contains(v.VisitorProfileId) && (v.StudentId == null || v.StudentId == studentId))))
+            .OrderByDescending(v => v.CheckedInAt ?? v.ScheduledAt ?? v.CreatedAt)
+            .Take(2000)
+            .ToListAsync();
+
+        // --- Welfare records (primary or linked via AdditionalStudentIds), same visibility rules as the timeline ---
+        var recordsQuery = _context.WelfareRecords
+            .Include(r => r.Category)
+            .Include(r => r.Attachments)
+            .Include(r => r.Notes)
+            .Include(r => r.Notifications)
+            .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft
+                && (r.StudentId == studentId || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Contains(studentId))));
+        if (!canViewConfidential)
+            recordsQuery = recordsQuery.Where(r => !r.Confidential);
+        var records = await recordsQuery.OrderBy(r => r.OccurredAt).ToListAsync();
+
+        // Names for every user id referenced anywhere in the document, resolved in one query.
+        var userIds = records.SelectMany(r => new[] { r.ReportedByUserId }
+                .Concat(r.AssignedToUserId.HasValue ? new[] { r.AssignedToUserId.Value } : Array.Empty<Guid>())
+                .Concat(r.Notes.Select(n => n.AuthorUserId))
+                .Concat(r.Notifications.Select(n => n.SentByUserId)))
+            .Concat(student.DataConsentRecordedByUserId.HasValue ? new[] { student.DataConsentRecordedByUserId.Value } : Array.Empty<Guid>())
+            .Concat(callerId.HasValue ? new[] { callerId.Value } : Array.Empty<Guid>())
+            .Distinct()
+            .ToList();
+        var userNames = await _context.Users
+            .Where(u => userIds.Contains(u.Id))
+            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
+
+        var notifiedProfileIds = records.SelectMany(r => r.Notifications.Select(n => n.GuardianVisitorProfileId)).Distinct().ToList();
+        var notifiedNames = notifiedProfileIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _context.VisitorProfiles.Where(p => notifiedProfileIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.FullName);
+
+        var linkedStudentIds = records.SelectMany(r => r.AdditionalStudentIds ?? Array.Empty<Guid>()).Concat(records.Select(r => r.StudentId)).Distinct().ToList();
+        var studentNames = await _context.Students.Where(s => linkedStudentIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.FullName);
+
+        string NameOf(Guid id) => userNames.GetValueOrDefault(id, "Unknown");
+
+        var document = new
+        {
+            exportType = "SubjectAccessRequest",
+            exportedAt = DateTime.UtcNow,
+            exportedBy = callerId.HasValue ? NameOf(callerId.Value) : "Unknown",
+            organizationId = student.OrganizationId,
+            branchId,
+            // The caller's own visibility, not a count of what was hidden — a count would confirm
+            // a confidential record exists to someone not cleared to know that.
+            confidentialRecordsIncluded = canViewConfidential,
+            student = new
+            {
+                student.Id,
+                student.FullName,
+                student.StudentCode,
+                student.ClassName,
+                student.IsActive,
+                student.CreatedAt,
+                student.UpdatedAt,
+                dataConsent = new
+                {
+                    given = student.DataConsentGivenAt.HasValue,
+                    givenAt = student.DataConsentGivenAt,
+                    recordedBy = student.DataConsentRecordedByUserId.HasValue ? NameOf(student.DataConsentRecordedByUserId.Value) : null,
+                    notes = student.DataConsentNotes
+                }
+            },
+            guardians = guardianLinks.Select(g => new
+            {
+                linkId = g.Id,
+                visitorProfileId = g.VisitorProfileId,
+                fullName = g.VisitorProfile!.FullName,
+                phone = g.VisitorProfile.Phone,
+                email = g.VisitorProfile.Email,
+                relationship = g.Relationship,
+                linkedAt = g.CreatedAt
+            }).ToList(),
+            visits = visits.Select(v => new
+            {
+                v.Id,
+                v.BadgeCode,
+                visitorName = v.VisitorProfile?.FullName,
+                v.Purpose,
+                v.HostName,
+                v.StudentName,
+                status = v.Status.ToString(),
+                v.ScheduledAt,
+                v.CheckedInAt,
+                v.CheckedOutAt,
+                v.Notes,
+                visitorConsentGivenAt = v.ConsentGivenAt
+            }).ToList(),
+            welfareRecords = records.Select(r => new
+            {
+                r.Id,
+                studentName = studentNames.GetValueOrDefault(r.StudentId, "Unknown"),
+                isPrimaryStudent = r.StudentId == studentId,
+                caseType = r.CaseType.ToString(),
+                category = r.Category?.Name,
+                tier = r.Tier.ToString(),
+                r.Points,
+                r.Description,
+                r.Location,
+                r.OccurredAt,
+                status = r.Status.ToString(),
+                r.Confidential,
+                reportedBy = NameOf(r.ReportedByUserId),
+                loggedAt = r.CreatedAt,
+                r.ActionTaken,
+                assignedTo = r.AssignedToUserId.HasValue ? NameOf(r.AssignedToUserId.Value) : null,
+                r.ActionDueDate,
+                alsoAppliesTo = (r.AdditionalStudentIds ?? Array.Empty<Guid>()).Select(id => studentNames.GetValueOrDefault(id, "Unknown")).ToList(),
+                notes = r.Notes.OrderBy(n => n.CreatedAt).Select(n => new
+                {
+                    n.Id,
+                    kind = n.Kind.ToString(),
+                    n.Body,
+                    author = NameOf(n.AuthorUserId),
+                    n.AttributedToName,
+                    n.IsFinal,
+                    n.CreatedAt
+                }).ToList(),
+                notificationsSent = r.Notifications.OrderBy(n => n.CreatedAt).Select(n => new
+                {
+                    n.Id,
+                    guardian = notifiedNames.GetValueOrDefault(n.GuardianVisitorProfileId, "Unknown"),
+                    channel = n.Channel.ToString(),
+                    n.Message,
+                    n.Success,
+                    sentBy = NameOf(n.SentByUserId),
+                    n.CreatedAt
+                }).ToList(),
+                attachments = r.Attachments.OrderBy(a => a.CreatedAt).Select(a => new
+                {
+                    a.Id,
+                    a.FileName,
+                    a.ContentType,
+                    a.FileSizeBytes,
+                    uploadedBy = NameOf(a.UploadedByUserId),
+                    uploadedAt = a.CreatedAt
+                }).ToList()
+            }).ToList()
+        };
+
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(document, ExportJsonOptions);
+        var codePart = string.IsNullOrWhiteSpace(student.StudentCode)
+            ? student.Id.ToString("N")[..8]
+            : new string(student.StudentCode.Trim().Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '-').ToArray());
+        return File(bytes, "application/json", $"student-{codePart}-data-export.json");
+    }
+
+    private const int MaxConsentNotesLength = 500;
+
+    private static readonly JsonSerializerOptions ExportJsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never
+    };
+
+    // Copied from WelfareController.CanViewConfidentialAsync (same role-lookup shape as
+    // PermissionAuthorizationHandler) — the SAR export has to apply the same confidentiality
+    // gate as the timeline, and reaching into another controller's private helper isn't an option.
+    private async Task<bool> CanViewConfidentialAsync()
+    {
+        if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
+
+        var userId = CurrentUserId();
+        if (!userId.HasValue) return false;
+
+        return await _context.Users
+            .Where(u => u.Id == userId.Value && u.IsActive)
+            .SelectMany(u => u.Role.RolePermissions)
+            .AnyAsync(rp => rp.Permission.Code == Permissions.WelfareConfidentialView);
+    }
+
     [HttpPost("branches/{branchId:guid}/students/{studentId:guid}/guardians")]
     [RequirePermission(Permissions.StudentsManage)]
     [ProducesResponseType(typeof(StudentGuardianDto), StatusCodes.Status201Created)]
@@ -452,16 +710,19 @@ public class StudentsController : ControllerBase
         return AcceptedAtAction(nameof(GetImportJob), new { branchId, jobId = job.Id }, MapToDto(job));
     }
 
+    /// <summary>Import history. <paramref name="kind"/> narrows to roster uploads or welfare-history backfills (both live in the same job table — see RosterImportKind); omitted = every kind.</summary>
     [HttpGet("branches/{branchId:guid}/students/import-jobs")]
     [RequirePermission(Permissions.StudentsView)]
     [ProducesResponseType(typeof(List<RosterImportJobDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetImportJobs(Guid branchId, [FromQuery] int limit = 50)
+    public async Task<IActionResult> GetImportJobs(Guid branchId, [FromQuery] RosterImportKind? kind = null, [FromQuery] int limit = 50)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var jobs = await _context.RosterImportJobs
-            .Where(j => j.BranchId == branchId)
+        var query = _context.RosterImportJobs.Where(j => j.BranchId == branchId);
+        if (kind.HasValue) query = query.Where(j => j.Kind == kind.Value);
+
+        var jobs = await query
             .OrderByDescending(j => j.CreatedAt)
             .Take(Math.Clamp(limit, 1, 200))
             .ToListAsync();
@@ -520,6 +781,9 @@ public class StudentsController : ControllerBase
         StudentCode = s.StudentCode,
         ClassName = s.ClassName,
         IsActive = s.IsActive,
+        DataConsentGivenAt = s.DataConsentGivenAt,
+        DataConsentRecordedByUserId = s.DataConsentRecordedByUserId,
+        DataConsentNotes = s.DataConsentNotes,
         GuardianCount = s.Guardians?.Count(g => g.IsActive) ?? 0,
         Guardians = s.Guardians?.Where(g => g.IsActive).Select(g => new StudentGuardianDto
         {
@@ -532,12 +796,15 @@ public class StudentsController : ControllerBase
         }).ToList() ?? new()
     };
 
-    private static RosterImportJobDto MapToDto(RosterImportJob j) => new()
+    // Internal so WelfareController's historical-import endpoint returns the identical DTO shape
+    // for the job it creates in this same table, rather than a second mapper to keep in sync.
+    internal static RosterImportJobDto MapToDto(RosterImportJob j) => new()
     {
         Id = j.Id,
         BranchId = j.BranchId,
         SourceFileName = j.SourceFileName,
         Source = j.Source,
+        Kind = j.Kind,
         Status = j.Status,
         TotalRows = j.TotalRows,
         ProcessedRows = j.ProcessedRows,

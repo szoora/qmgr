@@ -203,9 +203,9 @@ else
         color: var(--qm-text-secondary);
     }
 
-    .status-pill.active { background: rgba(34, 197, 94, 0.15); color: #16a34a; }
-    .status-pill.trialing { background: rgba(122, 40, 71, 0.12); color: var(--qm-primary); }
-    .status-pill.pastdue { background: rgba(234, 179, 8, 0.15); color: #a16207; }
+    .status-pill.active { background: rgba(var(--qm-success-rgb), 0.15); color: var(--qm-success); }
+    .status-pill.trialing { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
+    .status-pill.pastdue { background: rgba(var(--qm-warning-rgb), 0.15); color: var(--qm-accent-orange); }
     .status-pill.not-purchased { background: var(--qm-bg-elevated); color: var(--qm-text-tertiary, var(--qm-text-secondary)); }
 
     .module-marketplace-desc {
@@ -288,7 +288,7 @@ else
 
     .payment-method-toggle button.active {
         border-color: var(--qm-primary);
-        background: var(--qm-primary-light, rgba(122, 40, 71, 0.1));
+        background: var(--qm-primary-light);
         color: var(--qm-primary);
         font-weight: 600;
     }
