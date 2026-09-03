@@ -29,7 +29,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — every action already has its own [RequirePermission]
-[RequireModule(ModuleCodes.VisitorSafeguarding)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StudentsController : ControllerBase
 {
     private readonly QMgrDbContext _context;

@@ -21,7 +21,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.VisitorSafeguarding)]
+[RequireModule(ModuleCodes.VisitorManagement)]
 public class VisitorPassesController : ControllerBase
 {
     private readonly QMgrDbContext _context;
