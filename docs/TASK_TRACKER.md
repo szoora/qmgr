@@ -177,6 +177,85 @@ duplicates; `KioskMode` had a `Dispose()` that never ran (no `@implements IDispo
 punctuation rendering as `â€"` / `â¢`) which are repaired — worth knowing that this can happen, and
 that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
 
+### Product-gap pass (2026-09-03, later the same day)
+
+Prompted by two questions from the user: what feature and UI/UX gaps the end-to-end work had
+exposed, and whether the product is sufficient for the modules it sells. The honest answer was
+that Core Queue Management had three problems severe enough to undercut its own promise, plus a
+set of feature gaps against what buyers of this category expect. This pass fixed all of them.
+
+**The three blocking items.**
+
+1. **Two report pages were displaying invented numbers.** `CounterPerformance.razor` filled
+   tokens served, average service time, average wait and utilisation with `Random.Shared.Next(...)`,
+   so the figures changed on every refresh; `CustomerFeedback.razor` fabricated its rating, its
+   distribution bars and seven invented review quotes. A third, `QueueAnalytics.razor`, was not
+   random but was dividing branch-wide completions evenly across service types and presenting the
+   result as a per-service measurement, and its "date range" picker only affected the CSV. All four
+   report pages now read real aggregates from new JSON endpoints that share their arithmetic with
+   the CSV exports, so the screen and the download can no longer disagree. Averages are nullable:
+   where nothing was served the page shows a dash, because a zero reads as a measurement when it is
+   the absence of one. Utilisation is defined against each counter's own observed working window
+   and that definition is carried into the UI as a tooltip and a footnote, since an invented but
+   plausible denominator is exactly how the previous fake number passed for real.
+
+2. **The self-service kiosk could not issue a ticket unattended.** Creating a token required an
+   authenticated session with the tokens-create permission, so a lobby kiosk only worked while a
+   staff member happened to be logged in on that device. There is now an anonymous, branch-scoped
+   issue endpoint on the already-public `QueueController`, with a per-branch-per-IP cap (verified:
+   four succeed, then 429), a queue-size limit honoured from branch settings, and length caps on
+   free text. The kiosk no longer calls any authorized endpoint.
+
+3. **No customer was ever notified by the queue.** The SMS and email infrastructure existed and was
+   used by visitor check-in, welfare and marketing broadcasts, but no queue handler sent anything;
+   the customer's phone number was captured at ticket creation and never used again. A new
+   `IQueueCustomerNotifier` sends at the three moments that matter (ticket issued, nearly your turn,
+   called to a counter), fired after the transaction commits so a gateway timeout can never roll
+   back a call-next, with per-organization channel choices, a position threshold and editable
+   templates on the notification settings page. A token carries the stage it was last notified at,
+   so nobody is messaged twice for the same reason.
+
+**Feature gaps closed.**
+
+- **Appointments and booking**, which did not exist in any form. New `Appointment` entity and
+  controller, a public three-step booking page, an admin day/week list, availability computed from
+  the branch's operating hours with real capacity tracking, and a reminder job. Checking in
+  converts the booking into a live queue ticket. Verified end to end: a Saturday correctly reports
+  closed, a Monday returns slots, a booking returns a reference code, and the slot it took is
+  immediately reported full.
+- **Virtual queue join and ticket tracking.** New public pages let a customer join from a phone and
+  watch their position. The ticket-status response deliberately carries no name, phone or email,
+  because the URL is guessable.
+- **Interface translation.** English, Swahili and Luganda resources with a cookie-based culture
+  switch; resource keys are the English text, so anything untranslated renders as readable English
+  rather than a key name. Scope is the screens the public reads; the staff admin app stays English.
+- **Accessibility on the public terminals.** The kiosk, customer display and queue board had no
+  aria attributes, roles or alt text at all. Service tiles are now real buttons, called numbers are
+  announced through live regions, and focus is visible.
+- **Evacuation roll-call**, the first artefact a safeguarding audit asks for, built from data that
+  already existed; plus expected-visitor pre-registration, a watchlist that blocks check-in, and
+  contractor induction dates.
+- **Surveys and net promoter score.** Feedback was one rating and a comment. There is now a small
+  survey builder with an ordering UI and a live preview of the public form, answers stored on the
+  feedback row, and NPS computed properly as promoters minus detractors rather than an average of
+  the raw score.
+- **The integration SDK is consumable.** It built but produced an unusable package; it now has
+  packaging metadata, a README and symbols, plus a `QMgrWebhookVerifier` so partners are not
+  reimplementing HMAC comparison by hand.
+
+**What to know about how this pass ran.** Six work packages ran in parallel and five were cut off
+mid-edit by a session rate limit, leaving partially written files. Everything was recovered and the
+solution builds clean, but two recurring mechanical traps are worth recording because they cost
+real time: **a tag name in angle brackets inside a CSS or Razor comment is parsed as markup** and
+breaks the file (`/* the tile is a real <button> */`), and **a loop variable named `code` collides
+with the `@code` directive** when used in an attribute. Neither is obvious from the error message.
+
+**Still open after this pass.** Stripe remains unverifiable without credentials, unchanged and per
+the user's own instruction. S3 storage, SMS and email provider credentials, and load testing still
+need real infrastructure. The queue notifier is wired and settings-driven but has not sent a real
+message, because this environment has no SMS gateway configured; that is the one part of the three
+blocking fixes that is verified by code review rather than by observation.
+
 ### Subscription gating, added after the first pass on a live report from the user
 
 The user sent a screenshot of production showing the problem plainly: an organization whose
@@ -271,12 +350,11 @@ checking remains blocked by the browser tooling's non-functional viewport resize
    set `StripePriceIdMonthly`/`StripePriceIdAnnual` on the 4 module rows, and run a real test-mode
    checkout plus a webhook replay.
 2. **Production is still running the old build — but the package is built and waiting.**
-   `scripts/deploy/dist/qmgr-0.2.0-20260903.1518.tar.gz` (108.6 MB, ports 8586/8587, commit
-   `6c674f2`, gitignored) contains everything above. Deploying it is a live-system action that was
+   `scripts/deploy/dist/qmgr-0.2.0-20260903.1954.tar.gz` (108.8 MB, ports 8586/8587, gitignored) contains everything above. Deploying it is a live-system action that was
    deliberately left for the user's explicit go-ahead. Two things to know before running it:
    the deploy carries **two migrations that have only ever been applied locally**
-   (`AddIndustryCategoryConsolidation` from the previous session, `AddStudentConsentAndImportKind`
-   from this one) — both additive, but the industry one rewrites every existing org's
+   (`AddIndustryCategoryConsolidation` from the previous session, plus
+   `AddStudentConsentAndImportKind` and `AddAppointmentsSurveysAndQueueNotifications` from this one) — all additive, but the industry one rewrites every existing org's
    `IndustryType`, so sanity-check that data afterwards; and **the API-key change is breaking for
    any live integrator**, who must start sending the client secret.
    Also install `postgresql-client` on the server if it isn't there, or the new nightly backup
