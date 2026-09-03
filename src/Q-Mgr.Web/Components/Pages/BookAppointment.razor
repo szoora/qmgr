@@ -1,0 +1,527 @@
+@page "/book/{BranchId:guid}"
+@layout KioskLayout
+@using QMgr.Application.DTOs
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous]
+@inject IAppointmentApiService AppointmentApi
+@inject IOrganizationApiService OrganizationApi
+
+@*
+    Public, anonymous booking. Mobile-first: one decision per screenful, thumb-sized targets, and
+    no horizontal scroll at any width. Uses KioskLayout (same as the kiosk and feedback screens)
+    so the branch's own branding and light/dark choice apply without this page knowing anything
+    about branding itself.
+
+    Everything it calls lives under .../appointments/public, which is [AllowAnonymous] on the API
+    and rate-limited per branch per IP there. The availability response is free/busy only — this
+    page is never told who holds a taken slot.
+*@
+
+<PageTitle>Book an Appointment - Q-Mgr</PageTitle>
+
+<div class="booking-page">
+    <div class="booking-card">
+
+        @if (loadState == LoadState.Loading)
+        {
+            <div class="booking-state"><QSpinner Size="lg" /><span>Loading…</span></div>
+        }
+        else if (loadState == LoadState.InvalidBranch)
+        {
+            <div class="booking-state">
+                <QIcon Name="exclamation-triangle" Size="xl" />
+                <h1>This booking link isn't valid</h1>
+                <p>The location may have moved or closed. Please check the link you were given.</p>
+            </div>
+        }
+        else if (loadState == LoadState.BookingClosed)
+        {
+            <div class="booking-state">
+                <QIcon Name="calendar-x" Size="xl" />
+                <h1>Online booking isn't available here</h1>
+                <p>@(branch?.Name ?? "This location") isn't taking online bookings at the moment. Please contact them directly.</p>
+            </div>
+        }
+        else if (confirmation != null)
+        {
+            <div class="booking-confirmed">
+                <div class="confirm-mark"><QIcon Name="check-lg" Size="xl" /></div>
+                <h1>You're booked</h1>
+                <p class="confirm-lead">Please arrive a few minutes early and quote your reference.</p>
+
+                <div class="reference-block">
+                    <span class="reference-label">Your reference</span>
+                    <span class="reference-code">@confirmation.ReferenceCode</span>
+                </div>
+
+                <dl class="confirm-details">
+                    <div><dt>Service</dt><dd>@confirmation.ServiceTypeName</dd></div>
+                    <div><dt>When</dt><dd>@FormatLocal(confirmation.ScheduledAt, "dddd d MMMM, HH:mm")</dd></div>
+                    <div><dt>Where</dt><dd>@confirmation.BranchName</dd></div>
+                    <div><dt>Name</dt><dd>@customerName</dd></div>
+                </dl>
+
+                <QButton Text="Book another" Icon="plus-lg" Variant="secondary" Block="true" OnClick="@StartOver" />
+            </div>
+        }
+        else
+        {
+            <header class="booking-header">
+                <span class="branch-context">@branch?.OrganizationName</span>
+                <h1>Book an appointment</h1>
+                <p class="branch-name"><QIcon Name="geo-alt" /> @branch?.Name</p>
+            </header>
+
+            <ol class="step-rail" aria-hidden="true">
+                <li class="@StepClass(1)"><span>1</span>Service</li>
+                <li class="@StepClass(2)"><span>2</span>Time</li>
+                <li class="@StepClass(3)"><span>3</span>Details</li>
+            </ol>
+
+            @* ---------- Step 1: service ---------- *@
+            @if (step == 1)
+            {
+                <section class="step-body">
+                    <h2 class="step-title">What do you need?</h2>
+
+                    @if (!services.Any())
+                    {
+                        <div class="booking-state small">
+                            <QIcon Name="inbox" Size="lg" />
+                            <p>There are no bookable services at this location yet.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="service-list">
+                            @foreach (var service in services)
+                            {
+                                <button type="button" class="service-option @(selectedService?.Id == service.Id ? "selected" : "")"
+                                        @onclick="@(() => SelectService(service))">
+                                    <span class="service-dot" style="background: @(string.IsNullOrWhiteSpace(service.Color) ? "var(--qm-primary)" : service.Color)"></span>
+                                    <span class="service-text">
+                                        <strong>@service.Name</strong>
+                                        @if (!string.IsNullOrWhiteSpace(service.Description))
+                                        {
+                                            <small>@service.Description</small>
+                                        }
+                                    </span>
+                                    <span class="service-duration">@service.DurationMinutes min</span>
+                                </button>
+                            }
+                        </div>
+                    }
+                </section>
+            }
+
+            @* ---------- Step 2: day + slot ---------- *@
+            @if (step == 2)
+            {
+                <section class="step-body">
+                    <h2 class="step-title">Pick a time</h2>
+                    <p class="step-hint">@selectedService?.Name &middot; @selectedService?.DurationMinutes minutes</p>
+
+                    <div class="day-strip">
+                        @foreach (var day in dayOptions)
+                        {
+                            <button type="button" class="day-chip @(day == selectedDate ? "selected" : "")"
+                                    @onclick="@(() => SelectDay(day))">
+                                <span class="day-name">@day.ToString("ddd")</span>
+                                <span class="day-num">@day.Day</span>
+                                <span class="day-month">@day.ToString("MMM")</span>
+                            </button>
+                        }
+                    </div>
+
+                    @if (slotsLoading)
+                    {
+                        <div class="booking-state small"><QSpinner /><span>Checking availability…</span></div>
+                    }
+                    else if (availability is { IsOpen: false })
+                    {
+                        <div class="booking-state small">
+                            <QIcon Name="door-closed" Size="lg" />
+                            <p>Closed on @selectedDate.ToString("dddd"). Try another day.</p>
+                        </div>
+                    }
+                    else if (!OpenSlots.Any())
+                    {
+                        <div class="booking-state small">
+                            <QIcon Name="calendar-x" Size="lg" />
+                            <p>No times left on @selectedDate.ToString("dddd d MMM"). Try another day.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="slot-grid">
+                            @foreach (var slot in OpenSlots)
+                            {
+                                <button type="button"
+                                        class="slot-chip @(selectedSlot?.StartAt == slot.StartAt ? "selected" : "") @(slot.IsAvailable ? "" : "taken")"
+                                        disabled="@(!slot.IsAvailable)"
+                                        @onclick="@(() => SelectSlot(slot))">
+                                    @FormatLocal(slot.StartAt, "HH:mm")
+                                </button>
+                            }
+                        </div>
+                        <p class="tz-note">Times shown for @DisplayTimezoneLabel</p>
+                    }
+                </section>
+
+                <div class="step-actions">
+                    <QButton Text="Back" Icon="arrow-left" Variant="ghost" OnClick="@(() => step = 1)" />
+                </div>
+            }
+
+            @* ---------- Step 3: details + confirm ---------- *@
+            @if (step == 3)
+            {
+                <section class="step-body">
+                    <h2 class="step-title">Your details</h2>
+
+                    <div class="summary-strip">
+                        <QIcon Name="calendar-check" />
+                        <span>@selectedService?.Name &middot; @FormatLocal(selectedSlot!.StartAt, "ddd d MMM, HH:mm")</span>
+                    </div>
+
+                    <QInput TValue="string" Label="Full name" @bind-Value="customerName" Placeholder="e.g. Sarah Nakato"
+                            Required="true" MaxLength="100" HasError="@nameError" ErrorMessage="Please enter your name" />
+
+                    <QInput TValue="string" Label="Phone number" @bind-Value="customerPhone" Type="tel" Placeholder="e.g. 0700 123456"
+                            Required="true" MaxLength="30" HasError="@phoneError" ErrorMessage="Please enter a phone number we can reach you on"
+                            HelperText="We'll text you a reminder before your appointment." />
+
+                    <QInput TValue="string" Label="Email (optional)" @bind-Value="customerEmail" Type="email"
+                            Placeholder="you@example.com" MaxLength="200" />
+
+                    <QInput TValue="string" Label="Anything we should know? (optional)" @bind-Value="customerNotes"
+                            Type="textarea" Rows="3" MaxLength="500" />
+
+                    @if (!string.IsNullOrEmpty(bookingError))
+                    {
+                        <div class="booking-error" role="alert">
+                            <QIcon Name="exclamation-circle-fill" />
+                            <span>@bookingError</span>
+                        </div>
+                    }
+
+                    <QButton Text="Confirm booking" Icon="check-lg" Variant="primary" Block="true"
+                             Loading="@submitting" Disabled="@submitting" OnClick="@SubmitAsync" />
+                </section>
+
+                <div class="step-actions">
+                    <QButton Text="Back" Icon="arrow-left" Variant="ghost" Disabled="@submitting" OnClick="@(() => step = 2)" />
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .booking-page {
+        min-height: 100vh;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+        padding: 1rem;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        overflow-x: hidden;
+    }
+
+    .booking-card {
+        width: 100%;
+        max-width: 30rem;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        box-shadow: var(--qm-shadow-md);
+        padding: 1.25rem;
+    }
+
+    .booking-header { text-align: center; margin-bottom: 1.25rem; }
+    .booking-header h1 { font-family: var(--qm-font-display); font-size: 1.35rem; margin: .25rem 0; }
+    .branch-context { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--qm-text-muted); }
+    .branch-name { color: var(--qm-text-secondary); font-size: .9rem; margin: 0; }
+
+    .step-rail { display: flex; gap: .5rem; list-style: none; padding: 0; margin: 0 0 1.25rem; }
+    .step-rail li {
+        flex: 1; display: flex; align-items: center; gap: .4rem;
+        font-size: .72rem; color: var(--qm-text-muted); text-transform: uppercase; letter-spacing: .04em;
+    }
+    .step-rail li span {
+        width: 1.5rem; height: 1.5rem; flex: 0 0 1.5rem;
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 50%; border: 1px solid var(--qm-border); font-size: .75rem;
+    }
+    .step-rail li.active { color: var(--qm-text-primary); }
+    .step-rail li.active span { background: var(--qm-primary); border-color: var(--qm-primary); color: #fff; }
+    .step-rail li.done span { background: var(--qm-primary-light); border-color: var(--qm-primary); color: var(--qm-primary); }
+
+    .step-title { font-family: var(--qm-font-display); font-size: 1.05rem; margin: 0 0 .25rem; }
+    .step-hint { color: var(--qm-text-muted); font-size: .85rem; margin: 0 0 .75rem; }
+    .step-body { display: flex; flex-direction: column; gap: .75rem; }
+    .step-actions { margin-top: 1rem; }
+
+    .service-list { display: flex; flex-direction: column; gap: .5rem; }
+    .service-option {
+        display: flex; align-items: center; gap: .75rem; width: 100%;
+        padding: .85rem; min-height: 3.25rem; text-align: left;
+        background: var(--qm-bg-elevated); color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        cursor: pointer; transition: border-color .15s ease, background .15s ease;
+    }
+    .service-option:hover, .service-option.selected { border-color: var(--qm-primary); background: var(--qm-bg-card-hover); }
+    .service-dot { width: .6rem; height: .6rem; border-radius: 50%; flex: 0 0 .6rem; }
+    .service-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .service-text small { color: var(--qm-text-muted); font-size: .78rem; }
+    .service-duration { color: var(--qm-text-muted); font-size: .78rem; white-space: nowrap; }
+
+    .day-strip { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .35rem; }
+    .day-chip {
+        flex: 0 0 auto; width: 3.5rem; padding: .5rem .25rem;
+        display: flex; flex-direction: column; align-items: center; gap: .1rem;
+        background: var(--qm-bg-elevated); color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); cursor: pointer;
+    }
+    .day-chip.selected { border-color: var(--qm-primary); background: var(--qm-primary-light); }
+    .day-name, .day-month { font-size: .68rem; text-transform: uppercase; color: var(--qm-text-muted); }
+    .day-num { font-size: 1.15rem; font-weight: 600; font-family: var(--qm-font-display); }
+    .day-chip.selected .day-name, .day-chip.selected .day-month { color: var(--qm-primary); }
+
+    .slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr)); gap: .5rem; }
+    .slot-chip {
+        min-height: 2.75rem; padding: .5rem;
+        background: var(--qm-bg-elevated); color: var(--qm-text-primary);
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        font-size: .95rem; cursor: pointer;
+    }
+    .slot-chip.selected { background: var(--qm-primary); border-color: var(--qm-primary); color: #fff; }
+    .slot-chip.taken { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
+    .tz-note { color: var(--qm-text-muted); font-size: .75rem; margin: .25rem 0 0; }
+
+    .summary-strip {
+        display: flex; align-items: center; gap: .5rem;
+        padding: .6rem .75rem; border-radius: var(--qm-radius-md);
+        background: var(--qm-primary-light); color: var(--qm-primary); font-size: .9rem;
+    }
+
+    .booking-error {
+        display: flex; align-items: flex-start; gap: .5rem;
+        padding: .65rem .75rem; border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-danger-rgb), .12);
+        color: var(--qm-danger); font-size: .85rem;
+    }
+
+    .booking-state {
+        display: flex; flex-direction: column; align-items: center; gap: .5rem;
+        text-align: center; padding: 2.5rem 1rem; color: var(--qm-text-secondary);
+    }
+    .booking-state.small { padding: 1.5rem 1rem; }
+    .booking-state h1 { font-family: var(--qm-font-display); font-size: 1.2rem; margin: 0; color: var(--qm-text-primary); }
+    .booking-state p { margin: 0; font-size: .9rem; }
+
+    .booking-confirmed { text-align: center; display: flex; flex-direction: column; gap: 1rem; }
+    .confirm-mark {
+        width: 3.5rem; height: 3.5rem; margin: 0 auto;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 50%; background: rgba(var(--qm-success-rgb), .15); color: var(--qm-success);
+    }
+    .booking-confirmed h1 { font-family: var(--qm-font-display); font-size: 1.4rem; margin: 0; }
+    .confirm-lead { color: var(--qm-text-secondary); font-size: .9rem; margin: 0; }
+
+    .reference-block {
+        display: flex; flex-direction: column; gap: .25rem; padding: .85rem;
+        border: 1px dashed var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-primary-light);
+    }
+    .reference-label { font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; color: var(--qm-text-muted); }
+    .reference-code {
+        font-family: var(--qm-font-display); font-size: 1.6rem; font-weight: 700;
+        letter-spacing: .08em; color: var(--qm-primary);
+    }
+
+    .confirm-details { margin: 0; text-align: left; display: flex; flex-direction: column; gap: .5rem; }
+    .confirm-details > div { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--qm-border); padding-bottom: .4rem; }
+    .confirm-details dt { color: var(--qm-text-muted); font-size: .8rem; margin: 0; }
+    .confirm-details dd { margin: 0; font-size: .9rem; text-align: right; }
+
+    @@media (max-width: 380px) {
+        .booking-card { padding: 1rem .85rem; }
+        .step-rail li { font-size: .65rem; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+
+    private enum LoadState { Loading, Ready, InvalidBranch, BookingClosed }
+
+    private LoadState loadState = LoadState.Loading;
+    private BranchPublicDto? branch;
+    private List<BookableServiceTypeDto> services = new();
+
+    private int step = 1;
+    private BookableServiceTypeDto? selectedService;
+    private DateOnly selectedDate;
+    private List<DateOnly> dayOptions = new();
+    private AppointmentAvailabilityDto? availability;
+    private AppointmentSlotDto? selectedSlot;
+    private bool slotsLoading;
+
+    private string customerName = string.Empty;
+    private string customerPhone = string.Empty;
+    private string customerEmail = string.Empty;
+    private string customerNotes = string.Empty;
+    private bool nameError;
+    private bool phoneError;
+    private bool submitting;
+    private string? bookingError;
+
+    private PublicAppointmentConfirmationDto? confirmation;
+
+    /// <summary>Resolved from the availability response's IANA id so every rendered time is the
+    /// branch's local wall clock, not the server's and not the visitor's.</summary>
+    private TimeZoneInfo displayTimeZone = TimeZoneInfo.Utc;
+
+    private IEnumerable<AppointmentSlotDto> OpenSlots => availability?.Slots ?? Enumerable.Empty<AppointmentSlotDto>();
+
+    private string DisplayTimezoneLabel => displayTimeZone.Id == "UTC" ? "UTC" : displayTimeZone.Id.Replace('_', ' ');
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The 14-day strip is built from the server's own date; the availability call re-resolves
+        // each day in the branch's zone anyway, so a day-boundary mismatch only ever costs an
+        // extra "closed" answer, never a wrong slot.
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        dayOptions = Enumerable.Range(0, 14).Select(today.AddDays).ToList();
+        selectedDate = today;
+
+        branch = await OrganizationApi.GetBranchPublicAsync(BranchId);
+        if (branch == null)
+        {
+            loadState = LoadState.InvalidBranch;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        services = await AppointmentApi.GetPublicServiceTypesAsync(BranchId);
+
+        // The API answers 404 BOOKING_DISABLED for a branch with public booking switched off, and
+        // the typed client turns that into an empty list — indistinguishable here from "no
+        // services configured", so both land on a guidance state rather than a dead form.
+        loadState = services.Any() ? LoadState.Ready : LoadState.BookingClosed;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string StepClass(int index) => index == step ? "active" : index < step ? "done" : "";
+
+    private async Task SelectService(BookableServiceTypeDto service)
+    {
+        selectedService = service;
+        selectedSlot = null;
+        step = 2;
+        await LoadSlotsAsync();
+    }
+
+    private async Task SelectDay(DateOnly day)
+    {
+        selectedDate = day;
+        selectedSlot = null;
+        await LoadSlotsAsync();
+    }
+
+    private void SelectSlot(AppointmentSlotDto slot)
+    {
+        if (!slot.IsAvailable) return;
+        selectedSlot = slot;
+        bookingError = null;
+        step = 3;
+    }
+
+    private async Task LoadSlotsAsync()
+    {
+        if (selectedService == null) return;
+
+        slotsLoading = true;
+        availability = null;
+        await InvokeAsync(StateHasChanged);
+
+        availability = await AppointmentApi.GetPublicAvailabilityAsync(BranchId, selectedService.Id, selectedDate);
+        if (availability != null)
+            displayTimeZone = ResolveTimeZone(availability.Timezone);
+
+        slotsLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SubmitAsync()
+    {
+        nameError = string.IsNullOrWhiteSpace(customerName);
+        phoneError = string.IsNullOrWhiteSpace(customerPhone);
+        bookingError = null;
+
+        if (nameError || phoneError || selectedService == null || selectedSlot == null)
+            return;
+
+        submitting = true;
+        await InvokeAsync(StateHasChanged);
+
+        var result = await AppointmentApi.BookPublicAsync(BranchId, new PublicBookAppointmentRequest
+        {
+            ServiceTypeId = selectedService.Id,
+            ScheduledAt = selectedSlot.StartAt,
+            CustomerName = customerName.Trim(),
+            CustomerPhone = customerPhone.Trim(),
+            CustomerEmail = string.IsNullOrWhiteSpace(customerEmail) ? null : customerEmail.Trim(),
+            Notes = string.IsNullOrWhiteSpace(customerNotes) ? null : customerNotes.Trim()
+        });
+
+        submitting = false;
+
+        if (result.Success)
+        {
+            confirmation = result.Confirmation;
+            if (confirmation != null)
+                displayTimeZone = ResolveTimeZone(confirmation.Timezone);
+        }
+        else if (result.ErrorCode == "SLOT_FULL")
+        {
+            // Someone else took it while this customer was typing — send them back to a freshly
+            // loaded grid rather than leaving a stale slot selected.
+            bookingError = "That time was just taken. Please choose another.";
+            step = 2;
+            selectedSlot = null;
+            await LoadSlotsAsync();
+        }
+        else
+        {
+            bookingError = result.Message ?? "We couldn't complete your booking. Please try again.";
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void StartOver()
+    {
+        confirmation = null;
+        selectedService = null;
+        selectedSlot = null;
+        availability = null;
+        customerName = customerPhone = customerEmail = customerNotes = string.Empty;
+        nameError = phoneError = false;
+        bookingError = null;
+        step = 1;
+    }
+
+    private string FormatLocal(DateTime utc, string format) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), displayTimeZone).ToString(format);
+
+    private static TimeZoneInfo ResolveTimeZone(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return TimeZoneInfo.Utc;
+        try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
+        catch (TimeZoneNotFoundException) { return TimeZoneInfo.Utc; }
+        catch (InvalidTimeZoneException) { return TimeZoneInfo.Utc; }
+    }
+}

@@ -51,6 +51,21 @@ public interface IVisitorApiService
 
     /// <summary>Returns the raw CSV text (or null on failure) for the same range GetVisitorReportAsync summarizes.</summary>
     Task<string?> ExportVisitorReportCsvAsync(Guid branchId, DateOnly from, DateOnly to);
+
+    /// <summary>Point-in-time evacuation roll call — everyone on site right now. Null on failure.</summary>
+    Task<EvacuationReportDto?> GetEvacuationReportAsync(Guid branchId);
+
+    /// <summary>Books a party of expected arrivals. Throws InvalidOperationException with the API's ProblemDetails.Title on failure.</summary>
+    Task<List<VisitorDto>> CreateExpectedVisitorsAsync(Guid branchId, CreateExpectedVisitorsRequest request);
+
+    /// <summary>Expected arrivals over a date range (server defaults to today through a week out).</summary>
+    Task<List<VisitorDto>> GetExpectedVisitorsAsync(Guid branchId, DateOnly? from = null, DateOnly? to = null);
+
+    Task<VisitorDto?> CancelExpectedVisitorAsync(Guid branchId, Guid visitorId);
+
+    /// <summary>Records or clears a person's contractor site induction (null completedAt clears it).
+    /// Throws InvalidOperationException with the API's ProblemDetails.Title on failure.</summary>
+    Task SetInductionAsync(Guid branchId, Guid profileId, DateTime? completedAt, string? notes);
 }
 
 public class VisitorApiService : IVisitorApiService
@@ -406,4 +421,64 @@ public class VisitorApiService : IVisitorApiService
         }
     }
 
+    public async Task<EvacuationReportDto?> GetEvacuationReportAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<EvacuationReportDto>($"api/v1/branches/{branchId}/visitors/evacuation", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get the evacuation roll call for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<List<VisitorDto>> CreateExpectedVisitorsAsync(Guid branchId, CreateExpectedVisitorsRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/visitors/expected", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<List<VisitorDto>>(_jsonOptions)) ?? new();
+    }
+
+    public async Task<List<VisitorDto>> GetExpectedVisitorsAsync(Guid branchId, DateOnly? from = null, DateOnly? to = null)
+    {
+        try
+        {
+            var url = $"api/v1/branches/{branchId}/visitors/expected";
+            var query = new List<string>();
+            if (from.HasValue) query.Add($"from={from.Value:yyyy-MM-dd}");
+            if (to.HasValue) query.Add($"to={to.Value:yyyy-MM-dd}");
+            if (query.Count > 0) url += "?" + string.Join("&", query);
+
+            return await _httpClient.GetFromJsonAsync<List<VisitorDto>>(url, _jsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get expected visitors for branch {BranchId}", branchId);
+            return new();
+        }
+    }
+
+    public async Task<VisitorDto?> CancelExpectedVisitorAsync(Guid branchId, Guid visitorId)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync($"api/v1/branches/{branchId}/visitors/{visitorId}/cancel", null);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<VisitorDto>(_jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to cancel expected visitor {VisitorId}", visitorId);
+            return null;
+        }
+    }
+
+    public async Task SetInductionAsync(Guid branchId, Guid profileId, DateTime? completedAt, string? notes)
+    {
+        var request = new SetInductionRequest { CompletedAt = completedAt, Notes = notes };
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitor-profiles/{profileId}/induction", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
 }

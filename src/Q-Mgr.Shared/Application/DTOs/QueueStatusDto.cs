@@ -46,7 +46,7 @@ public record DashboardMetricsDto
     public QueueSummaryDto TodaySummary { get; init; } = new();
     public List<HourlyMetricDto> HourlyMetrics { get; init; } = new();
     public List<ServiceTypeMetricDto> ServiceTypeMetrics { get; init; } = new();
-    public List<CounterPerformanceDto> CounterPerformance { get; init; } = new();
+    public List<CounterThroughputDto> CounterPerformance { get; init; } = new();
 }
 
 public record HourlyMetricDto
@@ -63,7 +63,13 @@ public record ServiceTypeMetricDto
     public double PercentageOfTotal { get; init; }
 }
 
-public record CounterPerformanceDto
+/// <summary>
+/// Minimal per-counter throughput summary carried by <see cref="DashboardMetricsDto"/>.
+/// Renamed from CounterPerformanceDto to leave that name to the far richer reporting record in
+/// ReportDto.cs, which is what the Counter Performance report actually renders; the two are not
+/// interchangeable and having both under one name was a collision waiting to happen.
+/// </summary>
+public record CounterThroughputDto
 {
     public string CounterNumber { get; init; } = string.Empty;
     public int TokensServed { get; init; }

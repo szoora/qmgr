@@ -81,6 +81,12 @@ public class CreateTokenCommandHandler : IRequestHandler<CreateTokenCommand, Tok
         // Trigger webhook
         await _webhookService.TriggerTokenCreatedAsync(token, cancellationToken);
 
+        // Tell the customer their ticket exists. Deliberately AFTER the transaction above has
+        // committed — the ticket is real whether or not the SMS gateway is reachable. The
+        // notifier itself never throws and never blocks (see IQueueCustomerNotifier), and sends
+        // nothing at all unless this customer actually supplied a phone number or email.
+        await _customerNotifier.NotifyTicketIssuedAsync(token.Id, position);
+
         // Track token creation for usage metering
         var tenantContext = _tenantContextAccessor.TenantContext;
         if (tenantContext?.IsResolved == true)

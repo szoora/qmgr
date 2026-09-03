@@ -11,15 +11,15 @@
 *@
 
 <div class="qm-language-selector" role="group" aria-label="Choose a language">
-    @foreach (var (code, englishName, nativeName) in SupportedCultures.All)
+    @foreach (var (cultureCode, englishName, nativeName) in SupportedCultures.All)
     {
-        var isCurrent = string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, code, StringComparison.OrdinalIgnoreCase);
+        var isCurrent = string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, cultureCode, StringComparison.OrdinalIgnoreCase);
         <a class="qm-language-option @(isCurrent ? "is-current" : "")"
-           href="@BuildSwitchUrl(code)"
-           lang="@code"
-           hreflang="@code"
+           href="@BuildSwitchUrl(cultureCode)"
+           lang="@cultureCode"
+           hreflang="@cultureCode"
            aria-current="@(isCurrent ? "true" : null)"
-           aria-label="@($"Switch to {englishName}")">@nativeName</a>
+           aria-label="@GetSwitchLabel(englishName)">@nativeName</a>
     }
 </div>
 
@@ -64,6 +64,8 @@
 @code {
     /// <summary>Where to return after the cookie is set. Defaults to the current page.</summary>
     [Parameter] public string? ReturnUrl { get; set; }
+
+    private static string GetSwitchLabel(string englishName) => "Switch to " + englishName;
 
     private string BuildSwitchUrl(string culture)
     {

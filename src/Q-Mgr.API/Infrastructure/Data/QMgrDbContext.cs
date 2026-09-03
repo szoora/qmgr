@@ -46,7 +46,9 @@ public class QMgrDbContext : DbContext
     public DbSet<CounterServiceType> CounterServiceTypes => Set<CounterServiceType>();
     public DbSet<Token> Tokens => Set<Token>();
     public DbSet<TokenHistory> TokenHistories => Set<TokenHistory>();
+    public DbSet<Appointment> Appointments => Set<Appointment>();
     public DbSet<Feedback> Feedbacks => Set<Feedback>();
+    public DbSet<FeedbackQuestion> FeedbackQuestions => Set<FeedbackQuestion>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
     public DbSet<VisitorProfile> VisitorProfiles => Set<VisitorProfile>();
     public DbSet<VisitorPass> VisitorPasses => Set<VisitorPass>();

@@ -1,0 +1,693 @@
+@page "/join/{BranchId:guid}"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
+@attribute [AllowAnonymous]
+@inject IQueueApiService QueueApi
+@inject IOrganizationApiService OrganizationApi
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+@*
+    Virtual queue join from a phone. Deliberately separate from /kiosk:
+      /kiosk/branch/{id}  -> a wall-mounted terminal, big tiles, one tap, no typing
+      /join/{id}          -> the customer's own phone, thumb-reachable, keeps a link back
+                             to /ticket/{id}/{number} so they can walk away and still watch
+                             their place in the queue.
+    Everything it calls is anonymous (api/v1/branches/{id}/public and the queue/* endpoints);
+    there is no sign-in on this path at all.
+*@
+
+<PageTitle>Join the Queue@(branchInfo != null ? $" - {branchInfo.Name}" : "")</PageTitle>
+
+<div class="join-page">
+    <header class="join-header">
+        <div class="join-brand">
+            <QIcon Name="people-fill" aria-hidden="true" />
+            <div class="join-brand-text">
+                <span class="join-org">@(branchInfo?.OrganizationName ?? "Q-Mgr")</span>
+                @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
+                {
+                    <span class="join-branch">@branchInfo!.Name</span>
+                }
+            </div>
+        </div>
+    </header>
+
+    <main class="join-main">
+        @if (state == PageState.Loading)
+        {
+            <div class="join-state" role="status" aria-live="polite">
+                <QSpinner Size="lg" />
+                <span class="visually-hidden">Loading the services at this branch.</span>
+            </div>
+        }
+        else if (state == PageState.InvalidBranch)
+        {
+            <div class="join-state" role="alert">
+                <QIcon Name="exclamation-triangle" aria-hidden="true" />
+                <h1>This link is not valid</h1>
+                <p>The branch may have been removed or closed. Please ask a member of staff for a current link.</p>
+            </div>
+        }
+        else if (state == PageState.Issued && ticket != null)
+        {
+            <div class="join-ticket">
+                <div class="join-ticket-icon">
+                    <QIcon Name="check-circle-fill" aria-hidden="true" />
+                </div>
+                <h1 id="join-ticket-title">You're in the queue</h1>
+
+                @* assertive: this is the answer to the action the customer just took, and it is
+                   the one thing on the page that must interrupt. *@
+                <div class="join-ticket-number" role="status" aria-live="assertive">
+                    <span class="join-number">@ticket.DisplayNumber</span>
+                    <span class="visually-hidden">
+                        Your ticket number is @SpellOut(ticket.DisplayNumber).
+                        You are number @ticket.Position in the queue for @ticket.ServiceTypeName,
+                        about @ticket.EstimatedWaitMinutes minutes.
+                    </span>
+                </div>
+
+                <dl class="join-ticket-facts">
+                    <div>
+                        <dt>Service</dt>
+                        <dd>@ticket.ServiceTypeName</dd>
+                    </div>
+                    <div>
+                        <dt>Your position</dt>
+                        <dd>#@ticket.Position</dd>
+                    </div>
+                    <div>
+                        <dt>Estimated wait</dt>
+                        <dd>@ticket.EstimatedWaitMinutes min</dd>
+                    </div>
+                </dl>
+
+                <a class="join-primary-link" href="@StatusUrlPath()">
+                    <QIcon Name="arrow-right-circle-fill" aria-hidden="true" />
+                    <span>Track my place in the queue</span>
+                </a>
+
+                <div class="join-qr-block">
+                    <div class="join-qr" id="join-ticket-qr"></div>
+                    <p class="join-hint">
+                        Keep this page open, or save the link below — you can come back to it at any time.
+                    </p>
+                    <p class="join-url">@StatusUrlAbsolute()</p>
+                </div>
+
+                <button type="button" class="join-secondary-btn" aria-label="Return to the service list and request another ticket" @onclick="StartOver">
+                    <QIcon Name="arrow-counterclockwise" aria-hidden="true" />
+                    <span>Get another ticket</span>
+                </button>
+            </div>
+        }
+        else
+        {
+            <h1 class="join-title">Join the queue</h1>
+            <p class="join-subtitle">Pick the service you need. You'll get a number and can wait wherever you like.</p>
+
+            @if (serviceTypes.Count == 0)
+            {
+                <div class="join-state" role="status">
+                    <QIcon Name="slash-circle" aria-hidden="true" />
+                    <p>No services are open at this branch right now. Please ask a member of staff.</p>
+                </div>
+            }
+            else
+            {
+                <h2 class="join-section-title" id="join-services-label">Services</h2>
+                <div class="join-services" role="group" aria-labelledby="join-services-label">
+                    @foreach (var service in serviceTypes)
+                    {
+                        var isSelected = selectedServiceId == service.Id;
+                        <button type="button"
+                                class="join-service @(isSelected ? "is-selected" : "")"
+                                aria-pressed="@(isSelected ? "true" : "false")"
+                                aria-label="@($"{service.Name}. {service.WaitingCount} people waiting, about {service.EstimatedWaitMinutes} minutes.")"
+                                @onclick="@(() => selectedServiceId = service.Id)">
+                            <span class="join-service-main">
+                                <span class="join-service-name">@service.Name</span>
+                                @if (!string.IsNullOrWhiteSpace(service.Description))
+                                {
+                                    <span class="join-service-desc">@service.Description</span>
+                                }
+                            </span>
+                            <span class="join-service-stats" aria-hidden="true">
+                                <span class="join-service-waiting">@service.WaitingCount waiting</span>
+                                <span class="join-service-eta">~@service.EstimatedWaitMinutes min</span>
+                            </span>
+                        </button>
+                    }
+                </div>
+
+                <h2 class="join-section-title">Your details <span class="join-optional">(optional)</span></h2>
+                <div class="join-fields">
+                    <QInput TValue="string"
+                            @bind-Value="customerName"
+                            Label="Name"
+                            Placeholder="Your name"
+                            MaxLength="120"
+                            autocomplete="name" />
+                    <QInput TValue="string"
+                            @bind-Value="customerPhone"
+                            Label="Mobile number"
+                            Type="tel"
+                            Placeholder="+256700000000"
+                            MaxLength="32"
+                            HelperText="Only used to let you know when it is nearly your turn."
+                            autocomplete="tel" />
+                </div>
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="join-error" role="alert">
+                        <QIcon Name="exclamation-triangle-fill" aria-hidden="true" />
+                        <span>@errorMessage</span>
+                    </div>
+                }
+
+                <QButton Variant="primary"
+                         Size="lg"
+                         Block="true"
+                         Class="join-submit"
+                         Disabled="@(selectedServiceId == null)"
+                         Loading="@isSubmitting"
+                         OnClick="RequestTicket"
+                         aria-label="Get my ticket for the service selected above">
+                    <span>@(isSubmitting ? "Getting your ticket..." : "Get my ticket")</span>
+                </QButton>
+            }
+        }
+    </main>
+
+    <footer class="join-footer">
+        <span>Already have a number?</span>
+        <a href="/ticket/@BranchId">Track an existing ticket</a>
+    </footer>
+</div>
+
+<style>
+    /* Mobile-first: this page is designed for a phone held in one hand and only widens
+       from there. Colours are all --qm-* tokens, so it follows the light/dark choice
+       KioskLayout applies to the wrapper. */
+    .join-page {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+    }
+
+    .join-header {
+        padding: 16px 20px;
+        background: var(--qm-bg-card);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .join-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .join-brand .q-icon {
+        font-size: 26px;
+        color: var(--qm-primary);
+    }
+
+    .join-brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+        min-width: 0;
+    }
+
+    .join-org {
+        font-family: var(--qm-font-display);
+        font-size: 17px;
+        font-weight: 700;
+    }
+
+    .join-branch {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .join-main {
+        flex: 1;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 20px 20px 32px;
+    }
+
+    .join-title {
+        margin: 8px 0 6px;
+        font-family: var(--qm-font-display);
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .join-subtitle {
+        margin: 0 0 24px;
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+
+    .join-section-title {
+        margin: 24px 0 12px;
+        font-size: 14px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--qm-text-muted);
+    }
+
+    .join-optional {
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 500;
+    }
+
+    .join-services {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    /* Real buttons, sized for a thumb (min 64px tall). */
+    .join-service {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        text-align: left;
+        width: 100%;
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 18px;
+        background: var(--qm-bg-card);
+        color: var(--qm-text-primary);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        cursor: pointer;
+        transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .join-service:hover {
+        border-color: var(--qm-primary);
+    }
+
+    .join-service.is-selected {
+        border-color: var(--qm-primary);
+        background: var(--qm-primary-light);
+    }
+
+    .join-service-main {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+
+    .join-service-name {
+        font-size: 17px;
+        font-weight: 600;
+    }
+
+    .join-service-desc {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .join-service-stats {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 2px;
+        flex-shrink: 0;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .join-service-eta {
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .join-fields {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .join-error {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: var(--qm-radius-lg);
+        background: color-mix(in srgb, var(--qm-warning) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-warning) 35%, transparent);
+        color: var(--qm-text-primary);
+        font-size: 15px;
+        line-height: 1.45;
+    }
+
+    .join-error .q-icon {
+        color: var(--qm-warning);
+        font-size: 20px;
+        flex-shrink: 0;
+    }
+
+    /* QButton renders this class onto its own button element, so a plain selector reaches it. */
+    .join-submit {
+        margin-top: 22px;
+        min-height: 56px;
+        font-size: 17px;
+    }
+
+    /* Issued-ticket state */
+    .join-ticket {
+        text-align: center;
+        padding-top: 12px;
+    }
+
+    .join-ticket-icon .q-icon {
+        font-size: 52px;
+        color: var(--qm-success);
+    }
+
+    .join-ticket h1 {
+        margin: 12px 0 20px;
+        font-family: var(--qm-font-display);
+        font-size: 26px;
+        font-weight: 700;
+    }
+
+    .join-ticket-number {
+        padding: 24px 16px;
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .join-number {
+        display: block;
+        font-family: var(--qm-font-mono, 'JetBrains Mono', monospace);
+        font-size: 64px;
+        font-weight: 800;
+        line-height: 1;
+        color: var(--qm-primary);
+    }
+
+    .join-ticket-facts {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 18px 0 22px;
+        padding: 0;
+    }
+
+    .join-ticket-facts > div {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .join-ticket-facts dt {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--qm-text-muted);
+    }
+
+    .join-ticket-facts dd {
+        margin: 4px 0 0;
+        font-size: 17px;
+        font-weight: 700;
+    }
+
+    .join-primary-link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        min-height: 56px;
+        padding: 14px 20px;
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-primary);
+        color: var(--qm-text-on-primary);
+        font-size: 17px;
+        font-weight: 600;
+        text-decoration: none;
+    }
+
+    .join-primary-link:hover {
+        background: var(--qm-primary-dark);
+        color: var(--qm-text-on-primary);
+    }
+
+    .join-qr-block {
+        margin-top: 24px;
+    }
+
+    .join-qr {
+        display: inline-block;
+        line-height: 0;
+        padding: 10px;
+        background: #fff; /* a QR needs a white quiet zone in either theme */
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .join-qr:empty {
+        display: none;
+    }
+
+    .join-hint {
+        margin: 12px 0 6px;
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .join-url {
+        margin: 0;
+        font-family: var(--qm-font-mono, 'JetBrains Mono', monospace);
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        word-break: break-all;
+    }
+
+    .join-secondary-btn {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 24px;
+        min-height: 48px;
+        padding: 12px 20px;
+        background: transparent;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-secondary);
+        font-size: 15px;
+        cursor: pointer;
+    }
+
+    .join-secondary-btn:hover {
+        border-color: var(--qm-primary);
+        color: var(--qm-text-primary);
+    }
+
+    .join-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 56px 20px;
+        text-align: center;
+    }
+
+    .join-state .q-icon {
+        font-size: 52px;
+        color: var(--qm-text-muted);
+    }
+
+    .join-state h1 {
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 24px;
+    }
+
+    .join-state p {
+        margin: 0;
+        max-width: 420px;
+        font-size: 16px;
+        line-height: 1.55;
+        color: var(--qm-text-secondary);
+    }
+
+    .join-footer {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        padding: 18px 20px 28px;
+        font-size: 15px;
+        color: var(--qm-text-muted);
+        border-top: 1px solid var(--qm-border);
+    }
+
+    .join-footer a {
+        color: var(--qm-primary);
+        font-weight: 600;
+    }
+
+    /* Visible focus for every interactive element on the page. */
+    .join-page :focus-visible {
+        outline: 3px solid var(--qm-text-primary);
+        outline-offset: 3px;
+        border-radius: var(--qm-radius-sm);
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .join-page *,
+        .join-page *::before,
+        .join-page *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+
+    @@media (min-width: 640px) {
+        .join-main {
+            padding: 32px 24px 40px;
+        }
+
+        .join-title {
+            font-size: 32px;
+        }
+
+        .join-number {
+            font-size: 80px;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+
+    private enum PageState { Loading, Ready, Issued, InvalidBranch }
+
+    private PageState state = PageState.Loading;
+    private BranchPublicDto? branchInfo;
+    private List<PublicServiceTypeDto> serviceTypes = new();
+    private Guid? selectedServiceId;
+    private string? customerName;
+    private string? customerPhone;
+    private string? errorMessage;
+    private bool isSubmitting;
+    private PublicTicketDto? ticket;
+    private bool qrPending;
+
+    protected override async Task OnInitializedAsync()
+    {
+        branchInfo = await OrganizationApi.GetBranchPublicAsync(BranchId);
+        if (branchInfo == null || !branchInfo.IsActive)
+        {
+            state = PageState.InvalidBranch;
+            return;
+        }
+
+        serviceTypes = await QueueApi.GetPublicServiceTypesAsync(BranchId);
+        selectedServiceId = serviceTypes.Count == 1 ? serviceTypes[0].Id : null;
+        state = PageState.Ready;
+    }
+
+    private async Task RequestTicket()
+    {
+        if (selectedServiceId == null || isSubmitting) return;
+
+        isSubmitting = true;
+        errorMessage = null;
+        StateHasChanged();
+
+        PublicTicketResult result;
+        try
+        {
+            result = await QueueApi.IssuePublicTokenAsync(BranchId, new PublicJoinQueueRequest
+            {
+                ServiceTypeId = selectedServiceId,
+                CustomerName = customerName,
+                CustomerPhone = customerPhone
+            });
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+
+        if (!result.Success)
+        {
+            // The API's own sentence is shown verbatim: "the queue is full" and "too many
+            // requests from this device" are different problems with different remedies, and
+            // collapsing them into one generic failure would leave the customer standing there
+            // with no idea what to do next.
+            errorMessage = result.Message ?? "We could not add you to the queue. Please try again or ask a member of staff.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        ticket = result.Ticket;
+        state = PageState.Issued;
+        qrPending = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!qrPending || ticket == null) return;
+
+        qrPending = false;
+        try
+        {
+            // qrcodejs via the shared visitorBadge helper — already loaded in App.razor, so no
+            // new dependency is introduced for this page.
+            await JSRuntime.InvokeVoidAsync("visitorBadge.renderQr", "join-ticket-qr", StatusUrlAbsolute());
+        }
+        catch
+        {
+            // The printed URL below the QR is the fallback; nothing else depends on this.
+        }
+    }
+
+    private void StartOver()
+    {
+        ticket = null;
+        errorMessage = null;
+        selectedServiceId = serviceTypes.Count == 1 ? serviceTypes[0].Id : null;
+        state = PageState.Ready;
+    }
+
+    private string StatusUrlPath() =>
+        ticket == null ? $"/ticket/{BranchId}" : $"/ticket/{BranchId}/{Uri.EscapeDataString(ticket.DisplayNumber)}";
+
+    private string StatusUrlAbsolute() =>
+        $"{Navigation.BaseUri.TrimEnd('/')}{StatusUrlPath()}";
+
+    /// <summary>
+    /// "A007" read aloud as "A 0 0 7". A ticket number is a sequence of characters, not a
+    /// quantity, and screen readers otherwise run the digits together into one number.
+    /// </summary>
+    private static string SpellOut(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : string.Join(" ", value.ToCharArray());
+}
