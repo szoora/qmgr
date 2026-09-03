@@ -6,8 +6,11 @@
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
 @using QMgr.Web.Services
 
 <PageTitle>My Welfare Actions - Q-Mgr</PageTitle>
@@ -106,6 +109,13 @@
             if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
             {
                 Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            await ModuleState.LoadAsync(ModuleApi);
+            if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+            {
+                Navigation.NavigateTo("/billing/modules", forceLoad: false);
                 return;
             }
 

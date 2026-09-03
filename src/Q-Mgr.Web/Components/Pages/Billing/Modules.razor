@@ -19,6 +19,10 @@
             <span>Modules</span>
         </div>
         <p class="page-subtitle">Add or remove functional modules for your organization. Payment is collected via Mobile Money.</p>
+        @if (TrialingModuleName != null)
+        {
+            <p class="page-subtitle trial-gate-note"><QIcon Name="info-circle" Size="14" /> Complete payment for <strong>@TrialingModuleName</strong> to unlock adding another module.</p>
+        }
     </div>
 </div>
 
@@ -61,7 +65,18 @@ else
                     {
                         <p class="trial-note"><QIcon Name="shield-check" Size="14" /> Granted by platform admin</p>
                     }
-                    <QButton Text="Remove Module" Icon="trash" Variant="outline-danger" OnClick="@(() => OpenRemoveConfirm(module.Code, module.Name))" />
+                    <div class="module-card-actions">
+                        @if (status.Status == "Trialing")
+                        {
+                            <QButton Text="Pay Now" Icon="credit-card" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
+                        }
+                        <QButton Text="Remove Module" Icon="trash" Variant="outline-danger" OnClick="@(() => OpenRemoveConfirm(module.Code, module.Name))" />
+                    </div>
+                }
+                else if (TrialingModuleName != null)
+                {
+                    <QButton Text="Add Module" Icon="plus-circle" Variant="primary" Disabled="true" />
+                    <p class="trial-note blocked"><QIcon Name="lock-fill" Size="13" /> Pay for @TrialingModuleName first</p>
                 }
                 else
                 {
@@ -73,7 +88,7 @@ else
 }
 
 <!-- Purchase Modal -->
-<QModal Visible="@showPurchaseModal" VisibleChanged="@((bool v) => showPurchaseModal = v)" Title="@($"Add {purchaseTarget?.Name}")" Icon="grid-3x3-gap-fill" Size="md">
+<QModal Visible="@showPurchaseModal" VisibleChanged="@((bool v) => showPurchaseModal = v)" Title="@PurchaseModalTitle" Icon="grid-3x3-gap-fill" Size="md">
     <ChildContent>
         @if (purchaseTarget != null)
         {
@@ -220,6 +235,27 @@ else
         margin: 0;
     }
 
+    .trial-note.blocked {
+        color: var(--qm-primary);
+        margin-top: 6px;
+    }
+
+    .trial-gate-note {
+        color: var(--qm-primary) !important;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .module-card-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .module-card-actions > * {
+        flex: 1;
+    }
+
     .purchase-status {
         display: flex;
         align-items: center;
@@ -273,6 +309,16 @@ else
     private bool isLoading = true;
     private List<ModuleCatalogItem> catalog = new();
     private List<OrganizationModuleStatusDto> mine = new();
+
+    // Server-side enforcement lives in ModulesController's TRIAL_IN_PROGRESS check — this is just
+    // the matching client-side UX layer, derived from the already-loaded status list (no extra
+    // API call). Null once the trial module is fully paid, so "Add Module" unlocks for the rest.
+    private string? TrialingModuleName => mine.FirstOrDefault(m => m.Status == "Trialing")?.ModuleName;
+
+    private string PurchaseModalTitle =>
+        purchaseTarget != null && mine.FirstOrDefault(m => m.ModuleCode == purchaseTarget.Code)?.Status == "Trialing"
+            ? $"Pay Now: {purchaseTarget.Name}"
+            : $"Add {purchaseTarget?.Name}";
 
     private bool showPurchaseModal = false;
     private ModuleCatalogItem? purchaseTarget;

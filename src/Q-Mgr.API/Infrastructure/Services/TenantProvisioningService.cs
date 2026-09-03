@@ -42,6 +42,7 @@ public class TenantProvisioningService : ITenantProvisioningService
     };
 
     private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly IEmailSender _emailSender;
 
     public TenantProvisioningService(
         IUnitOfWork unitOfWork,
@@ -49,6 +50,7 @@ public class TenantProvisioningService : ITenantProvisioningService
         IDistributedCache cache,
         IConfiguration configuration,
         IPlatformSettingsService platformSettingsService,
+        IEmailSender emailSender,
         ILogger<TenantProvisioningService> logger)
     {
         _unitOfWork = unitOfWork;
@@ -56,6 +58,7 @@ public class TenantProvisioningService : ITenantProvisioningService
         _cache = cache;
         _configuration = configuration;
         _platformSettingsService = platformSettingsService;
+        _emailSender = emailSender;
         _logger = logger;
     }
 
@@ -102,7 +105,7 @@ public class TenantProvisioningService : ITenantProvisioningService
             await _unitOfWork.ExecuteInTransactionAsync(async ct =>
             {
                 // Parse industry type
-                var industryType = IndustryType.General;
+                var industryType = IndustryType.Service;
                 if (!string.IsNullOrEmpty(request.IndustryType))
                 {
                     Enum.TryParse<IndustryType>(request.IndustryType, true, out industryType);
@@ -298,29 +301,102 @@ public class TenantProvisioningService : ITenantProvisioningService
             return false;
         }
 
-        // Get organization
         var organization = await _unitOfWork.Organizations.GetByIdAsync(organizationId, cancellationToken);
         if (organization == null)
         {
             return false;
         }
 
-        // Update organization status
+        await MarkVerifiedAsync(organization, cancellationToken);
+        _logger.LogInformation("Email verified for organization {OrganizationId}", organizationId);
+        return true;
+    }
+
+    public async Task<bool> AdminVerifyAsync(Guid organizationId, CancellationToken cancellationToken = default)
+    {
+        var organization = await _unitOfWork.Organizations.GetByIdAsync(organizationId, cancellationToken);
+        if (organization == null || organization.Status != TenantStatus.Pending)
+        {
+            return false;
+        }
+
+        await MarkVerifiedAsync(organization, cancellationToken);
+        _logger.LogInformation("Organization {OrganizationId} verified directly by a platform admin (no token)", organizationId);
+        return true;
+    }
+
+    /// <summary>Shared tail of both VerifyEmailAsync (after a real token check) and AdminVerifyAsync
+    /// (admin vouching directly, no token) — status/VerifiedAt, clears any pending cached token,
+    /// and seeds the org's default branch/service types exactly like a real self-verified signup.</summary>
+    private async Task MarkVerifiedAsync(Organization organization, CancellationToken cancellationToken)
+    {
         organization.Status = TenantStatus.Trialing;
         organization.VerifiedAt = DateTime.UtcNow;
 
         await _unitOfWork.Organizations.UpdateAsync(organization, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // Remove token from cache
-        await _cache.RemoveAsync(cacheKey, cancellationToken);
+        await _cache.RemoveAsync($"{VerificationTokenPrefix}{organization.Id}", cancellationToken);
 
-        // Seed default data for the new tenant
-        await SeedDefaultDataAsync(organizationId, cancellationToken);
+        await SeedDefaultDataAsync(organization.Id, cancellationToken);
+    }
 
-        _logger.LogInformation("Email verified for organization {OrganizationId}", organizationId);
+    public async Task<bool> ResendVerificationEmailAsync(Guid organizationId, CancellationToken cancellationToken = default)
+    {
+        var organization = await _unitOfWork.Organizations.GetByIdAsync(organizationId, cancellationToken);
+        if (organization == null || organization.Status != TenantStatus.Pending)
+        {
+            return false;
+        }
 
-        return true;
+        var adminUser = await _unitOfWork.Users.FirstOrDefaultAsync(
+            u => u.OrganizationId == organizationId, cancellationToken);
+        if (adminUser == null)
+        {
+            return false;
+        }
+
+        var token = await GenerateVerificationTokenAsync(organizationId, cancellationToken);
+        var sent = await SendVerificationEmailAsync(adminUser, organization, token, cancellationToken);
+
+        _logger.LogInformation("Resent verification email for organization {OrganizationId} (sent={Sent})", organizationId, sent);
+        return sent;
+    }
+
+    private async Task<bool> SendVerificationEmailAsync(User user, Organization organization, string token, CancellationToken cancellationToken)
+    {
+        var saas = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+        var baseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+        var verificationUrl = $"{baseUrl}/verify?org={organization.Id}&token={token}";
+
+        var subject = "Verify your Q-Mgr account";
+        var htmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>Verify your email</title>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+        <h1 style='color: #2563eb;'>Verify your email</h1>
+        <p>Hi {user.FirstName},</p>
+        <p>You requested a new verification link for your Q-Mgr account. Click the button below to verify your email:</p>
+        <div style='text-align: center; margin: 30px 0;'>
+            <a href='{verificationUrl}' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;'>Verify Email Address</a>
+        </div>
+        <p>Or copy and paste this link into your browser:</p>
+        <p style='word-break: break-all; color: #666;'>{verificationUrl}</p>
+        <p>This link will expire in 24 hours.</p>
+        <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;'>
+        <p style='color: #666; font-size: 14px;'>
+            If you didn't request this email, you can safely ignore it.
+        </p>
+    </div>
+</body>
+</html>";
+
+        return await _emailSender.SendAsync(user.Email, subject, htmlBody, cancellationToken);
     }
 
     public async Task SuspendTenantAsync(Guid organizationId, string reason, CancellationToken cancellationToken = default)
@@ -418,51 +494,33 @@ public class TenantProvisioningService : ITenantProvisioningService
     {
         var serviceTypes = industryType switch
         {
-            IndustryType.Hospital => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
+            IndustryType.Health => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
             {
                 ("GEN", "General Consultation", "G", 15, 1),
                 ("LAB", "Laboratory", "L", 10, 2),
                 ("PHARM", "Pharmacy", "P", 5, 3),
                 ("CASH", "Cashier", "C", 5, 4)
             },
-            IndustryType.Bank => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
+            IndustryType.Business => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
             {
-                ("CASH", "Cash Services", "C", 5, 1),
-                ("ACC", "Account Services", "A", 15, 2),
-                ("LOAN", "Loans", "L", 20, 3),
-                ("CS", "Customer Service", "S", 10, 4)
-            },
-            IndustryType.Government => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
-            {
-                ("DOC", "Document Services", "D", 15, 1),
+                ("DOC", "Document/Account Services", "D", 15, 1),
                 ("PAY", "Payments", "P", 10, 2),
                 ("INQ", "Inquiries", "I", 10, 3),
                 ("REG", "Registration", "R", 20, 4)
             },
-            IndustryType.Telecom => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
+            IndustryType.Communications => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
             {
                 ("BILL", "Bill Payment", "B", 5, 1),
                 ("SUB", "Subscriptions", "S", 15, 2),
                 ("TECH", "Technical Support", "T", 20, 3),
                 ("SIM", "SIM Services", "M", 10, 4)
             },
-            IndustryType.Pharmacy => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
+            IndustryType.Education => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
             {
-                ("RX", "Prescription Pickup", "P", 5, 1),
-                ("CONS", "Consultation", "C", 10, 2),
-                ("OTC", "Over-the-Counter", "O", 3, 3)
-            },
-            IndustryType.Restaurant => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
-            {
-                ("ORDER", "Order Pickup", "O", 5, 1),
-                ("TABLE", "Table Service", "T", 2, 2),
-                ("RES", "Reservations", "R", 5, 3)
-            },
-            IndustryType.ElectronicsShop => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
-            {
-                ("SALES", "Sales", "S", 15, 1),
-                ("REPAIR", "Repairs", "R", 10, 2),
-                ("PICKUP", "Pickup", "P", 5, 3)
+                ("ADM", "Admissions", "A", 20, 1),
+                ("FEES", "Fees Payment", "F", 10, 2),
+                ("RECS", "Student Records", "R", 15, 3),
+                ("VISIT", "Visitor Check-In", "V", 5, 4)
             },
             _ => new List<(string Code, string Name, string Prefix, int AvgTime, int Priority)>
             {

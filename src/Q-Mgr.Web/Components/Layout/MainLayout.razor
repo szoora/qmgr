@@ -152,7 +152,7 @@ else
                                 <li><a href="queue/counter" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
                             }
                             <li><a href="queue/kiosk" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/kiosk") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
-                            <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/display") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
+                            <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/queue/display/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
                         </ul>
                     </li>
                 }
@@ -160,7 +160,7 @@ else
                 <!-- Visitor & Safeguarding (Visitor Management + the Welfare Ledger — one module,
                      was 2 scattered nav homes before: a standalone Visitor Management item, and
                      3 Welfare pages buried inside Administration) -->
-                @if ((canViewVisitors || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.VisitorSafeguarding))
+                @if ((canViewVisitors || canViewStudents || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.VisitorSafeguarding))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("visitor-safeguarding") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("visitor-safeguarding"))" @onclick:preventDefault>
@@ -172,6 +172,10 @@ else
                             @if (canViewVisitors)
                             {
                                 <li><a href="admin/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitor Management</a></li>
+                            }
+                            @if (canViewStudents)
+                            {
+                                <li><a href="admin/visitors/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/roster") ? "active" : "")"><i class="bi bi-mortarboard-fill"></i>Student Roster</a></li>
                             }
                             @if (canViewWelfare)
                             {
@@ -197,33 +201,38 @@ else
                     </li>
                 }
 
-                <!-- Campaign Marketing -->
-                @if (canViewMarketing && HasModule(ModuleCodes.EngagementCommunications))
+                <!-- Engagement & Communications (Digital Signage + Campaign Marketing + Feedback —
+                     one module, was 3 scattered nav homes before: a "Digital Signage" submenu, a
+                     standalone "Campaign Marketing" item, and Feedback split between Reports &
+                     Administration. Matches the Visitor & Safeguarding / Integrations & API
+                     consolidation pattern below. -->
+                @if ((canViewContent || canViewMarketing || canViewFeedback) && HasModule(ModuleCodes.EngagementCommunications))
                 {
-                    <li class="nav-item">
-                        <a href="admin/marketing" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/admin/marketing") ? "active" : "")">
-                            <i class="bi bi-megaphone-fill"></i>
-                            <span>Campaign Marketing</span>
-                        </a>
-                    </li>
-                }
-
-                <!-- Digital Signage -->
-                @if (canViewContent && HasModule(ModuleCodes.EngagementCommunications))
-                {
-                    <li class="nav-item has-submenu @(IsMenuExpanded("content") ? "open" : "")">
-                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("content"))" @onclick:preventDefault>
-                            <i class="bi bi-collection-play"></i>
-                            <span>Digital Signage</span>
+                    <li class="nav-item has-submenu @(IsMenuExpanded("engagement") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("engagement"))" @onclick:preventDefault>
+                            <i class="bi bi-broadcast"></i>
+                            <span>Engagement & Communications</span>
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="content/media" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
-                            <li><a href="content/playlists" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
-                            <li><a href="content/campaigns" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaigns</a></li>
-                            <li><a href="content/zones" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
-                            <li><a href="content/schedules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
-                            <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/display/signage") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
+                            @if (canViewContent)
+                            {
+                                <li><a href="content/media" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
+                                <li><a href="content/playlists" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
+                                <li><a href="content/campaigns" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-easel-fill"></i>Display Campaigns</a></li>
+                                <li><a href="content/zones" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
+                                <li><a href="content/schedules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
+                                <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/display/signage/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
+                            }
+                            @if (canViewMarketing)
+                            {
+                                <li><a href="admin/marketing" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/marketing") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaign Marketing</a></li>
+                            }
+                            @if (canViewFeedback)
+                            {
+                                <li><a href="admin/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
+                                <li><a href="reports/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-bar-chart-line-fill"></i>Feedback Reports</a></li>
+                            }
                         </ul>
                     </li>
                 }
@@ -241,10 +250,6 @@ else
                             <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
                             <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
                             <li><a href="reports/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
-                            @if (canViewFeedback && HasModule(ModuleCodes.EngagementCommunications))
-                            {
-                                <li><a href="reports/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Customer Feedback</a></li>
-                            }
                             @if (canViewVisitors && HasModule(ModuleCodes.VisitorSafeguarding))
                             {
                                 <li><a href="reports/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
@@ -285,10 +290,6 @@ else
                                 <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
                                 <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
                                 <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
-                            }
-                            @if (canViewFeedback && HasModule(ModuleCodes.EngagementCommunications))
-                            {
-                                <li><a href="admin/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
                             }
                             @if (canViewSettings)
                             {
@@ -551,6 +552,7 @@ else
     private bool canViewApiClients = false;
     private bool canViewFeedback = false;
     private bool canViewVisitors = false;
+    private bool canViewStudents = false;
     private bool canViewWelfare = false;
     private bool canViewWelfareReports = false;
     private bool canViewMarketing = false;
@@ -827,6 +829,7 @@ else
         canViewApiClients = await PermissionService.HasPermissionAsync(Permissions.ApiClientsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
+        canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
         canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
         canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
         canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
@@ -1009,14 +1012,19 @@ else
 
     private bool IsMenuExpanded(string menuKey) => expandedMenus.Contains(menuKey);
 
+    // Exact match only — a StartsWith fallback used to live here to catch dynamic-segment routes
+    // (Customer Display/Full-Screen Signage append a branch ID the nav link itself doesn't know
+    // ahead of time), but it silently double-highlighted any nav item whose route was a literal
+    // string-prefix of another item's, e.g. "/admin/visitors" matching "/admin/visitors/roster",
+    // or "Overview" (/reports) matching every other /reports/* sub-page. Callers with a genuinely
+    // dynamic route now pass the fully-resolved path (same one used in their own href) instead.
     private bool IsActive(string path)
     {
         var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
         if (string.IsNullOrEmpty(currentPath)) currentPath = "/";
         else currentPath = "/" + currentPath;
 
-        return currentPath.Equals(path, StringComparison.OrdinalIgnoreCase) ||
-               (path != "/" && currentPath.StartsWith(path, StringComparison.OrdinalIgnoreCase));
+        return currentPath.Equals(path, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ShowBranchSelector()

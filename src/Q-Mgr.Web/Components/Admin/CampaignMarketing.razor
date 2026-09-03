@@ -3,8 +3,11 @@
 @inject IToastService NotificationService
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 
@@ -334,6 +337,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.MarketingView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

@@ -7,6 +7,9 @@
 @inject IPermissionService PermissionService
 @inject NavigationManager NavigationManager
 @inject IBranchStateService BranchState
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>Schedules - Q-Mgr</PageTitle>
 
@@ -591,6 +594,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
         {
             NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            NavigationManager.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

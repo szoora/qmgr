@@ -132,28 +132,19 @@
 
                         <div class="form-group">
                             <label for="industry"><QIcon Name="tags" Size="16" /><span>Industry Type</span></label>
-                            @* BUG FIX: these option values used to be free-text words ("healthcare",
-                               "banking", etc.) that didn't match any QMgr.Domain.Enums.IndustryType
-                               member name. RegisterOrganizationCommandHandler does
-                               Enum.TryParse<IndustryType>(request.IndustryType, ...) — a failed parse
-                               silently falls back to IndustryType.General, so almost every industry
-                               selection here (all except the two that happened to coincidentally
-                               match, "government" and "telecom") was seeding the wrong default
-                               service types for a brand-new org. Caught live while walking through
-                               registration and checking what actually got seeded in the database.
-                               Values now match the real enum member names; Pharmacy — a supported
-                               backend industry type with its own default service types — previously
-                               had no UI option at all and is added below. *@
+                            @* Option values must match real QMgr.Domain.Enums.IndustryType member names —
+                               RegisterOrganizationCommandHandler does Enum.TryParse<IndustryType>(...) and a
+                               failed parse silently falls back to IndustryType.Service, seeding the wrong
+                               default service types for a brand-new org. Consolidated 2026-09-02 from 9 narrow
+                               verticals down to 5 broader categories — see IndustryType.cs's own doc comment
+                               for the reasoning and the data migration that remapped existing orgs. *@
                             <select id="industry" @bind="formData.IndustryType" class="form-control">
                                 <option value="">Select your industry</option>
-                                <option value="Hospital">Healthcare</option>
-                                <option value="Bank">Banking &amp; Finance</option>
-                                <option value="Pharmacy">Pharmacy</option>
-                                <option value="Government">Government</option>
-                                <option value="ElectronicsShop">Retail</option>
-                                <option value="Telecom">Telecommunications</option>
-                                <option value="Restaurant">Hospitality &amp; Food Service</option>
-                                <option value="General">Other</option>
+                                <option value="Service">Retail, Hospitality &amp; General Service</option>
+                                <option value="Business">Business (Banking, Government &amp; Offices)</option>
+                                <option value="Health">Health</option>
+                                <option value="Education">Education</option>
+                                <option value="Communications">Communications</option>
                             </select>
                         </div>
 
@@ -177,8 +168,8 @@
                 {
                     <div class="form-step">
                         <div class="form-group">
-                            <label><QIcon Name="grid-3x3-gap-fill" Size="16" /><span>Choose your modules *</span></label>
-                            <small class="form-hint">Pick at least one to continue &mdash; you can add the others any time from Billing.</small>
+                            <label><QIcon Name="grid-3x3-gap-fill" Size="16" /><span>Choose your module *</span></label>
+                            <small class="form-hint">Pick the one module to start your free trial with &mdash; you can add more once this one is fully paid.</small>
                         </div>
 
                         @if (loadingModules)
@@ -190,9 +181,9 @@
                             <div class="module-picker">
                                 @foreach (var module in catalogModules)
                                 {
-                                    <label class="module-card @(selectedModuleCodes.Contains(module.Code) ? "selected" : "")">
-                                        <input type="checkbox" checked="@selectedModuleCodes.Contains(module.Code)"
-                                               @onchange="@((ChangeEventArgs e) => ToggleModule(module.Code, (bool)e.Value!))" />
+                                    <label class="module-card @(selectedModuleCode == module.Code ? "selected" : "")">
+                                        <input type="radio" name="module" checked="@(selectedModuleCode == module.Code)"
+                                               @onchange="@(() => SelectModule(module.Code))" />
                                         <div class="module-card-body">
                                             <div class="module-card-head">
                                                 <span class="module-name">@module.Name</span>
@@ -212,7 +203,7 @@
                                 <span>Back</span>
                             </button>
                             <button type="button" class="btn-login" @onclick="NextStep"
-                                    disabled="@(selectedModuleCodes.Count == 0)">
+                                    disabled="@(selectedModuleCode == null)">
                                 <span>Next Step</span>
                                 <QIcon Name="arrow-right" Size="18" />
                             </button>
@@ -310,16 +301,16 @@
                             {
                                 <div class="summary-row">
                                     <span class="summary-label">Industry:</span>
-                                    <span class="summary-value">@formData.IndustryType</span>
+                                    <span class="summary-value">@IndustryLabel(formData.IndustryType)</span>
                                 </div>
                             }
                         </div>
 
                         <div class="summary-section">
-                            <h4>Modules</h4>
+                            <h4>Module</h4>
                             <div class="summary-row">
-                                <span class="summary-label">Selected:</span>
-                                <span class="summary-value">@string.Join(", ", catalogModules.Where(m => selectedModuleCodes.Contains(m.Code)).Select(m => m.Name))</span>
+                                <span class="summary-label">Trial:</span>
+                                <span class="summary-value">@(catalogModules.FirstOrDefault(m => m.Code == selectedModuleCode)?.Name)</span>
                             </div>
                         </div>
 
@@ -703,7 +694,7 @@
     private bool resendComplete = false;
     private int trialDays = 14; // Overwritten by the real platform setting below; this is only the fallback if that fetch fails.
     private List<ModuleCatalogItem> catalogModules = new();
-    private HashSet<string> selectedModuleCodes = new();
+    private string? selectedModuleCode;
     private bool loadingModules = true;
 
     private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
@@ -739,11 +730,7 @@
 
     private record TrialInfoResponse(int TrialDays, string? BaseDomain);
 
-    private void ToggleModule(string code, bool isChecked)
-    {
-        if (isChecked) selectedModuleCodes.Add(code);
-        else selectedModuleCodes.Remove(code);
-    }
+    private void SelectModule(string code) => selectedModuleCode = code;
 
     private static string FormatPrice(ModuleCatalogItem module) =>
         $"UGX {module.MonthlyPriceUgx:N0}/mo";
@@ -821,7 +808,7 @@
                 contactPhone = formData.ContactPhone,
                 industryType = formData.IndustryType,
                 acceptTerms = formData.AcceptTerms,
-                selectedModuleCodes = selectedModuleCodes.ToList()
+                selectedModuleCodes = selectedModuleCode != null ? new List<string> { selectedModuleCode } : new List<string>()
             };
 
             var response = await Http.PostAsJsonAsync("api/v1/register", request);
@@ -876,6 +863,22 @@
             isResending = false;
         }
     }
+
+    // Mirrors the <option> label text in the Industry Type <select> above — the option values are
+    // real QMgr.Domain.Enums.IndustryType member names, not all human-readable as-is (e.g.
+    // "Service" for "Retail, Hospitality & General Service"), so the step-4 confirmation summary
+    // needs this to show the friendly label instead of the raw enum value the user never saw on screen.
+    private static readonly Dictionary<string, string> IndustryLabels = new()
+    {
+        ["Service"] = "Retail, Hospitality & General Service",
+        ["Business"] = "Business (Banking, Government & Offices)",
+        ["Health"] = "Health",
+        ["Education"] = "Education",
+        ["Communications"] = "Communications",
+    };
+
+    private string IndustryLabel(string? value) =>
+        value != null && IndustryLabels.TryGetValue(value, out var label) ? label : value ?? "";
 
     // Form model
     private class RegisterFormData

@@ -1925,7 +1925,7 @@
 @code {
     [Parameter] public string? IndustryParam { get; set; }
 
-    private IndustryType currentIndustry = IndustryType.General;
+    private IndustryType currentIndustry = IndustryType.Service;
     private List<ServiceTypeQueueDto> serviceTypes = new();
     private ServiceTypeQueueDto? selectedService;
     private TokenDto? generatedToken;
@@ -2304,49 +2304,37 @@
 
     private string GetIndustryIcon() => currentIndustry switch
     {
-        IndustryType.Hospital => "hospital",
-        IndustryType.Bank => "bank",
-        IndustryType.Pharmacy => "capsule",
-        IndustryType.ElectronicsShop => "laptop",
-        IndustryType.Government => "bank",
-        IndustryType.Telecom => "broadcast",
-        IndustryType.Restaurant => "shop",
+        IndustryType.Health => "hospital",
+        IndustryType.Business => "briefcase",
+        IndustryType.Communications => "broadcast",
+        IndustryType.Education => "mortarboard",
         _ => "collection"
     };
 
     private string GetIndustryTitle() => currentIndustry switch
     {
-        IndustryType.Hospital => "Healthcare Services",
-        IndustryType.Bank => "Banking Services",
-        IndustryType.Pharmacy => "Pharmacy",
-        IndustryType.ElectronicsShop => "Tech Support",
-        IndustryType.Government => "Public Services",
-        IndustryType.Telecom => "Service Center",
-        IndustryType.Restaurant => "Welcome",
+        IndustryType.Health => "Healthcare Services",
+        IndustryType.Business => "Business Services",
+        IndustryType.Communications => "Service Center",
+        IndustryType.Education => "Student Services",
         _ => "Q-Mgr"
     };
 
     private string GetWelcomeMessage() => currentIndustry switch
     {
-        IndustryType.Hospital => "Welcome to Our Healthcare Facility",
-        IndustryType.Bank => "Welcome to Our Bank",
-        IndustryType.Pharmacy => "Welcome to Our Pharmacy",
-        IndustryType.ElectronicsShop => "Welcome to Tech Support",
-        IndustryType.Government => "Welcome to Public Services",
-        IndustryType.Telecom => "Welcome to Our Service Center",
-        IndustryType.Restaurant => "Welcome! Table Service",
+        IndustryType.Health => "Welcome to Our Healthcare Facility",
+        IndustryType.Business => "Welcome to Our Office",
+        IndustryType.Communications => "Welcome to Our Service Center",
+        IndustryType.Education => "Welcome to Our Campus",
         _ => "Welcome!"
     };
 
     private string GetInstructionMessage() => currentIndustry switch
     {
-        IndustryType.Hospital => "Please select the department or service you need",
-        IndustryType.Bank => "Please select the service you require",
-        IndustryType.Pharmacy => "Please select your service type",
-        IndustryType.ElectronicsShop => "How can we help you today?",
-        IndustryType.Government => "Please select the service you need",
-        IndustryType.Telecom => "What can we help you with today?",
-        IndustryType.Restaurant => "Please select from our services below",
+        IndustryType.Health => "Please select the department or service you need",
+        IndustryType.Business => "Please select the service you require",
+        IndustryType.Communications => "What can we help you with today?",
+        IndustryType.Education => "Please select the service you need",
         _ => "Please select the service you require to receive your queue number"
     };
 

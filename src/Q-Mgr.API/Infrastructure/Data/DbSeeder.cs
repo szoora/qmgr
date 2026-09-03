@@ -37,6 +37,16 @@ public class DbSeeder
             // keyed by ModuleCodes instead of a TenantTier. See ModuleAccessService.
             await SeedModulesAsync();
 
+            // One-time grandfathering for any org still carrying a pre-modules paid Tier (only
+            // ever true for seed/demo rows created before the module system existed — every
+            // registration since then creates orgs at Tier=Free and goes straight through
+            // OrganizationModule, so this can never fire for a newly-registered org). Runs
+            // automatically and idempotently on every boot rather than needing a platform admin
+            // to trigger it — there's no "real customer" risk to gate behind manual review here,
+            // just pre-existing fixture data that would otherwise silently lose module access the
+            // moment FeatureFlagService's old Tier-based fallback is fully retired.
+            await SeedLegacyTenantModuleGrantsAsync();
+
             // Check if demo data already exists (exclude platform org)
             var platformOrgId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
             if (await _context.Organizations.AnyAsync(o => o.Id != platformOrgId))
@@ -558,6 +568,53 @@ public class DbSeeder
 
         if (changed)
             await _context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// See the call site's comment in SeedAsync — grandfathers any pre-existing paid-tier org
+    /// (Starter/Professional/Enterprise) with no OrganizationModule rows yet onto all 4 modules,
+    /// Active, no charge. Idempotent: an org that already has any OrganizationModule row (already
+    /// migrated, or has genuinely self-served/been-granted a module) is skipped every time.
+    /// </summary>
+    private async Task SeedLegacyTenantModuleGrantsAsync()
+    {
+        var paidOrgIds = await _context.Organizations
+            .Where(o => o.Tier != TenantTier.Free && o.Status != TenantStatus.Deleted)
+            .Select(o => o.Id)
+            .ToListAsync();
+        if (paidOrgIds.Count == 0) return;
+
+        var orgIdsWithModules = (await _context.OrganizationModules
+            .Select(om => om.OrganizationId)
+            .Distinct()
+            .ToListAsync())
+            .ToHashSet();
+
+        var toMigrate = paidOrgIds.Where(id => !orgIdsWithModules.Contains(id)).ToList();
+        if (toMigrate.Count == 0) return;
+
+        var modules = await _context.SubscriptionPlans
+            .Where(m => ModuleCodes.All.Contains(m.Code))
+            .ToListAsync();
+
+        foreach (var orgId in toMigrate)
+        {
+            foreach (var module in modules)
+            {
+                _context.OrganizationModules.Add(new OrganizationModule
+                {
+                    OrganizationId = orgId,
+                    ModuleId = module.Id,
+                    Status = OrganizationModuleStatus.Active,
+                    ActivatedAt = DateTime.UtcNow,
+                    GrantedByPlatformAdmin = true,
+                    AdminNote = "Grandfathered from legacy tier billing (automatic, pre-existing tenant)"
+                });
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Grandfathered {Count} legacy-tier organization(s) onto all modules", toMigrate.Count);
     }
 
     /// <summary>

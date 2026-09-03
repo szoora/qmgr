@@ -138,6 +138,20 @@ public class ModuleAccessService : IModuleAccessService
         await InvalidateCacheAsync(organizationId);
     }
 
+    public async Task<(string Code, string Name)?> GetBlockingTrialModuleAsync(Guid organizationId, string excludingModuleCode)
+    {
+        var blocking = await _dbContext.OrganizationModules
+            .Include(om => om.Module)
+            .AsNoTracking()
+            .Where(om => om.OrganizationId == organizationId
+                && om.Status == OrganizationModuleStatus.Trialing
+                && om.Module!.Code != excludingModuleCode)
+            .Select(om => new { om.Module!.Code, om.Module!.Name })
+            .FirstOrDefaultAsync();
+
+        return blocking == null ? null : (blocking.Code, blocking.Name);
+    }
+
     public async Task ActivateAsync(Guid organizationId, string moduleCode, BillingCycle billingCycle, string? stripeSubscriptionItemId = null)
     {
         var module = await GetModuleOrThrowAsync(moduleCode);

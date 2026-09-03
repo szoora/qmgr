@@ -1,47 +1,46 @@
 namespace QMgr.Domain.Enums;
 
 /// <summary>
-/// Defines the industry type for the organization, which affects kiosk customization and UI theming.
+/// Defines the industry type for the organization, which affects kiosk customization and UI
+/// theming. Consolidated 2026-09-02 from 9 narrow verticals (Hospital/Bank/Pharmacy/Retail/
+/// Government/Telecom/Restaurant/School/General) down to 5 broader categories, per the user's own
+/// framing: most of the old list was "a duplication of Service" from a queue-management
+/// perspective — differentiating a bank from a restaurant added categories without adding real
+/// functional difference, since admins customize their own service types after signup anyway.
+/// Only Health and Education stayed genuinely distinct (real regulatory/workflow differences:
+/// patient care, student records). See migration AddIndustryCategoryConsolidation for how existing
+/// Organization.IndustryType / DocArticle.Industry rows were remapped — this was a real data
+/// migration, not just a rename, since the underlying column is a raw int.
 /// </summary>
 public enum IndustryType
 {
     /// <summary>
-    /// General purpose queue management (default)
+    /// General service/walk-in counter business (retail, restaurant, telecom shop, or anything
+    /// without a more specific category) — the default/catch-all.
     /// </summary>
-    General = 0,
+    Service = 0,
 
     /// <summary>
-    /// Hospital/Healthcare facility - Medical services, patient queues
+    /// Office/paperwork-driven business — banks, government offices, and similar
+    /// appointment/document-centric organizations.
     /// </summary>
-    Hospital = 1,
+    Business = 1,
 
     /// <summary>
-    /// Bank/Financial institution - Banking services, financial transactions
+    /// Healthcare — hospitals, clinics, pharmacies. Kept distinct from Service for genuinely
+    /// different regulatory/workflow needs (patient care, prescriptions).
     /// </summary>
-    Bank = 2,
+    Health = 2,
 
     /// <summary>
-    /// Pharmacy/Drugstore - Prescription pickup, consultation
+    /// Schools and academic institutions. Kept distinct from Service for genuinely different
+    /// workflow needs (student records) — the natural fit for the Visitor & Safeguarding module's
+    /// Student Roster/Welfare Ledger.
     /// </summary>
-    Pharmacy = 3,
+    Education = 3,
 
     /// <summary>
-    /// Electronics Shop - Sales, repairs, technical support
+    /// Telecom, ISPs, and other communications-infrastructure businesses.
     /// </summary>
-    ElectronicsShop = 4,
-
-    /// <summary>
-    /// Government Office - Public services, permits, documentation
-    /// </summary>
-    Government = 5,
-
-    /// <summary>
-    /// Telecom/Service Center - Phone, internet service support
-    /// </summary>
-    Telecom = 6,
-
-    /// <summary>
-    /// Restaurant/Food Service - Table management, order pickup
-    /// </summary>
-    Restaurant = 7
+    Communications = 4
 }

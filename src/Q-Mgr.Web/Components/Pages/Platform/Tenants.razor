@@ -15,51 +15,7 @@
         <h1><QIcon Name="building-fill" Size="32" /> Tenant Management</h1>
         <p class="page-subtitle">Manage all organizations on the platform</p>
     </div>
-    <QButton Text="Migrate Legacy Tenants to Modules" Icon="arrow-repeat" Variant="secondary" OnClick="OpenMigrationModal" />
 </div>
-
-<!-- Legacy Tier -> Modules migration: one-time, admin-triggered, dry-run first. Never runs on
-     its own — see MigrateLegacyTenantsToModules's own doc comment on the API side for why. -->
-<QModal @bind-Visible="showMigrationModal" Title="Migrate Legacy Tenants to Modules" Size="lg">
-    <ChildContent>
-        <p>Every organization still on a paid legacy tier (Starter/Professional/Enterprise) gets all 4 modules granted for free, preserving their existing access. Free-tier organizations and anyone who already has module rows are skipped automatically.</p>
-
-        @if (migrationLoading)
-        {
-            <div class="loading-state"><QSpinner Size="md" /><span>Checking...</span></div>
-        }
-        else if (migrationReport != null)
-        {
-            <div class="migration-summary">
-                <p><strong>@migrationReport.Message</strong></p>
-
-                @if (migrationReport.Migrated.Any())
-                {
-                    <h5>@(migrationReport.DryRun ? "Would migrate" : "Migrated") (@migrationReport.Migrated.Count)</h5>
-                    <ul class="migration-list">
-                        @foreach (var org in migrationReport.Migrated)
-                        {
-                            <li>@org.Name <span class="text-muted">(@org.Tier)</span></li>
-                        }
-                    </ul>
-                }
-
-                @if (migrationReport.AlreadyMigrated.Any())
-                {
-                    <h5 class="text-muted">Already has modules — skipped (@migrationReport.AlreadyMigrated.Count)</h5>
-                }
-            </div>
-        }
-    </ChildContent>
-    <FooterContent>
-        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showMigrationModal = false)" />
-        @if (migrationReport is { DryRun: true } && migrationReport.Migrated.Any())
-        {
-            <QButton Text="@($"Confirm — Migrate {migrationReport.Migrated.Count} Organization(s)")" Icon="check-lg" Variant="primary"
-                     OnClick="@(() => RunMigration(dryRun: false))" Loading="@migrationLoading" />
-        }
-    </FooterContent>
-</QModal>
 
 <div class="admin-content">
     <!-- Filters -->
@@ -154,6 +110,15 @@
                                                      OnClick="@(() => ShowTierDialog(tenant))" Title="Change Tier" />
                                             <QButton Icon="grid-3x3-gap-fill" Variant="ghost" Size="sm"
                                                      OnClick="@(() => ShowModulesDialog(tenant))" Title="Manage Modules" />
+                                            @if (tenant.Status == TenantStatus.Pending)
+                                            {
+                                                <QButton Icon="envelope-fill" Variant="ghost" Size="sm"
+                                                         OnClick="@(() => ResendVerification(tenant))" Title="Resend Verification Email"
+                                                         Loading="@(resendingId == tenant.Id)" />
+                                                <QButton Icon="patch-check-fill" Variant="ghost" Size="sm"
+                                                         OnClick="@(() => VerifyTenantNow(tenant))" Title="Verify Now (skip email)"
+                                                         Class="btn-success" Loading="@(verifyingId == tenant.Id)" />
+                                            }
                                             @if (tenant.Status == TenantStatus.Active || tenant.Status == TenantStatus.Trialing)
                                             {
                                                 <QButton Icon="pause-circle-fill" Variant="ghost" Size="sm"
@@ -764,7 +729,7 @@
     private int extendTrialDays = 14;
     private Guid extendTrialTenantId;
 
-    private List<string> statusOptions = new() { "", "Active", "Trialing", "Suspended", "Canceled" };
+    private List<string> statusOptions = new() { "", "Pending", "Trialing", "Active", "Suspended", "Cancelled" };
     private List<string> tierOptions = new() { "", "Free", "Starter", "Professional", "Enterprise" };
 
     protected override async Task OnInitializedAsync()
@@ -926,6 +891,67 @@
         }
     }
 
+    private Guid? resendingId;
+    private Guid? verifyingId;
+
+    private async Task ResendVerification(TenantSummary tenant)
+    {
+        resendingId = tenant.Id;
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/admin/tenants/{tenant.Id}/resend-verification", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Sent", $"Verification email resent to {tenant.Name}'s admin.");
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            resendingId = null;
+        }
+    }
+
+    // No confirm dialog — matches ReactivateTenant just above, the closest precedent for a
+    // one-click admin action in this same row. Real access is only granted once (Status ==
+    // Pending is the guard on the button itself), so there's nothing destructive to double-check.
+    private async Task VerifyTenantNow(TenantSummary tenant)
+    {
+        verifyingId = tenant.Id;
+        try
+        {
+            var response = await Http.PostAsync($"api/v1/admin/tenants/{tenant.Id}/verify", null);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Verified", $"{tenant.Name} is now verified and active.");
+                await LoadTenants();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
+        }
+        finally
+        {
+            verifyingId = null;
+        }
+    }
+
     private void ShowTierDialog(TenantSummary tenant)
     {
         selectedTenant = tenant;
@@ -984,53 +1010,6 @@
     }
 
     private record TenantModuleStatus(string ModuleCode, string ModuleName, bool Purchased, string? Status, DateTime? ActivatedAt, DateTime? TrialEndsAt, bool GrantedByPlatformAdmin);
-
-    private bool showMigrationModal = false;
-    private bool migrationLoading = false;
-    private MigrationReport? migrationReport;
-
-    private record MigrationOrgSummary(Guid Id, string Name, string Tier);
-    private record MigrationReport(bool DryRun, int TotalPaidOrganizations, List<MigrationOrgSummary> AlreadyMigrated, List<MigrationOrgSummary> Migrated, string Message);
-
-    private async Task OpenMigrationModal()
-    {
-        showMigrationModal = true;
-        migrationReport = null;
-        await RunMigration(dryRun: true);
-    }
-
-    private async Task RunMigration(bool dryRun)
-    {
-        migrationLoading = true;
-        StateHasChanged();
-
-        try
-        {
-            var response = await Http.PostAsync($"api/v1/admin/migrate-legacy-tenants-to-modules?dryRun={dryRun}", null);
-            if (response.IsSuccessStatusCode)
-            {
-                migrationReport = await response.Content.ReadFromJsonAsync<MigrationReport>(JsonOptions);
-                if (!dryRun)
-                {
-                    NotificationService.Notify(ToastSeverity.Success, "Migration complete", migrationReport?.Message ?? "Done.");
-                    await LoadTenants();
-                }
-            }
-            else
-            {
-                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
-                NotificationService.Notify(ToastSeverity.Error, title, detail);
-            }
-        }
-        catch (Exception ex)
-        {
-            NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
-        }
-        finally
-        {
-            migrationLoading = false;
-        }
-    }
 
     private async Task ConfirmTierChange()
     {
@@ -1132,10 +1111,12 @@
 
     private string GetStatusVariant(TenantStatus status) => status switch
     {
+        TenantStatus.Pending => "secondary",
         TenantStatus.Active => "success",
         TenantStatus.Trialing => "info",
         TenantStatus.Suspended => "warning",
-        TenantStatus.Canceled => "danger",
+        TenantStatus.Cancelled => "danger",
+        TenantStatus.Deleted => "danger",
         _ => "secondary"
     };
 
@@ -1152,7 +1133,16 @@
         OnboardingCompleted = details.OnboardingCompleted
     };
 
-    private enum TenantStatus { Active, Trialing, Suspended, Canceled }
+    // BUG FIX: this used to be missing Pending and Deleted entirely, and misspelled Cancelled as
+    // "Canceled" (single L) — since QMgr.Domain.Enums.TenantStatus (Q-Mgr.API/Domain/Enums/
+    // BillingEnums.cs) serializes as a JSON string (JsonStringEnumConverter is global), any org
+    // actually in one of the missing/misspelled states failed System.Text.Json deserialization
+    // for the *entire* tenant list — not just that one row. A brand-new, not-yet-verified
+    // registration sits in exactly this state (Pending) until the admin actions below act on it,
+    // so this was a live bug, not a theoretical one. Values now match the real enum exactly
+    // (name and int) — see that file for the authoritative definition; this is still a local
+    // duplicate copy, not a Q-Mgr.Shared type, since Web doesn't reference the API project.
+    private enum TenantStatus { Pending = 0, Trialing = 1, Active = 2, Suspended = 3, Cancelled = 4, Deleted = 5 }
     private enum TenantTier { Free, Starter, Professional, Enterprise }
     private enum SubscriptionStatus { Active, Canceled, PastDue, Trialing, Incomplete }
     private enum BillingCycle { Monthly, Annual }

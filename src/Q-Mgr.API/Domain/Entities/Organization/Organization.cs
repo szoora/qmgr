@@ -58,7 +58,7 @@ public class Organization : BaseAuditableEntity
     /// <summary>
     /// The industry type determines kiosk theming and default service types
     /// </summary>
-    public IndustryType IndustryType { get; set; } = IndustryType.General;
+    public IndustryType IndustryType { get; set; } = IndustryType.Service;
 
     #region SaaS / Multi-Tenancy Fields
 

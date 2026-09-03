@@ -9,7 +9,10 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 @inject IAuthService AuthService
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
@@ -610,6 +613,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

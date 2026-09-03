@@ -7,6 +7,9 @@
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IBranchStateService BranchState
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>Display Zones - Q-Mgr</PageTitle>
 
@@ -545,6 +548,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 
