@@ -1,10 +1,13 @@
 @page "/"
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
 @implements IDisposable
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
+@inject IModuleStateService ModuleState
+@inject IModuleApiService ModuleApi
 @inject NavigationManager Navigation
 
 <PageTitle>Dashboard - Q-Mgr</PageTitle>
@@ -101,6 +104,30 @@ else if (noBranchSelected)
                 <span>Click on the branch selector in the sidebar footer</span>
             </div>
         </div>
+    </div>
+}
+else if (!hasCoreQueue)
+{
+    @* Every panel below this point reports on queues, counters and tokens, which belong to Core
+       Queue Management. Showing them to an organization that never bought it produced the report
+       that started this: a dashboard full of zeroes plus "Open Kiosk" and "Counter Terminal"
+       shortcuts leading to pages the tenant has no licence for. *@
+    <div class="module-empty">
+        <div class="module-empty-icon"><QIcon Name="grid-3x3-gap-fill" /></div>
+        <h2>Your queue dashboard lives in Core Queue Management</h2>
+        <p>
+            Waiting lists, counters, tokens and the kiosk and display screens are all part of the
+            Core Queue Management module, which your organization hasn't added yet.
+        </p>
+        <div class="module-empty-actions">
+            <QButton Text="Browse modules" Icon="grid-3x3-gap-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+        </div>
+        @if (activeModuleNames.Any())
+        {
+            <p class="module-empty-note">
+                Your active modules: @string.Join(", ", activeModuleNames). Use the sidebar to open them.
+            </p>
+        }
     </div>
 }
 else if (queueStatus != null)
@@ -302,6 +329,48 @@ else if (queueStatus != null)
 }
 
 <style>
+    .module-empty {
+        max-width: 620px;
+        margin: 48px auto;
+        padding: 40px 32px;
+        text-align: center;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+    }
+
+    .module-empty-icon {
+        font-size: 40px;
+        line-height: 1;
+        color: var(--qm-primary);
+        margin-bottom: 16px;
+    }
+
+    .module-empty h2 {
+        font-family: var(--qm-font-display);
+        font-size: 22px;
+        color: var(--qm-text-primary);
+        margin: 0 0 12px 0;
+    }
+
+    .module-empty p {
+        color: var(--qm-text-secondary);
+        line-height: 1.6;
+        margin: 0 0 20px 0;
+    }
+
+    .module-empty-actions {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+    }
+
+    .module-empty-note {
+        margin-top: 20px !important;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
     .page-header {
         display: flex;
         justify-content: space-between;
@@ -838,7 +907,43 @@ else if (queueStatus != null)
         // Subscribe to branch changes
         BranchState.OnBranchChanged += HandleBranchChanged;
 
+        // LoadAsync is idempotent, so this is a no-op when MainLayout already populated it; it
+        // matters when the dashboard is the first page rendered on a fresh circuit.
+        await ModuleState.LoadAsync(ModuleApi);
+        await ResolveModulesAsync();
+
         // Note: We'll load data in OnAfterRenderAsync when BranchState is properly initialized
+    }
+
+    private bool hasCoreQueue = true;
+    private List<string> activeModuleNames = new();
+
+    /// <summary>
+    /// SuperAdmin administers every tenant and is never scoped to one tenant's purchases, matching
+    /// the bypass used by the sidebar, the navigation guard and the API's own module gate.
+    /// </summary>
+    private async Task ResolveModulesAsync()
+    {
+        if (await PermissionService.IsSuperAdminAsync())
+        {
+            hasCoreQueue = true;
+            return;
+        }
+
+        hasCoreQueue = ModuleState.ActiveModuleCodes.Contains(ModuleCodes.CoreQueue);
+
+        try
+        {
+            var catalog = await ModuleApi.GetMineAsync();
+            activeModuleNames = catalog
+                .Where(m => m.Purchased && m.ModuleCode != ModuleCodes.CoreQueue)
+                .Select(m => m.ModuleName)
+                .ToList();
+        }
+        catch
+        {
+            activeModuleNames = new();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
