@@ -250,6 +250,25 @@ real time: **a tag name in angle brackets inside a CSS or Razor comment is parse
 breaks the file (`/* the tile is a real <button> */`), and **a loop variable named `code` collides
 with the `@code` directive** when used in an attribute. Neither is obvious from the error message.
 
+**End-to-end coverage of this pass, run afterwards through an API key.** Signing in needs a
+password, which this assistant does not enter, so the authenticated surface was exercised through a
+broadly-scoped API client created directly in the dev database and deleted afterwards. Verified
+against real data: all four report endpoints return genuine aggregates (and the null-versus-zero
+distinction holds — a counter with a real 105-minute open window and nothing completed correctly
+reports 0%, while counters with no activity at all report null); an appointment was created, checked
+in, and produced a live queue ticket L001; a visitor was pre-registered, arrived, and appeared on the
+evacuation roll-call, whose count moved 0 to 1; and a watchlisted profile was refused check-in with
+409 and a staff-facing reason. Two route details worth recording: pre-registration takes a batch
+(`visitors: [...]`), and an expected visitor is converted by the normal
+`visitors/{id}/checkin`, not a dedicated route.
+
+**What remains unverified by observation**: every authenticated *screen*. The four rewritten report
+pages, the appointments admin page, the survey-questions tab, the evacuation and expected-visitor
+pages and the queue notification settings have never been rendered, only their endpoints exercised.
+Feedback question CRUD has no API scope mapped, so it could not be reached this way either. The
+queue customer notifier has still never sent a real message. Mobile viewport testing remains blocked
+by the browser tooling, and no accessibility tooling was run against the new markup.
+
 **Still open after this pass.** Stripe remains unverifiable without credentials, unchanged and per
 the user's own instruction. S3 storage, SMS and email provider credentials, and load testing still
 need real infrastructure. The queue notifier is wired and settings-driven but has not sent a real
