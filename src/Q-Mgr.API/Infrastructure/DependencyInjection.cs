@@ -48,6 +48,8 @@ public static class DependencyInjection
 
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();
+        // Queue-side customer messaging: ticket issued, nearly your turn, called to counter.
+        services.AddScoped<IQueueCustomerNotifier, QueueCustomerNotifier>();
         services.AddScoped<INotificationSettingsService, NotificationSettingsService>();
 
         // Platform-level email (org-less context, e.g. pre-verification signup email)

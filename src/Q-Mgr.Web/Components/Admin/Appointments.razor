@@ -1,0 +1,655 @@
+@page "/admin/appointments"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@inject IAppointmentApiService AppointmentApi
+@inject IQueueApiService QueueApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IToastService NotificationService
+@inject NavigationManager Navigation
+
+<PageTitle>Appointments - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Appointments</h1>
+            <p class="subtitle">Scheduled bookings, and the arrivals waiting to be checked in</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadAppointments" />
+            @if (canManage)
+            {
+                <QButton Text="New appointment" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenEditor(null))" />
+            }
+        </div>
+    </div>
+
+    <QCard Class="appointments-toolbar">
+        <div class="toolbar-row">
+            <div class="toolbar-dates">
+                <QButton Icon="chevron-left" Variant="ghost" Size="sm" OnClick="@(() => ShiftDay(-1))" aria-label="Previous day" />
+                <input type="date" class="date-input" value="@selectedDate.ToString("yyyy-MM-dd")"
+                       @onchange="OnDateChanged" aria-label="Day to show" />
+                <QButton Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => ShiftDay(1))" aria-label="Next day" />
+                <QButton Text="Today" Variant="secondary" Size="sm" OnClick="@GoToToday" />
+            </div>
+            <div class="toolbar-filters">
+                <label class="range-toggle">
+                    <input type="checkbox" checked="@showWholeWeek" @onchange="OnRangeToggled" />
+                    <span>Show the whole week</span>
+                </label>
+                <QSelect TValue="AppointmentStatus?" TItem="StatusOption" Data="@statusOptions"
+                         TextField="Label" ValueField="Value" Value="@filterStatus"
+                         ValueChanged="@OnStatusFilterChanged" Placeholder="Any status" />
+            </div>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading appointments…</span>
+        </div>
+    }
+    else if (appointments.Count == 0)
+    {
+        <div class="empty-state">
+            <QIcon Name="calendar-check" />
+            <h3>Nothing booked @(showWholeWeek ? "this week" : "for this day")</h3>
+            <p>
+                Bookings made here, or by customers on your public booking page, will appear on this
+                list ready to be checked in when they arrive.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="appointment-list">
+            @foreach (var group in appointments.GroupBy(a => a.ScheduledAt.ToLocalTime().Date).OrderBy(g => g.Key))
+            {
+                <div class="appointment-day">
+                    <h3 class="day-heading">@group.Key.ToString("dddd, d MMMM")</h3>
+                    @foreach (var appointment in group.OrderBy(a => a.ScheduledAt))
+                    {
+                        <div class="appointment-row status-@appointment.Status.ToString().ToLowerInvariant()">
+                            <div class="appointment-time">
+                                <span class="time">@appointment.ScheduledAt.ToLocalTime().ToString("HH:mm")</span>
+                                <span class="duration">@appointment.DurationMinutes min</span>
+                            </div>
+                            <div class="appointment-main">
+                                <span class="customer">@appointment.CustomerName</span>
+                                <div class="appointment-meta">
+                                    <span class="chip">@(appointment.ServiceTypeName ?? "Service")</span>
+                                    <span class="chip ref">@appointment.ReferenceCode</span>
+                                    @if (!string.IsNullOrWhiteSpace(appointment.CustomerPhone))
+                                    {
+                                        <span class="chip">@appointment.CustomerPhone</span>
+                                    }
+                                    @if (appointment.TokenDisplayNumber != null)
+                                    {
+                                        <span class="chip issued">Ticket @appointment.TokenDisplayNumber</span>
+                                    }
+                                </div>
+                            </div>
+                            <span class="status-badge status-@appointment.Status.ToString().ToLowerInvariant()">@DescribeStatus(appointment.Status)</span>
+                            @if (canManage)
+                            {
+                                <div class="appointment-actions">
+                                    @if (appointment.Status is AppointmentStatus.Booked or AppointmentStatus.Confirmed)
+                                    {
+                                        <QButton Text="Check in" Icon="box-arrow-in-right" Variant="primary" Size="sm"
+                                                 OnClick="@(() => CheckIn(appointment))" />
+                                        <QButton Text="Reschedule" Icon="calendar-event" Variant="ghost" Size="sm"
+                                                 OnClick="@(() => OpenEditor(appointment))" />
+                                        <QButton Text="No show" Icon="person-x" Variant="ghost" Size="sm"
+                                                 OnClick="@(() => MarkNoShow(appointment))" />
+                                        <QButton Text="Cancel" Icon="x-circle" Variant="danger" Size="sm"
+                                                 OnClick="@(() => OpenCancel(appointment))" />
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showEditor" Title="@(editingId == null ? "New appointment" : "Reschedule appointment")" Size="md">
+    <ChildContent>
+        <div class="appointment-form">
+            @if (editingId == null)
+            {
+                <div class="form-group">
+                    <label for="apt-name">Customer name</label>
+                    <QInput TValue="string" Id="apt-name" @bind-Value="formName" MaxLength="120" Placeholder="Who is coming in?" />
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="apt-phone">Phone</label>
+                        <QInput TValue="string" Id="apt-phone" @bind-Value="formPhone" MaxLength="32" Placeholder="Optional" />
+                    </div>
+                    <div class="form-group">
+                        <label for="apt-email">Email</label>
+                        <QInput TValue="string" Id="apt-email" @bind-Value="formEmail" MaxLength="160" Placeholder="Optional" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="apt-service">Service</label>
+                    <QSelect TValue="Guid?" TItem="ServiceOption" Id="apt-service" Data="@serviceOptions"
+                             TextField="Label" ValueField="Value" Value="@formServiceTypeId"
+                             ValueChanged="@OnFormServiceChanged" Placeholder="Choose a service" />
+                </div>
+            }
+            else
+            {
+                <p class="reschedule-note">
+                    Rescheduling <strong>@formName</strong> (@formReference). Pick a new time below.
+                </p>
+            }
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="apt-date">Date</label>
+                    <input type="date" id="apt-date" class="date-input" value="@formDate.ToString("yyyy-MM-dd")" @onchange="OnFormDateChanged" />
+                </div>
+                <div class="form-group">
+                    <label for="apt-slot">Time</label>
+                    @if (isLoadingSlots)
+                    {
+                        <span class="slot-hint">Checking availability…</span>
+                    }
+                    else if (availability is { IsOpen: false })
+                    {
+                        <span class="slot-hint">The branch is closed that day.</span>
+                    }
+                    else if (freeSlots.Count == 0)
+                    {
+                        <span class="slot-hint">No free slots left that day.</span>
+                    }
+                    else
+                    {
+                        <QSelect TValue="DateTime?" TItem="SlotOption" Id="apt-slot" Data="@freeSlots"
+                                 TextField="Label" ValueField="Value" Value="@formSlot"
+                                 ValueChanged="@(v => formSlot = v)" Placeholder="Choose a time" />
+                    }
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="apt-notes">Notes</label>
+                <QInput TValue="string" Id="apt-notes" @bind-Value="formNotes" MaxLength="500" Placeholder="Optional" />
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showEditor = false)" />
+        <QButton Text="@(editingId == null ? "Book" : "Reschedule")" Variant="primary" OnClick="@SaveAppointment" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showCancel" Title="Cancel appointment" Size="sm">
+    <ChildContent>
+        <p>Cancel <strong>@cancelTarget?.CustomerName</strong>'s @(cancelTarget?.ScheduledAt.ToLocalTime().ToString("HH:mm") ?? "") appointment?</p>
+        <div class="form-group">
+            <label for="apt-cancel-reason">Reason</label>
+            <QInput TValue="string" Id="apt-cancel-reason" @bind-Value="cancelReason" MaxLength="200" Placeholder="Optional, shown in the record" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="secondary" OnClick="@(() => showCancel = false)" />
+        <QButton Text="Cancel appointment" Variant="danger" OnClick="@ConfirmCancel" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .appointments-toolbar { margin-bottom: 16px; }
+
+    .toolbar-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .toolbar-dates { display: flex; align-items: center; gap: 8px; }
+    .toolbar-filters { display: flex; align-items: center; gap: 16px; }
+
+    .date-input {
+        padding: 8px 12px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-input);
+        color: var(--qm-text-primary);
+        font: inherit;
+    }
+
+    .range-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.875rem;
+        color: var(--qm-text-secondary);
+        cursor: pointer;
+    }
+
+    .day-heading {
+        margin: 24px 0 12px;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        color: var(--qm-text-muted);
+    }
+
+    .appointment-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 16px;
+        margin-bottom: 8px;
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+    }
+
+    .appointment-row.status-booked, .appointment-row.status-confirmed { border-left-color: var(--qm-primary); }
+    .appointment-row.status-checkedin { border-left-color: var(--qm-success); }
+    .appointment-row.status-completed { border-left-color: var(--qm-success); }
+    .appointment-row.status-cancelled { border-left-color: var(--qm-text-muted); opacity: .7; }
+    .appointment-row.status-noshow { border-left-color: var(--qm-danger); }
+
+    .appointment-time { min-width: 72px; display: flex; flex-direction: column; }
+    .appointment-time .time { font-weight: 700; font-size: 1.0625rem; color: var(--qm-text-primary); }
+    .appointment-time .duration { font-size: 0.75rem; color: var(--qm-text-muted); }
+
+    .appointment-main { flex: 1; min-width: 0; }
+    .appointment-main .customer { font-weight: 600; color: var(--qm-text-primary); }
+
+    .appointment-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+    .chip {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: var(--qm-radius-full);
+        background: var(--qm-bg-secondary);
+        color: var(--qm-text-secondary);
+    }
+
+    .chip.ref { font-family: var(--qm-font-mono); }
+    .chip.issued { background: rgba(var(--qm-success-rgb), 0.14); color: var(--qm-success); }
+
+    .status-badge {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: var(--qm-radius-full);
+        background: var(--qm-bg-secondary);
+        color: var(--qm-text-secondary);
+        white-space: nowrap;
+    }
+
+    .status-badge.status-checkedin { background: rgba(var(--qm-success-rgb), 0.14); color: var(--qm-success); }
+    .status-badge.status-noshow { background: rgba(var(--qm-danger-rgb), 0.14); color: var(--qm-danger); }
+
+    .appointment-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .slot-hint { color: var(--qm-text-muted); font-size: 0.875rem; }
+    .reschedule-note { color: var(--qm-text-secondary); margin-bottom: 16px; }
+
+    @@media (max-width: 768px) {
+        .appointment-row { flex-wrap: wrap; }
+        .appointment-actions { width: 100%; }
+        .form-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+@code {
+    private record StatusOption(string Label, AppointmentStatus? Value);
+    private record ServiceOption(string Label, Guid? Value, int DurationMinutes);
+    private record SlotOption(string Label, DateTime? Value);
+
+    private List<AppointmentDto> appointments = new();
+    private List<ServiceOption> serviceOptions = new();
+    private bool isLoading = true;
+    private bool canManage;
+
+    private DateTime selectedDate = DateTime.Today;
+    private bool showWholeWeek;
+    private AppointmentStatus? filterStatus;
+
+    private readonly List<StatusOption> statusOptions = new()
+    {
+        new("Any status", null),
+        new("Booked", AppointmentStatus.Booked),
+        new("Confirmed", AppointmentStatus.Confirmed),
+        new("Checked in", AppointmentStatus.CheckedIn),
+        new("Completed", AppointmentStatus.Completed),
+        new("Cancelled", AppointmentStatus.Cancelled),
+        new("No show", AppointmentStatus.NoShow)
+    };
+
+    // Editor state
+    private bool showEditor;
+    private bool isSaving;
+    private Guid? editingId;
+    private string formName = string.Empty;
+    private string? formPhone;
+    private string? formEmail;
+    private string? formNotes;
+    private string formReference = string.Empty;
+    private Guid? formServiceTypeId;
+    private DateTime formDate = DateTime.Today;
+    private DateTime? formSlot;
+    private AppointmentAvailabilityDto? availability;
+    private List<SlotOption> freeSlots = new();
+    private bool isLoadingSlots;
+
+    // Cancel state
+    private bool showCancel;
+    private AppointmentDto? cancelTarget;
+    private string? cancelReason;
+
+    private Guid BranchId => BranchState.CurrentBranchId;
+
+    private static string DescribeStatus(AppointmentStatus status) => status switch
+    {
+        AppointmentStatus.CheckedIn => "Checked in",
+        AppointmentStatus.NoShow => "No show",
+        _ => status.ToString()
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.QueueView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        canManage = await PermissionService.HasPermissionAsync(Permissions.QueueManage);
+        await BranchState.InitializeAsync();
+        await LoadServiceTypes();
+        await LoadAppointments();
+    }
+
+    private async Task LoadServiceTypes()
+    {
+        try
+        {
+            var services = await QueueApi.GetServiceTypesAsync(BranchId);
+            serviceOptions = services
+                .Select(s => new ServiceOption(s.Name, s.Id, s.AverageServiceTimeMinutes <= 0 ? 15 : s.AverageServiceTimeMinutes))
+                .ToList();
+        }
+        catch
+        {
+            serviceOptions = new();
+        }
+    }
+
+    private async Task LoadAppointments()
+    {
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            if (BranchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Choose a branch in the sidebar first.");
+                appointments = new();
+                return;
+            }
+
+            // The API takes UTC; the picker is the operator's local day.
+            var localStart = showWholeWeek ? StartOfWeek(selectedDate) : selectedDate.Date;
+            var localEnd = localStart.AddDays(showWholeWeek ? 7 : 1);
+
+            appointments = await AppointmentApi.GetAppointmentsAsync(
+                BranchId,
+                DateTime.SpecifyKind(localStart.ToUniversalTime(), DateTimeKind.Utc),
+                DateTime.SpecifyKind(localEnd.ToUniversalTime(), DateTimeKind.Utc),
+                filterStatus);
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not load appointments", ex.Message);
+            appointments = new();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static DateTime StartOfWeek(DateTime date)
+    {
+        var diff = (7 + (date.DayOfWeek - DayOfWeek.Monday)) % 7;
+        return date.Date.AddDays(-diff);
+    }
+
+    private async Task ShiftDay(int days)
+    {
+        selectedDate = selectedDate.AddDays(showWholeWeek ? days * 7 : days);
+        await LoadAppointments();
+    }
+
+    private async Task GoToToday()
+    {
+        selectedDate = DateTime.Today;
+        await LoadAppointments();
+    }
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var parsed))
+        {
+            selectedDate = parsed.Date;
+            await LoadAppointments();
+        }
+    }
+
+    private async Task OnRangeToggled(ChangeEventArgs e)
+    {
+        showWholeWeek = (bool)(e.Value ?? false);
+        await LoadAppointments();
+    }
+
+    private async Task OnStatusFilterChanged(AppointmentStatus? status)
+    {
+        filterStatus = status;
+        await LoadAppointments();
+    }
+
+    private void OpenEditor(AppointmentDto? existing)
+    {
+        editingId = existing?.Id;
+        formName = existing?.CustomerName ?? string.Empty;
+        formPhone = existing?.CustomerPhone;
+        formEmail = existing?.CustomerEmail;
+        formNotes = existing?.Notes;
+        formReference = existing?.ReferenceCode ?? string.Empty;
+        formServiceTypeId = existing?.ServiceTypeId ?? serviceOptions.FirstOrDefault()?.Value;
+        formDate = (existing?.ScheduledAt.ToLocalTime() ?? DateTime.Now).Date;
+        formSlot = null;
+        showEditor = true;
+        _ = LoadSlots();
+    }
+
+    private async Task OnFormServiceChanged(Guid? serviceTypeId)
+    {
+        formServiceTypeId = serviceTypeId;
+        await LoadSlots();
+    }
+
+    private async Task OnFormDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var parsed))
+        {
+            formDate = parsed.Date;
+            await LoadSlots();
+        }
+    }
+
+    /// <summary>
+    /// Only free slots are offered. Showing taken ones and rejecting the choice on save would be a
+    /// worse experience than not offering them at all.
+    /// </summary>
+    private async Task LoadSlots()
+    {
+        if (formServiceTypeId is not { } serviceTypeId)
+        {
+            freeSlots = new();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        isLoadingSlots = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            availability = await AppointmentApi.GetAvailabilityAsync(BranchId, serviceTypeId, DateOnly.FromDateTime(formDate));
+            freeSlots = (availability?.Slots ?? new List<AppointmentSlotDto>())
+                .Where(s => s.IsAvailable)
+                .Select(s => new SlotOption(s.StartAt.ToLocalTime().ToString("HH:mm"), s.StartAt))
+                .ToList();
+
+            if (formSlot != null && freeSlots.All(s => s.Value != formSlot))
+            {
+                formSlot = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not check availability", ex.Message);
+            freeSlots = new();
+        }
+        finally
+        {
+            isLoadingSlots = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SaveAppointment()
+    {
+        if (formSlot is not { } slot)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Pick a time", "Choose one of the free slots.");
+            return;
+        }
+
+        if (editingId == null && string.IsNullOrWhiteSpace(formName))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Name needed", "Enter who the appointment is for.");
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            if (editingId == null)
+            {
+                await AppointmentApi.CreateAppointmentAsync(BranchId, new CreateAppointmentRequest
+                {
+                    ServiceTypeId = formServiceTypeId,
+                    CustomerName = formName.Trim(),
+                    CustomerPhone = string.IsNullOrWhiteSpace(formPhone) ? null : formPhone.Trim(),
+                    CustomerEmail = string.IsNullOrWhiteSpace(formEmail) ? null : formEmail.Trim(),
+                    ScheduledAt = slot,
+                    Notes = string.IsNullOrWhiteSpace(formNotes) ? null : formNotes.Trim()
+                });
+                NotificationService.Notify(ToastSeverity.Success, "Booked", $"{formName} is booked for {slot.ToLocalTime():HH:mm}.");
+            }
+            else
+            {
+                await AppointmentApi.RescheduleAppointmentAsync(BranchId, editingId.Value, new RescheduleAppointmentRequest
+                {
+                    ScheduledAt = slot
+                });
+                NotificationService.Notify(ToastSeverity.Success, "Rescheduled", $"Moved to {slot.ToLocalTime():HH:mm}.");
+            }
+
+            showEditor = false;
+            await LoadAppointments();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CheckIn(AppointmentDto appointment)
+    {
+        try
+        {
+            var result = await AppointmentApi.CheckInAsync(BranchId, appointment.Id);
+            NotificationService.Notify(ToastSeverity.Success, "Checked in",
+                result.TokenDisplayNumber is { } number
+                    ? $"{appointment.CustomerName} is in the queue as {number}."
+                    : $"{appointment.CustomerName} is checked in.");
+            await LoadAppointments();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not check in", ex.Message);
+        }
+    }
+
+    private async Task MarkNoShow(AppointmentDto appointment)
+    {
+        try
+        {
+            await AppointmentApi.MarkNoShowAsync(BranchId, appointment.Id);
+            NotificationService.Notify(ToastSeverity.Info, "Marked as no show", $"{appointment.CustomerName} did not arrive.");
+            await LoadAppointments();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not update", ex.Message);
+        }
+    }
+
+    private void OpenCancel(AppointmentDto appointment)
+    {
+        cancelTarget = appointment;
+        cancelReason = null;
+        showCancel = true;
+    }
+
+    private async Task ConfirmCancel()
+    {
+        if (cancelTarget == null) return;
+
+        isSaving = true;
+        try
+        {
+            await AppointmentApi.CancelAppointmentAsync(BranchId, cancelTarget.Id, cancelReason);
+            NotificationService.Notify(ToastSeverity.Success, "Cancelled", "The appointment was cancelled.");
+            showCancel = false;
+            await LoadAppointments();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not cancel", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}
