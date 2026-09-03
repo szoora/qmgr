@@ -249,9 +249,12 @@ else
                         </a>
                         <ul class="submenu">
                             <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
-                            <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
-                            <li><a href="reports/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
-                            @if (canViewVisitors && HasModule(ModuleCodes.VisitorSafeguarding))
+                            @if (ModuleAllows("/reports/queue"))
+                            {
+                                <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
+                                <li><a href="reports/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
+                            }
+                            @if (canViewVisitors && ModuleAllows("/reports/visitors"))
                             {
                                 <li><a href="reports/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
                             }
@@ -273,11 +276,16 @@ else
                             {
                                 <li><a href="admin/branches" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branches") ? "active" : "")"><i class="bi bi-building"></i>Branches</a></li>
                             }
-                            @if (canViewCounters)
+                            @* Every item below pairs its RBAC check with ModuleAllows, which reads the
+                               same ModuleRouteMap the navigation guard and the API middleware use — so
+                               an item is visible exactly when it is reachable. Branches, Users & Roles,
+                               Industry, Branding, Notifications and System Settings carry no module:
+                               they are base product, available to every tenant. *@
+                            @if (canViewCounters && ModuleAllows("/admin/counters"))
                             {
                                 <li><a href="admin/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
                             }
-                            @if (canViewServiceTypes)
+                            @if (canViewServiceTypes && ModuleAllows("/admin/service-types"))
                             {
                                 <li><a href="admin/service-types" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
                             }
@@ -285,16 +293,22 @@ else
                             {
                                 <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
                             }
-                            @if (canViewSettings)
+                            @if (canViewSettings && ModuleAllows("/admin/printer-settings"))
                             {
                                 <li><a href="admin/printer-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
                                 <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
-                                <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
-                                <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
                             }
                             @if (canViewSettings)
                             {
+                                <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
+                                <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
+                            }
+                            @if (canViewSettings && ModuleAllows("/admin/integrations"))
+                            {
                                 <li><a href="admin/integrations" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
+                            }
+                            @if (canViewSettings && ModuleAllows("/admin/customer-links"))
+                            {
                                 <li><a href="admin/customer-links" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
                             }
                             @if (canViewNotifications)
@@ -855,11 +869,67 @@ else
         }
 
         await ModuleState.LoadAsync(ModuleApi);
+
+        // Hiding a nav item is not access control — the page is still one pasted URL away. This
+        // layout wraps every authenticated page, so guarding here covers all of them at once and
+        // cannot drift from the sidebar, since both read ModuleRouteMap.
+        if (!moduleGuardSubscribed)
+        {
+            NavigationManager.LocationChanged += HandleLocationChangedForModuleGuard;
+            moduleGuardSubscribed = true;
+        }
+        EnforceModuleAccessForCurrentPage();
     }
 
     private void HandleModuleStateChanged()
     {
-        InvokeAsync(StateHasChanged);
+        // A module the tenant just removed should also close any page they are sitting on.
+        InvokeAsync(() =>
+        {
+            EnforceModuleAccessForCurrentPage();
+            StateHasChanged();
+        });
+    }
+
+    private bool moduleGuardSubscribed;
+
+    private void HandleLocationChangedForModuleGuard(object? sender, LocationChangedEventArgs e)
+        => InvokeAsync(EnforceModuleAccessForCurrentPage);
+
+    /// <summary>
+    /// Sends the user to the Modules marketplace if the page they are on belongs to a module their
+    /// organization has not bought, rather than letting the page load and fail piecemeal against a
+    /// wall of 403s from the API.
+    /// </summary>
+    private void EnforceModuleAccessForCurrentPage()
+    {
+        // Until the module list has actually loaded, everything would look unpurchased.
+        if (!ModuleState.IsLoaded || isSuperAdmin) return;
+
+        var path = "/" + NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        var required = ModuleRouteMap.RequiredModuleForPage(path);
+        if (required == null || ModuleState.ActiveModuleCodes.Contains(required)) return;
+
+        ToastService.Notify(
+            ToastSeverity.Info,
+            "Module required",
+            canViewBilling
+                ? "That feature belongs to a module your organization hasn't added yet."
+                : "That feature isn't included in your organization's current modules. Ask an administrator to add it.");
+
+        // Only send people to the marketplace if they could actually buy something there; staff
+        // without billing access would just bounce off that page's own permission check.
+        NavigationManager.NavigateTo(canViewBilling ? "/billing/modules" : "/");
+    }
+
+    /// <summary>
+    /// Whether a nav item pointing at <paramref name="path"/> should be shown. Permission checks
+    /// stay with the caller; this only answers the subscription half.
+    /// </summary>
+    private bool ModuleAllows(string path)
+    {
+        var required = ModuleRouteMap.RequiredModuleForPage(path);
+        return required == null || HasModule(required);
     }
 
     // BUG FIX: this link previously pointed at the API's internal ApiBaseUrl - correct for Web's
@@ -1231,6 +1301,11 @@ else
         if (moduleStateSubscribed)
         {
             ModuleState.OnChanged -= HandleModuleStateChanged;
+        }
+
+        if (moduleGuardSubscribed)
+        {
+            NavigationManager.LocationChanged -= HandleLocationChangedForModuleGuard;
         }
 
         // Stop the SignalR connection

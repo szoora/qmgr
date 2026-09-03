@@ -264,6 +264,10 @@ app.UseTenantStatus();
 // Enforce usage limits based on subscription plan
 app.UseUsageLimits();
 
+// Refuse routes belonging to a module the tenant has not purchased. Central backstop behind the
+// per-action [RequireModule] attribute — see ModuleRouteMap for the one place the mapping lives.
+app.UseModuleAccess();
+
 app.UseAuthorization();
 
 app.MapControllers();
