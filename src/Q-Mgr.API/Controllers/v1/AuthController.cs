@@ -174,7 +174,8 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid email or password" });
         }
 
-        var token = GenerateJwtToken(user);
+        var expiryMinutes = await GetTokenExpiryMinutesAsync();
+        var token = GenerateJwtToken(user, expiryMinutes);
         var refreshToken = GenerateRefreshToken();
 
         user.RefreshToken = refreshToken;
@@ -196,7 +197,7 @@ public class AuthController : ControllerBase
         {
             AccessToken = token,
             RefreshToken = refreshToken,
-            ExpiresIn = int.Parse(_configuration["JWT:ExpiryMinutes"] ?? "60") * 60,
+            ExpiresIn = expiryMinutes * 60,
             User = new UserInfo
             {
                 Id = user.Id,
@@ -275,7 +276,8 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid or expired refresh token" });
         }
 
-        var token = GenerateJwtToken(user);
+        var expiryMinutes = await GetTokenExpiryMinutesAsync();
+        var token = GenerateJwtToken(user, expiryMinutes);
         var newRefreshToken = GenerateRefreshToken();
 
         user.RefreshToken = newRefreshToken;
@@ -292,7 +294,7 @@ public class AuthController : ControllerBase
         {
             AccessToken = token,
             RefreshToken = newRefreshToken,
-            ExpiresIn = int.Parse(_configuration["JWT:ExpiryMinutes"] ?? "60") * 60,
+            ExpiresIn = expiryMinutes * 60,
             User = new UserInfo
             {
                 Id = user.Id,
@@ -360,7 +362,27 @@ public class AuthController : ControllerBase
         });
     }
 
-    private string GenerateJwtToken(QMgr.Domain.Entities.Identity.User user)
+    /// <summary>
+    /// Token lifetime is the one JWT setting the Platform Settings UI can genuinely change at
+    /// runtime — the signing secret, issuer and audience are bound into the bearer validation
+    /// pipeline at startup from server configuration (JWT__Secret etc.), so they are deliberately
+    /// not read from the database here.
+    /// </summary>
+    private async Task<int> GetTokenExpiryMinutesAsync()
+    {
+        try
+        {
+            var jwt = await _platformSettingsService.GetSettingsAsync<JwtSettings>("JWT");
+            if (jwt is { ExpiryMinutes: > 0 and <= 24 * 60 }) return jwt.ExpiryMinutes;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read JWT platform settings; using configuration");
+        }
+        return int.TryParse(_configuration["JWT:ExpiryMinutes"], out var m) && m > 0 ? m : 60;
+    }
+
+    private string GenerateJwtToken(QMgr.Domain.Entities.Identity.User user, int expiryMinutes)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -381,7 +403,7 @@ public class AuthController : ControllerBase
             issuer: _configuration["JWT:Issuer"],
             audience: _configuration["JWT:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(int.Parse(_configuration["JWT:ExpiryMinutes"] ?? "60")),
+            expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
             signingCredentials: credentials
         );
 

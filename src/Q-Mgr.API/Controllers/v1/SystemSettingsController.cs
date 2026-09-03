@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
+using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Infrastructure.Data;
 
@@ -26,16 +27,57 @@ public class SystemSettingsController : ControllerBase
     private readonly QMgrDbContext _context;
     private readonly ILogger<SystemSettingsController> _logger;
 
-    public SystemSettingsController(QMgrDbContext context, ILogger<SystemSettingsController> logger)
+    private readonly ITenantContextAccessor _tenantAccessor;
+
+    public SystemSettingsController(QMgrDbContext context, ITenantContextAccessor tenantAccessor, ILogger<SystemSettingsController> logger)
     {
         _context = context;
+        _tenantAccessor = tenantAccessor;
         _logger = logger;
     }
 
+    /// <summary>
+    /// BranchSettings has no EF tenant query filter, so every action must prove the branch belongs
+    /// to the caller's organization (SuperAdmin bypasses). Without this any authenticated user of
+    /// any tenant could read — and the PUT below could create — another tenant's settings row by
+    /// branch GUID. Same helper shape as DisplayBannerController, which edits the same table.
+    /// </summary>
+    private async Task<IActionResult?> VerifyBranchOwnership(Guid branchId)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved)
+            return Unauthorized(new ProblemDetails
+            {
+                Title = "Tenant not resolved",
+                Detail = "Unable to determine your organization context.",
+                Status = StatusCodes.Status401Unauthorized
+            });
+
+        if (RoleCodes.IsSuperAdmin(tenantContext.UserRole))
+            return null;
+
+        var branchExists = await _context.Branches
+            .AnyAsync(b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId);
+
+        if (!branchExists)
+            return NotFound(new ProblemDetails
+            {
+                Title = "Branch not found",
+                Detail = $"Branch with ID '{branchId}' was not found.",
+                Status = StatusCodes.Status404NotFound
+            });
+
+        return null;
+    }
+
     [HttpGet("branches/{branchId:guid}/system-settings")]
+    [RequirePermission(Permissions.SettingsView)]
     [ProducesResponseType(typeof(SystemSettingsResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSystemSettings(Guid branchId)
     {
+        var verifyResult = await VerifyBranchOwnership(branchId);
+        if (verifyResult != null) return verifyResult;
+
         var settings = await _context.BranchSettings
             .FirstOrDefaultAsync(s => s.BranchId == branchId);
 
@@ -66,6 +108,9 @@ public class SystemSettingsController : ControllerBase
     [ProducesResponseType(typeof(SystemSettingsResponseDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateSystemSettings(Guid branchId, [FromBody] UpdateSystemSettingsRequest request)
     {
+        var verifyResult = await VerifyBranchOwnership(branchId);
+        if (verifyResult != null) return verifyResult;
+
         var settings = await _context.BranchSettings
             .FirstOrDefaultAsync(s => s.BranchId == branchId);
 

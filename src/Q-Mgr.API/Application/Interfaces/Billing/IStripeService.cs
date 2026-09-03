@@ -9,6 +9,12 @@ namespace QMgr.Application.Interfaces.Billing;
 public interface IStripeService
 {
     /// <summary>
+    /// True when a usable secret key is present (Platform Settings row first, then configuration)
+    /// and the Stripe provider is switched on in Platform Settings.
+    /// </summary>
+    Task<bool> IsConfiguredAsync();
+
+    /// <summary>
     /// Create a Stripe customer for an organization
     /// </summary>
     Task<string> CreateCustomerAsync(Organization organization);

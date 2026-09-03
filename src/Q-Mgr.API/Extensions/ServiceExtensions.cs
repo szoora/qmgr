@@ -150,6 +150,40 @@ public static class ServiceExtensions
         }
     }
 
+    /// <summary>
+    /// Reads the "CORS" PlatformSetting row directly (no DI container exists yet at this point in
+    /// startup). Returns null on any failure so Program.cs falls back to appsettings.json alone.
+    /// </summary>
+    public static QMgr.Domain.Entities.Platform.CorsSettings? TryLoadCorsSettingsFromDatabase(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return null;
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<QMgrDbContext>()
+                .UseNpgsql(connectionString)
+                .Options;
+
+            using var db = new QMgrDbContext(options);
+            var settingsJson = db.PlatformSettings
+                .Where(s => s.Category == "CORS" && s.IsEnabled)
+                .Select(s => s.SettingsJson)
+                .FirstOrDefault();
+
+            if (string.IsNullOrWhiteSpace(settingsJson))
+                return null;
+
+            return System.Text.Json.JsonSerializer.Deserialize<QMgr.Domain.Entities.Platform.CorsSettings>(
+                settingsJson,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static IServiceCollection AddSignalRServices(this IServiceCollection services)
     {
         services.AddSingleton<IQueueHubContext, QueueHubContext>();

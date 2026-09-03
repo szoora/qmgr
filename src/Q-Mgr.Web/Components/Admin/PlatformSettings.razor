@@ -314,6 +314,27 @@ else if (settings != null && settings.Any())
         color: var(--qm-text-secondary);
     }
 
+    .settings-note {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        margin-bottom: 16px;
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-primary);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 0.875rem;
+        line-height: 1.5;
+    }
+
+    .settings-note code {
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-mono);
+        font-size: 0.8125rem;
+    }
+
     .settings-toggle-group {
         display: flex;
         align-items: flex-start;
@@ -608,7 +629,7 @@ else if (settings != null && settings.Any())
                     var jwt = JsonSerializer.Deserialize<JwtSettingsModel>(json, JsonOpts) ?? new();
                     return new()
                     {
-                        ("Secret", string.IsNullOrEmpty(jwt.Secret) ? "(not set)" : SecretMask),
+                        ("Secret", "Server configuration (JWT__Secret)"),
                         ("Issuer", jwt.Issuer),
                         ("Audience", jwt.Audience),
                         ("Token Expiry", $"{jwt.ExpiryMinutes} minutes")
@@ -634,8 +655,8 @@ else if (settings != null && settings.Any())
                     {
                         ("Base Domain", saas.BaseDomain),
                         ("Trial Length", $"{saas.TrialDays} days"),
-                        ("Default Plan", saas.DefaultPlanCode),
-                        ("Custom Domains", saas.AllowCustomDomains ? "Allowed" : "Not allowed")
+                        ("Base URL", saas.BaseUrl),
+                        ("Email Verification", saas.RequireEmailVerification ? "Required" : "Not required")
                     };
                 case "Stripe":
                     var stripe = JsonSerializer.Deserialize<StripeSettingsModel>(json, JsonOpts) ?? new();
@@ -692,27 +713,31 @@ else if (settings != null && settings.Any())
     // ── Forms (edit mode) ────────────────────────────────────────────────────
 
     private RenderFragment RenderJwtForm() => @<div>
-        <div class="settings-form-group">
-            <label>Secret Key</label>
-            <QInput TValue="string" @bind-Value="editJwt!.Secret" Type="password" Placeholder="At least 32 characters" HelperText="Used to sign and verify API tokens — changing this immediately invalidates every issued token." />
+        <div class="settings-note">
+            <QIcon Name="info-circle-fill" />
+            <span>The signing secret, issuer and audience are read from the API server's own configuration (the <code>JWT__Secret</code> environment variable and <code>JWT:Issuer</code> / <code>JWT:Audience</code>) when it starts, and are never stored here. Only the token lifetime below is applied at runtime.</span>
         </div>
         <div class="settings-form-grid">
             <div class="settings-form-group">
                 <label>Issuer</label>
-                <QInput TValue="string" @bind-Value="editJwt!.Issuer" Placeholder="qmgr-api" />
+                <QInput TValue="string" Value="@editJwt!.Issuer" Disabled="true" />
             </div>
             <div class="settings-form-group">
                 <label>Audience</label>
-                <QInput TValue="string" @bind-Value="editJwt!.Audience" Placeholder="qmgr-clients" />
+                <QInput TValue="string" Value="@editJwt!.Audience" Disabled="true" />
             </div>
             <div class="settings-form-group">
                 <label>Token Expiry (minutes)</label>
-                <QInput TValue="int" @bind-Value="editJwt!.ExpiryMinutes" Type="number" Min="1" />
+                <QInput TValue="int" @bind-Value="editJwt!.ExpiryMinutes" Type="number" Min="5" Max="1440" HelperText="Applies to every new sign-in immediately. 5 minutes to 24 hours." />
             </div>
         </div>
     </div>;
 
     private RenderFragment RenderCorsForm() => @<div>
+        <div class="settings-note">
+            <QIcon Name="info-circle-fill" />
+            <span>Origins listed here are added to the ones in the API server's configuration. Changes apply the next time the API starts — restart it after saving.</span>
+        </div>
         <div class="settings-list-section">
             <label>Allowed Origins</label>
             @for (var i = 0; i < editCors!.AllowedOrigins.Count; i++)
@@ -799,23 +824,6 @@ else if (settings != null && settings.Any())
                 <label>Trial Length (days)</label>
                 <QInput TValue="int" @bind-Value="editSaas!.TrialDays" Type="number" Min="0" />
             </div>
-            <div class="settings-form-group">
-                <label>Default Plan Code</label>
-                <QInput TValue="string" @bind-Value="editSaas!.DefaultPlanCode" Placeholder="free" />
-            </div>
-            <div class="settings-form-group">
-                <label>Max Organizations per User</label>
-                <QInput TValue="int" @bind-Value="editSaas!.MaxOrganizationsPerUser" Type="number" Min="1" />
-            </div>
-        </div>
-        <div class="settings-toggle-group">
-            <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" @bind="editSaas!.AllowCustomDomains" />
-            </div>
-            <div class="settings-toggle-info">
-                <span class="settings-toggle-label">Allow Custom Domains</span>
-                <small>Let tenants point their own domain at their kiosk/display screens</small>
-            </div>
         </div>
         <div class="settings-toggle-group">
             <div class="form-check form-switch">
@@ -823,7 +831,7 @@ else if (settings != null && settings.Any())
             </div>
             <div class="settings-toggle-info">
                 <span class="settings-toggle-label">Require Email Verification</span>
-                <small>New accounts must confirm their email before signing in</small>
+                <small>New organizations must confirm their email before signing in. When off, registrations are verified and provisioned immediately.</small>
             </div>
         </div>
     </div>;
