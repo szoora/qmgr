@@ -56,14 +56,24 @@ public static class ModuleRouteMap
         ("/reports/feedback", ModuleCodes.EngagementCommunications),
 
         // ---- Visitor & Safeguarding ----
+        // Matching is per whole segment, so "/admin/welfare" would not cover "/admin/welfare-reports".
+        // That strictness is deliberate (it stops "/admin/visitors" swallowing an unrelated
+        // "/admin/visitors-something"), which means each hyphenated route is listed on its own.
         ("/admin/visitors", ModuleCodes.VisitorSafeguarding),
         ("/admin/students", ModuleCodes.VisitorSafeguarding),
-        ("/admin/welfare", ModuleCodes.VisitorSafeguarding),
+        ("/admin/welfare-categories", ModuleCodes.VisitorSafeguarding),
+        ("/admin/welfare-my-actions", ModuleCodes.VisitorSafeguarding),
+        ("/admin/welfare-reports", ModuleCodes.VisitorSafeguarding),
         ("/reports/visitors", ModuleCodes.VisitorSafeguarding),
 
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
         ("/admin/integrations", ModuleCodes.IntegrationsApi),
+
+        // Declared last on purpose: matching is first-hit and by segment prefix, so the specific
+        // /reports/visitors and /reports/feedback entries above must win before this catches the
+        // remaining /reports pages, which are all queue and counter metrics.
+        ("/reports", ModuleCodes.CoreQueue),
     };
 
     /// <summary>
