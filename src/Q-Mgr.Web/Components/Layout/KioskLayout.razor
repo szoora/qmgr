@@ -1,9 +1,12 @@
 @inherits LayoutComponentBase
 @using System.Text.RegularExpressions
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Web.Services
 @inject IOrganizationApiService OrganizationApi
 @inject NavigationManager Navigation
 @inject IBranchStateService BranchState
+@inject AuthenticationStateProvider AuthStateProvider
 
 <div class="kiosk-layout" data-theme="@displayTheme" style="@brandingStyle">
     @Body
@@ -19,34 +22,51 @@
 </style>
 
 @code {
-    // Falls back to the demo branch only when neither the selected-branch state nor the
-    // page's own URL resolve one (e.g. a bookmarked bare kiosk URL, first run).
-    private static readonly Guid DefaultBranchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private string brandingStyle = string.Empty;
     private string displayTheme = "dark";
 
-    // Prefers the same BranchStateService the kiosk page itself uses; a @layout component can't
-    // receive its page's [Parameter] route values directly (it wraps *above* Body in the render
-    // tree), so a GUID segment parsed out of the resolved URL is the fallback, not the primary.
-    private async Task<Guid> ResolveBranchIdAsync()
+    // Same resolution as DisplayLayout (and as KioskMode/FeedbackEntry themselves):
+    // route GUID -> ?branch= -> signed-in user's selected branch -> null. A @layout can't
+    // receive its page's [Parameter]/[SupplyParameterFromQuery] values (it wraps *above*
+    // Body in the render tree), so the branch is read back out of the resolved URL.
+    // Never falls back to a demo GUID: with no branch the layout just skips branding
+    // and the page renders its own "no branch" guidance state.
+    private async Task<Guid?> ResolveBranchIdAsync()
     {
-        await BranchState.InitializeAsync();
-        if (BranchState.CurrentBranchId != Guid.Empty)
-            return BranchState.CurrentBranchId;
+        var uri = new Uri(Navigation.Uri);
 
-        var path = new Uri(Navigation.Uri).AbsolutePath;
-        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var segment in uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (Guid.TryParse(segment, out var parsed) && parsed != Guid.Empty)
-                return parsed;
+            if (Guid.TryParse(segment, out var fromPath) && fromPath != Guid.Empty)
+                return fromPath;
         }
-        return DefaultBranchId;
+
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("branch", out var raw)
+            && Guid.TryParse(raw.ToString(), out var fromQuery)
+            && fromQuery != Guid.Empty)
+            return fromQuery;
+
+        // BranchStateService is the *admin's* selected branch (localStorage) — only
+        // meaningful, and only trusted, when someone is actually signed in on this browser.
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated == true)
+        {
+            await BranchState.InitializeAsync();
+            if (BranchState.CurrentBranchId != Guid.Empty)
+                return BranchState.CurrentBranchId;
+        }
+
+        return null;
     }
 
     protected override async Task OnInitializedAsync()
     {
         var branchId = await ResolveBranchIdAsync();
-        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId);
+        if (branchId == null)
+            return; // No branch -> default (dark, unbranded) look; the page shows the guidance state.
+
+        var branding = await OrganizationApi.GetBranchBrandingAsync(branchId.Value);
 
         // Applies regardless of WhitelabelEnabled — dark/light is a basic display
         // preference available on every plan, unlike the colors/logo below.

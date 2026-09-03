@@ -41,6 +41,12 @@ public interface IPermissionService
     /// Clears the cached permissions (call on logout)
     /// </summary>
     void ClearCache();
+
+    /// <summary>
+    /// Drops the cached set and re-fetches the user (role + permissions) from the API. Used when
+    /// the server pushes a PermissionsChanged signal after an admin edits this user's role.
+    /// </summary>
+    Task<HashSet<string>> RefreshAsync();
 }
 
 public class PermissionService : IPermissionService
@@ -164,6 +170,13 @@ public class PermissionService : IPermissionService
         _cachedPermissions = null;
         _cachedRoleCode = null;
         _cachedUserId = null;
+    }
+
+    public async Task<HashSet<string>> RefreshAsync()
+    {
+        ClearCache();
+        await _authService.RefreshCurrentUserAsync();
+        return await GetPermissionsAsync();
     }
 }
 

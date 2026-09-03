@@ -532,7 +532,7 @@
         right: 8px;
         padding: 4px 8px;
         background: rgba(0,0,0,0.6);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-sm);
         font-size: 11px;
         text-transform: uppercase;
@@ -691,7 +691,7 @@
     .browse-btn {
         padding: 12px 28px;
         background: var(--qm-gradient-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-lg);
         font-weight: 600;
         cursor: pointer;
@@ -833,7 +833,7 @@
     }
 
     .close-btn:hover .rzi {
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .close-btn .rzi {
@@ -903,7 +903,7 @@
 
     .play-overlay .rzi {
         font-size: 48px;
-        color: white;
+        color: var(--qm-text-on-primary);
         filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
     }
 
@@ -1023,36 +1023,36 @@
 
     /* Platform badges below use each service's real brand color (YouTube red,
        Vimeo blue, Google blue, Spotify green, SoundCloud orange) as a source
-       identifier, not an app status color - intentionally left literal.
+       identifier, not an app status color - sourced from the --qm-brand-* tokens in qm-theme.css.
        .direct uses Q-Mgr's own brand blue, so it's tokenized above instead. */
     .platform-badge.youtube {
-        background: rgba(255, 0, 0, 0.15);
-        color: #ff4444;
+        background: color-mix(in srgb, var(--qm-brand-youtube) 15%, transparent);
+        color: var(--qm-brand-youtube);
     }
 
     .platform-badge.vimeo {
-        background: rgba(26, 183, 234, 0.15);
-        color: #1ab7ea;
+        background: color-mix(in srgb, var(--qm-brand-vimeo) 15%, transparent);
+        color: var(--qm-brand-vimeo);
     }
 
     .platform-badge.tiktok {
-        background: rgba(254, 44, 85, 0.15);
-        color: #fe2c55;
+        background: color-mix(in srgb, var(--qm-brand-tiktok) 15%, transparent);
+        color: var(--qm-brand-tiktok);
     }
 
     .platform-badge.google {
-        background: rgba(66, 133, 244, 0.15);
-        color: #4285f4;
+        background: color-mix(in srgb, var(--qm-brand-gdrive) 15%, transparent);
+        color: var(--qm-brand-gdrive);
     }
 
     .platform-badge.spotify {
-        background: rgba(30, 215, 96, 0.15);
-        color: #1ed760;
+        background: color-mix(in srgb, var(--qm-brand-spotify) 15%, transparent);
+        color: var(--qm-brand-spotify);
     }
 
     .platform-badge.soundcloud {
-        background: rgba(255, 85, 0, 0.15);
-        color: #ff5500;
+        background: color-mix(in srgb, var(--qm-brand-soundcloud) 15%, transparent);
+        color: var(--qm-brand-soundcloud);
     }
 
     .platform-badge.direct {
@@ -1189,7 +1189,7 @@
     .add-url-dialog .btn-primary {
         background: var(--qm-gradient-primary);
         border: none;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .add-url-dialog .btn-primary:hover:not(:disabled) {

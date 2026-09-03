@@ -1,4 +1,5 @@
 @page "/admin/welfare-reports"
+@implements IAsyncDisposable
 @using System.Text.Json
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -9,6 +10,8 @@
 @inject IJSRuntime JS
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IStudentApiService StudentApi
+@inject INotificationClientService NotificationClient
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -21,6 +24,14 @@
         <div class="header-content">
             <h1>Welfare Reports</h1>
             <p class="subtitle">Dashboard overview and searchable records across the whole branch.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
+            @if (canImport)
+            {
+                <QButton Text="Import Records" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal"
+                         Title="Backfill historical achievement / behavior / welfare records from a spreadsheet" />
+            }
         </div>
     </div>
 
@@ -146,9 +157,193 @@
     }
 </div>
 
+@* ---------------- Import Historical Records ---------------- *@
+@*
+    Deliberately the same modal shape as StudentRoster.razor's Bulk Import (file input → preview →
+    start → live progress → row-by-row log): it's the same background job, the same
+    RosterImportProgress SignalR event and the same entries log — only the row columns differ.
+*@
+<QModal @bind-Visible="showImportModal" Title="Import Historical Records" Size="lg">
+    <ChildContent>
+        @if (importJob == null)
+        {
+            <div class="import-upload">
+                <p>
+                    Upload an Excel (.xlsx/.xls) or CSV export of your previous system's ledger with columns for
+                    <strong>student code</strong>, <strong>case type</strong> (Achievement / Behavior / Welfare),
+                    <strong>category</strong> (must already exist under Welfare Categories), <strong>date</strong> and
+                    <strong>description</strong>; optionally points, tier, action taken and status. Column order doesn't
+                    matter and common header variations are recognized. Students are matched by code — import the roster first.
+                    Imported records default to <em>Resolved</em> and are attributed to you as the importer.
+                </p>
+                <input type="file" id="welfare-file-input" accept=".xlsx,.xls,.csv" @onchange="OnFileSelected" />
+
+                @if (isParsingFile)
+                {
+                    <div class="loading-container loading-container--inline"><QSpinner Size="sm" /><span>Reading file...</span></div>
+                }
+                else if (headerErrors.Any())
+                {
+                    <div class="import-errors">
+                        <strong>Couldn't read this file:</strong>
+                        <ul>
+                            @foreach (var err in headerErrors)
+                            {
+                                <li>@err</li>
+                            }
+                        </ul>
+                    </div>
+                }
+                else if (parsedRows.Any())
+                {
+                    <div class="import-preview">
+                        <p><strong>@parsedRows.Count</strong> row@(parsedRows.Count == 1 ? "" : "s") parsed from <strong>@parsedFileName</strong>. First few rows:</p>
+                        <div class="import-preview-table">
+                            <div class="import-preview-row import-preview-header">
+                                <span>Code</span><span>Case Type</span><span>Category</span><span>Date</span><span>Tier</span><span>Points</span><span>Description</span>
+                            </div>
+                            @foreach (var r in parsedRows.Take(5))
+                            {
+                                <div class="import-preview-row">
+                                    <span>@r.StudentCode</span><span>@r.CaseType</span><span>@r.Category</span><span>@r.OccurredAt</span>
+                                    <span>@r.Tier</span><span>@r.Points</span><span title="@r.Description">@r.Description</span>
+                                </div>
+                            }
+                            @if (parsedRows.Count > 5)
+                            {
+                                <p class="import-preview-more">+ @(parsedRows.Count - 5) more row@(parsedRows.Count - 5 == 1 ? "" : "s")</p>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="import-progress">
+                <div class="import-progress-header">
+                    <span class="import-status-badge @importJob.Status.ToString().ToLower()">@importJob.Status</span>
+                    <span>@importJob.ProcessedRows / @importJob.TotalRows rows processed</span>
+                </div>
+                <div class="import-progress-bar">
+                    <div class="import-progress-fill" style="width: @(importJob.TotalRows > 0 ? (importJob.ProcessedRows * 100 / importJob.TotalRows) : 0)%"></div>
+                </div>
+                <div class="import-summary-grid">
+                    <div class="import-summary-tile created"><span class="value">@importJob.CreatedCount</span><span class="label">Created</span></div>
+                    <div class="import-summary-tile duplicate"><span class="value">@importJob.DuplicateCount</span><span class="label">Duplicates</span></div>
+                    <div class="import-summary-tile failed"><span class="value">@importJob.FailedCount</span><span class="label">Failed</span></div>
+                </div>
+                @if (importJob.Status == RosterImportStatus.Failed && !string.IsNullOrWhiteSpace(importJob.FailureReason))
+                {
+                    <div class="import-errors">@importJob.FailureReason</div>
+                }
+
+                @if (importJob.Status == RosterImportStatus.Completed || importJob.Status == RosterImportStatus.CompletedWithErrors)
+                {
+                    <QButton Text="@(showImportEntries ? "Hide Row-by-Row Log" : "View Row-by-Row Log")" Icon="list-ul" Variant="secondary" OnClick="@ToggleImportEntries" />
+                    @if (showImportEntries)
+                    {
+                        <div class="import-log">
+                            @foreach (var entry in importEntries)
+                            {
+                                <div class="import-log-row outcome-@entry.Outcome.ToString().ToLower()">
+                                    <span class="import-log-rownum">#@entry.RowNumber</span>
+                                    <span class="import-log-outcome">@entry.Outcome</span>
+                                    @* For a welfare job the entry's GuardianName column carries the category name. *@
+                                    <span class="import-log-name">@(entry.StudentName ?? entry.StudentCode ?? "—") / @(entry.GuardianName ?? "—")</span>
+                                    <span class="import-log-message" title="@entry.Message">@entry.Message</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (importJob == null)
+        {
+            <QButton Text="Cancel" Variant="ghost" OnClick="@CloseImportModal" />
+            <QButton Text="@($"Start Import{(parsedRows.Any() ? $" ({parsedRows.Count} rows)" : "")}")" Icon="upload" Variant="primary"
+                     OnClick="@StartImport" Disabled="@(!parsedRows.Any() || isStartingImport)" />
+        }
+        else
+        {
+            <QButton Text="Close" Variant="primary" OnClick="@CloseImportModal" />
+        }
+    </FooterContent>
+</QModal>
+
+@* ---------------- Import History ---------------- *@
+<QModal @bind-Visible="showHistoryModal" Title="Record Import History" Size="lg">
+    <ChildContent>
+        @if (!historyJobs.Any())
+        {
+            <p class="form-hint">No historical-record imports yet.</p>
+        }
+        else
+        {
+            <div class="import-log">
+                @foreach (var job in historyJobs)
+                {
+                    <div class="import-log-row outcome-@(job.FailedCount > 0 ? "failed" : "created")">
+                        <span class="import-log-rownum">@job.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                        <span class="import-log-outcome">@job.Status</span>
+                        <span class="import-log-name">@(job.SourceFileName ?? "Unnamed upload")</span>
+                        <span class="import-log-message">@job.TotalRows rows &middot; @job.CreatedCount created &middot; @job.DuplicateCount duplicate &middot; @job.FailedCount failed</span>
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => showHistoryModal = false)" />
+    </FooterContent>
+</QModal>
+
 <style>
     .admin-page { padding: 0; }
-    .page-header { margin-bottom: 16px; }
+    .page-header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    /* Import modal — same classes/tokens as StudentRoster.razor's Bulk Import so the two read as one feature. */
+    .loading-container--inline { padding: 16px; flex-direction: row; gap: 10px; border: none; background: none; }
+    .import-upload p { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 8px; line-height: 1.5; }
+    .import-upload input[type=file] { margin: 12px 0; display: block; color: var(--qm-text-primary); }
+    .import-errors { background: rgba(220, 38, 38, 0.08); border: 1px solid var(--qm-danger, #dc2626); border-radius: var(--qm-radius-md); padding: 12px 16px; color: var(--qm-danger, #dc2626); font-size: 13px; margin-top: 12px; }
+    .import-errors ul { margin: 6px 0 0; padding-left: 18px; }
+    .import-preview { margin-top: 16px; font-size: 13px; color: var(--qm-text-primary); }
+    .import-preview-table { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); overflow: hidden; margin-top: 8px; }
+    .import-preview-row { display: grid; grid-template-columns: 0.8fr 0.9fr 1fr 0.9fr 0.6fr 0.5fr 2fr; gap: 8px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--qm-border); overflow: hidden; }
+    .import-preview-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .import-preview-row:last-child { border-bottom: none; }
+    .import-preview-header { background: var(--qm-bg-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--qm-text-muted); }
+    .import-preview-more { text-align: center; padding: 8px; color: var(--qm-text-muted); font-size: 12px; margin: 0; }
+    .import-progress-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 14px; color: var(--qm-text-primary); }
+    .import-status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .import-status-badge.processing, .import-status-badge.pending { background: rgba(169, 120, 31, 0.15); color: #a9781f; }
+    .import-status-badge.completed { background: rgba(63, 125, 88, 0.15); color: #3f7d58; }
+    .import-status-badge.completedwitherrors, .import-status-badge.failed { background: rgba(217, 83, 79, 0.12); color: var(--qm-danger, #d9534f); }
+    .import-progress-bar { height: 8px; background: var(--qm-bg-secondary); border-radius: 999px; overflow: hidden; margin-bottom: 16px; }
+    .import-progress-fill { height: 100%; background: var(--qm-primary); transition: width 0.3s ease; }
+    .import-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+    .import-summary-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px; border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .import-summary-tile .value { font-size: 22px; font-weight: 700; color: var(--qm-text-primary); }
+    .import-summary-tile .label { font-size: 12px; color: var(--qm-text-muted); }
+    .import-summary-tile.failed .value { color: var(--qm-danger, #d9534f); }
+    .import-summary-tile.duplicate .value { color: #a9781f; }
+    .import-summary-tile.created .value { color: #3f7d58; }
+    .import-log { max-height: 360px; overflow-y: auto; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); margin-top: 12px; }
+    .import-log-row { display: grid; grid-template-columns: 100px 110px 1fr 2fr; gap: 10px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--qm-border); align-items: center; color: var(--qm-text-primary); }
+    .import-log-row:last-child { border-bottom: none; }
+    .import-log-rownum { font-family: monospace; color: var(--qm-text-muted); white-space: nowrap; }
+    .import-log-outcome { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .outcome-created .import-log-outcome { color: #3f7d58; }
+    .outcome-updated .import-log-outcome { color: var(--qm-primary); }
+    .outcome-duplicateinfile .import-log-outcome { color: #a9781f; }
+    .outcome-failed .import-log-outcome { color: var(--qm-danger, #d9534f); }
+    .import-log-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
 
@@ -206,6 +401,8 @@
     @@media (max-width: 900px) {
         .results-row { grid-template-columns: 1fr 1fr; }
         .results-header { display: none; }
+        .import-preview-row { grid-template-columns: 1fr 1fr; }
+        .import-log-row { grid-template-columns: 1fr; }
     }
 </style>
 
@@ -262,12 +459,148 @@
                 return;
             }
 
+            canImport = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
+
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
+
+            // Live import progress arrives on the branch group of the same hub the roster page
+            // listens to — one event ("RosterImportProgress") for both import kinds; the JobId
+            // check in HandleImportProgress keeps each page to its own job.
+            NotificationClient.OnRosterImportProgressReceived += HandleImportProgress;
+            await NotificationClient.JoinBranchAsync(branchId);
 
             await LoadSummary();
             StateHasChanged();
         }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        NotificationClient.OnRosterImportProgressReceived -= HandleImportProgress;
+        return ValueTask.CompletedTask;
+    }
+
+    // ---------------- Import historical records ----------------
+
+    private bool canImport;
+    private bool showImportModal, isParsingFile, isStartingImport, showImportEntries;
+    private string? parsedFileName;
+    private List<WelfareImportRow> parsedRows = new();
+    private List<string> headerErrors = new();
+    private RosterImportJobDto? importJob;
+    private List<RosterImportJobEntryDto> importEntries = new();
+    private bool showHistoryModal;
+    private List<RosterImportJobDto> historyJobs = new();
+
+    private record ParsedFileResult(string? FileName, List<WelfareImportRow> Rows, List<string> HeaderErrors);
+
+    private void OpenImportModal()
+    {
+        parsedRows = new();
+        headerErrors = new();
+        parsedFileName = null;
+        importJob = null;
+        showImportEntries = false;
+        importEntries = new();
+        showImportModal = true;
+    }
+
+    private async Task CloseImportModal()
+    {
+        showImportModal = false;
+        if (importJob != null)
+        {
+            // A completed import changed the ledger — refresh whatever the page is showing.
+            // Awaited, not fire-and-forget (see StudentRoster.CloseImportModal for why).
+            await LoadSummary();
+            if (activeTab == "search") await LoadSearch();
+        }
+    }
+
+    private async Task OnFileSelected(ChangeEventArgs e)
+    {
+        isParsingFile = true;
+        headerErrors = new();
+        parsedRows = new();
+        try
+        {
+            var json = await JS.InvokeAsync<string>("rosterImport.parseFile", "welfare-file-input", "welfare");
+            var result = JsonSerializer.Deserialize<ParsedFileResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (result != null)
+            {
+                parsedFileName = result.FileName;
+                parsedRows = result.Rows;
+                headerErrors = result.HeaderErrors;
+            }
+        }
+        catch (Exception ex)
+        {
+            headerErrors = new() { $"Failed to read the file: {ex.Message}" };
+        }
+        finally
+        {
+            isParsingFile = false;
+        }
+    }
+
+    private async Task StartImport()
+    {
+        isStartingImport = true;
+        try
+        {
+            importJob = await StudentApi.StartWelfareImportAsync(branchId, new StartWelfareImportRequest
+            {
+                SourceFileName = parsedFileName,
+                Rows = parsedRows
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not start import", ex.Message);
+        }
+        finally
+        {
+            isStartingImport = false;
+        }
+    }
+
+    private async Task HandleImportProgress(RosterImportProgressEvent progress)
+    {
+        if (importJob == null || progress.JobId != importJob.Id) return;
+
+        importJob = importJob with
+        {
+            Status = progress.Status,
+            TotalRows = progress.TotalRows,
+            ProcessedRows = progress.ProcessedRows,
+            CreatedCount = progress.CreatedCount,
+            UpdatedCount = progress.UpdatedCount,
+            DuplicateCount = progress.DuplicateCount,
+            FailedCount = progress.FailedCount
+        };
+
+        // The final broadcast carries no FailureReason — re-fetch the job row once it's terminal
+        // so a whole-job failure (not just per-row ones) shows its reason instead of a bare badge.
+        if (progress.Status == RosterImportStatus.Failed)
+            importJob = await StudentApi.GetImportJobAsync(branchId, importJob.Id) ?? importJob;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ToggleImportEntries()
+    {
+        showImportEntries = !showImportEntries;
+        if (showImportEntries && importJob != null && !importEntries.Any())
+        {
+            importEntries = await StudentApi.GetImportJobEntriesAsync(branchId, importJob.Id);
+        }
+    }
+
+    private async Task OpenHistoryModal()
+    {
+        historyJobs = await StudentApi.GetImportJobsAsync(branchId, RosterImportKind.Welfare);
+        showHistoryModal = true;
     }
 
     private void SwitchTab(string tab)

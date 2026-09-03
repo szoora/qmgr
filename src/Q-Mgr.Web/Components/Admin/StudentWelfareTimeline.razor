@@ -9,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IJSRuntime JS
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -44,6 +45,11 @@
             @if (canCreate)
             {
                 <QButton Text="Log Record" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
+            }
+            @if (canExport)
+            {
+                <QButton Text="Export data (SAR)" Icon="file-earmark-arrow-down" Variant="secondary" OnClick="@ExportStudentData" Loading="@isExporting"
+                         Title="Download everything held about this student as one JSON file — for a subject-access request" />
             }
             <QButton Text="Back to Roster" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/roster"))" />
         </div>
@@ -500,7 +506,7 @@
     private Guid branchId;
     private StudentDto? student;
     private bool isLoading = true;
-    private bool canCreate, canEdit, canNotify;
+    private bool canCreate, canEdit, canNotify, canExport, isExporting;
     private List<WelfareRecordDto> records = new();
     private List<WelfareCategoryDto> categories = new();
     private List<StudentDto> otherStudents = new();
@@ -559,6 +565,9 @@
             canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
             canEdit = await PermissionService.HasPermissionAsync(Permissions.WelfareEdit);
             canNotify = await PermissionService.HasPermissionAsync(Permissions.WelfareNotify);
+            // The SAR export endpoint requires students.view AND welfare.view; welfare.view is
+            // already established by the gate above, so only the other half is checked here.
+            canExport = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
 
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
@@ -988,6 +997,38 @@
         catch (Exception ex)
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to send notification: {ex.Message}");
+        }
+    }
+
+    // ---------------- Subject-access-request export ----------------
+
+    /// <summary>
+    /// Downloads the API's SAR document (GET .../students/{id}/data-export) via the same
+    /// downloadDataUrl helper the CSV exports use — the bytes come back through the
+    /// authenticated HttpClient, so a plain &lt;a href&gt; to the API (no auth header) wouldn't work.
+    /// </summary>
+    private async Task ExportStudentData()
+    {
+        isExporting = true;
+        try
+        {
+            var file = await StudentApi.ExportStudentDataAsync(branchId, StudentId);
+            if (file == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Export failed", "Couldn't build the data export — check you have both roster and welfare view access.");
+                return;
+            }
+            var dataUrl = "data:application/json;base64," + Convert.ToBase64String(file.Content);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, file.FileName);
+            NotificationService.Notify(ToastSeverity.Success, "Export ready", $"{file.FileName} downloaded");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Export failed", ex.Message);
+        }
+        finally
+        {
+            isExporting = false;
         }
     }
 

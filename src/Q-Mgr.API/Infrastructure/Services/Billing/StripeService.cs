@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Entities.Organization;
@@ -481,7 +482,7 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<IEnumerable<PaymentMethodInfo>> GetPaymentMethodsAsync(string customerId)
+    public async Task<IEnumerable<PaymentMethodDto>> GetPaymentMethodsAsync(string customerId)
     {
         await EnsureConfiguredAsync();
         try
@@ -500,20 +501,21 @@ public class StripeService : IStripeService
             var customer = await customerService.GetAsync(customerId);
             var defaultPaymentMethodId = customer.InvoiceSettings?.DefaultPaymentMethodId;
 
-            return paymentMethods.Data.Select(pm => new PaymentMethodInfo(
+            return paymentMethods.Data.Select(pm => new PaymentMethodDto(
                 pm.Id,
                 pm.Type,
                 pm.Card?.Brand,
                 pm.Card?.Last4,
                 (int?)pm.Card?.ExpMonth,
                 (int?)pm.Card?.ExpYear,
-                pm.Id == defaultPaymentMethodId
+                pm.Id == defaultPaymentMethodId,
+                pm.Created
             ));
         }
         catch (StripeException ex)
         {
             _logger.LogError(ex, "Failed to get payment methods for customer {CustomerId}", customerId);
-            return Enumerable.Empty<PaymentMethodInfo>();
+            return Enumerable.Empty<PaymentMethodDto>();
         }
     }
 
@@ -548,7 +550,7 @@ public class StripeService : IStripeService
         catch (StripeException ex)
         {
             _logger.LogError(ex, "Failed to set default payment method {PaymentMethodId} for customer {CustomerId}", paymentMethodId, customerId);
-            return false;
+            throw;
         }
     }
 
@@ -573,7 +575,7 @@ public class StripeService : IStripeService
         catch (StripeException ex)
         {
             _logger.LogError(ex, "Failed to remove payment method {PaymentMethodId} for customer {CustomerId}", paymentMethodId, customerId);
-            return false;
+            throw;
         }
     }
 

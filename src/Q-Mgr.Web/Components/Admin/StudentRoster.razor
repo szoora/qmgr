@@ -80,7 +80,13 @@
                     <span class="roster-select">
                         <input type="checkbox" checked="@selectedStudentIds.Contains(s.Id)" @onchange="@(e => ToggleStudentSelection(s.Id, (bool)(e.Value ?? false)))" />
                     </span>
-                    <span class="roster-name">@s.FullName</span>
+                    <span class="roster-name">
+                        @s.FullName
+                        <span class="consent-icon @(s.DataConsentGivenAt.HasValue ? "consent-icon--given" : "")"
+                              title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {s.DataConsentGivenAt.Value.ToLocalTime():MMM d, yyyy}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
+                            <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "shield-check" : "shield")" Size="sm" />
+                        </span>
+                    </span>
                     <span class="roster-code">@(s.StudentCode ?? "—")</span>
                     <span>
                         @if (!string.IsNullOrEmpty(s.ClassName))
@@ -117,6 +123,12 @@
                         @if (canViewWelfare)
                         {
                             <QButton Icon="clipboard2-pulse" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))" Title="View welfare timeline" />
+                            <QButton Icon="file-earmark-arrow-down" Size="sm" Variant="ghost" OnClick="@(() => ExportStudentData(s))" Title="Export data (SAR) — everything held about this student as one JSON file" />
+                        }
+                        @if (canManageStudents)
+                        {
+                            <QButton Icon="@(s.DataConsentGivenAt.HasValue ? "shield-slash" : "shield-check")" Size="sm" Variant="ghost" OnClick="@(() => OpenConsentModal(s))"
+                                     Title="@(s.DataConsentGivenAt.HasValue ? "Withdraw or re-record data consent" : "Record data consent")" />
                         }
                         <QButton Icon="person-vcard-fill" Size="sm" Variant="ghost" OnClick="@(() => PrintStudentIdCard(s))" Title="Print Student Visitation Card (all guardians)" />
                         <QButton Icon="person-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
@@ -147,6 +159,45 @@
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showStudentModal = false)" />
         <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveStudent" Disabled="@string.IsNullOrWhiteSpace(studentModel.FullName)" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Data Consent ---------------- *@
+<QModal @bind-Visible="showConsentModal" Title="@($"Data Consent — {consentTargetStudent?.FullName}")" Size="md">
+    <ChildContent>
+        @if (consentTargetStudent?.DataConsentGivenAt is { } givenAt)
+        {
+            <p class="consent-status consent-status--given">
+                <QIcon Name="shield-check" /> Consent recorded @givenAt.ToLocalTime().ToString("MMM d, yyyy 'at' h:mm tt")
+            </p>
+            @if (!string.IsNullOrWhiteSpace(consentTargetStudent.DataConsentNotes))
+            {
+                <p class="form-hint" style="margin-top: 0;">@consentTargetStudent.DataConsentNotes</p>
+            }
+        }
+        else
+        {
+            <p class="consent-status"><QIcon Name="shield" /> No data-processing consent on file for this student.</p>
+        }
+        <div class="form-grid">
+            <label class="full-width">
+                Notes (optional)
+                <textarea @bind="consentNotes" rows="3" maxlength="500" placeholder="e.g., Signed consent form received from mother, 12 Feb 2026"></textarea>
+            </label>
+        </div>
+        <p class="form-hint">Recording consent stamps the current time and your name. Withdrawing clears the record entirely — the notes included.</p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showConsentModal = false)" />
+        @if (consentTargetStudent?.DataConsentGivenAt.HasValue == true)
+        {
+            <QButton Text="Withdraw consent" Icon="shield-slash" Variant="danger" OnClick="@(() => SaveConsent(false))" Disabled="@isSavingConsent" />
+            <QButton Text="Re-record" Icon="shield-check" Variant="primary" OnClick="@(() => SaveConsent(true))" Disabled="@isSavingConsent" />
+        }
+        else
+        {
+            <QButton Text="Record consent" Icon="shield-check" Variant="primary" OnClick="@(() => SaveConsent(true))" Disabled="@isSavingConsent" />
+        }
     </FooterContent>
 </QModal>
 
@@ -392,7 +443,12 @@
     .roster-row:last-child { border-bottom: none; }
     .roster-header { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .roster-row.inactive { opacity: 0.5; }
-    .roster-name { font-weight: 600; color: var(--qm-text-primary); }
+    .roster-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .consent-icon { display: inline-flex; color: var(--qm-text-muted); opacity: 0.55; cursor: help; }
+    .consent-icon--given { color: var(--qm-success, #3f7d58); opacity: 1; }
+    .consent-status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; color: var(--qm-text-muted); }
+    .consent-status--given { color: var(--qm-success, #3f7d58); font-weight: 600; }
+    .form-grid textarea { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit; resize: vertical; }
     .roster-code { font-family: monospace; color: var(--qm-text-muted); }
     .roster-guardians { font-size: 13px; color: var(--qm-text-muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
     .roster-empty-guardians { font-style: italic; }
@@ -906,6 +962,7 @@
 
         canLogWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
         canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
+        canManageStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsManage);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
@@ -1100,8 +1157,62 @@
 
     private async Task OpenHistoryModal()
     {
-        historyJobs = await StudentApi.GetImportJobsAsync(branchId);
+        // Roster uploads only — welfare-history backfills share the same job table (see
+        // RosterImportKind) and are listed on the Welfare Reports page instead.
+        historyJobs = await StudentApi.GetImportJobsAsync(branchId, RosterImportKind.Roster);
         showHistoryModal = true;
+    }
+
+    // ---------------- Data consent ----------------
+
+    private bool canManageStudents;
+    private bool showConsentModal, isSavingConsent;
+    private StudentDto? consentTargetStudent;
+    private string consentNotes = "";
+
+    private void OpenConsentModal(StudentDto s)
+    {
+        consentTargetStudent = s;
+        consentNotes = s.DataConsentNotes ?? "";
+        showConsentModal = true;
+    }
+
+    private async Task SaveConsent(bool given)
+    {
+        if (consentTargetStudent == null) return;
+        isSavingConsent = true;
+        try
+        {
+            var updated = await StudentApi.UpdateConsentAsync(branchId, consentTargetStudent.Id,
+                new UpdateStudentConsentRequest { Given = given, Notes = given ? consentNotes : null });
+            if (updated == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not save", "Consent wasn't updated — check the notes are under 500 characters and try again.");
+                return;
+            }
+            NotificationService.Notify(ToastSeverity.Success, given ? "Consent recorded" : "Consent withdrawn", $"{updated.FullName}'s data consent updated.");
+            showConsentModal = false;
+            await LoadStudents();
+        }
+        finally
+        {
+            isSavingConsent = false;
+        }
+    }
+
+    // ---------------- Subject-access-request export ----------------
+
+    private async Task ExportStudentData(StudentDto s)
+    {
+        var file = await StudentApi.ExportStudentDataAsync(branchId, s.Id);
+        if (file == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Export failed", "Couldn't build the data export — this needs both roster and welfare view access.");
+            return;
+        }
+        var dataUrl = "data:application/json;base64," + Convert.ToBase64String(file.Content);
+        await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, file.FileName);
+        NotificationService.Notify(ToastSeverity.Success, "Export ready", $"{file.FileName} downloaded");
     }
 
     public async ValueTask DisposeAsync()

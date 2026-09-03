@@ -102,6 +102,13 @@ public interface INotificationHubService
     Task SendToBranchAsync(Guid branchId, Notification notification);
     Task SendToAllAsync(Notification notification);
     Task NotifyUnreadCountAsync(Guid userId, int count);
+
+    /// <summary>
+    /// Tells a signed-in user's open circuits that their role or role permissions changed, so
+    /// the Web client can re-fetch its permission set instead of showing stale buttons until the
+    /// next login.
+    /// </summary>
+    Task NotifyPermissionsChangedAsync(Guid userId);
 }
 
 /// <summary>

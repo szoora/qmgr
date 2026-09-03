@@ -25,6 +25,10 @@ public class QueueIntegrationClient : IQueueIntegrationClient
 
         _httpClient.BaseAddress = new Uri(options.ApiBaseUrl);
         _httpClient.DefaultRequestHeaders.Add("X-API-Key", options.ApiKey);
+        if (!string.IsNullOrEmpty(options.ApiSecret))
+        {
+            _httpClient.DefaultRequestHeaders.Add("X-API-Secret", options.ApiSecret);
+        }
     }
 
     public async Task<CreateTokenResult> CreateTokenAsync(CreateTokenRequest request, CancellationToken cancellationToken = default)
@@ -279,7 +283,14 @@ public class QueueIntegrationClient : IQueueIntegrationClient
 public record QueueIntegrationOptions
 {
     public string ApiBaseUrl { get; init; } = string.Empty;
+    /// <summary>The API client id issued by Q-Mgr (X-API-Key).</summary>
     public string ApiKey { get; init; } = string.Empty;
+
+    /// <summary>
+    /// The client secret issued alongside it. Q-Mgr requires it on every API-key request (sent as
+    /// X-API-Secret). Leave empty only if ApiKey already holds the combined "clientId.secret" form.
+    /// </summary>
+    public string ApiSecret { get; init; } = string.Empty;
     public Guid BranchId { get; init; }
     public string SystemIdentifier { get; init; } = string.Empty;
 }

@@ -10,6 +10,7 @@ using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Domain.Entities.Organization;
 using QMgr.Domain.Entities.Platform;
+using QMgr.Infrastructure.Email;
 using QMgr.Domain.Enums;
 using QMgr.Domain.Interfaces;
 using QMgr.Infrastructure.Data;
@@ -370,31 +371,18 @@ public class TenantProvisioningService : ITenantProvisioningService
         var verificationUrl = $"{baseUrl}/verify?org={organization.Id}&token={token}";
 
         var subject = "Verify your Q-Mgr account";
-        var htmlBody = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <title>Verify your email</title>
-</head>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
-    <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
-        <h1 style='color: #2563eb;'>Verify your email</h1>
-        <p>Hi {user.FirstName},</p>
-        <p>You requested a new verification link for your Q-Mgr account. Click the button below to verify your email:</p>
-        <div style='text-align: center; margin: 30px 0;'>
-            <a href='{verificationUrl}' style='background-color: #2563eb; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block;'>Verify Email Address</a>
-        </div>
-        <p>Or copy and paste this link into your browser:</p>
-        <p style='word-break: break-all; color: #666;'>{verificationUrl}</p>
-        <p>This link will expire in 24 hours.</p>
-        <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;'>
-        <p style='color: #666; font-size: 14px;'>
-            If you didn't request this email, you can safely ignore it.
-        </p>
-    </div>
-</body>
-</html>";
+        var htmlBody = EmailTemplates.Layout(
+            "Verify your email",
+            user.FirstName,
+            new[]
+            {
+                $"You requested a new verification link for your {EmailTemplates.AppName} account. Click the button below to verify your email.",
+                "This link will expire in 24 hours."
+            },
+            "Verify Email Address",
+            verificationUrl,
+            footerNote: "If you didn't request this email, you can safely ignore it.",
+            showLinkFallback: true);
 
         return await _emailSender.SendAsync(user.Email, subject, htmlBody, cancellationToken);
     }

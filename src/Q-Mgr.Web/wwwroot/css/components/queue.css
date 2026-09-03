@@ -102,7 +102,7 @@
 }
 
 .qm-queue-ticket-status.waiting {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
@@ -112,18 +112,18 @@
 }
 
 .qm-queue-ticket-status.serving {
-    background: rgba(22, 163, 74, 0.15);
+    background: rgba(var(--qm-success-rgb), 0.15);
     color: var(--qm-accent-green);
 }
 
 .qm-queue-ticket-status.completed {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    background: rgba(var(--qm-success-rgb), 0.15);
+    color: var(--qm-success);
 }
 
 .qm-queue-ticket-status.cancelled {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: rgba(var(--qm-danger-rgb), 0.15);
+    color: var(--qm-danger);
 }
 
 /* ================================
@@ -244,7 +244,7 @@
 
 .qm-queue-terminal-btn.call {
     background: var(--qm-gradient-primary);
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-terminal-btn.call:hover {
@@ -253,43 +253,43 @@
 }
 
 .qm-queue-terminal-btn.complete {
-    background: rgba(22, 163, 74, 0.2);
+    background: rgba(var(--qm-success-rgb), 0.2);
     color: var(--qm-accent-green);
 }
 
 .qm-queue-terminal-btn.complete:hover {
     background: var(--qm-accent-green);
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-terminal-btn.recall {
-    background: rgba(245, 158, 11, 0.2);
+    background: rgba(var(--qm-warning-rgb), 0.2);
     color: var(--qm-warning);
 }
 
 .qm-queue-terminal-btn.recall:hover {
     background: var(--qm-warning);
-    color: #333;
+    color: var(--qm-text-dark);
 }
 
 .qm-queue-terminal-btn.transfer {
-    background: rgba(38, 55, 74, 0.2);
-    color: #a78bfa;
+    background: var(--qm-secondary-light);
+    color: var(--qm-accent-pink);
 }
 
 .qm-queue-terminal-btn.transfer:hover {
-    background: #2e242a;
-    color: #fff;
+    background: var(--qm-secondary-dark);
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-terminal-btn.noshow {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
+    background: rgba(var(--qm-danger-rgb), 0.2);
+    color: var(--qm-danger);
 }
 
 .qm-queue-terminal-btn.noshow:hover {
-    background: #ef4444;
-    color: #fff;
+    background: var(--qm-danger);
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-terminal-btn:disabled {
@@ -351,7 +351,7 @@
     align-items: center;
     justify-content: center;
     font-size: 36px;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-kiosk-title {
@@ -391,7 +391,7 @@
 .qm-queue-kiosk-service:hover {
     border-color: var(--qm-primary);
     transform: translateY(-4px);
-    box-shadow: 0 12px 40px rgba(140, 47, 82, 0.2);
+    box-shadow: 0 12px 40px rgba(var(--qm-primary-rgb), 0.2);
 }
 
 .qm-queue-kiosk-service:active {
@@ -499,7 +499,7 @@
     align-items: center;
     justify-content: center;
     font-size: 24px;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-queue-display-logo-text {

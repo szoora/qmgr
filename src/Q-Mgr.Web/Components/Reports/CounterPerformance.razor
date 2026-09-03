@@ -4,6 +4,8 @@
 @inject IPermissionService PermissionService
 @inject IBranchStateService BranchState
 @inject NavigationManager Navigation
+@inject IToastService NotificationService
+@inject IJSRuntime JS
 
 <PageTitle>Counter Performance - Q-Mgr</PageTitle>
 
@@ -58,7 +60,7 @@ else
             </div>
             <div class="filter-item">
                 <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" />
-                <QButton Text="Export" Icon="cloud-download-fill" Variant="secondary" />
+                <QButton Text="Export" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
             </div>
         </div>
     </QCard>
@@ -368,6 +370,7 @@ else
     private List<CounterDto> counters = new();
     private List<CounterStat> counterStats = new();
     private bool isLoading = true;
+    private bool isExporting;
     private string? errorMessage;
 
     private List<string> periods = new() { "today", "yesterday", "week", "month" };
@@ -449,6 +452,58 @@ else
     }
 
     private void NavigateToCounters() => Navigation.NavigateTo("/admin/counters");
+
+    /// <summary>
+    /// Downloads the per-counter CSV for the selected period from ReportsController — same
+    /// data: URL + downloadDataUrl pattern VisitorReport uses. The date range comes from the
+    /// "Date Range" picker; the "Counter" filter is display-only here (the export always
+    /// includes every counter so idle ones are visible, mirroring the API's own reasoning).
+    /// </summary>
+    private async Task ExportCsv()
+    {
+        var branchId = BranchState.CurrentBranchId;
+        if (branchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.", 4000);
+            return;
+        }
+
+        var (from, to) = ResolvePeriod(selectedPeriod);
+        isExporting = true;
+        try
+        {
+            var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Counters, branchId, from, to);
+            if (!result.Success)
+            {
+                if (result.IsForbidden)
+                    NotificationService.Notify(ToastSeverity.Warning, "Export not available",
+                        result.ErrorMessage ?? "You don't have permission to export reports, or your plan doesn't include exports.", 6000);
+                else
+                    NotificationService.Notify(ToastSeverity.Error, "Export failed",
+                        result.ErrorMessage ?? "Couldn't export counter performance. Please try again.", 5000);
+                return;
+            }
+
+            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(result.Csv!);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"counter-performance-{from:yyyyMMdd}-{to:yyyyMMdd}.csv");
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    private static (DateOnly From, DateOnly To) ResolvePeriod(string period)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return period switch
+        {
+            "yesterday" => (today.AddDays(-1), today.AddDays(-1)),
+            "week" => (today.AddDays(-6), today),
+            "month" => (today.AddDays(-29), today),
+            _ => (today, today)
+        };
+    }
 
     private string GetUtilizationClass(int utilization)
     {

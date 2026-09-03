@@ -240,8 +240,8 @@
 
     .profile-card,
     .actions-card {
-        background: var(--qm-bg-card, #1e1e2d);
-        border: 1px solid var(--qm-border, #2d2d3a);
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-xl);
         padding: 24px;
     }
@@ -251,7 +251,7 @@
         align-items: center;
         gap: 20px;
         padding-bottom: 24px;
-        border-bottom: 1px solid var(--qm-border, #2d2d3a);
+        border-bottom: 1px solid var(--qm-border);
         margin-bottom: 24px;
         position: relative;
     }
@@ -260,13 +260,13 @@
         width: 80px;
         height: 80px;
         border-radius: 50%;
-        background: var(--qm-gradient-primary, #8c2f52);
+        background: var(--qm-gradient-primary);
         display: flex;
         align-items: center;
         justify-content: center;
         font-size: 28px;
         font-weight: 700;
-        color: white;
+        color: var(--qm-text-on-primary);
         flex-shrink: 0;
     }
 
@@ -278,7 +278,7 @@
         margin: 0 0 8px;
         font-size: 24px;
         font-weight: 600;
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
     }
 
     .btn-edit {
@@ -288,9 +288,9 @@
         width: 40px;
         height: 40px;
         border-radius: var(--qm-radius-lg);
-        border: 1px solid var(--qm-border, #2d2d3a);
-        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
-        color: var(--qm-text-muted, #a0a0a0);
+        border: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-muted);
         cursor: pointer;
         transition: all 0.2s ease;
         display: flex;
@@ -300,8 +300,8 @@
 
     .btn-edit:hover {
         background: var(--qm-primary-light);
-        border-color: var(--qm-primary, #8c2f52);
-        color: var(--qm-primary, #8c2f52);
+        border-color: var(--qm-primary);
+        color: var(--qm-primary);
     }
 
     .role-badge {
@@ -315,8 +315,8 @@
 
     .role-badge.admin,
     .role-badge.superadmin {
-        background: rgba(139, 92, 246, 0.2);
-        color: #a78bfa;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
     }
 
     .role-badge.manager {
@@ -345,7 +345,7 @@
         align-items: center;
         gap: 16px;
         padding: 12px;
-        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
+        background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-lg);
     }
 
@@ -362,7 +362,7 @@
 
     .detail-icon i {
         font-size: 18px;
-        color: var(--qm-primary, #8c2f52);
+        color: var(--qm-primary);
     }
 
     .detail-content {
@@ -373,14 +373,14 @@
 
     .detail-content label {
         font-size: 12px;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
 
     .detail-content span {
         font-size: 15px;
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
     }
 
     /* Actions Card */
@@ -394,7 +394,7 @@
         margin: 0 0 16px;
         font-size: 16px;
         font-weight: 600;
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
     }
 
     .actions-list {
@@ -405,7 +405,7 @@
 
     .actions-list hr {
         border: none;
-        border-top: 1px solid var(--qm-border, #2d2d3a);
+        border-top: 1px solid var(--qm-border);
         margin: 8px 0;
     }
 
@@ -414,10 +414,10 @@
         align-items: center;
         gap: 12px;
         padding: 12px;
-        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.02));
+        background: var(--qm-bg-elevated);
         border: 1px solid transparent;
         border-radius: var(--qm-radius-lg);
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         text-decoration: none;
         cursor: pointer;
         transition: all 0.2s ease;
@@ -433,7 +433,7 @@
 
     .action-item i:first-child {
         font-size: 18px;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
     }
 
     .action-item span {
@@ -442,7 +442,7 @@
 
     .action-item i:last-child {
         font-size: 14px;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
     }
 
     .action-item.logout:hover {
@@ -451,7 +451,7 @@
     }
 
     .action-item.logout i:first-child {
-        color: var(--qm-danger, #ef4444);
+        color: var(--qm-danger);
     }
 
     /* Not Found State */
@@ -462,50 +462,50 @@
 
     .not-found i {
         font-size: 64px;
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
         margin-bottom: 16px;
     }
 
     .not-found p {
-        color: var(--qm-text-muted, #a0a0a0);
+        color: var(--qm-text-muted);
         margin-bottom: 24px;
     }
 
     /* Modal Styling */
     .modal-content {
-        background: var(--qm-bg-card, #1e1e2d);
-        border: 1px solid var(--qm-border, #2d2d3a);
-        color: var(--qm-text-primary, #fff);
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
     }
 
     .modal-header {
-        border-bottom-color: var(--qm-border, #2d2d3a);
+        border-bottom-color: var(--qm-border);
     }
 
     .modal-footer {
-        border-top-color: var(--qm-border, #2d2d3a);
+        border-top-color: var(--qm-border);
     }
 
     .form-label {
-        color: var(--qm-text-primary, #fff);
+        color: var(--qm-text-primary);
         font-weight: 500;
     }
 
     .form-control {
-        background: var(--qm-bg-elevated, #252536);
-        border-color: var(--qm-border, #2d2d3a);
-        color: var(--qm-text-primary, #fff);
+        background: var(--qm-bg-elevated);
+        border-color: var(--qm-border);
+        color: var(--qm-text-primary);
     }
 
     .form-control:focus {
-        background: var(--qm-bg-elevated, #252536);
-        border-color: var(--qm-primary, #8c2f52);
-        color: var(--qm-text-primary, #fff);
+        background: var(--qm-bg-elevated);
+        border-color: var(--qm-primary);
+        color: var(--qm-text-primary);
         box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--qm-primary) 25%, transparent);
     }
 
     .form-control::placeholder {
-        color: var(--qm-text-muted, #6b7280);
+        color: var(--qm-text-muted);
     }
 
     .btn-close {

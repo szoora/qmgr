@@ -11,6 +11,7 @@
 @inject JsonSerializerOptions JsonOptions
 @inject INotificationApiService NotificationApi
 @inject INotificationClientService NotificationHub
+@inject IToastService ToastService
 @inject AuthenticationStateProvider AuthStateProvider
 @using Blazored.LocalStorage
 @using Microsoft.AspNetCore.Components.Authorization
@@ -151,7 +152,7 @@ else
                             {
                                 <li><a href="queue/counter" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/counter") ? "active" : "")"><i class="bi bi-display"></i>Counter Terminal</a></li>
                             }
-                            <li><a href="queue/kiosk" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/queue/kiosk") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
+                            <li><a href="@($"kiosk/branch/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/kiosk/branch/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-hand-index-thumb"></i>Self-Service Kiosk</a></li>
                             <li><a href="@($"queue/display/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/queue/display/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-tv"></i>Customer Display</a></li>
                         </ul>
                     </li>
@@ -909,8 +910,10 @@ else
             // Unsubscribe first so re-entry can never double-register.
             NotificationHub.OnNotificationReceived -= HandleNewNotification;
             NotificationHub.OnUnreadCountUpdated -= HandleUnreadCountUpdate;
+            NotificationHub.OnPermissionsChanged -= HandlePermissionsChanged;
             NotificationHub.OnNotificationReceived += HandleNewNotification;
             NotificationHub.OnUnreadCountUpdated += HandleUnreadCountUpdate;
+            NotificationHub.OnPermissionsChanged += HandlePermissionsChanged;
 
             // Start the connection
             await NotificationHub.StartAsync(userId, currentBranch?.Id);
@@ -919,6 +922,26 @@ else
         {
             // Silently fail - notifications will still work via polling
         }
+    }
+
+    /// <summary>
+    /// An admin changed this user's role or the role's permissions. Re-fetch the permission set
+    /// and rebuild the nav flags so buttons and menu items stop reflecting the old role. Server-
+    /// side checks already enforce the new set; this only closes the client-side UI lag.
+    /// </summary>
+    private async Task HandlePermissionsChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            await PermissionService.RefreshAsync();
+            await LoadPermissionsAsync();
+            if (AuthStateProvider is CustomAuthenticationStateProvider provider)
+            {
+                provider.NotifyAuthenticationStateChanged();
+            }
+            ToastService.Notify(ToastSeverity.Info, "Access updated", "Your permissions were changed by an administrator. Menus and actions have been refreshed.");
+            StateHasChanged();
+        });
     }
 
     private async Task HandleNewNotification(NotificationDto notification)
@@ -1203,6 +1226,7 @@ else
         // Unsubscribe from notification events
         NotificationHub.OnNotificationReceived -= HandleNewNotification;
         NotificationHub.OnUnreadCountUpdated -= HandleUnreadCountUpdate;
+        NotificationHub.OnPermissionsChanged -= HandlePermissionsChanged;
 
         if (moduleStateSubscribed)
         {

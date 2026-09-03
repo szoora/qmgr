@@ -38,7 +38,7 @@
 }
 
 .qm-reports-stats-card.success {
-    border-left-color: #34d399;
+    border-left-color: var(--qm-success);
 }
 
 .qm-reports-stats-card.warning {
@@ -46,11 +46,11 @@
 }
 
 .qm-reports-stats-card.info {
-    border-left-color: #60a5fa;
+    border-left-color: var(--qm-info);
 }
 
 .qm-reports-stats-card.danger {
-    border-left-color: #f87171;
+    border-left-color: var(--qm-danger);
 }
 
 .qm-reports-stats-content {
@@ -95,11 +95,11 @@
 }
 
 .qm-reports-trend.up {
-    color: #34d399;
+    color: var(--qm-success);
 }
 
 .qm-reports-trend.down {
-    color: #f87171;
+    color: var(--qm-danger);
 }
 
 .qm-reports-trend.neutral {
@@ -141,7 +141,7 @@
     justify-content: center;
     font-size: 28px;
     margin-bottom: 16px;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 /* Brand-coherent tonal set, not a random multi-hue gradient preset —
@@ -156,15 +156,15 @@
 }
 
 .qm-reports-card-icon.feedback {
-    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+    background: var(--qm-accent-pink);
 }
 
 .qm-reports-card-icon.services {
-    background: linear-gradient(135deg, var(--qm-success) 0%, #15803d 100%);
+    background: var(--qm-success);
 }
 
 .qm-reports-card-icon.customers {
-    background: linear-gradient(135deg, var(--qm-accent-orange) 0%, #b45309 100%);
+    background: var(--qm-accent-orange);
 }
 
 .qm-reports-card h3 {
@@ -313,15 +313,15 @@
 }
 
 .qm-reports-hour-block.high {
-    background: rgba(239, 68, 68, 0.2);
+    background: rgba(var(--qm-danger-rgb), 0.2);
 }
 
 .qm-reports-hour-block.medium {
-    background: rgba(245, 158, 11, 0.2);
+    background: rgba(var(--qm-warning-rgb), 0.2);
 }
 
 .qm-reports-hour-block.low {
-    background: rgba(16, 185, 129, 0.2);
+    background: rgba(var(--qm-success-rgb), 0.2);
 }
 
 /* ==========================================
@@ -377,7 +377,7 @@
 
 .qm-reports-counter-icon .rzi {
     font-size: 20px;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-reports-counter-name h4 {
@@ -402,18 +402,18 @@
 }
 
 .qm-reports-counter-status.active {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
+    background: rgba(var(--qm-success-rgb), 0.15);
+    color: var(--qm-success);
 }
 
 .qm-reports-counter-status.idle {
-    background: rgba(245, 158, 11, 0.15);
+    background: rgba(var(--qm-warning-rgb), 0.15);
     color: var(--qm-warning);
 }
 
 .qm-reports-counter-status.offline {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
+    background: rgba(var(--qm-danger-rgb), 0.15);
+    color: var(--qm-danger);
 }
 
 .qm-reports-counter-stats {
@@ -478,7 +478,7 @@
 }
 
 .qm-reports-efficiency-fill.high {
-    background: linear-gradient(90deg, #34d399, #10b981);
+    background: var(--qm-success);
 }
 
 .qm-reports-efficiency-fill.medium {
@@ -486,7 +486,7 @@
 }
 
 .qm-reports-efficiency-fill.low {
-    background: linear-gradient(90deg, #f87171, #ef4444);
+    background: var(--qm-danger);
 }
 
 /* ==========================================
@@ -625,7 +625,7 @@
     align-items: center;
     justify-content: center;
     font-weight: 600;
-    color: white;
+    color: var(--qm-text-on-primary);
 }
 
 .qm-reports-feedback-user-info h5 {
@@ -730,7 +730,7 @@
 }
 
 .qm-reports-table tr:hover td {
-    background: rgba(140, 47, 82, 0.03);
+    background: rgba(var(--qm-primary-rgb), 0.03);
 }
 
 /* ==========================================

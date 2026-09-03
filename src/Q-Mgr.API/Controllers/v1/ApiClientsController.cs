@@ -17,6 +17,11 @@ namespace QMgr.API.Controllers.v1;
 /// api/v1/auth/token), verified there via BCrypt against ClientSecretHash. This controller
 /// was previously missing entirely; the /admin/api-clients page had no backend to call and
 /// showed 3 hardcoded fake clients instead.
+///
+/// Also owns each client's webhook configuration: the outbound subscription (WebhookUrl +
+/// WebhookEvents, delivered by WebhookService) and the shared HMAC signing secret
+/// (WebhookSecret), which signs outbound deliveries AND authenticates inbound calls to
+/// WebhooksController (POST api/v1/webhooks/inbound/{clientId}).
 /// </summary>
 [ApiController]
 [Route("api/v1/api-clients")]
@@ -47,9 +52,17 @@ public class ApiClientsController : ControllerBase
         var clients = await _unitOfWork.ApiClients.FindAsync(c => c.OrganizationId == OrganizationId);
         var dtos = clients
             .OrderByDescending(c => c.CreatedAt)
-            .Select(MapToDto);
+            .Select(c => MapToDto(c));
         return Ok(dtos);
     }
+
+    /// <summary>
+    /// Canonical webhook event catalog — the outbound events a client can subscribe to and the
+    /// inbound events it may POST to the receiver. Static; same for every organization.
+    /// </summary>
+    [HttpGet("webhook-events")]
+    [RequirePermission(Permissions.ApiClientsView)]
+    public IActionResult GetWebhookEvents() => Ok(WebhookEventCatalog.All);
 
     [HttpPost]
     [RequirePermission(Permissions.ApiClientsCreate)]
@@ -58,8 +71,16 @@ public class ApiClientsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { message = "Name is required." });
 
+        var webhookError = ValidateWebhookConfig(request.WebhookUrl, request.WebhookEvents, out var webhookUrl, out var webhookEvents);
+        if (webhookError != null)
+            return BadRequest(new { message = webhookError });
+
         var clientId = $"qmgr_{Guid.NewGuid():N}"[..21];
         var clientSecret = GenerateClientSecret();
+
+        // A signing secret is generated whenever an outbound URL is configured, so the very
+        // first delivery is already signed (and the same secret authenticates inbound calls).
+        string? newWebhookSecret = webhookUrl != null ? GenerateWebhookSecret() : null;
 
         var client = new ApiClient
         {
@@ -70,19 +91,28 @@ public class ApiClientsController : ControllerBase
             ClientId = clientId,
             ClientSecretHash = BCrypt.Net.BCrypt.HashPassword(clientSecret),
             Scopes = request.Scopes.ToArray(),
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            WebhookUrl = webhookUrl,
+            WebhookEvents = webhookEvents,
+            WebhookSecret = newWebhookSecret
         };
 
         await _unitOfWork.ApiClients.AddAsync(client);
         await _unitOfWork.SaveChangesAsync();
 
-        _logger.LogInformation("Created API client {ClientId} ({Name}) for organization {OrganizationId}",
-            client.ClientId, client.Name, OrganizationId);
+        _logger.LogInformation("Created API client {ClientId} ({Name}) for organization {OrganizationId}; webhook URL {HasWebhook}",
+            client.ClientId, client.Name, OrganizationId, webhookUrl != null ? "configured" : "not configured");
 
-        var dto = new ApiClientSecretRevealDto { Client = MapToDto(client), ClientSecret = clientSecret };
+        var dto = new ApiClientSecretRevealDto { Client = MapToDto(client, newWebhookSecret), ClientSecret = clientSecret };
         return CreatedAtAction(nameof(GetApiClients), new { id = client.Id }, dto);
     }
 
+    /// <summary>
+    /// Updates the client. If a webhook URL is set and the client has no signing secret yet, one
+    /// is generated and returned once via <see cref="ApiClientDto.WebhookSecret"/> on this
+    /// response only. Clearing the URL keeps the existing secret (it still authenticates
+    /// inbound calls) — use DELETE or rotate if it must be invalidated.
+    /// </summary>
     [HttpPut("{id:guid}")]
     [RequirePermission(Permissions.ApiClientsEdit)]
     public async Task<IActionResult> UpdateApiClient(Guid id, [FromBody] UpdateApiClientRequest request)
@@ -94,16 +124,29 @@ public class ApiClientsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { message = "Name is required." });
 
+        var webhookError = ValidateWebhookConfig(request.WebhookUrl, request.WebhookEvents, out var webhookUrl, out var webhookEvents);
+        if (webhookError != null)
+            return BadRequest(new { message = webhookError });
+
         client.Name = request.Name;
         client.Description = request.Description;
         client.SystemType = request.SystemType;
         client.Scopes = request.Scopes.ToArray();
         client.IsActive = request.IsActive;
+        client.WebhookUrl = webhookUrl;
+        client.WebhookEvents = webhookEvents;
+
+        string? newWebhookSecret = null;
+        if (webhookUrl != null && string.IsNullOrEmpty(client.WebhookSecret))
+        {
+            newWebhookSecret = GenerateWebhookSecret();
+            client.WebhookSecret = newWebhookSecret;
+        }
 
         await _unitOfWork.ApiClients.UpdateAsync(client);
         await _unitOfWork.SaveChangesAsync();
 
-        return Ok(MapToDto(client));
+        return Ok(MapToDto(client, newWebhookSecret));
     }
 
     /// <summary>
@@ -130,6 +173,32 @@ public class ApiClientsController : ControllerBase
         return Ok(new ApiClientSecretRevealDto { Client = MapToDto(client), ClientSecret = newSecret });
     }
 
+    /// <summary>
+    /// Rotates (or creates, if none exists yet) the webhook signing secret. The old secret stops
+    /// verifying immediately for both outbound signatures and inbound calls. The new secret is
+    /// returned once via <see cref="ApiClientDto.WebhookSecret"/>. Works with no WebhookUrl
+    /// configured — an inbound-only integration still needs a secret to sign its calls.
+    /// </summary>
+    [HttpPost("{id:guid}/webhook-secret/rotate")]
+    [RequirePermission(Permissions.ApiClientsEdit)]
+    public async Task<IActionResult> RotateWebhookSecret(Guid id)
+    {
+        var client = await _unitOfWork.ApiClients.FirstOrDefaultAsync(c => c.Id == id && c.OrganizationId == OrganizationId);
+        if (client == null)
+            return NotFound();
+
+        var newSecret = GenerateWebhookSecret();
+        client.WebhookSecret = newSecret;
+
+        await _unitOfWork.ApiClients.UpdateAsync(client);
+        await _unitOfWork.SaveChangesAsync();
+
+        _logger.LogWarning("Rotated webhook secret for API client {ClientId} in organization {OrganizationId}",
+            client.ClientId, OrganizationId);
+
+        return Ok(MapToDto(client, newSecret));
+    }
+
     [HttpDelete("{id:guid}")]
     [RequirePermission(Permissions.ApiClientsDelete)]
     public async Task<IActionResult> DeleteApiClient(Guid id)
@@ -146,9 +215,52 @@ public class ApiClientsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Normalizes and validates the webhook URL + event list from a create/update request.
+    /// Returns an error message, or null when valid. A blank URL means "no outbound webhook"
+    /// (url = null, events = null). Only https is accepted, except plain http to localhost for
+    /// local development. Event names must come from the outbound catalog (case-insensitive,
+    /// stored canonical, de-duplicated).
+    /// </summary>
+    private static string? ValidateWebhookConfig(string? rawUrl, List<string>? rawEvents, out string? url, out string[]? events)
+    {
+        url = null;
+        events = null;
+
+        if (string.IsNullOrWhiteSpace(rawUrl))
+            return null;
+
+        var trimmed = rawUrl.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+            return "Webhook URL must be an absolute URL (e.g. https://example.com/qmgr/webhook).";
+
+        var isHttps = string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        var isHttp = string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+        if (!isHttps && !(isHttp && uri.IsLoopback))
+            return "Webhook URL must use https (plain http is only allowed for localhost).";
+
+        var canonical = new List<string>();
+        foreach (var raw in rawEvents ?? new List<string>())
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var match = WebhookEventCatalog.Outbound.FirstOrDefault(e => string.Equals(e.Name, raw.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (match == null)
+                return $"Unknown webhook event '{raw}'. Supported: {string.Join(", ", WebhookEventCatalog.Outbound.Select(e => e.Name))}.";
+            if (!canonical.Contains(match.Name))
+                canonical.Add(match.Name);
+        }
+
+        url = uri.ToString();
+        events = canonical.ToArray();
+        return null;
+    }
+
     private static string GenerateClientSecret() => $"qmgr_sk_{Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant()}";
 
-    private static ApiClientDto MapToDto(ApiClient client) => new()
+    /// <summary>32 random bytes, Base64 — the shared HMAC-SHA256 key for this client's webhooks.</summary>
+    private static string GenerateWebhookSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
+    private static ApiClientDto MapToDto(ApiClient client, string? revealWebhookSecret = null) => new()
     {
         Id = client.Id,
         Name = client.Name,
@@ -159,6 +271,10 @@ public class ApiClientsController : ControllerBase
         Scopes = client.Scopes?.ToList() ?? new(),
         RateLimitPerMinute = client.RateLimitPerMinute,
         LastUsedAt = client.LastUsedAt,
-        CreatedAt = client.CreatedAt
+        CreatedAt = client.CreatedAt,
+        WebhookUrl = client.WebhookUrl,
+        WebhookEvents = client.WebhookEvents?.ToList() ?? new(),
+        HasWebhookSecret = !string.IsNullOrEmpty(client.WebhookSecret),
+        WebhookSecret = revealWebhookSecret
     };
 }

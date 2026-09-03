@@ -6,6 +6,15 @@ namespace QMgr.Web.Services;
 public interface IOrganizationApiService
 {
     Task<OrganizationBrandingDto> GetBranchBrandingAsync(Guid branchId);
+
+    /// <summary>
+    /// Anonymous public identity of a branch (GET api/v1/branches/{id}/public).
+    /// Returns null when the branch doesn't exist / is inactive (404) — or when the
+    /// lookup fails outright — so the public pages can show a "this branch link is
+    /// not valid" state instead of rendering against a branch they can't confirm.
+    /// </summary>
+    Task<BranchPublicDto?> GetBranchPublicAsync(Guid branchId);
+
     Task<OrganizationBrandingDto?> GetOrganizationBrandingAsync(Guid organizationId);
     Task<HttpResponseMessage> UpdateOrganizationBrandingAsync(Guid organizationId, OrganizationBrandingDto branding);
     Task<HttpResponseMessage> UpdateDisplayThemeAsync(Guid organizationId, string displayTheme);
@@ -48,6 +57,23 @@ public class OrganizationApiService : IOrganizationApiService
             // Branding is cosmetic, never let a lookup failure break the display/kiosk screen.
             _logger.LogWarning(ex, "Failed to get branch branding for {BranchId} — falling back to default branding", branchId);
             return Disabled;
+        }
+    }
+
+    public async Task<BranchPublicDto?> GetBranchPublicAsync(Guid branchId)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"api/v1/branches/{branchId}/public");
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            return await response.Content.ReadFromJsonAsync<BranchPublicDto>(_jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to look up public branch info for {BranchId}", branchId);
+            return null;
         }
     }
 

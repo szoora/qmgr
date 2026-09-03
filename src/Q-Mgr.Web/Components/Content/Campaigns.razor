@@ -8,6 +8,7 @@
 @inject IBranchStateService BranchState
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IJSRuntime JS
 @using QMgr.Domain.Constants
 
 <PageTitle>Campaigns - Q-Mgr</PageTitle>
@@ -74,9 +75,14 @@
                                 <QIcon Name="calendar-event-fill" />
                                 @campaign.StartDate.ToString("MMM d, yyyy") &ndash; @campaign.EndDate.ToString("MMM d, yyyy")
                             </span>
+                            <span class="meta-item">
+                                <QIcon Name="eye-fill" />
+                                @campaign.TotalImpressions.ToString("N0") @(campaign.TotalImpressions == 1 ? "impression" : "impressions")
+                            </span>
                         </div>
                     </div>
                     <div class="campaign-actions">
+                        <QButton Icon="graph-up" Size="sm" Variant="secondary" OnClick="@(() => ShowStats(campaign))" />
                         @if (canEdit)
                         {
                             <QButton Icon="pencil-fill" Size="sm" Variant="secondary" OnClick="@(() => EditCampaign(campaign))" />
@@ -122,6 +128,143 @@
     <FooterContent>
         <QButton Text="Cancel" Icon="x-lg" Variant="secondary" OnClick="@CloseDialog" />
         <QButton Text="@(isEditing ? "Save" : "Create")" Icon="@(isEditing ? "check-lg" : "plus-lg")" Variant="primary" OnClick="@SaveCampaign" />
+    </FooterContent>
+</QModal>
+
+<!-- Impression Stats Dialog -->
+<QModal @bind-Visible="showStatsDialog" Title="@($"Impressions: {statsCampaign?.Name}")" Icon="graph-up" Size="xl">
+    <ChildContent>
+        <div class="stats-filter-row">
+            <div class="stats-filter-item">
+                <label>From<input type="date" @bind="statsFrom" /></label>
+            </div>
+            <div class="stats-filter-item">
+                <label>To<input type="date" @bind="statsTo" /></label>
+            </div>
+            <div class="stats-filter-item stats-quick-ranges">
+                <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(6))" />
+                <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(29))" />
+                <QButton Text="90 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(89))" />
+            </div>
+            <div class="stats-filter-item">
+                <QButton Text="Apply" Icon="funnel-fill" Size="sm" Variant="primary" OnClick="@LoadStats" Disabled="@statsLoading" />
+            </div>
+        </div>
+
+        @if (statsLoading)
+        {
+            <div class="stats-loading">
+                <QSpinner Size="lg" />
+                <span>Loading impressions...</span>
+            </div>
+        }
+        else if (stats == null)
+        {
+            <div class="stats-empty">
+                <QIcon Name="exclamation-triangle" />
+                <h4>Couldn't load impressions</h4>
+                <p>Try a different date range or reload the page.</p>
+            </div>
+        }
+        else if (stats.TotalImpressions == 0)
+        {
+            <div class="stats-empty">
+                <QIcon Name="eye-slash" />
+                <h4>No impressions yet</h4>
+                <p>Nothing was recorded between @stats.From.ToString("MMM d, yyyy") and @stats.To.ToString("MMM d, yyyy"). Impressions are logged each time a media item attached to this campaign plays on a public display.</p>
+            </div>
+        }
+        else
+        {
+            <div class="stats-tiles">
+                <div class="stats-tile">
+                    <div class="stats-tile-value">@stats.TotalImpressions.ToString("N0")</div>
+                    <div class="stats-tile-label">Total Impressions</div>
+                </div>
+                <div class="stats-tile">
+                    <div class="stats-tile-value">@stats.UniqueMediaItems.ToString("N0")</div>
+                    <div class="stats-tile-label">Media Items Shown</div>
+                </div>
+                <div class="stats-tile">
+                    <div class="stats-tile-value">@StatsDayCount.ToString("N0")</div>
+                    <div class="stats-tile-label">Days in Range</div>
+                </div>
+                <div class="stats-tile">
+                    <div class="stats-tile-value">@StatsPerDay.ToString("N1")</div>
+                    <div class="stats-tile-label">Avg. per Day</div>
+                </div>
+            </div>
+
+            <div class="stats-chart-card">
+                <h4>Impressions by Day</h4>
+                <RadzenChart Style="height: 240px;">
+                    <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Count" Title="Impressions" Smooth="true" />
+                    <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                    <RadzenValueAxis>
+                        <RadzenGridLines Visible="true" />
+                    </RadzenValueAxis>
+                </RadzenChart>
+            </div>
+
+            <div class="stats-tables-row">
+                <div class="stats-table-card">
+                    <h4>By Media</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Media</th>
+                                <th class="stats-share-col">Share</th>
+                                <th class="stats-count-col">Impressions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in stats.ByMedia)
+                            {
+                                <tr>
+                                    <td class="stats-name-col" title="@m.Title">@m.Title</td>
+                                    <td class="stats-share-col">
+                                        <div class="stats-bar"><div class="stats-bar-fill" style="width: @SharePercent(m.Count)%"></div></div>
+                                    </td>
+                                    <td class="stats-count-col">@m.Count.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="stats-table-card">
+                    <h4>By Branch</h4>
+                    <table class="stats-table">
+                        <thead>
+                            <tr>
+                                <th>Branch</th>
+                                <th class="stats-share-col">Share</th>
+                                <th class="stats-count-col">Impressions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var b in stats.ByBranch)
+                            {
+                                <tr>
+                                    <td class="stats-name-col" title="@b.BranchName">@b.BranchName</td>
+                                    <td class="stats-share-col">
+                                        <div class="stats-bar"><div class="stats-bar-fill" style="width: @SharePercent(b.Count)%"></div></div>
+                                    </td>
+                                    <td class="stats-count-col">@b.Count.ToString("N0")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@CloseStatsDialog" />
+        @if (canExport)
+        {
+            <QButton Text="@(isExporting ? "Exporting..." : "Export CSV")" Icon="cloud-download-fill" Variant="primary" OnClick="@ExportStatsCsv" Disabled="@(isExporting || statsLoading || stats == null)" />
+        }
     </FooterContent>
 </QModal>
 
@@ -291,6 +434,188 @@
         align-items: center;
         gap: 8px;
     }
+
+    /* Impression stats dialog */
+    .stats-filter-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+    }
+
+    .stats-filter-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .stats-filter-item label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .stats-filter-item input[type="date"] {
+        padding: 7px 10px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-input, var(--qm-bg-card));
+        color: var(--qm-text-primary);
+        font-family: inherit;
+    }
+
+    .stats-quick-ranges {
+        flex-direction: row;
+        gap: 6px;
+    }
+
+    .stats-loading, .stats-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 48px 20px;
+        text-align: center;
+        color: var(--qm-text-secondary);
+    }
+
+    .stats-empty .rzi {
+        font-size: 48px;
+        color: var(--qm-text-muted);
+    }
+
+    .stats-empty h4 {
+        margin: 0;
+        color: var(--qm-text-primary);
+    }
+
+    .stats-empty p {
+        margin: 0;
+        max-width: 460px;
+        font-size: 13px;
+    }
+
+    .stats-tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .stats-tile {
+        padding: 14px 16px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        text-align: center;
+    }
+
+    .stats-tile-value {
+        font-family: var(--qm-font-display);
+        font-size: 26px;
+        font-weight: 700;
+        color: var(--qm-primary);
+        line-height: 1.2;
+    }
+
+    .stats-tile-label {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .stats-chart-card, .stats-table-card {
+        padding: 16px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+    }
+
+    .stats-chart-card {
+        margin-bottom: 20px;
+    }
+
+    .stats-chart-card h4, .stats-table-card h4 {
+        margin: 0 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .stats-tables-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
+    .stats-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .stats-table th {
+        text-align: left;
+        padding: 6px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--qm-text-muted);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .stats-table td {
+        padding: 8px;
+        border-bottom: 1px solid var(--qm-border);
+        color: var(--qm-text-primary);
+        vertical-align: middle;
+    }
+
+    .stats-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .stats-name-col {
+        max-width: 220px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .stats-share-col {
+        width: 34%;
+    }
+
+    .stats-count-col {
+        width: 90px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }
+
+    .stats-bar {
+        height: 8px;
+        background: var(--qm-primary-light);
+        border-radius: var(--qm-radius-sm);
+        overflow: hidden;
+    }
+
+    .stats-bar-fill {
+        height: 100%;
+        background: var(--qm-primary);
+        border-radius: var(--qm-radius-sm);
+    }
+
+    @@media (max-width: 900px) {
+        .stats-tables-row {
+            grid-template-columns: 1fr;
+        }
+    }
 </style>
 
 @code {
@@ -302,7 +627,7 @@
     private CampaignEditModel editModel = new();
     private Guid? editingId;
 
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
     private bool showDeleteConfirm = false;
     private string deleteConfirmMessage = "";
@@ -311,6 +636,24 @@
     private bool canCreate = false;
     private bool canEdit = false;
     private bool canDelete = false;
+    private bool canExport = false;
+
+    // Impression stats dialog state
+    private bool showStatsDialog = false;
+    private bool statsLoading = false;
+    private bool isExporting = false;
+    private CampaignDto? statsCampaign;
+    private CampaignStatsDto? stats;
+    private DateOnly statsFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-29);
+    private DateOnly statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
+
+    // RadzenChart's category axis wants a DateTime to format/order against — DayCountDto carries
+    // a DateOnly, so this is a charting-only projection (same pattern as VisitorReport.razor).
+    private record DayChartPoint(DateTime Day, int Count);
+    private List<DayChartPoint> dailyChartData = new();
+
+    private int StatsDayCount => stats == null ? 0 : stats.To.DayNumber - stats.From.DayNumber + 1;
+    private double StatsPerDay => StatsDayCount == 0 || stats == null ? 0 : (double)stats.TotalImpressions / StatsDayCount;
 
     private IEnumerable<CampaignDto> FilteredCampaigns => campaigns
         .Where(c => string.IsNullOrEmpty(searchTerm) || c.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
@@ -333,6 +676,7 @@
         canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
         canEdit = await PermissionService.HasPermissionAsync(Permissions.ContentEdit);
         canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+        canExport = await PermissionService.HasPermissionAsync(Permissions.ReportsExport);
 
         await BranchState.InitializeAsync();
         if (BranchState.CurrentBranchId != Guid.Empty)
@@ -491,6 +835,102 @@
 
         campaignToDelete = null;
     }
+
+    #region Impression stats
+
+    private async Task ShowStats(CampaignDto campaign)
+    {
+        statsCampaign = campaign;
+        stats = null;
+        dailyChartData = new();
+        statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
+        statsFrom = statsTo.AddDays(-29);
+        showStatsDialog = true;
+        await LoadStats();
+    }
+
+    private void CloseStatsDialog() => showStatsDialog = false;
+
+    private async Task ApplyStatsQuickRange(int daysBack)
+    {
+        statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
+        statsFrom = statsTo.AddDays(-daysBack);
+        await LoadStats();
+    }
+
+    private async Task LoadStats()
+    {
+        if (statsCampaign == null) return;
+
+        statsLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        stats = await ContentApi.GetCampaignStatsAsync(statsCampaign.Id, statsFrom, statsTo);
+        dailyChartData = stats?.Daily
+            .Select(d => new DayChartPoint(d.Day.ToDateTime(TimeOnly.MinValue), d.Count))
+            .ToList() ?? new();
+
+        // The API may have swapped or capped the range (366-day max) — reflect what it actually used.
+        if (stats != null)
+        {
+            statsFrom = stats.From;
+            statsTo = stats.To;
+        }
+
+        statsLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private int SharePercent(int count) =>
+        stats == null || stats.TotalImpressions == 0 ? 0 : (int)Math.Round(100.0 * count / stats.TotalImpressions);
+
+    private async Task ExportStatsCsv()
+    {
+        if (statsCampaign == null) return;
+
+        isExporting = true;
+        try
+        {
+            var csv = await ContentApi.ExportCampaignStatsCsvAsync(statsCampaign.Id, statsFrom, statsTo);
+            if (csv == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't export campaign impressions.");
+                return;
+            }
+
+            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"campaign-{Slugify(statsCampaign.Name)}-impressions.csv");
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    // Mirrors the API's filename slug so the browser-side download name matches the server's.
+    private static string Slugify(string name)
+    {
+        var sb = new System.Text.StringBuilder();
+        var lastWasDash = true;
+        foreach (var ch in name.ToLowerInvariant())
+        {
+            if (ch < 128 && char.IsLetterOrDigit(ch))
+            {
+                sb.Append(ch);
+                lastWasDash = false;
+            }
+            else if (!lastWasDash)
+            {
+                sb.Append('-');
+                lastWasDash = true;
+            }
+            if (sb.Length >= 40) break;
+        }
+        var slug = sb.ToString().Trim('-');
+        return slug.Length > 0 ? slug : "campaign";
+    }
+
+    #endregion
 
     private class CampaignEditModel
     {

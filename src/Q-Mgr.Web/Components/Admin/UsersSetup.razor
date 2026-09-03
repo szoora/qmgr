@@ -102,7 +102,7 @@
                 {
                     <div class="role-card">
                         <div class="role-header">
-                            <div class="role-icon" style="background: @(role.Color ?? "#6b7280")">
+                            <div class="role-icon" style="background: @(role.Color ?? "var(--qm-text-muted)")">
                                 <QIcon Name="@(role.Icon ?? "shield")" />
                             </div>
                             <div class="role-title">
@@ -210,7 +210,7 @@
         {
             <div class="role-editor">
                 <div class="role-info-header">
-                    <div class="role-icon" style="background: @(editingRole.Color ?? "#6b7280")">
+                    <div class="role-icon" style="background: @(editingRole.Color ?? "var(--qm-text-muted)")">
                         <QIcon Name="@(editingRole.Icon ?? "shield")" />
                     </div>
                     <div>
@@ -322,7 +322,7 @@
         align-items: center;
         justify-content: center;
         font-weight: 600;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .user-info { display: flex; flex-direction: column; }
@@ -355,7 +355,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .role-title h4 { margin: 0 0 4px; color: var(--qm-text-primary); }
@@ -771,8 +771,8 @@
 
     private string GetAvatarColor(string? name)
     {
-        if (string.IsNullOrEmpty(name)) return "#6b7280";
-        var colors = new[] { "#8c2f52", "#47393f", "#10b981", "#f59e0b", "#ef4444" };
+        if (string.IsNullOrEmpty(name)) return "var(--qm-text-muted)";
+        var colors = new[] { "var(--qm-primary)", "var(--qm-secondary)", "var(--qm-success)", "var(--qm-warning)", "var(--qm-danger)" };
         return colors[Math.Abs(name.GetHashCode()) % colors.Length];
     }
 

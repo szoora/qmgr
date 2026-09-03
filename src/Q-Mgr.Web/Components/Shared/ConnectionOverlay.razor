@@ -82,8 +82,8 @@
     }
 
     .overlay-content {
-        background: var(--qm-bg-card, #1a1f2e);
-        border: 1px solid var(--qm-border, rgba(255, 255, 255, 0.1));
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-xl);
         padding: 48px;
         max-width: 480px;
@@ -98,11 +98,11 @@
     }
 
     .connection-overlay.disconnected .overlay-icon {
-        color: var(--qm-danger, #ef4444);
+        color: var(--qm-danger);
     }
 
     .connection-overlay.reconnecting .overlay-icon {
-        color: var(--qm-warning, #ffc107);
+        color: var(--qm-warning);
     }
 
     .reconnecting-spinner {
@@ -118,19 +118,19 @@
         margin: 0 0 12px;
         font-size: 28px;
         font-weight: 700;
-        color: var(--qm-text-primary, #ffffff);
+        color: var(--qm-text-primary);
     }
 
     .overlay-content .message {
         margin: 0 0 16px;
         font-size: 16px;
-        color: var(--qm-text-secondary, #a0aec0);
+        color: var(--qm-text-secondary);
         line-height: 1.6;
     }
 
     .last-connected {
         font-size: 13px;
-        color: var(--qm-text-muted, #718096);
+        color: var(--qm-text-muted);
         margin-bottom: 24px;
     }
 
@@ -143,10 +143,10 @@
         align-items: center;
         gap: 8px;
         padding: 14px 32px;
-        background: var(--qm-gradient-primary, #8c2f52);
+        background: var(--qm-gradient-primary);
         border: none;
         border-radius: var(--qm-radius-xl);
-        color: white;
+        color: var(--qm-text-on-primary);
         font-size: 16px;
         font-weight: 600;
         cursor: pointer;
@@ -155,7 +155,7 @@
 
     .btn-retry:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(140, 47, 82, 0.3);
+        box-shadow: 0 8px 25px rgba(var(--qm-primary-rgb), 0.3);
     }
 
     .btn-retry:active {
@@ -168,7 +168,7 @@
 
     .troubleshooting {
         text-align: left;
-        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.05));
+        background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-xl);
         padding: 16px 20px;
     }
@@ -177,13 +177,13 @@
         margin: 0 0 8px;
         font-size: 13px;
         font-weight: 600;
-        color: var(--qm-text-secondary, #a0aec0);
+        color: var(--qm-text-secondary);
     }
 
     .troubleshooting ul {
         margin: 0;
         padding-left: 20px;
-        color: var(--qm-text-muted, #718096);
+        color: var(--qm-text-muted);
         font-size: 13px;
     }
 
@@ -198,19 +198,19 @@
     .retry-info p {
         margin: 0 0 12px;
         font-size: 14px;
-        color: var(--qm-text-muted, #718096);
+        color: var(--qm-text-muted);
     }
 
     .retry-progress {
         height: 4px;
-        background: var(--qm-bg-elevated, rgba(255, 255, 255, 0.1));
+        background: var(--qm-bg-elevated);
         border-radius: var(--qm-radius-sm);
         overflow: hidden;
     }
 
     .retry-bar {
         height: 100%;
-        background: var(--qm-warning, #ffc107);
+        background: var(--qm-warning);
         transition: width 0.3s ease;
     }
 
@@ -220,12 +220,12 @@
     }
 
     [data-theme="light"] .overlay-content {
-        background: var(--qm-bg-card, #ffffff);
+        background: var(--qm-bg-card);
         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
     }
 
     [data-theme="light"] .btn-retry {
-        color: #ffffff;
+        color: var(--qm-text-on-primary);
     }
 </style>
 

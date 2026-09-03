@@ -411,7 +411,7 @@ else if (queueStatus != null)
         gap: 6px;
         padding: 4px 12px;
         background: var(--qm-danger);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-full);
         font-size: 11px;
         font-weight: 600;
@@ -421,7 +421,7 @@ else if (queueStatus != null)
     .live-dot {
         width: 8px;
         height: 8px;
-        background: white;
+        background: var(--qm-text-on-primary);
         border-radius: 50%;
         animation: pulse 1s infinite;
     }
@@ -488,7 +488,7 @@ else if (queueStatus != null)
         border-radius: var(--qm-radius-lg);
         font-size: 12px;
         font-weight: 600;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .service-name {
@@ -503,7 +503,7 @@ else if (queueStatus != null)
         min-width: 28px;
         height: 28px;
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-radius: var(--qm-radius-full);
         font-weight: 600;
         font-size: 13px;
@@ -573,17 +573,17 @@ else if (queueStatus != null)
        this dashboard widget deliberately uses solid backgrounds, not QBadge's default. */
     .counter-status-badge-solid.q-badge--success {
         background: var(--qm-success);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .counter-status-badge-solid.q-badge--warning {
         background: var(--qm-warning);
-        color: #1a1a1a;
+        color: var(--qm-text-dark);
     }
 
     .counter-status-badge-solid.q-badge--secondary {
         background: var(--qm-text-muted);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .counter-body {
@@ -764,7 +764,7 @@ else if (queueStatus != null)
         width: 32px;
         height: 32px;
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         border-radius: 50%;
         font-weight: 600;
         font-size: 0.875rem;
@@ -987,13 +987,13 @@ else if (queueStatus != null)
         var firstChar = string.IsNullOrEmpty(code) ? '_' : char.ToUpperInvariant(code[0]);
         return firstChar switch
         {
-            'A' => "#8c2f52",
-            'B' => "#16a34a",
-            'C' => "#d97706",
-            'D' => "#dc2626",
-            'E' => "#0d9488",
-            'F' => "#47393f",
-            _ => "#8c2f52"
+            'A' => "var(--qm-primary)",
+            'B' => "var(--qm-success)",
+            'C' => "var(--qm-accent-orange)",
+            'D' => "var(--qm-danger)",
+            'E' => "var(--qm-accent-pink)",
+            'F' => "var(--qm-secondary)",
+            _ => "var(--qm-primary)"
         };
     }
 

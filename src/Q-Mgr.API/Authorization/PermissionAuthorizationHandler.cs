@@ -61,7 +61,29 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         // branch ticker banner (not the full MediaContent/Playlist pipeline) as the fastest correct
         // signage proof: it's already public, already live-pushes via DisplayHub, zero new Q-Mgr code.
         ["settings:write"] = new[] { Permissions.SettingsEdit },
+        // Added 2026-09-03 (API-key hardening): Visitor Management, Marketing and the Student
+        // Welfare Ledger previously had no scopes at all, so they were JWT-only by accident of
+        // omission rather than by decision.
+        ["visitors:read"] = new[] { Permissions.VisitorsView },
+        ["visitors:write"] = new[] { Permissions.VisitorsManage, Permissions.VisitorsCheckIn, Permissions.VisitorsCheckOut },
+        ["marketing:read"] = new[] { Permissions.MarketingView },
+        ["marketing:send"] = new[] { Permissions.MarketingManage, Permissions.MarketingSend },
+        ["welfare:read"] = new[] { Permissions.WelfareView },
+        ["welfare:write"] = new[] { Permissions.WelfareCreate, Permissions.WelfareEdit },
     };
+
+    /// <summary>
+    /// The canonical list of API-client scopes this handler understands — the single source of
+    /// truth for any scope picker or validation. A scope not in this list is silently inert (it
+    /// grants nothing), so UI/API surfaces that let admins assign scopes should be driven from here.
+    /// </summary>
+    public static readonly IReadOnlyList<string> AllScopes = ScopeToPermissions.Keys.ToList().AsReadOnly();
+
+    /// <summary>
+    /// Returns the permission codes a given scope grants (empty for an unknown scope).
+    /// </summary>
+    public static IReadOnlyList<string> GetPermissionsForScope(string scope)
+        => ScopeToPermissions.TryGetValue(scope, out var perms) ? perms : Array.Empty<string>();
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context,

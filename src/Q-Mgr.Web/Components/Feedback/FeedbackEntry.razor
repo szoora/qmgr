@@ -1,6 +1,8 @@
 @page "/feedback"
 @layout KioskLayout
+@using QMgr.Application.DTOs
 @inject NavigationManager Navigation
+@inject IOrganizationApiService OrganizationApi
 
 <PageTitle>Give Feedback - Q-Mgr</PageTitle>
 
@@ -9,6 +11,14 @@
         <div class="logo">
             <QIcon Name="chat-square-text-fill" />
         </div>
+        @if (branchInfo != null)
+        {
+            <span class="branch-context">@branchInfo.OrganizationName &middot; @branchInfo.Name</span>
+        }
+        else if (branchLinkInvalid)
+        {
+            <span class="branch-context invalid">This branch link is not valid &mdash; you can still enter a feedback code below</span>
+        }
         <h1>Share Your Feedback</h1>
         <p>Enter your feedback code to share your experience</p>
 
@@ -81,6 +91,24 @@
         margin: 0 0 8px;
         font-size: 32px;
         font-weight: 700;
+    }
+
+    /* Which branch this feedback page was opened for (from ?branch= on the shared link).
+       Token-only so it follows the layout's [data-theme] automatically. */
+    .branch-context {
+        display: block;
+        margin-bottom: 12px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+    }
+
+    .branch-context.invalid {
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--qm-warning);
     }
 
     .entry-card > p {
@@ -253,6 +281,24 @@
 
 @code {
     private string feedbackCode = string.Empty;
+    private BranchPublicDto? branchInfo;
+    private bool branchLinkInvalid;
+
+    // Customer Links shares this page as "/feedback?branch={id}". Feedback itself is keyed
+    // by a per-ticket code (FeedbackPage.razor at /feedback/{code} derives the branch from
+    // the code server-side), so there is no branch-level feedback form to jump to — the
+    // branch is only used here to confirm which location the customer is rating.
+    [SupplyParameterFromQuery(Name = "branch")]
+    public Guid? BranchQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (BranchQuery is { } branchId && branchId != Guid.Empty)
+        {
+            branchInfo = await OrganizationApi.GetBranchPublicAsync(branchId);
+            branchLinkInvalid = branchInfo == null;
+        }
+    }
 
     private void GoToFeedback()
     {

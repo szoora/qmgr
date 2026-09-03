@@ -39,6 +39,36 @@ public class QueueController : ControllerBase
     }
 
     /// <summary>
+    /// Waiting tokens for a public display — the same query TokensController.GetWaitingTokens runs,
+    /// but anonymous (a display screen has no session) and with every customer field stripped.
+    /// The public board only ever shows ticket numbers and service names.
+    /// </summary>
+    [HttpGet("waiting")]
+    [ProducesResponseType(typeof(List<TokenDto>), StatusCodes.Status200OK)]
+    [ResponseCache(Duration = 3)]
+    public async Task<IActionResult> GetPublicWaitingTokens(Guid branchId, [FromQuery] Guid? serviceTypeId = null, [FromQuery] int? limit = null)
+    {
+        var cappedLimit = Math.Clamp(limit ?? 50, 1, 200);
+        var result = await _mediator.Send(new GetWaitingTokensQuery
+        {
+            BranchId = branchId,
+            ServiceTypeId = serviceTypeId,
+            Limit = cappedLimit
+        });
+
+        var scrubbed = result.Select(t => t with
+        {
+            Customer = null,
+            Notes = null,
+            Metadata = null,
+            ExternalReference = null,
+            ExternalSystem = null
+        }).ToList();
+
+        return Ok(scrubbed);
+    }
+
+    /// <summary>
     /// Gets estimated wait time for a service type
     /// </summary>
     [HttpGet("wait-time/{serviceTypeId:guid}")]

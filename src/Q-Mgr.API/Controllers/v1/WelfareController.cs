@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,9 +10,11 @@ using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Notification;
+using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Jobs;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -39,10 +43,14 @@ public class WelfareController : ControllerBase
     // question than a phone photo — worth a real conversation with whoever owns the server before
     // going higher, not a silent scope add.
     private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
-    private const int MaxDescriptionLength = 2000;
-    private const int MinDescriptionLength = 10;
-    private const int MaxPoints = 100;
+    // Internal (not private) so RosterImportProcessorJob's welfare-import branch validates a
+    // backfilled historical row against exactly the same limits as a record logged live here —
+    // one set of numbers, not a second copy that drifts.
+    internal const int MaxDescriptionLength = 2000;
+    internal const int MinDescriptionLength = 10;
+    internal const int MaxPoints = 100;
     private const int LateEntryThresholdDays = 14;
+    private const int MaxImportRows = 10000;
     private static readonly string[] AllowedAttachmentMimePrefixes = { "image/", "application/pdf", "video/", "audio/" };
 
     public WelfareController(
@@ -219,16 +227,23 @@ public class WelfareController : ControllerBase
 
     private static IActionResult? ValidatePointsSign(WelfareCaseType caseType, int? points)
     {
+        var error = PointsSignError(caseType, points);
+        return error == null ? null : new BadRequestObjectResult(new ProblemDetails { Title = error, Status = StatusCodes.Status400BadRequest });
+    }
+
+    /// <summary>The points-sign rule as a plain message (null = valid) — shared with the historical-import processor, which has no HTTP result to hand back, only a per-row log line.</summary>
+    internal static string? PointsSignError(WelfareCaseType caseType, int? points)
+    {
         if (points == null) return null;
 
         if (Math.Abs(points.Value) > MaxPoints)
-            return new BadRequestObjectResult(new ProblemDetails { Title = $"Points must be between -{MaxPoints} and {MaxPoints}", Status = StatusCodes.Status400BadRequest });
+            return $"Points must be between -{MaxPoints} and {MaxPoints}";
 
         return caseType switch
         {
-            WelfareCaseType.Achievement when points < 0 => new BadRequestObjectResult(new ProblemDetails { Title = "Achievement points must be zero or positive", Status = StatusCodes.Status400BadRequest }),
-            WelfareCaseType.Behavior when points > 0 => new BadRequestObjectResult(new ProblemDetails { Title = "Behavior points must be zero or negative", Status = StatusCodes.Status400BadRequest }),
-            WelfareCaseType.Welfare when points != 0 => new BadRequestObjectResult(new ProblemDetails { Title = "Welfare concerns are not scored — leave points blank", Status = StatusCodes.Status400BadRequest }),
+            WelfareCaseType.Achievement when points < 0 => "Achievement points must be zero or positive",
+            WelfareCaseType.Behavior when points > 0 => "Behavior points must be zero or negative",
+            WelfareCaseType.Welfare when points != 0 => "Welfare concerns are not scored — leave points blank",
             _ => null
         };
     }
@@ -731,6 +746,67 @@ public class WelfareController : ControllerBase
             AttributedToName = note.AttributedToName,
             CreatedAt = note.CreatedAt
         });
+    }
+
+    // ---------------------------------------------------------------------
+    // Historical-records import — the roster import's job table, processor, progress channel
+    // and history UI, reused wholesale with Kind=Welfare (see RosterImportKind)
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Starts a background import of historical welfare records (a school backfilling its
+    /// previous system's ledger) and returns 202 immediately — identical shape to
+    /// StudentsController.StartImport: rows are parsed client-side (rosterImport.js, kind
+    /// "welfare"), the job row stashes them, and RosterImportProcessorJob does the per-row
+    /// validation/matching, logging every row's outcome to RosterImportJobEntry and broadcasting
+    /// live progress over the same "RosterImportProgress" hub event. Poll/list via
+    /// StudentsController.GetImportJobs with ?kind=Welfare.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/welfare-records/import-jobs")]
+    [RequirePermission(Permissions.WelfareCreate)]
+    [ProducesResponseType(typeof(RosterImportJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> StartImport(Guid branchId, [FromBody] StartWelfareImportRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request.Rows == null || request.Rows.Count == 0)
+            return BadRequest(new ProblemDetails { Title = "No rows to import", Status = StatusCodes.Status400BadRequest });
+
+        if (request.Rows.Count > MaxImportRows)
+            return BadRequest(new ProblemDetails { Title = $"A single import is capped at {MaxImportRows:N0} rows — split larger files into batches", Status = StatusCodes.Status400BadRequest });
+
+        // Every imported record is attributed (ReportedByUserId) to whoever ran the import — that
+        // column is non-nullable, so an unattributable caller (API-key auth carries no user) can't
+        // start one. The roster import tolerates this; a welfare record must always have a reporter.
+        var userId = CurrentUserId();
+        if (userId == Guid.Empty)
+            return BadRequest(new ProblemDetails { Title = "Historical imports must be started by a signed-in user", Detail = "Imported records are attributed to the importing staff member; API-key callers can't be attributed.", Status = StatusCodes.Status400BadRequest });
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        var job = new RosterImportJob
+        {
+            OrganizationId = organizationId,
+            BranchId = branchId,
+            CreatedByUserId = userId,
+            SourceFileName = request.SourceFileName,
+            Source = "admin_ui",
+            Kind = RosterImportKind.Welfare,
+            Status = RosterImportStatus.Pending,
+            TotalRows = request.Rows.Count,
+            RowsJson = JsonSerializer.Serialize(request.Rows)
+        };
+        _context.RosterImportJobs.Add(job);
+        await _context.SaveChangesAsync();
+
+        BackgroundJob.Enqueue<RosterImportProcessorJob>(j => j.ProcessAsync(job.Id));
+
+        _logger.LogInformation("Welfare history import job {JobId} queued for branch {BranchId}: {Rows} rows from {File}",
+            job.Id, branchId, job.TotalRows, job.SourceFileName ?? "(unnamed)");
+
+        return Accepted(StudentsController.MapToDto(job));
     }
 
     // ---------------------------------------------------------------------

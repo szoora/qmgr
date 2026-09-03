@@ -5,6 +5,7 @@
 @inject NavigationManager Navigation
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
+@inject IJSRuntime JS
 
 <PageTitle>Reports & Analytics - Q-Mgr</PageTitle>
 
@@ -114,8 +115,8 @@
                     TextSelector="@(r => r.Text)" ValueSelector="@(r => r.Value)" Label="Report Type" />
             </div>
             <div class="filter-item filter-actions">
-                <QButton Text="Generate Report" Icon="file-earmark-text-fill" Variant="primary" OnClick="@GenerateReport" />
-                <QButton Text="Export PDF" Icon="file-pdf-fill" Variant="secondary" OnClick="@ExportPdf" />
+                <QButton Text="Generate Report" Icon="file-earmark-text-fill" Variant="primary" OnClick="@GenerateReport" Loading="@isExporting" Disabled="@isExporting" />
+                <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="secondary" OnClick="@PrintSummary" />
             </div>
         </div>
     </QCard>
@@ -266,6 +267,9 @@
     private DateTime? fromDate = DateTime.Today.AddDays(-7);
     private DateTime? toDate = DateTime.Today;
     private string selectedReportType = "summary";
+    private bool isExporting;
+    private Guid currentBranchId;
+    private string currentBranchName = "";
 
     [Inject] private NavigationManager NavigationManager { get; set; } = default!;
 
@@ -302,7 +306,9 @@
             await BranchState.InitializeAsync();
             var branchId = BranchState.CurrentBranchId != Guid.Empty
                 ? BranchState.CurrentBranchId
-                : Guid.Parse("00000000-0000-0000-0000-000000000001");
+                : Guid.Empty;
+            currentBranchId = branchId;
+            currentBranchName = BranchState.CurrentBranchName ?? "";
             var status = await QueueApi.GetQueueStatusAsync(branchId);
             if (status != null)
             {
@@ -323,15 +329,114 @@
         NavigationManager.NavigateTo($"/reports/{report}");
     }
 
-    private void GenerateReport()
+    /// <summary>
+    /// Downloads the selected report as CSV from ReportsController — same data: URL +
+    /// downloadDataUrl pattern VisitorReport uses. "Summary" and "Detailed Queue" both map to
+    /// the daily queue summary export (the API has no separate per-token dump, and the daily
+    /// series is what both options were always going to show).
+    /// </summary>
+    private async Task GenerateReport()
     {
-        // Not implemented yet — was previously a silent no-op button.
-        NotificationService.Notify(ToastSeverity.Info, "Coming soon", "Custom report generation isn't available yet.", 4000);
+        if (currentBranchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before generating a report.", 4000);
+            return;
+        }
+
+        var (from, to) = ResolveRange();
+        var (kind, filePrefix) = selectedReportType switch
+        {
+            "counters" => (ReportExportKind.Counters, "counter-performance"),
+            "services" => (ReportExportKind.Services, "service-types"),
+            _ => (ReportExportKind.Overview, "queue-summary")
+        };
+
+        isExporting = true;
+        try
+        {
+            var result = await QueueApi.ExportReportCsvAsync(kind, currentBranchId, from, to);
+            if (!result.Success)
+            {
+                NotifyExportFailure(result);
+                return;
+            }
+
+            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(result.Csv!);
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"{filePrefix}-{from:yyyyMMdd}-{to:yyyyMMdd}.csv");
+            NotificationService.Notify(ToastSeverity.Success, "Report ready", "Your CSV download has started.", 3000);
+        }
+        finally
+        {
+            isExporting = false;
+        }
     }
 
-    private void ExportPdf()
+    /// <summary>
+    /// Opens a printable page of the on-screen summary via the shared print helper (same
+    /// QMgrPrint.init("browser") + autoPrint:false flow WelfareReports/StudentRoster use) —
+    /// the browser's own print dialog is the "Save as PDF" path, with no server-side PDF
+    /// dependency (see CLAUDE.md's no-third-party-server-deps constraint).
+    /// </summary>
+    private async Task PrintSummary()
     {
-        // Not implemented yet — was previously a silent no-op button.
-        NotificationService.Notify(ToastSeverity.Info, "Coming soon", "PDF export isn't available yet.", 4000);
+        var branchLabel = string.IsNullOrWhiteSpace(currentBranchName) ? "" : $" — {System.Net.WebUtility.HtmlEncode(currentBranchName)}";
+        var (from, to) = ResolveRange();
+        var html = $$"""
+            <html>
+            <head>
+                <title>Queue Summary{{branchLabel}}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 24px; color: #222; }
+                    h1 { font-size: 18px; margin-bottom: 2px; }
+                    .meta-line { color: #666; font-size: 12px; margin-bottom: 20px; }
+                    table { border-collapse: collapse; width: 100%; max-width: 520px; }
+                    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ddd; font-size: 13px; }
+                    th { font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: .03em; }
+                    td.value { font-weight: 700; font-size: 16px; text-align: right; }
+                    .note { margin-top: 20px; color: #888; font-size: 11px; }
+                </style>
+            </head>
+            <body>
+                <h1>Queue Summary{{branchLabel}}</h1>
+                <div class="meta-line">Today's figures as of {{DateTime.Now:MMM d, yyyy h:mm tt}} · Selected range {{from:MMM d, yyyy}} – {{to:MMM d, yyyy}}</div>
+                <table>
+                    <tr><th>Metric</th><th style="text-align:right">Value</th></tr>
+                    <tr><td>Served today</td><td class="value">{{todayServed}}</td></tr>
+                    <tr><td>Average wait time</td><td class="value">{{avgWaitTime}} min</td></tr>
+                    <tr><td>Average service time</td><td class="value">{{avgServiceTime}} min</td></tr>
+                    <tr><td>Active counters</td><td class="value">{{activeCounters}}</td></tr>
+                </table>
+                <p class="note">Use "Generate Report" for the full day-by-day CSV over the selected range. Choose "Save as PDF" in the print dialog to keep a PDF copy.</p>
+            </body>
+            </html>
+            """;
+
+        try
+        {
+            await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+            await JS.InvokeAsync<object>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
+        }
+        catch (JSException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Print failed", ex.Message, 5000);
+        }
+    }
+
+    private (DateOnly From, DateOnly To) ResolveRange()
+    {
+        var to = DateOnly.FromDateTime(toDate ?? DateTime.Today);
+        var from = DateOnly.FromDateTime(fromDate ?? (toDate ?? DateTime.Today).AddDays(-7));
+        if (from > to) (from, to) = (to, from);
+        return (from, to);
+    }
+
+    private void NotifyExportFailure(ReportExportResult result)
+    {
+        if (result.IsForbidden)
+            NotificationService.Notify(ToastSeverity.Warning, "Export not available",
+                result.ErrorMessage ?? "You don't have permission to export reports, or your plan doesn't include exports.", 6000);
+        else
+            NotificationService.Notify(ToastSeverity.Error, "Export failed",
+                result.ErrorMessage ?? "Couldn't generate the report. Please try again.", 5000);
     }
 }

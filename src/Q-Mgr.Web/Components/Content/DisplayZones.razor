@@ -345,7 +345,7 @@
     }
 
     .display-icon.online .rzi {
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .display-icon .rzi {
@@ -515,7 +515,7 @@
     private DisplayDto? selectedDisplay;
     private ZoneEditModel zoneModel = new();
 
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
     private List<DisplayType> displayTypeValues = Enum.GetValues<DisplayType>().ToList();
     private List<ZoneType> zoneTypeValues = Enum.GetValues<ZoneType>().ToList();

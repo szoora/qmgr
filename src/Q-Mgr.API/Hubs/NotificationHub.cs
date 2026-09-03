@@ -173,6 +173,12 @@ public class NotificationHubService : INotificationHubService
         _logger.LogDebug("Updated unread count for user {UserId}: {Count}", userId, count);
     }
 
+    public async Task NotifyPermissionsChangedAsync(Guid userId)
+    {
+        await _hubContext.Clients.Group($"user-{userId}").SendAsync("PermissionsChanged", userId);
+        _logger.LogDebug("Notified user {UserId} that their permissions changed", userId);
+    }
+
     private static NotificationDto MapToDto(Notification notification) => new()
     {
         Id = notification.Id,

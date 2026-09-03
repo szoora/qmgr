@@ -277,7 +277,7 @@
         border-left: 3px solid transparent;
     }
 
-    .settings-nav-item:hover { color: var(--qm-text-primary); background: rgba(255,255,255,0.03); }
+    .settings-nav-item:hover { color: var(--qm-text-primary); background: var(--qm-bg-card-hover); }
 
     .settings-nav-item.active {
         color: var(--qm-primary);
@@ -380,7 +380,7 @@
     // Matches the same hardcoded default branch used elsewhere on the admin path
     // (BrandingSettings.razor, KioskSettings.razor) until per-tenant branch resolution is
     // wired through the whole app — see docs/TASK_TRACKER.md.
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
     private List<SectionInfo> sections = new()
     {

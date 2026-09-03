@@ -3077,6 +3077,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
 
@@ -3195,6 +3198,16 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DataConsentGivenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DataConsentNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("DataConsentRecordedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("FullName")
                         .IsRequired()

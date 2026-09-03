@@ -26,7 +26,13 @@ public class RosterImportJob : BaseEntity
     // informational (the job history view labels rows differently for each).
     public string Source { get; set; } = "admin_ui";
 
-    // The uploaded rows themselves (serialized List&lt;RosterImportRow&gt;), stashed here because
+    // Which shape RowsJson holds and which processor branch handles it — a roster
+    // (student+guardian) upload, or a historical welfare-ledger backfill. Same table, same
+    // Entries log, same live progress channel; only the per-row work differs.
+    public RosterImportKind Kind { get; set; } = RosterImportKind.Roster;
+
+    // The uploaded rows themselves (serialized List&lt;RosterImportRow&gt; for Kind=Roster,
+    // List&lt;WelfareImportRow&gt; for Kind=Welfare), stashed here because
     // the background job runs on a Hangfire worker with no access to the original HTTP request —
     // this is what it reads to actually do the import. Not exposed on RosterImportJobDto; nobody
     // needs the raw payload back once the job's real output (the Entries) exists.

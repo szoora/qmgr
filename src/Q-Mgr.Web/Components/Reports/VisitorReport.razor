@@ -172,9 +172,9 @@ else
 
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
     .stat-card { padding: 18px; text-align: center; }
-    .stat-card.warn { border: 1px solid rgba(169, 120, 31, 0.4); }
+    .stat-card.warn { border: 1px solid rgba(var(--qm-warning-rgb), 0.4); }
     .stat-value { font-size: 28px; font-weight: 700; color: var(--qm-text-primary); }
-    .stat-card.warn .stat-value { color: #a9781f; }
+    .stat-card.warn .stat-value { color: var(--qm-accent-orange); }
     .stat-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 4px; }
 
     .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -183,7 +183,7 @@ else
     .chart-card h4, .table-card h4 { margin: 0 0 12px; font-size: 15px; color: var(--qm-text-primary); }
     .chart-empty, .table-hint { font-size: 13px; color: var(--qm-text-muted); }
     .table-hint { margin: -6px 0 12px; }
-    .watchlist-flag { color: var(--qm-danger, #d9534f); margin-left: 6px; }
+    .watchlist-flag { color: var(--qm-danger); margin-left: 6px; }
 
     @@media (max-width: 900px) {
         .charts-row, .tables-row { grid-template-columns: 1fr; }

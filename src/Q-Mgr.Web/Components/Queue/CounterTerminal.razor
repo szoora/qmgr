@@ -9,6 +9,8 @@
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IConnectionMonitorService ConnectionMonitor
+@inject ILogger<CounterTerminal> Logger
 
 <PageTitle>Counter Terminal - Q-Mgr</PageTitle>
 
@@ -875,6 +877,76 @@
         await SignalR.ConnectAsync(BranchId);
         SignalR.OnTokenCalled += HandleTokenCalled;
         SignalR.OnTokenCompleted += HandleTokenCompleted;
+        SignalR.OnReconnected += HandleReconnected;
+        ConnectionMonitor.OnStatusChanged += HandleConnectionStatusChanged;
+    }
+
+    /// <summary>
+    /// Pulls the selected counter's real state (status, current token) and the waiting list from
+    /// the server. Called on counter selection (so a page refresh restores the token being
+    /// served, which used to be lost) and after any hub / API reconnect (broadcasts during the
+    /// outage were missed, and an in-flight Call Next may have landed server-side without its
+    /// response ever reaching this circuit).
+    /// </summary>
+    private async Task ReconcileFromServerAsync()
+    {
+        if (selectedCounterId == Guid.Empty) return;
+
+        try
+        {
+            counters = await QueueApi.GetCountersAsync(BranchId);
+            var mine = counters.FirstOrDefault(c => c.Id == selectedCounterId);
+            if (mine == null)
+            {
+                selectedCounterId = Guid.Empty;
+                currentToken = null;
+                counterStatus = "Inactive";
+                return;
+            }
+
+            if (mine.CurrentToken != null)
+            {
+                // The list projection omits customer/service detail; fetch the full token.
+                var full = await QueueApi.GetTokenAsync(mine.CurrentToken.Id);
+                if (currentToken?.Id != mine.CurrentToken.Id)
+                {
+                    serviceStartTime ??= DateTime.Now;
+                }
+                currentToken = full ?? mine.CurrentToken;
+                counterStatus = "Serving";
+            }
+            else
+            {
+                currentToken = null;
+                serviceStartTime = null;
+                counterStatus = mine.Status == CounterStatus.OnBreak ? "OnBreak" : "Active";
+            }
+
+            await LoadWaitingTokens();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Counter terminal reconcile failed");
+        }
+    }
+
+    private void HandleReconnected()
+    {
+        InvokeAsync(async () =>
+        {
+            await ReconcileFromServerAsync();
+            StateHasChanged();
+        });
+    }
+
+    private ConnectionStatus lastConnectionStatus = ConnectionStatus.Connected;
+
+    private void HandleConnectionStatusChanged()
+    {
+        var status = ConnectionMonitor.Status;
+        var cameBack = status == ConnectionStatus.Connected && lastConnectionStatus != ConnectionStatus.Connected;
+        lastConnectionStatus = status;
+        if (cameBack) HandleReconnected();
     }
 
     private async Task LoadCounters()
@@ -901,7 +973,7 @@
         if (selectedCounterId != Guid.Empty)
         {
             counterStatus = "Active";
-            await LoadWaitingTokens();
+            await ReconcileFromServerAsync();
         }
     }
 
@@ -1132,6 +1204,8 @@
         BranchState.OnBranchChanged -= HandleBranchChanged;
         SignalR.OnTokenCalled -= HandleTokenCalled;
         SignalR.OnTokenCompleted -= HandleTokenCompleted;
+        SignalR.OnReconnected -= HandleReconnected;
+        ConnectionMonitor.OnStatusChanged -= HandleConnectionStatusChanged;
     }
 
     private class FilterOption

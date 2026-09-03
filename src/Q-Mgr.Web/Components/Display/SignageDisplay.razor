@@ -1,26 +1,63 @@
 @page "/display/signage"
 @page "/display/signage/{BranchId:guid}"
 @layout DisplayLayout
+@using Microsoft.AspNetCore.Components.Authorization
+@using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
+@using QMgr.Web.Services
+@inject IOrganizationApiService OrganizationApi
+@inject IBranchStateService BranchState
+@inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Signage - Q-Mgr</PageTitle>
 
-<div class="signage-display">
-    <AdSignagePlayer BranchId="@branchId" CssClass="signage-fill">
-        <LoadingContent>
-            <div class="signage-empty">
-                <QSpinner Size="lg" />
-            </div>
-        </LoadingContent>
-        <EmptyContent>
-            <div class="signage-empty">
-                <QIcon Name="collection-play-fill" />
-                <span>No signage content configured for this branch</span>
-            </div>
-        </EmptyContent>
-    </AdSignagePlayer>
-    <DisplayBanner BranchId="@branchId" />
-</div>
+@if (branchState == BranchResolveState.Resolving)
+{
+    <div class="branch-state">
+        <QSpinner Size="lg" />
+    </div>
+}
+else if (branchState == BranchResolveState.NoBranch)
+{
+    <div class="branch-state">
+        <QIcon Name="geo-alt" />
+        <h1>No branch selected</h1>
+        <p>
+            Open this screen from <strong>Customer Links</strong> in the admin, or add the
+            branch ID to the URL: <code>/display/signage/{branchId}</code>
+        </p>
+    </div>
+}
+else if (branchState == BranchResolveState.InvalidBranch)
+{
+    <div class="branch-state">
+        <QIcon Name="exclamation-triangle" />
+        <h1>This branch link is not valid</h1>
+        <p>
+            The branch may have been removed or deactivated. Open a fresh link from
+            <strong>Customer Links</strong> in the admin.
+        </p>
+    </div>
+}
+else
+{
+    <div class="signage-display">
+        <AdSignagePlayer BranchId="@branchId" CssClass="signage-fill">
+            <LoadingContent>
+                <div class="signage-empty">
+                    <QSpinner Size="lg" />
+                </div>
+            </LoadingContent>
+            <EmptyContent>
+                <div class="signage-empty">
+                    <QIcon Name="collection-play-fill" />
+                    <span>No signage content configured for @(branchInfo?.Name ?? "this branch")</span>
+                </div>
+            </EmptyContent>
+        </AdSignagePlayer>
+        <DisplayBanner BranchId="@branchId" />
+    </div>
+}
 
 <style>
     .signage-display {
@@ -56,21 +93,106 @@
     .signage-empty span {
         font-size: 20px;
     }
+
+    /* Branch-resolution states (no branch / invalid link / resolving). Token-only so
+       they follow the layout's [data-theme] automatically. */
+    .branch-state {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 40px;
+        text-align: center;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+    }
+
+    .branch-state .q-icon {
+        font-size: 64px;
+        color: var(--qm-text-muted);
+    }
+
+    .branch-state h1 {
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .branch-state p {
+        margin: 0;
+        max-width: 560px;
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--qm-text-secondary);
+    }
+
+    .branch-state code {
+        font-family: var(--qm-font-mono);
+        font-size: 14px;
+        padding: 2px 8px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        color: var(--qm-text-primary);
+    }
 </style>
 
 @code {
-    // Falls back to the demo branch only when no {BranchId} route segment is present
-    // (e.g. a bookmarked bare "/display/signage" URL).
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private enum BranchResolveState { Resolving, NoBranch, InvalidBranch, Ready }
+
+    private BranchResolveState branchState = BranchResolveState.Resolving;
+    private Guid branchId;
+    private BranchPublicDto? branchInfo;
 
     [Parameter]
     public Guid? BranchId { get; set; }
 
-    protected override void OnInitialized()
+    [SupplyParameterFromQuery(Name = "branch")]
+    public Guid? BranchQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
     {
-        if (BranchId.HasValue && BranchId.Value != Guid.Empty)
+        var resolved = await ResolveBranchIdAsync();
+        if (resolved == null)
         {
-            branchId = BranchId.Value;
+            branchState = BranchResolveState.NoBranch;
+            return;
         }
+
+        branchId = resolved.Value;
+        branchInfo = await OrganizationApi.GetBranchPublicAsync(branchId);
+        if (branchInfo == null)
+        {
+            branchState = BranchResolveState.InvalidBranch;
+            return;
+        }
+
+        branchState = BranchResolveState.Ready;
+    }
+
+    // Route param -> ?branch= query -> signed-in user's selected branch -> nothing.
+    // Deliberately no demo-GUID fallback: a bare URL with nothing to go on renders the
+    // guidance state above rather than silently showing another tenant's branch.
+    private async Task<Guid?> ResolveBranchIdAsync()
+    {
+        if (BranchId is { } fromRoute && fromRoute != Guid.Empty)
+            return fromRoute;
+
+        if (BranchQuery is { } fromQuery && fromQuery != Guid.Empty)
+            return fromQuery;
+
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (auth.User.Identity?.IsAuthenticated == true)
+        {
+            await BranchState.InitializeAsync();
+            if (BranchState.CurrentBranchId != Guid.Empty)
+                return BranchState.CurrentBranchId;
+        }
+
+        return null;
     }
 }

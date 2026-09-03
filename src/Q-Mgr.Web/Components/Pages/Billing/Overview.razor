@@ -1,4 +1,5 @@
 @page "/billing/overview"
+@using QMgr.Application.DTOs
 @using System.Text.Json
 @inject HttpClient Http
 @inject IPermissionService PermissionService
@@ -310,8 +311,8 @@ else
                         </div>
                         <div class="card-details">
                             <span class="card-brand">@method.CardBrand</span>
-                            <span class="card-number">•••• @method.Last4</span>
-                            <span class="card-expiry">Expires @method.ExpiryMonth/@method.ExpiryYear</span>
+                            <span class="card-number">•••• @method.CardLast4</span>
+                            <span class="card-expiry">Expires @(method.CardExpMonth?.ToString("D2") ?? "--")/@(method.CardExpYear?.ToString() ?? "----")</span>
                         </div>
                         @if (method.IsDefault)
                         {
@@ -373,7 +374,7 @@ else
         align-items: center;
         padding: 20px;
         background: var(--qm-gradient-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .subscription-card .header-left {
@@ -632,7 +633,7 @@ else
         top: 8px;
         right: 8px;
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         padding: 4px 12px;
         border-radius: var(--qm-radius-full);
         font-size: 11px;
@@ -683,17 +684,17 @@ else
 
     .badge.badge-paid {
         background: var(--qm-success);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .badge.badge-pending {
         background: var(--qm-warning);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .badge.badge-failed {
         background: var(--qm-danger);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .status-active {
@@ -854,7 +855,7 @@ else
         return $"{len:0.##} {sizes[order]}";
     }
 
-    private string GetCardIcon(string brand) => brand.ToLower() switch
+    private string GetCardIcon(string? brand) => brand?.ToLower() switch
     {
         "visa" => "credit-card",
         "mastercard" => "credit-card-2-front",
@@ -910,13 +911,4 @@ else
         public string Status { get; init; } = "";
     }
 
-    private record PaymentMethodDto
-    {
-        public Guid Id { get; init; }
-        public string CardBrand { get; init; } = "";
-        public string Last4 { get; init; } = "";
-        public int ExpiryMonth { get; init; }
-        public int ExpiryYear { get; init; }
-        public bool IsDefault { get; init; }
-    }
 }

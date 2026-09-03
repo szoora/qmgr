@@ -471,7 +471,7 @@
 
     .schedule-block span {
         font-size: 10px;
-        color: white;
+        color: var(--qm-text-on-primary);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -578,7 +578,7 @@
     private PlaylistDetailDto? selectedPlaylist;
     private ScheduleEditModel scheduleModel = new();
 
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
     private List<string> scheduleTypeOptions = new() { "always", "scheduled", "conditional" };
     private List<string> conditionTypes = new() { "queue_length", "time_of_day", "day_of_week", "custom" };

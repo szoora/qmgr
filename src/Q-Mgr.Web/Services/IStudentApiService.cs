@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using QMgr.Application.DTOs;
+using QMgr.Domain.Enums;
 
 namespace QMgr.Web.Services;
 
@@ -17,9 +18,20 @@ public interface IStudentApiService
     Task<StudentGuardianDto> AddGuardianAsync(Guid branchId, Guid studentId, AddGuardianRequest request);
     Task<bool> RemoveGuardianAsync(Guid branchId, Guid studentId, Guid guardianLinkId);
 
+    /// <summary>Records (given=true) or withdraws (given=false) a student's data-processing consent — see Student.DataConsentGivenAt.</summary>
+    Task<StudentDto?> UpdateConsentAsync(Guid branchId, Guid studentId, UpdateStudentConsentRequest request);
+
+    /// <summary>Subject-access-request export: one JSON document of everything held about the student. Null on any failure (permission, not found, network) — the caller shows a generic toast.</summary>
+    Task<StudentDataExportFile?> ExportStudentDataAsync(Guid branchId, Guid studentId);
+
     /// <summary>Starts a background bulk-import job and returns immediately — poll or listen for RosterImportProgress over SignalR for live status.</summary>
     Task<RosterImportJobDto> StartImportAsync(Guid branchId, StartRosterImportRequest request);
-    Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId);
+
+    /// <summary>Same job pipeline as StartImportAsync, but for historical welfare-ledger rows (Kind = Welfare) — same progress event, same entries log.</summary>
+    Task<RosterImportJobDto> StartWelfareImportAsync(Guid branchId, StartWelfareImportRequest request);
+
+    /// <summary>Import history; pass <paramref name="kind"/> so each page lists only its own uploads (roster vs. welfare history share one job table).</summary>
+    Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId, RosterImportKind? kind = null);
     Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId);
     Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId);
 
@@ -28,6 +40,9 @@ public interface IStudentApiService
 
     Task<PrintLetterheadDto?> GetPrintLetterheadAsync(Guid branchId);
 }
+
+/// <summary>A downloaded SAR export — the JSON bytes plus the server-suggested filename (from Content-Disposition), so the browser download keeps the "student-{code}-data-export.json" name the API chose.</summary>
+public record StudentDataExportFile(byte[] Content, string FileName);
 
 public class StudentApiService : IStudentApiService
 {
@@ -127,6 +142,40 @@ public class StudentApiService : IStudentApiService
         }
     }
 
+    public async Task<StudentDto?> UpdateConsentAsync(Guid branchId, Guid studentId, UpdateStudentConsentRequest request)
+    {
+        try
+        {
+            var response = await _httpClient.PatchAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/consent", request, _jsonOptions);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<StudentDto>(_jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update consent for student {StudentId}", studentId);
+            return null;
+        }
+    }
+
+    public async Task<StudentDataExportFile?> ExportStudentDataAsync(Guid branchId, Guid studentId)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"api/v1/branches/{branchId}/students/{studentId}/data-export");
+            if (!response.IsSuccessStatusCode) return null;
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            var fileName = response.Content.Headers.ContentDisposition?.FileNameStar
+                ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"')
+                ?? $"student-{studentId:N}-data-export.json";
+            return new StudentDataExportFile(bytes, fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export data for student {StudentId}", studentId);
+            return null;
+        }
+    }
+
     public async Task<RosterImportJobDto> StartImportAsync(Guid branchId, StartRosterImportRequest request)
     {
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/import-jobs", request, _jsonOptions);
@@ -134,12 +183,20 @@ public class StudentApiService : IStudentApiService
         return (await response.Content.ReadFromJsonAsync<RosterImportJobDto>(_jsonOptions))!;
     }
 
-    public async Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId)
+    public async Task<RosterImportJobDto> StartWelfareImportAsync(Guid branchId, StartWelfareImportRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/welfare-records/import-jobs", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<RosterImportJobDto>(_jsonOptions))!;
+    }
+
+    public async Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId, RosterImportKind? kind = null)
     {
         try
         {
-            return await _httpClient.GetFromJsonAsync<List<RosterImportJobDto>>(
-                $"api/v1/branches/{branchId}/students/import-jobs", _jsonOptions) ?? new();
+            var url = $"api/v1/branches/{branchId}/students/import-jobs";
+            if (kind.HasValue) url += $"?kind={kind.Value}";
+            return await _httpClient.GetFromJsonAsync<List<RosterImportJobDto>>(url, _jsonOptions) ?? new();
         }
         catch (Exception ex)
         {

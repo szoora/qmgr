@@ -5,6 +5,8 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
+using QMgr.Application.Interfaces.Billing;
+using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Integration;
 using QMgr.Domain.Entities.Queue;
 using QMgr.Domain.Interfaces;
@@ -17,15 +19,18 @@ public class WebhookService : IWebhookService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IModuleAccessService _moduleAccessService;
     private readonly ILogger<WebhookService> _logger;
 
     public WebhookService(
         IUnitOfWork unitOfWork,
         IHttpClientFactory httpClientFactory,
+        IModuleAccessService moduleAccessService,
         ILogger<WebhookService> logger)
     {
         _unitOfWork = unitOfWork;
         _httpClientFactory = httpClientFactory;
+        _moduleAccessService = moduleAccessService;
         _logger = logger;
     }
 
@@ -72,8 +77,31 @@ public class WebhookService : IWebhookService
             .Where(ac => ac.WebhookEvents != null && ac.WebhookEvents.Contains(eventType))
             .ToList();
 
+        if (apiClients.Count == 0)
+            return;
+
+        // MODULE GATING: outbound webhooks are part of the Integrations API module. A client
+        // whose organization no longer has that module active (trial lapsed, module revoked)
+        // keeps its configuration but gets no deliveries until the module is active again.
+        // Checked once per organization per event, not once per client.
+        var moduleActiveByOrg = new Dictionary<Guid, bool>();
+
         foreach (var client in apiClients)
         {
+            if (!moduleActiveByOrg.TryGetValue(client.OrganizationId, out var moduleActive))
+            {
+                moduleActive = await _moduleAccessService.IsModuleActiveAsync(client.OrganizationId, ModuleCodes.IntegrationsApi);
+                moduleActiveByOrg[client.OrganizationId] = moduleActive;
+            }
+
+            if (!moduleActive)
+            {
+                _logger.LogDebug(
+                    "Skipping webhook {EventType} for API client {ApiClientId}: organization {OrganizationId} does not have the {Module} module active",
+                    eventType, client.Id, client.OrganizationId, ModuleCodes.IntegrationsApi);
+                continue;
+            }
+
             // Check if client has access to this branch
             if (client.AllowedBranches != null && client.AllowedBranches.Length > 0)
             {

@@ -91,11 +91,12 @@ Add (P 'H1' 'Getting access')
 $arrow = [char]0x2192
 $accessText = "Ask your Q-Mgr administrator to create an API key for you, from Integrations $arrow API Clients in the Q-Mgr admin panel. They choose which permissions (called **scopes**) your key gets — see the table below — and hand you two values: a **Client ID** and a **Client Secret**."
 Add (PlainP $accessText)
-Add (PlainP "The Client ID is what you use on every request. The Client Secret is only needed if you use the separate token-exchange login instead of sending the key directly (both are described below); it's shown once, so store it somewhere safe.")
+Add (PlainP "Both values are needed on every request. The Client Secret is shown once when the key is created, so store it somewhere safe; your administrator can regenerate it at any time, which immediately retires the old one.")
 
 Add (P 'H1' 'Authenticating a request')
-Add (PlainP 'Add this header to every request:')
-Add (CodeBlock "X-API-Key: your-client-id-here")
+Add (PlainP 'Add these two headers to every request:')
+Add (CodeBlock "X-API-Key: your-client-id-here`nX-API-Secret: your-client-secret-here")
+Add (PlainP "If your HTTP client only lets you set one custom header, send both values in X-API-Key separated by a dot: your-client-id-here.your-client-secret-here.")
 Add (PlainP "That's it — no login step, no token that expires and needs refreshing. Every request is checked against your organisation and your key's scopes, so a key issued to one company can never see or touch another company's data, even by guessing.")
 Add (PlainP "If you'd rather work with a short-lived bearer token instead of sending the raw key on every call, exchange your Client ID and Secret once at " )
 Add (CodeBlock "POST /api/v1/auth/token")
@@ -108,6 +109,7 @@ Add (P 'H2' '1. Create the ticket')
 Add (CodeBlock @"
 curl -X POST https://your-qmgr-instance/api/v1/branches/{branchId}/tokens \
   -H "X-API-Key: your-client-id-here" \
+  -H "X-API-Secret: your-client-secret-here" \
   -H "Content-Type: application/json" \
   -d '{
     "serviceTypeCode": "GEN",
@@ -121,13 +123,15 @@ Add (PlainP "The externalReference field is yours to fill in — put whatever ID
 Add (P 'H2' '2. Read back their position')
 Add (CodeBlock @"
 curl https://your-qmgr-instance/api/v1/branches/{branchId}/tokens/by-reference?externalSystem=your_system_name&externalReference=YOUR-OWN-ID-4821 \
-  -H "X-API-Key: your-client-id-here"
+  -H "X-API-Key: your-client-id-here" \
+  -H "X-API-Secret: your-client-secret-here"
 "@)
 
 Add (P 'H2' '3. Check how busy the branch is')
 Add (CodeBlock @"
 curl https://your-qmgr-instance/api/v1/branches/{branchId}/queue/status \
-  -H "X-API-Key: your-client-id-here"
+  -H "X-API-Key: your-client-id-here" \
+  -H "X-API-Secret: your-client-secret-here"
 "@)
 
 Add (P 'H1' 'What your key can do')
@@ -139,7 +143,18 @@ Add (Table @('Scope','What it lets you do') @(
     @('token:manage', 'Cancel a ticket, plus everything queue:write allows'),
     @('counter:read', 'See which counters exist and whether they are open'),
     @('service:read', 'See the list of service types (e.g. General, Pharmacy Pickup)'),
-    @('stats:read', 'Pull reports and analytics')
+    @('stats:read', 'Pull reports and analytics'),
+    @('roster:read', 'Read the student/guardian roster'),
+    @('roster:write', 'Sync the student/guardian roster from your student information system'),
+    @('visitors:read', 'Read visitor records and check-in history'),
+    @('visitors:write', 'Check visitors in and out, manage visitor records'),
+    @('welfare:read', 'Read student welfare records'),
+    @('welfare:write', 'Create and update student welfare records'),
+    @('marketing:read', 'Read marketing contacts and broadcasts'),
+    @('marketing:send', 'Send marketing broadcasts'),
+    @('content:read', 'Read playlists and media for signage'),
+    @('content:write', 'Manage playlists and media for signage'),
+    @('settings:write', 'Update the display banner')
 ))
 
 Add (P 'H1' 'Every other endpoint')
@@ -156,14 +171,15 @@ Add (CodeBlock @"
 }
 "@)
 Add (Table @('Status','Meaning') @(
-    @('401', 'Your key was not recognised at all — check the header name and value'),
-    @('403', 'Your key was recognised but does not have the scope for what you tried to do'),
+    @('401', 'Your key or secret was not recognised — check both header values'),
+    @('403', 'Your key was recognised but does not have the scope for what you tried to do (or the endpoint is not open to API keys)'),
+    @('429', 'You have exceeded your key''s per-minute limit — wait for the number of seconds in the Retry-After header'),
     @('404', 'Either the thing does not exist, or it belongs to a different organisation — deliberately indistinguishable, so a wrong guess cannot be used to confirm another company data exists')
 ))
 
 Add (P 'H1' 'Worth knowing before you build against this')
-Add (BulletP 'Rate limits are currently applied per IP address, not per API key — if you share an IP with other traffic, be mindful of overall volume.')
-Add (BulletP 'Q-Mgr does not call back out to your system yet. If you need to know the moment a ticket is called or cancelled, poll for it — there is no webhook to register for that today.')
+Add (BulletP 'Each key has its own requests-per-minute limit, set by your administrator, on top of a general per-IP limit. A 429 response carries a Retry-After header.')
+Add (BulletP 'Q-Mgr can call your system back: ask your administrator to set a webhook URL on your API client and you will receive signed POSTs (X-QMgr-Signature) when tickets are created, called, served, completed, cancelled or marked no-show. Your system can also push appointment.created / appointment.cancelled events to the inbound endpoint shown on your API client. Details are in the developer guide.')
 
 Add (P 'H1' 'Questions')
 Add (PlainP 'support@getsacc.com')

@@ -518,7 +518,7 @@
     // display path (Playlists.razor, CustomerDisplay.razor, SignageDisplay.razor)
     // until per-tenant branch resolution is wired through the whole app — see
     // docs/TASK_TRACKER.md.
-    private Guid branchId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
     private bool isSavingBanner = false;
     private DisplayBannerSettingsDto banner = new();
 
