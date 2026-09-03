@@ -115,6 +115,19 @@ public static partial class RegistrationIdentity
             digits = digits[2..];
         }
 
+        // A trunk zero written between the country code and the subscriber number, as in
+        // "+256 (0) 772 345 678". People copy their number from letterheads and email signatures
+        // in exactly this form, and without this the same number typed two ways produces two
+        // different canonical values, which is the one thing this method exists to prevent.
+        if (digits.StartsWith(defaultCountryCode, StringComparison.Ordinal))
+        {
+            var subscriber = digits[defaultCountryCode.Length..];
+            if (subscriber.StartsWith('0'))
+            {
+                digits = defaultCountryCode + subscriber.TrimStart('0');
+            }
+        }
+
         return digits.Length == 0 ? null : digits;
     }
 

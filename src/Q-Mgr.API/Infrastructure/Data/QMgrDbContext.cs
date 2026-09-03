@@ -14,6 +14,7 @@ using QMgr.Domain.Entities.Marketing;
 using QMgr.Domain.Entities.Queue;
 using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Entities.Welfare;
+using QMgr.Domain.Identity;
 
 namespace QMgr.Infrastructure.Data;
 
@@ -440,6 +441,45 @@ public class QMgrDbContext : DbContext
             }
         }
 
+        ApplyIdentityNormalization();
+
         return base.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Keeps the canonical duplicate-detection columns in step with the values they are derived
+    /// from, for every user and organization written through this context.
+    /// </summary>
+    /// <remarks>
+    /// This lives here rather than at each call site because there are several: self-service
+    /// sign-up, an administrator adding a user, and three separate seeders. NormalizedEmail carries
+    /// a unique index and starts life as an empty string, so a single site that forgot to populate
+    /// it would not merely weaken the duplicate check — the second such row would violate the index
+    /// and fail the write outright, which on a fresh install means seeding two demo users breaks
+    /// startup. Deriving the values here makes forgetting impossible.
+    /// </remarks>
+    private void ApplyIdentityNormalization()
+    {
+        foreach (var entry in ChangeTracker.Entries<Domain.Entities.Identity.User>())
+        {
+            if (entry.State != EntityState.Added && entry.State != EntityState.Modified) continue;
+
+            var user = entry.Entity;
+
+            // Falling back to the raw address keeps the column non-empty for anything the
+            // normalizer declines to interpret, so the unique index still separates those rows.
+            user.NormalizedEmail = RegistrationIdentity.NormalizeEmail(user.Email)
+                ?? user.Email.Trim().ToLowerInvariant();
+            user.NormalizedPhone = RegistrationIdentity.NormalizePhone(user.Phone);
+        }
+
+        foreach (var entry in ChangeTracker.Entries<Domain.Entities.Organization.Organization>())
+        {
+            if (entry.State != EntityState.Added && entry.State != EntityState.Modified) continue;
+
+            var organization = entry.Entity;
+            organization.NormalizedName = RegistrationIdentity.NormalizeOrganizationName(organization.Name);
+            organization.NameBlockingKey = RegistrationIdentity.BuildNameBlockingKey(organization.Name);
+        }
     }
 }

@@ -151,6 +151,14 @@ namespace QMgr.Infrastructure.Migrations
                 ) AS s
                 WHERE s.uid = u.""Id"";");
 
+            // A trunk zero written between the country code and the subscriber number, as in
+            // "+256 (0) 772 345 678", which is how people copy the number off a letterhead. Without
+            // this the same number typed two ways lands on two different canonical values.
+            migrationBuilder.Sql(@"
+                UPDATE qmgr.users
+                SET ""NormalizedPhone"" = '256' || ltrim(substring(""NormalizedPhone"" from 4), '0')
+                WHERE ""NormalizedPhone"" LIKE '2560%';");
+
             // Organization names: lower-cased, punctuation flattened, legal-form and filler words
             // dropped, then the remaining words sorted so word order stops mattering. The C
             // collation makes Postgres sort byte-wise, which is what StringComparer.Ordinal does on
