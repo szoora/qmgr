@@ -1,0 +1,587 @@
+@page "/platform/module-catalog"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+
+<PageTitle>Module Catalog - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="grid-3x3-gap-fill" Size="32" /> Module Catalog</h1>
+        <p class="page-subtitle">What each module is called, what it says it does, and what it costs</p>
+    </div>
+</div>
+
+<div class="admin-content">
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <QSpinner Size="lg" />
+            <span>Loading the catalog...</span>
+        </div>
+    }
+    else if (hasError)
+    {
+        <QCard>
+            <div class="error-state">
+                <QIcon Name="exclamation-triangle-fill" Size="48" />
+                <h4>Could not load the catalog</h4>
+                <p>@errorMessage</p>
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="primary" OnClick="@Load" />
+            </div>
+        </QCard>
+    }
+    else if (!modules.Any())
+    {
+        <QCard>
+            <div class="empty-state">
+                <QIcon Name="grid-3x3-gap" Size="48" />
+                <h4>No modules in this database</h4>
+                <p>Modules are created when the API starts. Restarting it will add them.</p>
+            </div>
+        </QCard>
+    }
+    else
+    {
+        <QCard Class="mb-4">
+            <div class="catalog-note">
+                <QIcon Name="info-circle-fill" Size="18" />
+                <div>
+                    <strong>A price change applies to existing subscribers too.</strong>
+                    Nothing records what a customer agreed to pay — each renewal invoice is priced
+                    from this page at the moment it is generated. Changing a price here changes what
+                    everyone holding that module pays from their next invoice onward, not just new
+                    buyers.
+                </div>
+            </div>
+        </QCard>
+
+        <div class="module-grid">
+            @foreach (var module in modules)
+            {
+                <QCard Class="@($"module-card {(module.IsActive ? "" : "retired")}")">
+                    <div class="module-head">
+                        <div>
+                            <h4>@module.Name</h4>
+                            <code class="module-code">@module.Code</code>
+                        </div>
+                        <div class="module-tags">
+                            @if (!string.IsNullOrWhiteSpace(module.Badge))
+                            {
+                                <QBadge Text="@module.Badge" Variant="primary" />
+                            }
+                            <QBadge Text="@(module.IsActive ? "Live" : "Retired")"
+                                    Variant="@(module.IsActive ? "success" : "secondary")" />
+                        </div>
+                    </div>
+
+                    <p class="module-description">@module.Description</p>
+
+                    <div class="module-prices">
+                        <div class="price-line">
+                            <span class="price-main">UGX @module.MonthlyPriceUgx.ToString("N0")</span>
+                            <span class="price-period">/mo</span>
+                            <span class="price-alt">or UGX @module.AnnualPriceUgx.ToString("N0")/yr</span>
+                        </div>
+                        <div class="price-line secondary">
+                            <span>$@module.MonthlyPriceUsd.ToString("N2")/mo</span>
+                            <span class="price-alt">or $@module.AnnualPriceUsd.ToString("N2")/yr</span>
+                        </div>
+                    </div>
+
+                    <div class="module-facts">
+                        <span><QIcon Name="people-fill" Size="14" /> @module.SubscriberCount subscriber@(module.SubscriberCount == 1 ? "" : "s")</span>
+                        <span><QIcon Name="calendar-check" Size="14" /> @module.TrialDays-day trial</span>
+                    </div>
+
+                    <div class="module-actions">
+                        <QButton Text="Edit" Icon="pencil-fill" Variant="secondary" Size="sm"
+                                 OnClick="@(() => OpenEditor(module))" />
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showEditor" Title="@($"Edit {editing?.Name}")" Size="lg">
+    <ChildContent>
+        @if (form != null)
+        {
+            @if (editing!.SubscriberCount > 0)
+            {
+                <div class="editor-warning">
+                    <QIcon Name="exclamation-triangle-fill" Size="18" />
+                    <span>
+                        @editing.SubscriberCount organization@(editing.SubscriberCount == 1 ? " holds" : "s hold")
+                        this module. A price change here reaches @(editing.SubscriberCount == 1 ? "them" : "them all")
+                        on their next invoice.
+                    </span>
+                </div>
+            }
+
+            <div class="editor-section">
+                <h5>Presentation</h5>
+                <div class="form-group">
+                    <QInput TValue="string" @bind-Value="form.Name" Label="Name *" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" @bind-Value="form.Description" Label="Description"
+                            Type="textarea" Rows="3" />
+                    <small>Shown on the marketplace card and in the sign-up wizard.</small>
+                </div>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="string" @bind-Value="form.Badge" Label="Badge"
+                                Placeholder="Most Popular" />
+                        <small>Leave blank for none.</small>
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.SortOrder" Label="Sort order" Type="number" Min="0" />
+                        <small>Lower numbers come first.</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="editor-section">
+                <h5>Pricing</h5>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="decimal" @bind-Value="form.MonthlyPriceUgx" Label="UGX / month" Type="number" Min="0" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="decimal" @bind-Value="form.AnnualPriceUgx" Label="UGX / year" Type="number" Min="0" />
+                    </div>
+                </div>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="decimal" @bind-Value="form.MonthlyPriceUsd" Label="USD / month" Type="number" Min="0" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="decimal" @bind-Value="form.AnnualPriceUsd" Label="USD / year" Type="number" Min="0" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <QInput TValue="int" @bind-Value="form.TrialDays" Label="Trial length (days)" Type="number" Min="0" Max="365" />
+                </div>
+                @if (annualIsWorseThanMonthly)
+                {
+                    <div class="editor-hint">
+                        A year costs more than twelve months at the monthly rate. That is allowed, but
+                        it is usually the opposite of what an annual price is for.
+                    </div>
+                }
+            </div>
+
+            <div class="editor-section">
+                <h5>Limits</h5>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxBranches" Label="Branches" Type="number" Min="0" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxDisplays" Label="Displays" Type="number" Min="0" />
+                    </div>
+                </div>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxUsersPerBranch" Label="Users per branch" Type="number" Min="0" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxCountersPerBranch" Label="Counters per branch" Type="number" Min="0" />
+                    </div>
+                </div>
+                <div class="editor-row">
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxTokensPerMonth" Label="Tokens per month" Type="number" Min="0" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="int" @bind-Value="form.MaxApiCallsPerMonth" Label="API calls per month" Type="number" Min="0" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <QInput TValue="int" @bind-Value="form.MaxStorageMb" Label="Storage (MB)" Type="number" Min="0" />
+                </div>
+            </div>
+
+            <div class="editor-section">
+                <h5>Availability</h5>
+                <label class="editor-toggle">
+                    <input type="checkbox" checked="@form.IsActive" @onchange="OnActiveChanged" />
+                    <span>
+                        <strong>Live.</strong> Switch off to retire the module: it disappears from the
+                        marketplace and the sign-up wizard. Organizations already holding it keep their
+                        access.
+                    </span>
+                </label>
+                <label class="editor-toggle">
+                    <input type="checkbox" checked="@form.IsPublic" @onchange="OnPublicChanged" />
+                    <span><strong>Publicly listed.</strong></span>
+                </label>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showEditor = false)" />
+        <QButton Text="Save changes" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .catalog-note {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+
+    .catalog-note strong { color: var(--qm-text-primary); }
+
+    .module-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 1.25rem;
+    }
+
+    .module-card.retired { opacity: 0.6; }
+
+    .module-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .module-head h4 {
+        margin: 0 0 0.25rem;
+        font-family: var(--qm-font-display);
+    }
+
+    .module-code {
+        font-size: 0.75rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .module-tags {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        align-items: flex-end;
+    }
+
+    .module-description {
+        font-size: 0.875rem;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+        margin: 0 0 1rem;
+    }
+
+    .module-prices {
+        padding: 0.75rem 0;
+        border-top: 1px solid var(--qm-border);
+        border-bottom: 1px solid var(--qm-border);
+        margin-bottom: 0.75rem;
+    }
+
+    .price-line {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+
+    .price-line.secondary {
+        margin-top: 0.25rem;
+        font-size: 0.8125rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .price-main {
+        font-family: var(--qm-font-display);
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--qm-primary);
+    }
+
+    .price-period { font-size: 0.875rem; color: var(--qm-text-secondary); }
+    .price-alt { font-size: 0.8125rem; color: var(--qm-text-secondary); }
+
+    .module-facts {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        font-size: 0.8125rem;
+        color: var(--qm-text-secondary);
+        margin-bottom: 1rem;
+    }
+
+    .module-facts span {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .module-actions { display: flex; justify-content: flex-end; }
+
+    .editor-section {
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .editor-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+    .editor-section h5 {
+        font-family: var(--qm-font-display);
+        font-size: 0.8125rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--qm-text-secondary);
+        margin: 0 0 0.75rem;
+    }
+
+    .editor-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+    }
+
+    .editor-section .form-group { margin-bottom: 0.75rem; }
+
+    .editor-section small {
+        display: block;
+        margin-top: 0.25rem;
+        font-size: 0.75rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .editor-warning,
+    .editor-hint {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+        padding: 0.75rem 0.875rem;
+        border-radius: var(--qm-radius-md);
+        font-size: 0.8125rem;
+        line-height: 1.5;
+        margin-bottom: 1rem;
+    }
+
+    .editor-warning {
+        background: var(--qm-warning-light, rgba(201, 138, 26, 0.12));
+        color: var(--qm-warning, #c98a1a);
+    }
+
+    .editor-hint {
+        background: var(--qm-bg-subtle, rgba(0, 0, 0, 0.04));
+        color: var(--qm-text-secondary);
+        margin-top: 0.5rem;
+    }
+
+    .editor-toggle {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+        font-size: 0.8125rem;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+        cursor: pointer;
+    }
+
+    .editor-toggle strong { color: var(--qm-text-primary); }
+
+    .loading-state,
+    .error-state,
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 3rem 1rem;
+        color: var(--qm-text-secondary);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool hasError;
+    private string errorMessage = "";
+    private bool isSaving;
+
+    private List<ModuleCatalogAdminDto> modules = new();
+
+    private bool showEditor;
+    private ModuleCatalogAdminDto? editing;
+    private ModuleForm? form;
+
+    /// <summary>
+    /// Twelve months at the monthly rate compared against the annual price. Not an error — some
+    /// catalogs really do price a year higher — but almost always a slipped decimal point.
+    /// </summary>
+    private bool annualIsWorseThanMonthly =>
+        form != null && form.AnnualPriceUgx > form.MonthlyPriceUgx * 12 && form.MonthlyPriceUgx > 0;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        isLoading = true;
+        hasError = false;
+
+        try
+        {
+            modules = await Http.GetFromJsonAsync<List<ModuleCatalogAdminDto>>(
+                "api/v1/admin/module-catalog", JsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void OpenEditor(ModuleCatalogAdminDto module)
+    {
+        editing = module;
+        form = ModuleForm.From(module);
+        showEditor = true;
+    }
+
+    private void OnActiveChanged(ChangeEventArgs e)
+    {
+        if (form != null) form.IsActive = e.Value is bool value && value;
+    }
+
+    private void OnPublicChanged(ChangeEventArgs e)
+    {
+        if (form != null) form.IsPublic = e.Value is bool value && value;
+    }
+
+    private async Task Save()
+    {
+        if (form == null || editing == null) return;
+
+        if (string.IsNullOrWhiteSpace(form.Name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "A module needs a name.");
+            return;
+        }
+
+        isSaving = true;
+
+        try
+        {
+            var response = await Http.PutAsJsonAsync(
+                $"api/v1/admin/module-catalog/{editing.Code}", form.ToRequest());
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, $"{form.Name} updated.");
+                showEditor = false;
+                await Load();
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ApiError>();
+                NotificationService.Notify(ToastSeverity.Error, "Could not save that.",
+                    error?.Message ?? "Please try again.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save that.", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    /// <summary>
+    /// A mutable mirror of the request record, because @bind-Value cannot write to init-only
+    /// properties.
+    /// </summary>
+    private class ModuleForm
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string? Badge { get; set; }
+        public int SortOrder { get; set; }
+        public int TrialDays { get; set; }
+        public decimal MonthlyPriceUsd { get; set; }
+        public decimal AnnualPriceUsd { get; set; }
+        public decimal MonthlyPriceUgx { get; set; }
+        public decimal AnnualPriceUgx { get; set; }
+        public int MaxBranches { get; set; }
+        public int MaxDisplays { get; set; }
+        public int MaxUsersPerBranch { get; set; }
+        public int MaxCountersPerBranch { get; set; }
+        public int MaxTokensPerMonth { get; set; }
+        public int MaxApiCallsPerMonth { get; set; }
+        public int MaxStorageMb { get; set; }
+        public bool IsActive { get; set; }
+        public bool IsPublic { get; set; }
+
+        public static ModuleForm From(ModuleCatalogAdminDto m) => new()
+        {
+            Name = m.Name,
+            Description = m.Description,
+            Badge = m.Badge,
+            SortOrder = m.SortOrder,
+            TrialDays = m.TrialDays,
+            MonthlyPriceUsd = m.MonthlyPriceUsd,
+            AnnualPriceUsd = m.AnnualPriceUsd,
+            MonthlyPriceUgx = m.MonthlyPriceUgx,
+            AnnualPriceUgx = m.AnnualPriceUgx,
+            MaxBranches = m.MaxBranches,
+            MaxDisplays = m.MaxDisplays,
+            MaxUsersPerBranch = m.MaxUsersPerBranch,
+            MaxCountersPerBranch = m.MaxCountersPerBranch,
+            MaxTokensPerMonth = m.MaxTokensPerMonth,
+            MaxApiCallsPerMonth = m.MaxApiCallsPerMonth,
+            MaxStorageMb = m.MaxStorageMb,
+            IsActive = m.IsActive,
+            IsPublic = m.IsPublic
+        };
+
+        public UpdateModuleCatalogRequest ToRequest() => new()
+        {
+            Name = Name,
+            Description = Description,
+            Badge = Badge,
+            SortOrder = SortOrder,
+            TrialDays = TrialDays,
+            MonthlyPriceUsd = MonthlyPriceUsd,
+            AnnualPriceUsd = AnnualPriceUsd,
+            MonthlyPriceUgx = MonthlyPriceUgx,
+            AnnualPriceUgx = AnnualPriceUgx,
+            MaxBranches = MaxBranches,
+            MaxDisplays = MaxDisplays,
+            MaxUsersPerBranch = MaxUsersPerBranch,
+            MaxCountersPerBranch = MaxCountersPerBranch,
+            MaxTokensPerMonth = MaxTokensPerMonth,
+            MaxApiCallsPerMonth = MaxApiCallsPerMonth,
+            MaxStorageMb = MaxStorageMb,
+            IsActive = IsActive,
+            IsPublic = IsPublic
+        };
+    }
+
+    private record ApiError
+    {
+        public string? Error { get; init; }
+        public string? Message { get; init; }
+    }
+}

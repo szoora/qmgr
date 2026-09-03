@@ -397,8 +397,15 @@ public class DbSeeder
         // Sync numeric limits + Features on every plan this method manages (matched by Code) to
         // the tier-appropriate values above — independent of the per-org loop below, since that
         // loop skips orgs that already have a subscription and would otherwise never revisit an
-        // already-linked plan. Safe to run unconditionally every startup: this seeder is these
-        // plans' sole owner (no admin UI edits SubscriptionPlan rows).
+        // already-linked plan. Safe to run unconditionally every startup because this seeder is
+        // the sole owner of the four TIER plans it manages, and nothing else writes them.
+        //
+        // Note the scope: knownCodes below comes from tierPlans, so this loop never touches the
+        // module rows. That matters now that Platform Admin's Module Catalog page
+        // (ModuleCatalogController) does edit module rows, and an administrator's prices and limits
+        // survive a restart precisely because they are not in this list. Do not widen it to cover
+        // module codes without first deciding what should happen when the seeder's hard-coded
+        // values and an administrator's edits disagree; as written, the administrator wins.
         //
         // This exists because the first version of this method only set Tier/ShowAds/
         // RequiresDedicatedSchema/Features on creation, leaving every numeric limit (MaxBranches,
