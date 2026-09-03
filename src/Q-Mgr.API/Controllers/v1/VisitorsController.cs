@@ -33,6 +33,19 @@ public class VisitorsController : ControllerBase
     private const long MaxPhotoSizeBytes = 5 * 1024 * 1024; // 5MB — a headshot, not a document
     private static readonly TimeSpan BadgeValidity = TimeSpan.FromHours(16); // covers a full working day
 
+    /// <summary>
+    /// How long a recorded contractor site induction stays valid before check-in starts warning
+    /// again. A deliberate constant rather than a per-branch setting: this feature is a flag and a
+    /// date, not an induction-management module, and one more knob in Visitor Settings buys very
+    /// little for a rule ("re-induct annually") that is near-universal. If a site genuinely needs a
+    /// different window, promote this to VisitingDaySettingsDto — it's a settled-with-the-user
+    /// decision, not a code change to make on a hunch.
+    /// </summary>
+    private const int InductionValidityDays = 365;
+
+    /// <summary>Cap on one pre-registration batch — a coach party, not a bulk roster import.</summary>
+    private const int MaxExpectedBatchSize = 50;
+
     public VisitorsController(
         QMgrDbContext context,
         ITenantContextAccessor tenantAccessor,
@@ -308,7 +321,81 @@ public class VisitorsController : ControllerBase
         return rows.ToDictionary(r => r.ProfileId, r => new ProfileStats(r.Total, r.Last24h));
     }
 
-    internal static VisitorDto MapToDto(Visitor v, VisitorProfile p, ProfileStats? stats = null, string? qrToken = null) => new()
+    /// <summary>
+    /// Npgsql rejects a Kind=Unspecified DateTime against a "timestamp with time zone" column, and
+    /// System.Text.Json hands back Unspecified for any wire value written without a trailing "Z"
+    /// or offset — which a hand-rolled client or a `datetime-local` value that skipped
+    /// ToUniversalTime() will be. Treating Unspecified as already-UTC (rather than calling
+    /// ToUniversalTime(), which would silently shift it by the SERVER's timezone) is the only
+    /// interpretation that can't corrupt the value.
+    /// </summary>
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+    };
+
+    private static bool IsInductionValid(VisitorProfile p) =>
+        p.InductionCompletedAt.HasValue && p.InductionCompletedAt.Value.AddDays(InductionValidityDays) > DateTime.UtcNow;
+
+    /// <summary>
+    /// Warn-not-block: a contractor arriving without a current site induction is a real problem
+    /// worth putting in front of the person on the desk, but refusing entry over a paperwork date
+    /// would strand a crew at the gate over something a supervisor can resolve in a minute. The
+    /// watchlist is the only thing in this module that actually bars anyone.
+    /// </summary>
+    private static string? InductionWarning(Visitor v, VisitorProfile p)
+    {
+        if (v.VisitorType != VisitorType.Contractor) return null;
+        if (!p.InductionCompletedAt.HasValue)
+            return $"{p.FullName} is checking in as a contractor with no recorded site induction.";
+        if (!IsInductionValid(p))
+            return $"{p.FullName}'s site induction lapsed on {p.InductionCompletedAt.Value.AddDays(InductionValidityDays):MMM dd, yyyy} and needs renewing.";
+        return null;
+    }
+
+    /// <summary>
+    /// BLOCK, not warn. A watchlisted profile is refused check-in outright — the whole point of
+    /// flagging someone is that they should not be admitted, and a dismissible banner on a busy
+    /// front desk is not a control. The reason is returned in the ProblemDetails because every
+    /// caller of this is permission-gated staff (VisitorsCheckIn); it is never rendered on a
+    /// kiosk/public surface, which reads VisitorScanResultDto/CustomerDisplay, not this.
+    ///
+    /// The single way past it is a Manager-or-above supplying WatchlistOverrideReason, which is
+    /// then written into the visit's Notes — an override that leaves a record, rather than a
+    /// silent one. Staff supplying a reason changes nothing; they need a manager.
+    /// </summary>
+    private IActionResult? WatchlistBlock(VisitorProfile profile, string? overrideReason)
+    {
+        if (!profile.IsWatchlisted) return null;
+
+        var isManager = RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole);
+        if (isManager && !string.IsNullOrWhiteSpace(overrideReason)) return null;
+
+        var since = profile.WatchlistAddedAt.HasValue ? $" (flagged {profile.WatchlistAddedAt.Value:MMM dd, yyyy})" : "";
+        var reason = string.IsNullOrWhiteSpace(profile.WatchlistReason) ? "No reason was recorded." : profile.WatchlistReason;
+        return Conflict(new ProblemDetails
+        {
+            Title = "Visitor is on the watchlist",
+            Detail = isManager
+                ? $"{profile.FullName} is flagged{since}: {reason} As a Manager you may admit them anyway by supplying an override reason, which is recorded against the visit."
+                : $"{profile.FullName} is flagged{since}: {reason} Do not admit them — a Manager or Admin must authorise this check-in.",
+            Status = StatusCodes.Status409Conflict
+        });
+    }
+
+    /// <summary>Applies a watchlist flag/unflag to a profile, keeping who/when in step with it.</summary>
+    private void ApplyWatchlist(VisitorProfile profile, bool isWatchlisted, string? reason)
+    {
+        profile.IsWatchlisted = isWatchlisted;
+        profile.WatchlistReason = isWatchlisted ? reason : null;
+        profile.WatchlistAddedAt = isWatchlisted ? DateTime.UtcNow : null;
+        profile.WatchlistAddedByUserId = isWatchlisted ? CurrentUserId() : null;
+        profile.UpdatedAt = DateTime.UtcNow;
+    }
+
+    internal static VisitorDto MapToDto(Visitor v, VisitorProfile p, ProfileStats? stats = null, string? qrToken = null, string? checkInWarning = null) => new()
     {
         Id = v.Id,
         BranchId = v.BranchId,
@@ -322,6 +409,12 @@ public class VisitorsController : ControllerBase
         PhotoUrl = p.PhotoUrl,
         IsWatchlisted = p.IsWatchlisted,
         WatchlistReason = p.WatchlistReason,
+        WatchlistAddedAt = p.WatchlistAddedAt,
+        InductionCompletedAt = p.InductionCompletedAt,
+        InductionExpiresAt = p.InductionCompletedAt?.AddDays(InductionValidityDays),
+        InductionValid = IsInductionValid(p),
+        InductionNotes = p.InductionNotes,
+        CheckInWarning = checkInWarning,
         Purpose = v.Purpose,
         VehiclePlate = v.VehiclePlate,
         HostUserId = v.HostUserId,
@@ -329,7 +422,9 @@ public class VisitorsController : ControllerBase
         StudentId = v.StudentId,
         StudentName = v.StudentName,
         Status = v.Status,
+        VisitorType = v.VisitorType,
         ScheduledAt = v.ScheduledAt,
+        ExpectedArrivalAt = v.ExpectedArrivalAt,
         CheckedInAt = v.CheckedInAt,
         CheckedOutAt = v.CheckedOutAt,
         BadgeConsumedAt = v.BadgeConsumedAt,
@@ -457,8 +552,91 @@ public class VisitorsController : ControllerBase
         {
             CurrentlyOnSite = todaysVisitors.Count(v => v.Status == VisitorStatus.CheckedIn),
             TotalToday = todaysVisitors.Count,
-            PreRegisteredUpcoming = todaysVisitors.Count(v => v.Status == VisitorStatus.PreRegistered),
+            // Both pre-registration statuses — reception cares that someone is due, not which of
+            // the two code paths (older PreRegister vs. the expected-arrivals batch) booked them.
+            PreRegisteredUpcoming = todaysVisitors.Count(v => v.Status == VisitorStatus.PreRegistered || v.Status == VisitorStatus.Expected),
+            ExpectedToday = todaysVisitors.Count(v => v.Status == VisitorStatus.Expected),
             WatchlistedOnSite = todaysVisitors.Count(v => v.Status == VisitorStatus.CheckedIn && v.VisitorProfile!.IsWatchlisted)
+        });
+    }
+
+    /// <summary>
+    /// EVACUATION ROLL CALL — everyone inside this branch at this instant. The first thing a fire
+    /// marshal or a safeguarding inspector asks for, assembled entirely from data check-in already
+    /// captures; nothing here is stored or scheduled, it's recomputed per request so it can never
+    /// be stale.
+    ///
+    /// Two populations, deliberately reported separately rather than merged into one number:
+    /// individually checked-in visitors (named, contactable) and group-pass occupants (a headcount
+    /// only — a pass admits a crew under one badge and never records who they are, so a roll call
+    /// can say "4 people under ACME Contractors" and no more; pretending otherwise would be worse
+    /// than saying so).
+    ///
+    /// Students are NOT included: the roster has no presence concept at all — Student.IsActive is
+    /// roster membership ("still enrolled here"), not attendance, and inventing an attendance
+    /// signal out of it would put names on an evacuation sheet that nobody ever marked present.
+    /// The response says this explicitly (StudentsIncluded/StudentsNote) so a marshal reads it off
+    /// the sheet instead of assuming the headcount already covers the school roll.
+    ///
+    /// Gated on the existing VisitorsView rather than a new permission — it is a re-presentation
+    /// of the visitor log this role already reads in full, and in a real evacuation the last thing
+    /// anyone needs is the person holding the phone discovering they lack a bespoke role.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/evacuation")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(EvacuationReportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetEvacuationReport(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var now = DateTime.UtcNow;
+        var branchName = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Name).FirstOrDefaultAsync() ?? "";
+
+        var onSite = await _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null && v.Status == VisitorStatus.CheckedIn)
+            .OrderBy(v => v.CheckedInAt)
+            .ToListAsync();
+
+        var activePasses = await _context.VisitorPasses
+            .Where(p => p.BranchId == branchId && p.RevokedAt == null && p.ExpiresAt > now && p.CurrentVisitors > 0)
+            .OrderBy(p => p.Label)
+            .ToListAsync();
+
+        var people = onSite.Select(v => new EvacuationPersonDto
+        {
+            VisitorId = v.Id,
+            BadgeCode = v.BadgeCode,
+            FullName = v.VisitorProfile!.FullName,
+            Company = v.VisitorProfile.Company,
+            HostName = v.HostName,
+            Phone = v.VisitorProfile.Phone,
+            CheckedInAt = v.CheckedInAt,
+            VisitorType = v.VisitorType,
+            StudentName = v.StudentName
+        }).ToList();
+
+        var passes = activePasses.Select(p => new EvacuationGroupPassDto
+        {
+            PassId = p.Id,
+            Label = p.Label,
+            OccupantCount = p.CurrentVisitors,
+            ExpiresAt = p.ExpiresAt
+        }).ToList();
+
+        var passHeadcount = passes.Sum(p => p.OccupantCount);
+
+        return Ok(new EvacuationReportDto
+        {
+            GeneratedAt = now,
+            BranchName = branchName,
+            CheckedInVisitorCount = people.Count,
+            GroupPassOccupantCount = passHeadcount,
+            TotalOnSite = people.Count + passHeadcount,
+            StudentsIncluded = false,
+            StudentsNote = "Students are not included — the roster records enrolment, not attendance, so this system has no record of which students are on site.",
+            People = people,
+            GroupPasses = passes
         });
     }
 
@@ -954,7 +1132,9 @@ public class VisitorsController : ControllerBase
                 HostUserId = request.HostUserId,
                 HostName = request.HostName,
                 Status = VisitorStatus.PreRegistered,
-                ScheduledAt = request.ScheduledAt,
+                VisitorType = request.VisitorType,
+                ScheduledAt = request.ScheduledAt.HasValue ? ToUtc(request.ScheduledAt.Value) : null,
+                PreRegisteredByUserId = CurrentUserId(),
                 Notes = request.Notes
             };
             _context.Visitors.Add(visitor);
@@ -966,6 +1146,173 @@ public class VisitorsController : ControllerBase
         var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.PreRegistered, dto);
         return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, dto);
+    }
+
+    /// <summary>
+    /// Books one or many EXPECTED visitors in for a future date/time (Status = Expected). One
+    /// request covers a whole party arriving together for the same reason — the realistic shape of
+    /// a pre-booking (an interview panel, a contractor crew, a governors' meeting) — instead of
+    /// making reception retype the host, purpose and time once per name.
+    ///
+    /// Every person still becomes an ordinary Visitor row against an ordinary VisitorProfile,
+    /// matched through the same FindOrCreateProfileAsync every other entry point uses, so a
+    /// pre-registered arrival is not a parallel kind of record that later has to be reconciled —
+    /// it converts into a real check-in through the existing CheckInExisting action (which keeps
+    /// every consent, watchlist and repeat-check-in control intact), it doesn't get duplicated
+    /// into one.
+    ///
+    /// ScheduledAt is populated alongside ExpectedArrivalAt on purpose: several existing queries
+    /// (GetVisitors' default "today" view, GetSummary) already key off ScheduledAt, so filling
+    /// both means an expected arrival shows up on the front desk's normal screens on the day
+    /// without touching any of them.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/visitors/expected")]
+    [RequirePermission(Permissions.VisitorsCheckIn)]
+    [ProducesResponseType(typeof(List<VisitorDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateExpectedVisitors(Guid branchId, [FromBody] CreateExpectedVisitorsRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var entries = (request.Visitors ?? new List<ExpectedVisitorEntry>())
+            .Where(e => !string.IsNullOrWhiteSpace(e.FullName))
+            .ToList();
+
+        if (entries.Count == 0)
+            return BadRequest(new ProblemDetails { Title = "At least one visitor with a name is required", Status = StatusCodes.Status400BadRequest });
+        if (entries.Count > MaxExpectedBatchSize)
+            return BadRequest(new ProblemDetails { Title = $"At most {MaxExpectedBatchSize} visitors can be pre-registered in one request", Status = StatusCodes.Status400BadRequest });
+        if (string.IsNullOrWhiteSpace(request.Purpose))
+            return BadRequest(new ProblemDetails { Title = "Purpose of visit is required", Status = StatusCodes.Status400BadRequest });
+        if (request.ExpectedArrivalAt == default)
+            return BadRequest(new ProblemDetails { Title = "An expected arrival date and time is required", Status = StatusCodes.Status400BadRequest });
+
+        var expectedUtc = ToUtc(request.ExpectedArrivalAt);
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var createdByUserId = CurrentUserId();
+
+        var created = new List<(Visitor Visit, VisitorProfile Profile)>();
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            created.Clear(); // a retried execution must not accumulate the previous attempt's rows
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+
+            foreach (var entry in entries)
+            {
+                var profile = await FindOrCreateProfileAsync(organizationId, entry.VisitorProfileId,
+                    entry.FullName, entry.Phone, entry.Email, entry.IdNumber, entry.Company, null);
+                await _context.SaveChangesAsync(); // each profile needs an Id before the visit references it
+
+                var visitor = new Visitor
+                {
+                    OrganizationId = organizationId,
+                    BranchId = branchId,
+                    VisitorProfileId = profile.Id,
+                    BadgeCode = await GenerateBadgeCodeAsync(branchId),
+                    Purpose = request.Purpose,
+                    VehiclePlate = entry.VehiclePlate,
+                    HostUserId = request.HostUserId,
+                    HostName = request.HostName,
+                    Status = VisitorStatus.Expected,
+                    VisitorType = request.VisitorType,
+                    ExpectedArrivalAt = expectedUtc,
+                    ScheduledAt = expectedUtc,
+                    PreRegisteredByUserId = createdByUserId,
+                    Notes = request.Notes
+                };
+                _context.Visitors.Add(visitor);
+                await _context.SaveChangesAsync();
+                created.Add((visitor, profile));
+            }
+
+            await transaction.CommitAsync();
+        });
+
+        var stats = await GetStatsAsync(created.Select(c => c.Profile.Id));
+        var dtos = created
+            .Select(c => MapToDto(c.Visit, c.Profile, stats.GetValueOrDefault(c.Profile.Id)))
+            .ToList();
+
+        foreach (var dto in dtos)
+            await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.PreRegistered, dto);
+
+        return StatusCode(StatusCodes.Status201Created, dtos);
+    }
+
+    /// <summary>
+    /// Expected arrivals still outstanding over a date range (defaults to today through a week
+    /// out). Covers BOTH pre-registration statuses — a front desk asking "who's due?" doesn't care
+    /// whether a booking came from the older PreRegister path or the expected-arrivals batch.
+    /// Anything already checked in, checked out or cancelled has stopped being an expectation and
+    /// drops out by construction.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/expected")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(List<VisitorDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetExpectedVisitors(Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var fromDate = from ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var toDate = to ?? fromDate.AddDays(7);
+        if (fromDate > toDate) (fromDate, toDate) = (toDate, fromDate);
+
+        // Same Kind=Unspecified trap as ResolveReportRange — DateOnly.ToDateTime always produces
+        // Unspecified, which Npgsql refuses against a timestamptz column.
+        var rangeStart = DateTime.SpecifyKind(fromDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        var rangeEndExclusive = DateTime.SpecifyKind(toDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc).AddDays(1);
+
+        var expected = await _context.Visitors.Include(v => v.VisitorProfile)
+            .Where(v => v.BranchId == branchId && v.DeletedAt == null &&
+                        (v.Status == VisitorStatus.Expected || v.Status == VisitorStatus.PreRegistered))
+            // COALESCE: an Expected row always has ExpectedArrivalAt, an older PreRegistered row
+            // only ever had ScheduledAt — one ordering/filter key covers both.
+            .Where(v => (v.ExpectedArrivalAt ?? v.ScheduledAt) >= rangeStart &&
+                        (v.ExpectedArrivalAt ?? v.ScheduledAt) < rangeEndExclusive)
+            .OrderBy(v => v.ExpectedArrivalAt ?? v.ScheduledAt)
+            .ToListAsync();
+
+        var stats = await GetStatsAsync(expected.Select(v => v.VisitorProfileId));
+        return Ok(expected.Select(v => MapToDto(v, v.VisitorProfile!, stats.GetValueOrDefault(v.VisitorProfileId))).ToList());
+    }
+
+    /// <summary>
+    /// Cancels an expected/pre-registered arrival that isn't coming. Deliberately a status change
+    /// rather than a delete — "they were booked in and didn't come" is itself a fact a visitor log
+    /// should be able to answer, and DeleteVisitor exists (with its mandatory reason) for records
+    /// that genuinely shouldn't be there at all.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/visitors/{visitorId:guid}/cancel")]
+    [RequirePermission(Permissions.VisitorsCheckIn)]
+    [ProducesResponseType(typeof(VisitorDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CancelExpectedVisitor(Guid branchId, Guid visitorId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var visitor = await _context.Visitors.Include(v => v.VisitorProfile)
+            .FirstOrDefaultAsync(v => v.Id == visitorId && v.BranchId == branchId && v.DeletedAt == null);
+        if (visitor == null) return NotFound();
+
+        if (visitor.Status != VisitorStatus.Expected && visitor.Status != VisitorStatus.PreRegistered)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Cannot cancel",
+                Detail = $"This visit is already '{visitor.Status}' — only an expected arrival that hasn't started yet can be cancelled.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        visitor.Status = VisitorStatus.Cancelled;
+        visitor.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
+        return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId)));
     }
 
     /// <summary>
@@ -1017,6 +1364,16 @@ public class VisitorsController : ControllerBase
                 return;
             }
 
+            // WATCHLIST: checked before anything else about this visit is decided — a flagged
+            // person is refused entry outright, not warned about after the fact.
+            var watchlistError = WatchlistBlock(profile, request.WatchlistOverrideReason);
+            if (watchlistError != null)
+            {
+                conflict = watchlistError;
+                await transaction.RollbackAsync();
+                return;
+            }
+
             // Visiting-day repeat check-in gate: only applies to roster (StudentId-linked)
             // check-ins — a plain walk-in visitor isn't part of the guardian-card abuse scenario
             // this exists for. A Manager+ user's own elevated login IS the "supervisor override";
@@ -1026,8 +1383,15 @@ public class VisitorsController : ControllerBase
             if (studentId.HasValue)
             {
                 var checkInsToday = await GetCheckInsTodayAsync(profile.Id);
+                // The `!profile.IsWatchlisted` term this condition used to carry is gone on
+                // purpose: a watchlisted profile can no longer reach this line at all (the block
+                // above stops it), unless a Manager overrode — in which case IsManagerOrAbove
+                // already skips the gate. Its replacement is CardFlagReason: supplying one is the
+                // front-desk Staff self-service path, and it now flags the card as part of THIS
+                // request instead of requiring a separate flag call first (which the watchlist
+                // block would otherwise turn into a self-inflicted lockout).
                 if (checkInsToday >= visitingDaySettings.CardCheckInWarningThreshold
-                    && !profile.IsWatchlisted
+                    && string.IsNullOrWhiteSpace(request.CardFlagReason)
                     && !RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole))
                 {
                     conflict = BadRequest(new ProblemDetails
@@ -1039,6 +1403,15 @@ public class VisitorsController : ControllerBase
                     await transaction.RollbackAsync();
                     return;
                 }
+            }
+
+            // Contractor induction recorded at the desk — written through to the PERSON so the
+            // next visit (and any other branch) already knows. Null means "don't touch it".
+            if (request.InductionCompletedAt.HasValue)
+            {
+                profile.InductionCompletedAt = ToUtc(request.InductionCompletedAt.Value);
+                if (!string.IsNullOrWhiteSpace(request.InductionNotes)) profile.InductionNotes = request.InductionNotes;
+                profile.UpdatedAt = DateTime.UtcNow;
             }
 
             var badgeCode = await GenerateBadgeCodeAsync(branchId);
@@ -1055,11 +1428,19 @@ public class VisitorsController : ControllerBase
                 StudentId = studentId,
                 StudentName = studentName,
                 Status = VisitorStatus.CheckedIn,
+                VisitorType = request.VisitorType ?? VisitorType.Guest,
                 CheckedInAt = DateTime.UtcNow,
                 ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null,
-                Notes = request.Notes
+                Notes = ComposeCheckInNotes(request.Notes, request.WatchlistOverrideReason, profile.IsWatchlisted)
             };
             _context.Visitors.Add(visitor);
+
+            // Flag the card as part of the same transaction as the visit it authorised — either
+            // both happen or neither does, so there is never a check-in whose stated justification
+            // was "I flagged the card" with no flag to show for it.
+            if (!string.IsNullOrWhiteSpace(request.CardFlagReason) && !profile.IsWatchlisted)
+                ApplyWatchlist(profile, true, request.CardFlagReason);
+
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
         });
@@ -1071,10 +1452,21 @@ public class VisitorsController : ControllerBase
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
-        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken);
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 
         return CreatedAtAction(nameof(GetVisitor), new { branchId, visitorId = visitor.Id }, dto);
+    }
+
+    /// <summary>
+    /// A Manager's watchlist override has to survive in the record itself, not just in a log line —
+    /// the visit's own Notes is where anyone reviewing that visit will actually look.
+    /// </summary>
+    private static string? ComposeCheckInNotes(string? notes, string? overrideReason, bool wasWatchlisted)
+    {
+        if (!wasWatchlisted || string.IsNullOrWhiteSpace(overrideReason)) return notes;
+        var line = $"[Watchlist override] {overrideReason}";
+        return string.IsNullOrWhiteSpace(notes) ? line : $"{notes}\n{line}";
     }
 
     /// <summary>
@@ -1097,13 +1489,19 @@ public class VisitorsController : ControllerBase
         if (visitor == null) return NotFound();
         var profile = visitor.VisitorProfile!;
 
-        if (visitor.Status != VisitorStatus.PreRegistered)
+        // Both pre-registration statuses convert through this one action — that's the whole point
+        // of Expected being a status on the existing record rather than a separate booking table:
+        // "convert to a check-in" is just this, with every control below applying unchanged.
+        if (visitor.Status != VisitorStatus.PreRegistered && visitor.Status != VisitorStatus.Expected)
             return BadRequest(new ProblemDetails
             {
                 Title = "Cannot check in",
-                Detail = $"Visitor is already '{visitor.Status}', not pre-registered.",
+                Detail = $"Visitor is already '{visitor.Status}', not an expected arrival.",
                 Status = StatusCodes.Status400BadRequest
             });
+
+        var watchlistError = WatchlistBlock(profile, request?.WatchlistOverrideReason);
+        if (watchlistError != null) return watchlistError;
 
         var activeVisit = await GetActiveVisitAsync(profile.Id, excludeVisitId: visitor.Id);
         if (activeVisit != null)
@@ -1123,8 +1521,10 @@ public class VisitorsController : ControllerBase
         if (visitor.StudentId.HasValue)
         {
             var checkInsToday = await GetCheckInsTodayAsync(profile.Id);
+            // See the identical gate in CheckIn for why the old `!profile.IsWatchlisted` term is
+            // gone and CardFlagReason replaces the separate flag-then-check-in client dance.
             if (checkInsToday >= visitingDaySettings.CardCheckInWarningThreshold
-                && !profile.IsWatchlisted
+                && string.IsNullOrWhiteSpace(request?.CardFlagReason)
                 && !RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole))
             {
                 return BadRequest(new ProblemDetails
@@ -1145,16 +1545,34 @@ public class VisitorsController : ControllerBase
             }
             if (!string.IsNullOrWhiteSpace(request.PhotoUrl)) profile.PhotoUrl = request.PhotoUrl;
             if (!string.IsNullOrWhiteSpace(request.VehiclePlate)) visitor.VehiclePlate = request.VehiclePlate;
+
+            // Nullable on the request specifically so "the caller said nothing" keeps whatever the
+            // pre-registered record already carries, rather than silently resetting it to Guest.
+            if (request.VisitorType is { } requestedType) visitor.VisitorType = requestedType;
+
+            if (request.InductionCompletedAt.HasValue)
+            {
+                profile.InductionCompletedAt = ToUtc(request.InductionCompletedAt.Value);
+                if (!string.IsNullOrWhiteSpace(request.InductionNotes)) profile.InductionNotes = request.InductionNotes;
+            }
         }
 
-        // Watchlist matching happens on the profile itself now (FindOrCreateProfileAsync /
-        // SetWatchlist keep it current), so no separate re-check is needed here — if this
-        // profile is flagged, IsWatchlisted is already true and travels with every visit.
+        // Watchlist matching happens on the profile itself (FindOrCreateProfileAsync /
+        // SetWatchlist keep it current) and is enforced by the WatchlistBlock call above, which
+        // has already refused this check-in if the person is flagged.
+
+        var wasWatchlisted = profile.IsWatchlisted;
 
         visitor.Status = VisitorStatus.CheckedIn;
         visitor.CheckedInAt = DateTime.UtcNow;
         visitor.ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null;
+        visitor.Notes = ComposeCheckInNotes(visitor.Notes, request?.WatchlistOverrideReason, wasWatchlisted);
         visitor.UpdatedAt = DateTime.UtcNow;
+
+        if (!string.IsNullOrWhiteSpace(request?.CardFlagReason) && !wasWatchlisted)
+            ApplyWatchlist(profile, true, request!.CardFlagReason);
+
+        profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
         await NotifyHostAsync(visitor, profile, visitor.OrganizationId, branchId);
@@ -1162,7 +1580,7 @@ public class VisitorsController : ControllerBase
 
         var stats = await GetStatsAsync(new[] { profile.Id });
         var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
-        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken);
+        var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 
         return Ok(dto);
@@ -1267,11 +1685,10 @@ public class VisitorsController : ControllerBase
             });
 
         // Flagging is a property of the PERSON, not this one visit — it follows the profile to
-        // every branch and every future visit.
+        // every branch and every future visit, and now BARS them from checking in at any of them
+        // (VisitorsController.WatchlistBlock) rather than merely marking their record.
         var profile = visitor.VisitorProfile!;
-        profile.IsWatchlisted = request.IsWatchlisted;
-        profile.WatchlistReason = request.IsWatchlisted ? request.Reason : null;
-        profile.UpdatedAt = DateTime.UtcNow;
+        ApplyWatchlist(profile, request.IsWatchlisted, request.Reason);
 
         await _context.SaveChangesAsync();
         var stats = await GetStatsAsync(new[] { profile.Id });
@@ -1314,12 +1731,57 @@ public class VisitorsController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
-        profile.IsWatchlisted = request.IsWatchlisted;
-        profile.WatchlistReason = request.IsWatchlisted ? request.Reason : null;
+        ApplyWatchlist(profile, request.IsWatchlisted, request.Reason);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { profile.Id, profile.IsWatchlisted, profile.WatchlistReason, profile.WatchlistAddedAt });
+    }
+
+    /// <summary>
+    /// Records (or clears) a person's contractor site induction. On the PROFILE, so it's checked
+    /// at the moment of check-in — before this trip's Visitor row exists — and so it follows them
+    /// to every branch, which is what an induction actually is.
+    ///
+    /// Gated on VisitorsManage, not VisitorsCheckIn: an induction date is the thing the
+    /// contractor-check-in warning is measured against, so letting the same front-desk tier that
+    /// sees the warning also silence it by typing a date would make the control decorative. Staff
+    /// can still record one inline at check-in for a person who has none — CheckIn's
+    /// InductionCompletedAt — but only a Manager/Admin can revise or revoke an existing one here.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitor-profiles/{profileId:guid}/induction")]
+    [RequirePermission(Permissions.VisitorsManage)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetInduction(Guid branchId, Guid profileId, [FromBody] SetInductionRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var profile = await _context.VisitorProfiles.FirstOrDefaultAsync(
+            p => p.Id == profileId && p.OrganizationId == organizationId && p.DeletedAt == null);
+        if (profile == null) return NotFound();
+
+        if (request.CompletedAt.HasValue && ToUtc(request.CompletedAt.Value) > DateTime.UtcNow.AddDays(1))
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Induction date cannot be in the future",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        profile.InductionCompletedAt = request.CompletedAt.HasValue ? ToUtc(request.CompletedAt.Value) : null;
+        profile.InductionNotes = request.CompletedAt.HasValue ? request.Notes : null;
         profile.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        return Ok(new { profile.Id, profile.IsWatchlisted, profile.WatchlistReason });
+        return Ok(new
+        {
+            profile.Id,
+            profile.InductionCompletedAt,
+            profile.InductionNotes,
+            InductionExpiresAt = profile.InductionCompletedAt?.AddDays(InductionValidityDays),
+            InductionValid = IsInductionValid(profile)
+        });
     }
 
     /// <summary>

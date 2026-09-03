@@ -35,7 +35,8 @@
         @if (branchState == BranchResolveState.Resolving)
         {
             <div class="branch-state" role="status" aria-live="polite">
-                <QSpinner Size="lg" Text="Loading the services at this branch" />
+                <QSpinner Size="lg" />
+                <span class="visually-hidden">Loading the services offered at this branch.</span>
             </div>
         }
         else if (branchState == BranchResolveState.NoBranch)
@@ -51,8 +52,8 @@
         }
         else
         {
-            <div class="branch-state">
-                <QIcon Name="exclamation-triangle" />
+            <div class="branch-state" role="alert">
+                <QIcon Name="exclamation-triangle" aria-hidden="true" />
                 <h1>This branch link is not valid</h1>
                 <p>
                     The branch may have been removed or deactivated. Open a fresh link from
@@ -66,11 +67,11 @@ else
 {
 <div class="kiosk-container @GetIndustryClass()">
     <!-- Header -->
-    <div class="kiosk-header">
+    <header class="kiosk-header">
         <div class="header-content">
             <div class="logo-area">
                 <div class="logo-icon">
-                    <QIcon Name="@GetIndustryIcon()" />
+                    <QIcon Name="@GetIndustryIcon()" aria-hidden="true" />
                 </div>
                 <div class="logo-meta">
                     <span class="logo-text">@GetHeaderTitle()</span>
@@ -80,7 +81,9 @@ else
                     }
                 </div>
             </div>
-            <div class="header-info">
+            @* The clock updates every second. It is deliberately NOT a live region: announcing
+               it would talk over everything else a screen-reader user is trying to hear. *@
+            <div class="header-info" aria-live="off">
                 <span class="datetime">@currentDateTime.ToString("dddd, MMMM dd, yyyy")</span>
                 <span class="time">@currentDateTime.ToString("HH:mm:ss")</span>
             </div>
@@ -89,53 +92,75 @@ else
             <h1>@GetWelcomeMessage()</h1>
             <p>@GetInstructionMessage()</p>
         </div>
-    </div>
+    </header>
 
     <!-- Services Grid -->
-    <div class="kiosk-body">
-        <div class="services-grid">
+    <main class="kiosk-body">
+        <h2 class="visually-hidden">Choose a service</h2>
+        <div class="kiosk-body-inner">
+        @* Real button elements, not clickable divs: a kiosk is a public terminal and these tiles
+           have to be reachable with a keyboard, a switch or a screen reader, not just a
+           fingertip. The .service-card rule below resets the browser's button styling so the
+           tiles look exactly as they did before. *@
+        <div class="services-grid" role="group" aria-label="Services offered at this branch">
             @foreach (var serviceType in serviceTypes)
             {
-                <div class="service-card" @onclick="@(() => SelectService(serviceType))">
-                    <div class="service-icon-wrapper">
-                        <div class="service-icon">
-                            <QIcon Name="@GetServiceIcon(serviceType.Code)" />
-                        </div>
-                    </div>
-                    <div class="service-content">
-                        <h3 class="service-name">@serviceType.Name</h3>
-                        <p class="service-description">@GetServiceDescription(serviceType.Code)</p>
-                    </div>
-                    <div class="service-stats">
-                        <div class="stat">
+                var description = string.IsNullOrWhiteSpace(serviceType.Description)
+                    ? GetServiceDescription(serviceType.Code)
+                    : serviceType.Description!;
+                <button type="button"
+                        class="service-card"
+                        aria-label="@($"Get a ticket for {serviceType.Name}. {description}. {serviceType.WaitingCount} people are waiting, about {serviceType.EstimatedWaitMinutes} minutes.")"
+                        disabled="@isIssuingTicket"
+                        @onclick="@(() => SelectService(serviceType))">
+                    <span class="service-icon-wrapper">
+                        <span class="service-icon">
+                            <QIcon Name="@GetServiceIcon(serviceType.Code)" aria-hidden="true" />
+                        </span>
+                    </span>
+                    <span class="service-content">
+                        <span class="service-name">@serviceType.Name</span>
+                        <span class="service-description">@description</span>
+                    </span>
+                    <span class="service-stats" aria-hidden="true">
+                        <span class="stat">
                             <span class="stat-value">@serviceType.WaitingCount</span>
                             <span class="stat-label">Waiting</span>
-                        </div>
-                        <div class="stat-divider"></div>
-                        <div class="stat">
+                        </span>
+                        <span class="stat-divider"></span>
+                        <span class="stat">
                             <span class="stat-value">~@serviceType.EstimatedWaitMinutes</span>
                             <span class="stat-label">Minutes</span>
-                        </div>
-                    </div>
-                    <div class="service-action">
+                        </span>
+                    </span>
+                    <span class="service-action" aria-hidden="true">
                         <span>Tap to Get Ticket</span>
                         <QIcon Name="hand-index-fill" />
-                    </div>
-                </div>
+                    </span>
+                </button>
             }
         </div>
-    </div>
+
+        @if (!string.IsNullOrEmpty(issueError))
+        {
+            <div class="kiosk-error" role="alert">
+                <QIcon Name="exclamation-triangle-fill" aria-hidden="true" />
+                <span>@issueError</span>
+            </div>
+        }
+        </div>
+    </main>
 
     <!-- Footer -->
-    <div class="kiosk-footer">
+    <footer class="kiosk-footer">
         <div class="footer-content">
             <span>Need assistance? Please ask our staff for help.</span>
-            <div class="language-selector">
-                <button class="lang-btn active">EN</button>
-                <button class="lang-btn">AR</button>
+            <div class="language-selector" role="group" aria-label="Kiosk language">
+                <button type="button" class="lang-btn active" aria-pressed="true" aria-label="Show this kiosk in English">EN</button>
+                <button type="button" class="lang-btn" aria-pressed="false" aria-label="Show this kiosk in Arabic">AR</button>
             </div>
         </div>
-    </div>
+    </footer>
 </div>
 }
 
@@ -143,48 +168,65 @@ else
 @if (showTicket)
 {
     <div class="ticket-overlay @GetIndustryClass()" @onclick="CloseTicket">
-        <div class="ticket-modal" @onclick:stopPropagation="true">
+        <div class="ticket-modal" role="dialog" aria-modal="true" aria-labelledby="kiosk-ticket-title" @onclick:stopPropagation="true">
             <div class="ticket-success">
                 <div class="success-icon">
-                    <QIcon Name="check-circle-fill" />
+                    <QIcon Name="check-circle-fill" aria-hidden="true" />
                 </div>
-                <h2>Your Ticket</h2>
+                <h2 id="kiosk-ticket-title">Your Ticket</h2>
             </div>
 
-            <div class="ticket-number-display">
-                <span class="ticket-number">@generatedToken?.DisplayNumber</span>
+            @* assertive, unlike everything else on this screen: the customer has just asked for
+               a number and this is the answer — it has to interrupt, not queue behind other
+               announcements. *@
+            <div class="ticket-number-display" role="status" aria-live="assertive">
+                <span class="ticket-number">@generatedTicket?.DisplayNumber</span>
+                <span class="visually-hidden">
+                    Your ticket number is @SpellOut(generatedTicket?.DisplayNumber).
+                    You are number @generatedTicket?.Position in the queue,
+                    about @generatedTicket?.EstimatedWaitMinutes minutes.
+                </span>
             </div>
 
             <div class="ticket-info">
                 <div class="info-row">
                     <span class="info-label">Service</span>
-                    <span class="info-value">@selectedService?.Name</span>
+                    <span class="info-value">@(generatedTicket?.ServiceTypeName ?? selectedService?.Name)</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Position</span>
-                    <span class="info-value">#@generatedToken?.PositionInQueue in queue</span>
+                    <span class="info-value">#@generatedTicket?.Position in queue</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Estimated Wait</span>
-                    <span class="info-value">@generatedToken?.EstimatedWaitMinutes minutes</span>
+                    <span class="info-value">@generatedTicket?.EstimatedWaitMinutes minutes</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Time Issued</span>
-                    <span class="info-value">@generatedToken?.CreatedAt.ToString("HH:mm")</span>
+                    <span class="info-value">@(generatedTicket?.IssuedAt.ToLocalTime().ToString("HH:mm"))</span>
                 </div>
             </div>
 
             <div class="ticket-qr">
-                <div class="qr-placeholder">
-                    <QIcon Name="qr-code" />
-                </div>
-                <span>Scan for digital ticket</span>
+                @* A real QR (qrcodejs, already loaded app-wide) pointing at this ticket's own
+                   status page, so the customer can walk away and still watch their place in
+                   the queue from their phone. Falls back to the placeholder glyph if the
+                   library did not load. *@
+                <div class="qr-code-box" id="kiosk-ticket-qr"></div>
+                @if (!ticketQrRendered)
+                {
+                    <div class="qr-placeholder">
+                        <QIcon Name="qr-code" aria-hidden="true" />
+                    </div>
+                }
+                <span>Scan to follow your place in the queue</span>
+                <span class="ticket-status-url">@TicketStatusUrl()</span>
             </div>
 
             @if (!string.IsNullOrEmpty(ticketFeedbackCode))
             {
                 <div class="ticket-feedback-url">
-                    <QIcon Name="chat-square-text-fill" />
+                    <QIcon Name="chat-square-text-fill" aria-hidden="true" />
                     <div class="feedback-url-info">
                         <span class="feedback-url-label">Give feedback later:</span>
                         <span class="feedback-url-code">@(Navigation.BaseUri)feedback/@ticketFeedbackCode</span>
@@ -193,39 +235,43 @@ else
             }
 
             <div class="ticket-actions">
-                <button class="ticket-btn primary" @onclick="PrintToken">
-                    <QIcon Name="printer-fill" />
+                <button type="button" class="ticket-btn primary" aria-label="Print this ticket on the kiosk printer" @onclick="PrintToken">
+                    <QIcon Name="printer-fill" aria-hidden="true" />
                     <span>Print Ticket</span>
                 </button>
-                <button class="ticket-btn secondary" @onclick="SendSMS">
-                    <QIcon Name="chat-dots-fill" />
+                <button type="button" class="ticket-btn secondary" aria-label="Send this ticket number to a phone by text message" @onclick="SendSMS">
+                    <QIcon Name="chat-dots-fill" aria-hidden="true" />
                     <span>Send SMS</span>
                 </button>
             </div>
 
             <div class="ticket-notice">
-                <QIcon Name="info-circle-fill" />
+                <QIcon Name="info-circle-fill" aria-hidden="true" />
                 <p>Please wait in the waiting area. Your number will be displayed on the screen when called.</p>
             </div>
 
             <div class="feedback-prompt">
-                <button class="feedback-prompt-btn" @onclick="ShowFeedbackModal">
-                    <QIcon Name="chat-square-text-fill" />
+                <button type="button" class="feedback-prompt-btn" aria-label="Rate your experience at this branch" @onclick="ShowFeedbackModal">
+                    <QIcon Name="chat-square-text-fill" aria-hidden="true" />
                     <span>Rate Your Experience</span>
                 </button>
             </div>
 
             @if (kioskSettings?.ShowCountdown == true && redirectTimer != null)
             {
-                <div class="countdown-display" @onclick="ResetRedirectTimer">
-                    <QIcon Name="clock-history" />
+                @* aria-live="off": this ticks once a second and would otherwise drown out the
+                   ticket number itself. *@
+                <button type="button" class="countdown-display" aria-live="off"
+                        aria-label="Stay on this screen. This ticket closes automatically in @countdownSeconds seconds."
+                        @onclick="ResetRedirectTimer">
+                    <QIcon Name="clock-history" aria-hidden="true" />
                     <span>Returning to home in @countdownSeconds seconds...</span>
                     <small>Tap anywhere to stay on this screen</small>
-                </div>
+                </button>
             }
 
-            <button class="close-btn" @onclick="CloseTicket">
-                <QIcon Name="x-lg" />
+            <button type="button" class="close-btn" aria-label="Close this ticket and return to the list of services" @onclick="CloseTicket">
+                <QIcon Name="x-lg" aria-hidden="true" />
             </button>
         </div>
     </div>
@@ -235,46 +281,52 @@ else
 @if (showFeedbackModal)
 {
     <div class="feedback-overlay @GetIndustryClass()" @onclick="CloseFeedbackModal">
-        <div class="feedback-modal" @onclick:stopPropagation="true">
-            <button class="close-btn" @onclick="CloseFeedbackModal">
-                <QIcon Name="x-lg" />
+        <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="kiosk-feedback-title" @onclick:stopPropagation="true">
+            <button type="button" class="close-btn" aria-label="Close the feedback form without sending it" @onclick="CloseFeedbackModal">
+                <QIcon Name="x-lg" aria-hidden="true" />
             </button>
 
             @if (!feedbackSubmitted)
             {
                 <div class="feedback-header">
                     <div class="feedback-icon">
-                        <QIcon Name="emoji-smile-fill" />
+                        <QIcon Name="emoji-smile-fill" aria-hidden="true" />
                     </div>
-                    <h2>How was your experience?</h2>
+                    <h2 id="kiosk-feedback-title">How was your experience?</h2>
                     <p>Your feedback helps us improve our services</p>
                 </div>
 
-                <div class="star-rating">
+                <div class="star-rating" role="group" aria-label="Rate your experience out of five stars">
                     @for (int i = 1; i <= 5; i++)
                     {
                         var rating = i;
-                        <button class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
+                        <button type="button"
+                                class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
+                                aria-pressed="@(feedbackRating == rating ? "true" : "false")"
+                                aria-label="@($"Rate your experience {rating} out of 5 stars")"
                                 @onclick="@(() => SetRating(rating))"
                                 @onmouseenter="@(() => hoverRating = rating)"
                                 @onmouseleave="@(() => hoverRating = 0)">
-                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" />
+                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" aria-hidden="true" />
                         </button>
                     }
                 </div>
 
-                <div class="rating-label">
+                <div class="rating-label" role="status" aria-live="polite">
                     @GetRatingLabel()
                 </div>
 
                 <div class="feedback-categories">
-                    <p class="category-label">What can we improve?</p>
-                    <div class="category-chips">
+                    <p class="category-label" id="kiosk-feedback-category-label">What can we improve?</p>
+                    <div class="category-chips" role="group" aria-labelledby="kiosk-feedback-category-label">
                         @foreach (var cat in feedbackCategories)
                         {
-                            <button class="category-chip @(selectedCategory == cat.Value ? "selected" : "")"
+                            <button type="button"
+                                    class="category-chip @(selectedCategory == cat.Value ? "selected" : "")"
+                                    aria-pressed="@(selectedCategory == cat.Value ? "true" : "false")"
+                                    aria-label="@($"This feedback is about {cat.Label}")"
                                     @onclick="@(() => selectedCategory = cat.Value)">
-                                <QIcon Name="@cat.Icon" />
+                                <QIcon Name="@cat.Icon" aria-hidden="true" />
                                 <span>@cat.Label</span>
                             </button>
                         }
@@ -282,24 +334,26 @@ else
                 </div>
 
                 <div class="feedback-comment">
-                    <textarea @bind="feedbackComment"
+                    <label class="visually-hidden" for="kiosk-feedback-comment">Share your thoughts about your visit. This is optional.</label>
+                    <textarea id="kiosk-feedback-comment"
+                              @bind="feedbackComment"
                               placeholder="Share your thoughts (optional)..."
                               rows="3"></textarea>
                 </div>
 
                 <div class="feedback-actions">
-                    <button class="feedback-btn secondary" @onclick="CloseFeedbackModal">
+                    <button type="button" class="feedback-btn secondary" aria-label="Skip giving feedback" @onclick="CloseFeedbackModal">
                         Skip
                     </button>
-                    <button class="feedback-btn primary" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmittingFeedback)">
+                    <button type="button" class="feedback-btn primary" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmittingFeedback)">
                         @if (isSubmittingFeedback)
                         {
-                            <QIcon Name="arrow-repeat" class="spinning" />
+                            <QIcon Name="arrow-repeat" class="spinning" aria-hidden="true" />
                             <span>Submitting...</span>
                         }
                         else
                         {
-                            <QIcon Name="send-fill" />
+                            <QIcon Name="send-fill" aria-hidden="true" />
                             <span>Submit Feedback</span>
                         }
                     </button>
@@ -307,13 +361,13 @@ else
 
                 <div class="feedback-link-section">
                     <p>Prefer to give feedback later?</p>
-                    <button class="get-link-btn" @onclick="GenerateFeedbackLink">
-                        <QIcon Name="link-45deg" />
+                    <button type="button" class="get-link-btn" aria-label="Get a code so you can give feedback later" @onclick="GenerateFeedbackLink">
+                        <QIcon Name="link-45deg" aria-hidden="true" />
                         <span>Get Feedback Link</span>
                     </button>
                     @if (!string.IsNullOrEmpty(feedbackLinkCode))
                     {
-                        <div class="feedback-link-display">
+                        <div class="feedback-link-display" role="status" aria-live="polite">
                             <span class="link-code">@feedbackLinkCode</span>
                             <span class="link-hint">Visit: yoursite.com/feedback/@feedbackLinkCode</span>
                         </div>
@@ -322,17 +376,17 @@ else
             }
             else
             {
-                <div class="feedback-success">
+                <div class="feedback-success" role="status" aria-live="polite">
                     <div class="success-animation">
                         <div class="success-checkmark">
-                            <QIcon Name="check-circle-fill" />
+                            <QIcon Name="check-circle-fill" aria-hidden="true" />
                         </div>
                     </div>
-                    <h2>Thank You!</h2>
+                    <h2 id="kiosk-feedback-title">Thank You!</h2>
                     <p>Your feedback has been submitted successfully.</p>
                     <p class="thank-you-message">We appreciate you taking the time to help us improve.</p>
-                    <button class="feedback-btn primary" @onclick="CloseFeedbackModal">
-                        <QIcon Name="check-lg" />
+                    <button type="button" class="feedback-btn primary" aria-label="Close the feedback form" @onclick="CloseFeedbackModal">
+                        <QIcon Name="check-lg" aria-hidden="true" />
                         <span>Done</span>
                     </button>
                 </div>
@@ -345,23 +399,23 @@ else
 @if (showCustomerForm)
 {
     <div class="ticket-overlay @GetIndustryClass()" @onclick="@(() => showCustomerForm = false)">
-        <div class="customer-form-modal" @onclick:stopPropagation="true">
-            <h2>Customer Information</h2>
+        <div class="customer-form-modal" role="dialog" aria-modal="true" aria-labelledby="kiosk-customer-title" @onclick:stopPropagation="true">
+            <h2 id="kiosk-customer-title">Customer Information</h2>
             <p>Optional: Enter your details for notifications</p>
 
             <div class="form-group">
-                <label>Name</label>
-                <input type="text" @bind="customerName" placeholder="Your name" />
+                <label for="kiosk-customer-name">Name</label>
+                <input id="kiosk-customer-name" type="text" autocomplete="name" maxlength="120" @bind="customerName" placeholder="Your name" />
             </div>
 
             <div class="form-group">
-                <label>Phone Number</label>
-                <input type="tel" @bind="customerPhone" placeholder="+1234567890" />
+                <label for="kiosk-customer-phone">Phone Number</label>
+                <input id="kiosk-customer-phone" type="tel" autocomplete="tel" maxlength="32" @bind="customerPhone" placeholder="+1234567890" />
             </div>
 
             <div class="form-actions">
-                <button class="form-btn secondary" @onclick="SkipCustomerInfo">Skip</button>
-                <button class="form-btn primary" @onclick="SubmitCustomerInfo">Continue</button>
+                <button type="button" class="form-btn secondary" aria-label="Skip entering your details and get a ticket" @onclick="SkipCustomerInfo">Skip</button>
+                <button type="button" class="form-btn primary" aria-label="Continue and get a ticket" @onclick="SubmitCustomerInfo">Continue</button>
             </div>
         </div>
     </div>
@@ -609,7 +663,18 @@ else
         width: 100%;
     }
 
+    /* The tile is a real button element for keyboard, switch and screen-reader access. These first four
+       declarations undo the browser's own button styling so it renders exactly as the old
+       div did, and everything below them is the original rule, unchanged. */
     .service-card {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        text-align: inherit;
+        width: 100%;
+        color: inherit;
+        margin: 0;
+
         background: rgba(255, 255, 255, 0.03);
         border: 2px solid rgba(255, 255, 255, 0.08);
         border-radius: var(--qm-radius-xl);
@@ -622,6 +687,11 @@ else
         position: relative;
         overflow: hidden;
         backdrop-filter: blur(20px);
+    }
+
+    .service-card:disabled {
+        opacity: 0.55;
+        cursor: progress;
     }
 
     .service-card::before {
@@ -700,22 +770,28 @@ else
     }
 
     .service-content {
+        display: block;
         text-align: center;
         margin-bottom: 20px;
         position: relative;
         z-index: 1;
     }
 
+    /* display:block because these were heading and paragraph elements before the tile became a button — a button's
+       content must be phrasing, so they are span elements now and need the block behaviour back. */
     .service-name {
+        display: block;
         font-size: 22px;
         font-weight: 700;
         color: white;
         margin: 0 0 8px;
     }
 
+    /* 14px -> 17px: this screen is read standing up, at arm's length or further. */
     .service-description {
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.6);
+        display: block;
+        font-size: 17px;
+        color: rgba(255, 255, 255, 0.75);
         margin: 0;
     }
 
@@ -744,9 +820,10 @@ else
         font-family: 'JetBrains Mono', monospace;
     }
 
+    /* 11px -> 14px: legible from standing distance. */
     .stat-label {
-        font-size: 11px;
-        color: rgba(255, 255, 255, 0.5);
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.65);
         text-transform: uppercase;
         letter-spacing: 1.5px;
     }
@@ -764,9 +841,35 @@ else
         gap: 10px;
         color: var(--kiosk-accent);
         font-weight: 600;
-        font-size: 15px;
+        font-size: 17px;
         position: relative;
         z-index: 1;
+    }
+
+    /* Anonymous ticket issuing can fail for reasons the customer needs told plainly
+       (queue full, too many requests from this terminal). */
+    .kiosk-error {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        max-width: 900px;
+        margin: 24px auto 0;
+        padding: 18px 24px;
+        border-radius: var(--qm-radius-xl);
+        background: rgba(245, 158, 11, 0.12);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        color: #f59e0b;
+        font-size: 18px;
+        font-weight: 600;
+        text-align: center;
+    }
+
+    /* .kiosk-body is a centring flex row; this wrapper keeps the grid full-width inside it
+       while giving the error message somewhere to sit underneath. */
+    .kiosk-body-inner {
+        width: 100%;
+        max-width: 1400px;
     }
 
     .service-action .q-icon {
@@ -790,7 +893,8 @@ else
         display: flex;
         justify-content: space-between;
         align-items: center;
-        color: rgba(255, 255, 255, 0.7);
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 17px;
     }
 
     .language-selector {
@@ -945,8 +1049,8 @@ else
     }
 
     .info-label {
-        color: rgba(255, 255, 255, 0.5);
-        font-size: 14px;
+        color: rgba(255, 255, 255, 0.65);
+        font-size: 16px;
     }
 
     .info-value {
@@ -976,8 +1080,30 @@ else
     }
 
     .ticket-qr span {
-        font-size: 13px;
-        color: rgba(255, 255, 255, 0.5);
+        display: block;
+        font-size: 15px;
+        color: rgba(255, 255, 255, 0.65);
+    }
+
+    .qr-code-box {
+        display: inline-block;
+        line-height: 0;
+        background: white;
+        padding: 10px;
+        border-radius: var(--qm-radius-xl);
+        margin: 0 auto 12px;
+    }
+
+    .qr-code-box:empty {
+        display: none;
+    }
+
+    .ticket-status-url {
+        margin-top: 6px;
+        font-family: var(--qm-font-mono, 'JetBrains Mono', monospace);
+        font-size: 13px !important;
+        word-break: break-all;
+        opacity: 0.75;
     }
 
     .ticket-actions {
@@ -1047,14 +1173,14 @@ else
     }
 
     .feedback-url-label {
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
 
     .feedback-url-code {
-        font-size: 13px;
+        font-size: 15px;
         font-weight: 500;
         color: #22c55e;
         word-break: break-all;
@@ -1083,8 +1209,13 @@ else
         line-height: 1.5;
     }
 
-    /* Countdown Display */
+    /* Countdown Display — a real button element (it was a clickable div), so the browser's button
+       chrome is reset here and the visual result is unchanged. */
     .countdown-display {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        width: 100%;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1386,8 +1517,8 @@ else
         background: rgba(255, 255, 255, 0.05);
         border: 2px solid rgba(255, 255, 255, 0.1);
         border-radius: var(--qm-radius-xl);
-        color: rgba(255, 255, 255, 0.7);
-        font-size: 13px;
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 15px;
         cursor: pointer;
         transition: all 0.3s ease;
     }
@@ -1597,6 +1728,54 @@ else
         margin-bottom: 24px !important;
     }
 
+    /* ================================
+       Accessibility: focus + reduced motion
+       Public terminals are used with keyboards, switches and assistive tech, not only
+       fingertips, so every interactive element needs a focus ring that is visible against
+       both the dark and the light kiosk backgrounds. --qm-text-primary is the right token
+       for that here (rather than --qm-primary): it is defined per [data-theme] in
+       qm-theme.css and is by definition the highest-contrast foreground for whichever
+       theme KioskLayout has applied.
+       ================================ */
+    .kiosk-container :focus-visible,
+    .ticket-overlay :focus-visible,
+    .feedback-overlay :focus-visible {
+        outline: 3px solid var(--qm-text-primary);
+        outline-offset: 3px;
+        border-radius: var(--qm-radius-sm);
+    }
+
+    /* Anything relying on a mouse-only :hover also gets the same treatment on focus, so a
+       keyboard user sees the same affordance a pointer user does. */
+    .service-card:focus-visible {
+        transform: translateY(-12px) scale(1.02);
+        border-color: var(--kiosk-accent);
+    }
+
+    /* Honour the OS "reduce motion" setting: this screen otherwise pulses, bounces, pops and
+       slides, which is exactly the class of animation that triggers vestibular symptoms. */
+    @@media (prefers-reduced-motion: reduce) {
+        .kiosk-container *,
+        .kiosk-container *::before,
+        .kiosk-container *::after,
+        .ticket-overlay *,
+        .ticket-overlay *::before,
+        .ticket-overlay *::after,
+        .feedback-overlay *,
+        .feedback-overlay *::before,
+        .feedback-overlay *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+
+        .service-card:hover,
+        .service-card:focus-visible {
+            transform: none;
+        }
+    }
+
     /* Responsive */
     @@media (max-width: 768px) {
         .kiosk-header {
@@ -1630,7 +1809,7 @@ else
         }
 
         .service-name {
-            font-size: 16px;
+            font-size: 18px;
         }
 
         .ticket-number {
@@ -2041,9 +2220,14 @@ else
     [Parameter] public string? IndustryParam { get; set; }
 
     private IndustryType currentIndustry = IndustryType.Service;
-    private List<ServiceTypeQueueDto> serviceTypes = new();
-    private ServiceTypeQueueDto? selectedService;
-    private TokenDto? generatedToken;
+    // Public, anonymous shapes throughout: this screen has to work on an unattended lobby
+    // terminal with nobody signed in, so it may only call the api/.../queue/* endpoints.
+    private List<PublicServiceTypeDto> serviceTypes = new();
+    private PublicServiceTypeDto? selectedService;
+    private PublicTicketDto? generatedTicket;
+    private bool isIssuingTicket;
+    private string? issueError;
+    private bool ticketQrRendered;
     private bool showTicket = false;
     private bool showCustomerForm = false;
     private string? customerName;
@@ -2195,9 +2379,13 @@ else
         kioskSettings ??= new KioskSettingsDto();
     }
 
+    // Both timers this component creates are disposed here: the 1s clock and the ticket
+    // auto-redirect countdown (via StopRedirectTimer, which also nulls its field). Nulling
+    // clockTimer too means a callback already in flight cannot re-arm anything after teardown.
     public void Dispose()
     {
         clockTimer?.Dispose();
+        clockTimer = null;
         StopRedirectTimer();
     }
 
@@ -2215,7 +2403,7 @@ else
                 StopRedirectTimer();
 
                 // Auto-print if enabled and not already printed
-                if (kioskSettings?.AutoPrintBeforeRedirect == true && !ticketPrinted && generatedToken != null)
+                if (kioskSettings?.AutoPrintBeforeRedirect == true && !ticketPrinted && generatedTicket != null)
                 {
                     await InvokeAsync(PrintToken);
                 }
@@ -2242,11 +2430,13 @@ else
 
     private async Task LoadServiceTypes()
     {
-        var status = await QueueApi.GetQueueStatusAsync(branchId);
-        serviceTypes = status?.ServiceTypes ?? new();
+        // GET api/v1/branches/{branchId}/queue/service-types — anonymous. The old call went
+        // through GetQueueStatusAsync, which is also anonymous, but returned counters and
+        // summary metrics this screen never uses.
+        serviceTypes = await QueueApi.GetPublicServiceTypesAsync(branchId);
     }
 
-    private async Task SelectService(ServiceTypeQueueDto serviceType)
+    private async Task SelectService(PublicServiceTypeDto serviceType)
     {
         selectedService = serviceType;
         // Option: Show customer form first
@@ -2271,7 +2461,7 @@ else
 
     private async Task CreateToken()
     {
-        if (selectedService == null) return;
+        if (selectedService == null || isIssuingTicket) return;
 
         // Check if branch is configured
         if (branchId == Guid.Empty)
@@ -2280,47 +2470,112 @@ else
             return;
         }
 
-        generatedToken = await QueueApi.CreateTokenAsync(branchId, selectedService.Code,
-            new CustomerDto { Name = customerName, Phone = customerPhone });
+        isIssuingTicket = true;
+        issueError = null;
+        StateHasChanged();
 
-        if (generatedToken != null)
+        PublicTicketResult result;
+        try
         {
-            showTicket = true;
-            await LoadServiceTypes();
-
-            // Generate feedback link for the ticket
-            try
+            // POST api/v1/branches/{branchId}/queue/tokens — the anonymous endpoint. The old
+            // call went to the [Authorize]d POST .../tokens, which meant this screen only ever
+            // worked while a staff member happened to be signed in on the terminal.
+            result = await QueueApi.IssuePublicTokenAsync(branchId, new PublicJoinQueueRequest
             {
-                var feedbackResponse = await Http.PostAsync(
-                    $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback-link",
-                    null);
-
-                if (feedbackResponse.IsSuccessStatusCode)
-                {
-                    var result = await feedbackResponse.Content.ReadFromJsonAsync<FeedbackLinkResponse>(JsonOptions);
-                    ticketFeedbackCode = result?.FeedbackCode;
-                }
-            }
-            catch
-            {
-                // Feedback link generation is not critical
-            }
-
-            // Check if auto-print is enabled and print automatically
-            await CheckAndAutoPrint();
-
-            // Start the auto-redirect timer
-            StartRedirectTimer();
+                ServiceTypeId = selectedService.Id,
+                ServiceTypeCode = selectedService.Code,
+                CustomerName = customerName,
+                CustomerPhone = customerPhone
+            });
         }
-        else
+        finally
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to generate token. Please try again.");
+            isIssuingTicket = false;
+        }
+
+        if (!result.Success)
+        {
+            // Shown in the page, not only as a toast: on a wall-mounted terminal a toast that
+            // fades after a few seconds is easy to miss while you are still looking at the tiles.
+            issueError = result.Message ?? "We could not issue a ticket right now. Please ask a member of staff.";
+            NotificationService.Notify(
+                result.IsQueueFull || result.IsRateLimited ? ToastSeverity.Warning : ToastSeverity.Error,
+                result.IsQueueFull ? "Queue full" : "Ticket not issued",
+                issueError);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        generatedTicket = result.Ticket;
+        ticketQrRendered = false;
+        showTicket = true;
+        await LoadServiceTypes();
+
+        // Generate feedback link for the ticket. This endpoint is still [Authorize]d
+        // (feedback.view), so on an unattended terminal it simply 401s and the ticket shows
+        // without a feedback code — deliberately non-fatal rather than blocking the ticket.
+        try
+        {
+            var feedbackResponse = await Http.PostAsync(
+                $"api/v1/branches/{branchId}/tokens/{generatedTicket!.TokenId}/feedback-link",
+                null);
+
+            if (feedbackResponse.IsSuccessStatusCode)
+            {
+                var feedbackResult = await feedbackResponse.Content.ReadFromJsonAsync<FeedbackLinkResponse>(JsonOptions);
+                ticketFeedbackCode = feedbackResult?.FeedbackCode;
+            }
+        }
+        catch
+        {
+            // Feedback link generation is not critical
+        }
+
+        // Check if auto-print is enabled and print automatically
+        await CheckAndAutoPrint();
+
+        // Start the auto-redirect timer
+        StartRedirectTimer();
+
+        await InvokeAsync(StateHasChanged);
+        await RenderTicketQrAsync();
+    }
+
+    /// <summary>The customer's own status page for this ticket — what the QR encodes.</summary>
+    private string TicketStatusUrl() =>
+        generatedTicket == null
+            ? string.Empty
+            : $"{Navigation.BaseUri.TrimEnd('/')}/ticket/{branchId}/{Uri.EscapeDataString(generatedTicket.DisplayNumber)}";
+
+    private async Task RenderTicketQrAsync()
+    {
+        if (generatedTicket == null) return;
+
+        try
+        {
+            // visitorBadge.renderQr wraps qrcodejs, which is already loaded app-wide in
+            // App.razor — no new dependency, and no server-side rendering cost.
+            await JSRuntime.InvokeVoidAsync("visitorBadge.renderQr", "kiosk-ticket-qr", TicketStatusUrl());
+            ticketQrRendered = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch
+        {
+            // The placeholder glyph stays visible; the printed/shown URL still works.
+            ticketQrRendered = false;
         }
     }
 
+    /// <summary>
+    /// "A007" read aloud as "A 0 0 7" rather than "A seven" — a ticket number is a sequence of
+    /// characters, not a quantity, and screen readers otherwise run the digits together.
+    /// </summary>
+    private static string SpellOut(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : string.Join(" ", value.ToCharArray());
+
     private async Task CheckAndAutoPrint()
     {
-        if (generatedToken == null) return;
+        if (generatedTicket == null) return;
 
         try
         {
@@ -2344,7 +2599,7 @@ else
 
     private async Task PrintToken()
     {
-        if (generatedToken == null)
+        if (generatedTicket == null)
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", "No token to print.");
             return;
@@ -2355,12 +2610,23 @@ else
         try
         {
             // Get print data from API
-            var response = await Http.GetAsync($"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/print-data");
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/tokens/{generatedTicket!.TokenId}/print-data");
 
             if (!response.IsSuccessStatusCode)
             {
-                var error = await response.Content.ReadAsStringAsync();
-                NotificationService.Notify(ToastSeverity.Error, "Print Error", "Failed to get print data.");
+                // GET .../tokens/{tokenId}/print-data is still [Authorize]d (tokens.view), so on
+                // an unattended terminal with no staff session this is a 401, not a printer
+                // fault. Say so plainly instead of "failed to get print data", and point at the
+                // number that is already on screen.
+                var unauthenticated = response.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                    or System.Net.HttpStatusCode.Forbidden;
+
+                NotificationService.Notify(
+                    unauthenticated ? ToastSeverity.Warning : ToastSeverity.Error,
+                    unauthenticated ? "Printing unavailable" : "Print Error",
+                    unauthenticated
+                        ? "This terminal cannot print without a staff sign-in. Please note your ticket number from the screen."
+                        : "Failed to get print data.");
                 return;
             }
 
@@ -2418,11 +2684,13 @@ else
         StopRedirectTimer();
         showTicket = false;
         selectedService = null;
-        generatedToken = null;
+        generatedTicket = null;
         customerName = null;
         customerPhone = null;
         ticketFeedbackCode = null;
         ticketPrinted = false;
+        ticketQrRendered = false;
+        issueError = null;
     }
 
     private string GetServiceIcon(string code)
@@ -2542,7 +2810,7 @@ else
 
     private async Task SubmitFeedback()
     {
-        if (feedbackRating == 0 || generatedToken == null) return;
+        if (feedbackRating == 0 || generatedTicket == null) return;
 
         isSubmittingFeedback = true;
         StateHasChanged();
@@ -2559,7 +2827,7 @@ else
             };
 
             var response = await Http.PostAsJsonAsync(
-                $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback",
+                $"api/v1/branches/{branchId}/tokens/{generatedTicket!.TokenId}/feedback",
                 request, JsonOptions);
 
             if (response.IsSuccessStatusCode)
@@ -2586,12 +2854,12 @@ else
 
     private async Task GenerateFeedbackLink()
     {
-        if (generatedToken == null) return;
+        if (generatedTicket == null) return;
 
         try
         {
             var response = await Http.PostAsync(
-                $"api/v1/branches/{branchId}/tokens/{generatedToken.Id}/feedback-link",
+                $"api/v1/branches/{branchId}/tokens/{generatedTicket!.TokenId}/feedback-link",
                 null);
 
             if (response.IsSuccessStatusCode)

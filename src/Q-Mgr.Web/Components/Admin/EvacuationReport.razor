@@ -1,0 +1,400 @@
+@page "/admin/visitors/evacuation"
+@inject IVisitorApiService VisitorApi
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Evacuation Roll Call - Q-Mgr</PageTitle>
+
+@* Deliberately spare: this screen is read on a phone, outdoors, in a hurry, by someone holding a
+   hi-vis vest. Large type, hard contrast, one number that matters, and nothing that needs a
+   second tap to understand. *@
+<div class="evac-page">
+    <div class="evac-bar">
+        <QButton Icon="arrow-left" Text="Back" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+        <div class="evac-bar-actions">
+            <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@Refresh" />
+            <QButton Icon="printer-fill" Text="Print Roll Call" Variant="primary" OnClick="@PrintRollCall" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="evac-loading"><QSpinner Size="lg" /><span>Loading roll call...</span></div>
+    }
+    else if (report == null)
+    {
+        <div class="evac-empty">
+            <QIcon Name="exclamation-octagon" />
+            <h2>Roll call unavailable</h2>
+            <p>The roll call couldn't be loaded. Check the connection and try Refresh — do not treat this as "nobody on site".</p>
+        </div>
+    }
+    else
+    {
+        <div class="evac-headline">
+            <div class="evac-total">
+                <span class="evac-total-value">@report.TotalOnSite</span>
+                <span class="evac-total-label">On site</span>
+            </div>
+            <div class="evac-accounted @(AllAccountedFor ? "complete" : "")">
+                <span class="evac-accounted-value">@safeIds.Count / @report.CheckedInVisitorCount</span>
+                <span class="evac-accounted-label">Marked safe</span>
+            </div>
+        </div>
+
+        <div class="evac-meta">
+            <span><strong>@report.BranchName</strong></span>
+            <span>As at @report.GeneratedAt.ToLocalTime().ToString("HH:mm:ss") on @report.GeneratedAt.ToLocalTime().ToString("ddd dd MMM yyyy")</span>
+            <span>@report.CheckedInVisitorCount named visitor@(report.CheckedInVisitorCount == 1 ? "" : "s") &middot; @report.GroupPassOccupantCount on group passes</span>
+        </div>
+
+        @if (!report.StudentsIncluded && !string.IsNullOrWhiteSpace(report.StudentsNote))
+        {
+            <div class="evac-note">
+                <QIcon Name="info-circle-fill" />
+                <span>@report.StudentsNote</span>
+            </div>
+        }
+
+        @if (!report.People.Any() && !report.GroupPasses.Any())
+        {
+            <div class="evac-empty">
+                <QIcon Name="check-circle-fill" />
+                <h2>Nobody is checked in</h2>
+                <p>No visitors are currently on site at @report.BranchName.</p>
+            </div>
+        }
+
+        @if (report.People.Any())
+        {
+            <div class="evac-section-head">
+                <h2>Visitors on site</h2>
+                <QButton Text="@(AllAccountedFor ? "Clear all marks" : "Mark all safe")" Icon="@(AllAccountedFor ? "arrow-counterclockwise" : "check-all")"
+                         Variant="secondary" OnClick="@ToggleAll" />
+            </div>
+
+            <div class="evac-list">
+                @foreach (var person in report.People)
+                {
+                    var isSafe = safeIds.Contains(person.VisitorId);
+                    <button type="button" class="evac-row @(isSafe ? "safe" : "")" @onclick="@(() => ToggleSafe(person.VisitorId))">
+                        <span class="evac-tick">
+                            <QIcon Name="@(isSafe ? "check-square-fill" : "square")" />
+                        </span>
+                        <span class="evac-person">
+                            <span class="evac-name">
+                                @person.FullName
+                                @if (person.VisitorType != VisitorType.Guest)
+                                {
+                                    <span class="evac-type">@person.VisitorType</span>
+                                }
+                            </span>
+                            <span class="evac-sub">
+                                @if (!string.IsNullOrWhiteSpace(person.Company))
+                                {
+                                    <span>@person.Company</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(person.HostName))
+                                {
+                                    <span>Host: @person.HostName</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(person.StudentName))
+                                {
+                                    <span>Visiting: @person.StudentName</span>
+                                }
+                            </span>
+                            <span class="evac-sub">
+                                <span class="evac-badge">@person.BadgeCode</span>
+                                @if (person.CheckedInAt.HasValue)
+                                {
+                                    <span>In @person.CheckedInAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(person.Phone))
+                                {
+                                    <span>@person.Phone</span>
+                                }
+                            </span>
+                        </span>
+                    </button>
+                }
+            </div>
+        }
+
+        @if (report.GroupPasses.Any())
+        {
+            <div class="evac-section-head"><h2>Group passes</h2></div>
+            <div class="evac-note">
+                <QIcon Name="exclamation-triangle-fill" />
+                <span>A group pass records a headcount only — the individual members were never named, so they cannot be ticked off by name. Find the pass holder and count them.</span>
+            </div>
+            <div class="evac-list">
+                @foreach (var pass in report.GroupPasses)
+                {
+                    <div class="evac-row pass">
+                        <span class="evac-tick"><QIcon Name="people-fill" /></span>
+                        <span class="evac-person">
+                            <span class="evac-name">@pass.Label</span>
+                            <span class="evac-sub"><span><strong>@pass.OccupantCount</strong> people unaccounted by name</span></span>
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+<style>
+    /* High-contrast, oversized, minimal chrome — see the comment on the markup above. */
+    .evac-page { padding: 0 0 40px; }
+
+    .evac-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .evac-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .evac-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 80px 20px; color: var(--qm-text-muted); font-size: 18px; }
+
+    .evac-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 20px; text-align: center; color: var(--qm-text-muted); }
+    .evac-empty .q-icon { font-size: 48px; opacity: 0.6; }
+    .evac-empty h2 { margin: 0; font-size: 24px; color: var(--qm-text-primary); }
+    .evac-empty p { margin: 0; max-width: 460px; font-size: 15px; }
+
+    .evac-headline { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
+    .evac-total, .evac-accounted { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 22px 16px; border-radius: var(--qm-radius-md); border: 2px solid var(--qm-border); background: var(--qm-bg-card); }
+    .evac-total { background: var(--qm-primary); border-color: var(--qm-primary); color: var(--qm-text-on-primary); }
+    .evac-total-value { font-size: 64px; font-weight: 800; line-height: 1; font-family: var(--qm-font-display, inherit); }
+    .evac-total-label { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+    .evac-accounted-value { font-size: 44px; font-weight: 800; line-height: 1; color: var(--qm-text-primary); font-family: var(--qm-font-display, inherit); }
+    .evac-accounted-label { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; color: var(--qm-text-muted); }
+    .evac-accounted.complete { border-color: var(--qm-success); }
+    .evac-accounted.complete .evac-accounted-value { color: var(--qm-success); }
+
+    .evac-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 15px; color: var(--qm-text-muted); margin-bottom: 14px; }
+    .evac-meta strong { color: var(--qm-text-primary); }
+
+    .evac-note { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 14px; line-height: 1.45;
+                 border: 1px solid rgba(var(--qm-warning-rgb), 0.35); background: rgba(var(--qm-warning-rgb), 0.10); color: var(--qm-text-primary); border-radius: var(--qm-radius-sm); }
+    .evac-note .q-icon { color: var(--qm-accent-orange); flex-shrink: 0; margin-top: 2px; }
+
+    .evac-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 22px 0 10px; }
+    .evac-section-head h2 { margin: 0; font-size: 20px; color: var(--qm-text-primary); }
+
+    .evac-list { display: flex; flex-direction: column; gap: 10px; }
+
+    /* A whole row is the hit target — gloved hands, moving, on a phone. */
+    .evac-row { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; cursor: pointer;
+                padding: 16px 18px; border: 2px solid var(--qm-border); border-radius: var(--qm-radius-md);
+                background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit; }
+    .evac-row.pass { cursor: default; }
+    .evac-row.safe { border-color: var(--qm-success); background: rgba(var(--qm-success-rgb), 0.10); }
+    .evac-tick { font-size: 30px; line-height: 1; color: var(--qm-text-muted); flex-shrink: 0; }
+    .evac-row.safe .evac-tick { color: var(--qm-success); }
+    .evac-person { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .evac-name { font-size: 22px; font-weight: 700; line-height: 1.2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .evac-type { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px;
+                 background: var(--qm-primary-light); color: var(--qm-primary); }
+    .evac-sub { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 15px; color: var(--qm-text-muted); }
+    .evac-badge { font-family: monospace; background: var(--qm-bg-secondary); padding: 1px 7px; border-radius: 4px; }
+
+    @@media (max-width: 640px) {
+        .evac-total-value { font-size: 54px; }
+        .evac-name { font-size: 20px; }
+        .evac-bar-actions { width: 100%; }
+    }
+</style>
+
+@code {
+    private EvacuationReportDto? report;
+    private bool isLoading = true;
+    private Guid branchId;
+
+    // "Marked safe" is deliberately CLIENT-SIDE ONLY — no column, no endpoint.
+    //
+    // A drill tick is a scratch note that lives for the twenty minutes everyone is standing in the
+    // car park; the durable fact ("who was on site at 14:32") is the roll call itself, which is
+    // already recorded by check-in. Persisting the ticks would mean a new column (or table) whose
+    // only correct value is "empty" the instant the drill ends, plus a whole lifecycle nobody has
+    // asked for — when does a drill start, when does it end, whose ticks win when two marshals
+    // tick the same person on two phones. That is a real feature (a Drill entity with its own
+    // start/end), not a column, and it isn't what was asked for. Losing the ticks on refresh is
+    // the honest trade, and Refresh is the only thing that clears them.
+    private readonly HashSet<Guid> safeIds = new();
+
+    private bool AllAccountedFor => report != null && report.People.Count > 0 && safeIds.Count >= report.People.Count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        report = await VisitorApi.GetEvacuationReportAsync(branchId);
+
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task Refresh()
+    {
+        // A refresh re-reads who is on site, so ticks against the previous snapshot would be
+        // misleading (someone ticked safe may no longer be listed, and new arrivals appear
+        // pre-ticked by id collision). Clearing is the only safe behaviour.
+        safeIds.Clear();
+        await LoadAsync();
+    }
+
+    private void ToggleSafe(Guid visitorId)
+    {
+        if (!safeIds.Add(visitorId)) safeIds.Remove(visitorId);
+    }
+
+    private void ToggleAll()
+    {
+        if (report == null) return;
+        if (AllAccountedFor) safeIds.Clear();
+        else foreach (var p in report.People) safeIds.Add(p.VisitorId);
+    }
+
+    private async Task PrintRollCall()
+    {
+        if (report == null) return;
+
+        var rows = string.Join("", report.People.Select(p =>
+        {
+            var marked = safeIds.Contains(p.VisitorId);
+            var detail = string.Join(" &middot; ", new[]
+                {
+                    p.Company,
+                    string.IsNullOrWhiteSpace(p.HostName) ? null : $"Host: {p.HostName}",
+                    string.IsNullOrWhiteSpace(p.StudentName) ? null : $"Visiting: {p.StudentName}",
+                    p.Phone
+                }
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => System.Net.WebUtility.HtmlEncode(s)));
+
+            return $"""
+                <tr>
+                    <td class="tick">{(marked ? "&#10004;" : "")}</td>
+                    <td>
+                        <div class="pname">{System.Net.WebUtility.HtmlEncode(p.FullName)}{(p.VisitorType == VisitorType.Guest ? "" : $" <span class=\"ptype\">{p.VisitorType}</span>")}</div>
+                        <div class="pdetail">{detail}</div>
+                    </td>
+                    <td class="mono">{System.Net.WebUtility.HtmlEncode(p.BadgeCode)}</td>
+                    <td class="mono">{(p.CheckedInAt.HasValue ? p.CheckedInAt.Value.ToLocalTime().ToString("HH:mm") : "&mdash;")}</td>
+                </tr>
+                """;
+        }));
+
+        if (string.IsNullOrEmpty(rows))
+            rows = """<tr><td colspan="4" class="none">No visitors were checked in at this time.</td></tr>""";
+
+        var passBody = string.Join("", report.GroupPasses.Select(g =>
+            "<tr><td class=\"tick\"></td><td class=\"pname\">" + System.Net.WebUtility.HtmlEncode(g.Label) +
+            "</td><td class=\"mono\">" + g.OccupantCount + "</td></tr>"));
+
+        var passRows = report.GroupPasses.Any()
+            ? "<h2>Group passes &mdash; headcount only, members are not named</h2>" +
+              "<table><thead><tr><th class=\"tick\">&#9744;</th><th>Pass</th><th>People</th></tr></thead>" +
+              "<tbody>" + passBody + "</tbody></table>"
+            : "";
+
+        var studentsNote = string.IsNullOrWhiteSpace(report.StudentsNote)
+            ? ""
+            : $"""<p class="note">{System.Net.WebUtility.HtmlEncode(report.StudentsNote)}</p>""";
+
+        var html = $$"""
+            <html>
+            <head>
+                <title>Evacuation Roll Call - {{System.Net.WebUtility.HtmlEncode(report.BranchName)}}</title>
+                <style>
+                    @page { size: A4 portrait; margin: 12mm; }
+                    body { font-family: Arial, Helvetica, sans-serif; color: #000; margin: 0; }
+                    h1 { font-size: 22pt; margin: 0 0 2mm; }
+                    h2 { font-size: 12pt; margin: 8mm 0 2mm; }
+                    .head { border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 4mm; }
+                    .counts { display: flex; gap: 10mm; font-size: 12pt; margin-top: 2mm; }
+                    .counts strong { font-size: 20pt; }
+                    .meta { font-size: 10pt; color: #333; margin-top: 2mm; }
+                    .note { font-size: 9.5pt; color: #333; border: 1px solid #999; padding: 2mm 3mm; margin: 3mm 0; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th, td { border-bottom: 1px solid #bbb; padding: 2.5mm 2mm; text-align: left; vertical-align: top; font-size: 10.5pt; }
+                    th { border-bottom: 1.5px solid #000; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.4px; }
+                    .tick { width: 10mm; text-align: center; font-size: 14pt; border-right: 1px solid #bbb; }
+                    thead .tick { font-size: 11pt; }
+                    .pname { font-size: 12pt; font-weight: 700; }
+                    .ptype { font-size: 8.5pt; font-weight: 400; border: 1px solid #666; padding: 0 1.5mm; text-transform: uppercase; }
+                    .pdetail { font-size: 9.5pt; color: #333; }
+                    .mono { font-family: "Courier New", monospace; white-space: nowrap; }
+                    .none { font-style: italic; color: #555; }
+                    .foot { margin-top: 8mm; font-size: 9.5pt; color: #333; }
+                    .sign { margin-top: 10mm; font-size: 10pt; }
+                    .sign span { display: inline-block; border-bottom: 1px solid #000; width: 60mm; margin-left: 3mm; }
+                </style>
+            </head>
+            <body>
+                <div class="head">
+                    <h1>Evacuation Roll Call</h1>
+                    <div class="meta"><strong>{{System.Net.WebUtility.HtmlEncode(report.BranchName)}}</strong> &middot;
+                        As at {{report.GeneratedAt.ToLocalTime():HH:mm:ss}} on {{report.GeneratedAt.ToLocalTime():ddd dd MMM yyyy}} &middot;
+                        Printed {{DateTime.Now:HH:mm:ss}}</div>
+                    <div class="counts">
+                        <div><strong>{{report.TotalOnSite}}</strong> on site</div>
+                        <div><strong>{{report.CheckedInVisitorCount}}</strong> named visitors</div>
+                        <div><strong>{{report.GroupPassOccupantCount}}</strong> on group passes</div>
+                        <div><strong>{{safeIds.Count}}</strong> marked safe on screen</div>
+                    </div>
+                </div>
+                {{studentsNote}}
+                <table>
+                    <thead><tr><th class="tick">&#9744;</th><th>Visitor</th><th>Badge</th><th>In</th></tr></thead>
+                    <tbody>{{rows}}</tbody>
+                </table>
+                {{passRows}}
+                <p class="foot">This sheet is a point-in-time snapshot taken at {{report.GeneratedAt.ToLocalTime():HH:mm:ss}}. Anyone who arrived or left after that time will not be reflected.</p>
+                <div class="sign">Marshal:<span></span> &nbsp;&nbsp; Assembly point:<span></span> &nbsp;&nbsp; All accounted for at:<span></span></div>
+            </body>
+            </html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
+        var result = await JS.InvokeAsync<PrintJsResult>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
+        if (!result.Success)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Print Notice", result.Message ?? "Print may not have completed.");
+        }
+    }
+
+    private record PrintJsResult
+    {
+        public bool Success { get; init; }
+        public string? Message { get; init; }
+    }
+}

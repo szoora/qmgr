@@ -1,5 +1,6 @@
 @page "/reports/counters"
 @using QMgr.Application.DTOs
+@inject IReportsApiService ReportsApi
 @inject IQueueApiService QueueApi
 @inject IPermissionService PermissionService
 @inject IBranchStateService BranchState
@@ -16,142 +17,201 @@
     </div>
 </div>
 
-@if (isLoading)
-{
-    <div class="loading-container">
-        <div class="webster-spinner"></div>
-        <span class="loading-text">Loading counter performance data...</span>
-    </div>
-}
-else if (!string.IsNullOrEmpty(errorMessage))
-{
-    <div class="error-banner">
-        <QIcon Name="exclamation-triangle-fill" />
-        <span>@errorMessage</span>
-        <QButton Text="Retry" Icon="arrow-clockwise" Variant="danger" Size="sm" OnClick="@LoadData" />
-    </div>
-}
-else if (!counterStats.Any())
-{
-    <div class="empty-state-container">
-        <div class="empty-state-content">
-            <div class="empty-state-icon">
-                <QIcon Name="door-open-fill" />
-            </div>
-            <h3>No Counters Configured</h3>
-            <p>Counter performance data will appear here once counters are set up and serving customers.</p>
-            <QButton Text="Configure Counters" Icon="gear-fill" Variant="secondary" OnClick="@NavigateToCounters" />
-        </div>
-    </div>
-}
-else
-{
 <div class="performance-page">
-    <!-- Filters -->
+    <!-- Filters — the Date Range drives every figure below AND the CSV export -->
     <QCard Class="filter-card">
         <div class="filter-row">
             <div class="filter-item">
-                <QSelect TValue="string" TItem="string" @bind-Value="@selectedPeriod" Items="@periods" Label="Date Range" />
+                <QSelect TValue="string" TItem="string" Value="@selectedPeriod" ValueChanged="@OnPeriodChanged"
+                    Items="@periods" Label="Date Range" Disabled="@isLoading" />
             </div>
             <div class="filter-item">
-                <QSelect TValue="Guid?" TItem="CounterDto" @bind-Value="@selectedCounter" Items="@counters"
-                    TextSelector="@(c => c.DisplayName)" ValueSelector="@(c => (Guid?)c.Id)"
-                    Label="Counter" Placeholder="All Counters" AllowClear="true" />
+                <QSelect TValue="Guid?" TItem="CounterPerformanceDto" Value="@selectedCounter" ValueChanged="@OnCounterChanged"
+                    Items="@allCounters" TextSelector="@(c => c.DisplayName)" ValueSelector="@(c => (Guid?)c.CounterId)"
+                    Label="Counter" Placeholder="All Counters" AllowClear="true" Disabled="@isLoading" />
             </div>
             <div class="filter-item">
-                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" />
+                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
                 <QButton Text="Export" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
             </div>
         </div>
+        <p class="range-caption">Showing @RangeCaption</p>
     </QCard>
 
-    <!-- Counter Cards -->
-    <div class="counter-cards">
-        @foreach (var counter in counterStats)
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="error-banner @(isForbidden ? "warn" : "")">
+            <QIcon Name="exclamation-triangle-fill" />
+            <span>@errorMessage</span>
+            @if (isForbidden)
+            {
+                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+            }
+            else
+            {
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="danger" Size="sm" OnClick="@LoadData" />
+            }
+        </div>
+    }
+    else if (isLoading)
+    {
+        <div class="loading-container">
+            <div class="webster-spinner"></div>
+            <span class="loading-text">Loading counter performance data...</span>
+        </div>
+    }
+    else if (!allCounters.Any())
+    {
+        <div class="empty-state-container">
+            <div class="empty-state-content">
+                <div class="empty-state-icon">
+                    <QIcon Name="door-open-fill" />
+                </div>
+                <h3>No Counters Configured</h3>
+                <p>Counter performance data will appear here once counters are set up and serving customers.</p>
+                <QButton Text="Configure Counters" Icon="gear-fill" Variant="secondary" OnClick="@NavigateToCounters" />
+            </div>
+        </div>
+    }
+    else
+    {
+        @if (!counterStats.Any(c => c.TokensHandled > 0))
         {
-            <QCard Class="@($"counter-card {(counter.IsActive ? "active" : "inactive")}")">
-                <div class="counter-header">
-                    <div class="counter-name">
-                        <QIcon Name="door-open-fill" />
-                        <span>@counter.DisplayName</span>
-                    </div>
-                    <QBadge Variant="@(counter.IsActive ? "success" : "light")"
-                        Text="@(counter.IsActive ? "Active" : "Closed")" />
-                </div>
-
-                <div class="counter-stats">
-                    <div class="stat">
-                        <span class="stat-value">@counter.TokensServed</span>
-                        <span class="stat-label">Served Today</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-value">@counter.AvgServiceTime min</span>
-                        <span class="stat-label">Avg Service</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-value">@counter.Utilization%</span>
-                        <span class="stat-label">Utilization</span>
-                    </div>
-                </div>
-
-                <div class="utilization-bar">
-                    <div class="utilization-fill" style="width: @(counter.Utilization)%"></div>
-                </div>
-
-                @if (!string.IsNullOrEmpty(counter.CurrentCustomer))
-                {
-                    <div class="current-serving">
-                        <span class="serving-label">Now Serving:</span>
-                        <span class="serving-token">@counter.CurrentToken</span>
-                    </div>
-                }
+            <QCard Class="notice-card">
+                <QIcon Name="info-circle-fill" />
+                <span>No tokens were handled by @(selectedCounter is null ? "any counter" : "this counter") in this range. The figures below are all empty rather than zero, because there is nothing to measure.</span>
             </QCard>
         }
-    </div>
 
-    <!-- Performance Chart -->
-    <QCard Class="chart-card">
-        <h4>Tokens Served by Counter</h4>
-        <RadzenChart Style="height: 300px;">
-            <RadzenBarSeries Data="@counterStats" CategoryProperty="DisplayName" ValueProperty="TokensServed" Title="Tokens Served" />
-            <RadzenCategoryAxis />
-            <RadzenValueAxis>
-                <RadzenGridLines Visible="true" />
-            </RadzenValueAxis>
-        </RadzenChart>
-    </QCard>
-
-    <!-- Detailed Table -->
-    <QCard Class="table-card">
-        <h4>Detailed Performance Metrics</h4>
-        <RadzenDataGrid Data="@counterStats" TItem="CounterStat" AllowSorting="true">
-            <Columns>
-                <RadzenDataGridColumn TItem="CounterStat" Property="DisplayName" Title="Counter" Width="150px" />
-                <RadzenDataGridColumn TItem="CounterStat" Property="IsActive" Title="Status" Width="100px" TextAlign="TextAlign.Center">
-                    <Template Context="item">
-                        <QBadge Variant="@(item.IsActive ? "success" : "light")"
-                            Text="@(item.IsActive ? "Active" : "Closed")" />
-                    </Template>
-                </RadzenDataGridColumn>
-                <RadzenDataGridColumn TItem="CounterStat" Property="TokensServed" Title="Tokens Served" TextAlign="TextAlign.Center" />
-                <RadzenDataGridColumn TItem="CounterStat" Property="AvgServiceTime" Title="Avg Service (min)" TextAlign="TextAlign.Center" />
-                <RadzenDataGridColumn TItem="CounterStat" Property="AvgWaitTime" Title="Avg Wait (min)" TextAlign="TextAlign.Center" />
-                <RadzenDataGridColumn TItem="CounterStat" Property="Utilization" Title="Utilization" TextAlign="TextAlign.Center">
-                    <Template Context="item">
-                        <div class="utilization-cell">
-                            <span>@item.Utilization%</span>
-                            <div class="mini-bar">
-                                <div class="mini-fill @GetUtilizationClass(item.Utilization)" style="width: @(item.Utilization)%"></div>
-                            </div>
+        <!-- Counter Cards -->
+        <div class="counter-cards">
+            @foreach (var counter in counterStats)
+            {
+                <QCard Class="@($"counter-card {(counter.Status == QMgr.Domain.Enums.CounterStatus.Active ? "active" : "inactive")}")">
+                    <div class="counter-header">
+                        <div class="counter-name">
+                            <QIcon Name="door-open-fill" />
+                            <span>@counter.DisplayName</span>
                         </div>
-                    </Template>
-                </RadzenDataGridColumn>
-                <RadzenDataGridColumn TItem="CounterStat" Property="ServiceTypes" Title="Service Types" />
-            </Columns>
-        </RadzenDataGrid>
-    </QCard>
+                        <QBadge Variant="@(counter.Status == QMgr.Domain.Enums.CounterStatus.Active ? "success" : "light")"
+                            Text="@counter.Status.ToString()" />
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(counter.AssignedStaff))
+                    {
+                        <div class="counter-staff">@counter.AssignedStaff</div>
+                    }
+
+                    <div class="counter-stats">
+                        <div class="stat">
+                            <span class="stat-value">@counter.Served</span>
+                            <span class="stat-label">Served</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value">@FormatNumber(counter.AvgServiceMinutes)</span>
+                            <span class="stat-label">Avg Service (min)</span>
+                        </div>
+                        <div class="stat" title="@utilisationDefinition">
+                            <span class="stat-value">@FormatPercent(counter.UtilisationPercent)</span>
+                            <span class="stat-label">Utilisation</span>
+                        </div>
+                    </div>
+
+                    <div class="utilization-bar">
+                        <div class="utilization-fill" style="width: @(BarWidth(counter.UtilisationPercent))%"></div>
+                    </div>
+
+                    <div class="counter-footnote">
+                        @if (counter.UtilisationPercent.HasValue)
+                        {
+                            <span>@counter.TotalServiceMinutes serving min of @counter.ActiveMinutes active min</span>
+                        }
+                        else
+                        {
+                            <span>No recorded activity in this range</span>
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+
+        <!-- Performance Chart -->
+        <QCard Class="chart-card">
+            <h4>Tokens Served by Counter</h4>
+            @if (counterStats.Any(c => c.Served > 0))
+            {
+                <RadzenChart Style="height: 300px;">
+                    <RadzenBarSeries Data="@counterStats" CategoryProperty="DisplayName" ValueProperty="Served" Title="Tokens Served" />
+                    <RadzenCategoryAxis />
+                    <RadzenValueAxis>
+                        <RadzenGridLines Visible="true" />
+                    </RadzenValueAxis>
+                </RadzenChart>
+            }
+            else
+            {
+                <p class="chart-empty">No tokens were served in this range.</p>
+            }
+        </QCard>
+
+        <!-- Detailed Table -->
+        <QCard Class="table-card">
+            <h4>Detailed Performance Metrics</h4>
+            <RadzenDataGrid Data="@counterStats" TItem="CounterPerformanceDto" AllowSorting="true">
+                <Columns>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="DisplayName" Title="Counter" Width="150px" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="Status" Title="Status" Width="110px" TextAlign="TextAlign.Center">
+                        <Template Context="item">
+                            <QBadge Variant="@(item.Status == QMgr.Domain.Enums.CounterStatus.Active ? "success" : "light")"
+                                Text="@item.Status.ToString()" />
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="AssignedStaff" Title="Assigned Staff">
+                        <Template Context="item">
+                            @(string.IsNullOrWhiteSpace(item.AssignedStaff) ? Dash : item.AssignedStaff)
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="TokensHandled" Title="Handled" TextAlign="TextAlign.Center" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="Served" Title="Served" TextAlign="TextAlign.Center" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="NoShow" Title="No-Show" TextAlign="TextAlign.Center" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="Transferred" Title="Transferred" TextAlign="TextAlign.Center" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="AvgWaitMinutes" Title="Avg Wait (min)" TextAlign="TextAlign.Center">
+                        <Template Context="item">@FormatNumber(item.AvgWaitMinutes)</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="AvgServiceMinutes" Title="Avg Service (min)" TextAlign="TextAlign.Center">
+                        <Template Context="item">@FormatNumber(item.AvgServiceMinutes)</Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="TotalServiceMinutes" Title="Total Service (min)" TextAlign="TextAlign.Center" />
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Property="UtilisationPercent" Title="Utilisation" TextAlign="TextAlign.Center">
+                        <Template Context="item">
+                            <div class="utilization-cell" title="@utilisationDefinition">
+                                <span>@FormatPercent(item.UtilisationPercent)</span>
+                                @if (item.UtilisationPercent.HasValue)
+                                {
+                                    <div class="mini-bar">
+                                        <div class="mini-fill @GetUtilizationClass(item.UtilisationPercent)" style="width: @(BarWidth(item.UtilisationPercent))%"></div>
+                                    </div>
+                                }
+                            </div>
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="CounterPerformanceDto" Title="Service Types" Sortable="false">
+                        <Template Context="item">
+                            @(item.ServiceTypes.Any() ? string.Join(", ", item.ServiceTypes) : Dash)
+                        </Template>
+                    </RadzenDataGridColumn>
+                </Columns>
+            </RadzenDataGrid>
+
+            <!-- The utilisation definition is served by the API alongside the numbers, so this
+                 caption can never describe a different calculation than the one that produced them. -->
+            <p class="definition-note">
+                <strong>How utilisation is measured:</strong> @utilisationDefinition
+            </p>
+            <p class="definition-note">A dash means there was nothing to measure in this range — it is not a value of zero.</p>
+        </QCard>
+    }
 </div>
-}
 
 <style>
     .performance-page {
@@ -182,6 +242,21 @@ else
         gap: 10px;
     }
 
+    .range-caption {
+        margin: 14px 0 0 0;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .notice-card {
+        padding: 14px 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--qm-text-secondary);
+        font-size: 13px;
+    }
+
     .counter-cards {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -202,7 +277,7 @@ else
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 16px;
+        margin-bottom: 8px;
     }
 
     .counter-name {
@@ -213,16 +288,24 @@ else
         font-size: 16px;
     }
 
+    .counter-staff {
+        font-size: 12px;
+        color: var(--qm-text-secondary);
+        margin-bottom: 12px;
+    }
+
     .counter-stats {
         display: flex;
         justify-content: space-between;
         margin-bottom: 12px;
+        gap: 8px;
     }
 
     .stat {
         display: flex;
         flex-direction: column;
         align-items: center;
+        text-align: center;
     }
 
     .stat-value {
@@ -242,33 +325,19 @@ else
         background: var(--qm-bg-card-hover);
         border-radius: var(--qm-radius-sm);
         overflow: hidden;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
     }
 
     .utilization-fill {
         height: 100%;
-        background: linear-gradient(90deg, var(--qm-success) 0%, var(--qm-primary) 100%);
+        background: var(--qm-primary);
         border-radius: var(--qm-radius-sm);
         transition: width 0.3s ease;
     }
 
-    .current-serving {
-        background: var(--qm-bg-elevated);
-        padding: 8px 12px;
-        border-radius: var(--qm-radius-md);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .serving-label {
-        font-size: 12px;
-        color: var(--qm-text-secondary);
-    }
-
-    .serving-token {
-        font-weight: 700;
-        color: var(--qm-primary);
+    .counter-footnote {
+        font-size: 11px;
+        color: var(--qm-text-muted);
     }
 
     .chart-card, .table-card {
@@ -279,6 +348,19 @@ else
         margin: 0 0 16px 0;
         font-size: 16px;
         font-weight: 600;
+    }
+
+    .chart-empty {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin: 0;
+    }
+
+    .definition-note {
+        margin: 14px 0 0 0;
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--qm-text-muted);
     }
 
     .utilization-cell {
@@ -324,11 +406,16 @@ else
         align-items: center;
         gap: 12px;
         padding: 16px 20px;
-        background: rgba(220, 53, 69, 0.1);
-        border: 1px solid var(--qm-danger);
+        background: color-mix(in srgb, var(--qm-danger) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-danger) 35%, transparent);
         border-radius: var(--qm-radius-lg);
-        margin-bottom: 20px;
         color: var(--qm-danger);
+    }
+
+    .error-banner.warn {
+        background: color-mix(in srgb, var(--qm-warning) 12%, transparent);
+        border-color: color-mix(in srgb, var(--qm-warning) 35%, transparent);
+        color: var(--qm-warning);
     }
 
     .empty-state-container {
@@ -365,99 +452,124 @@ else
 </style>
 
 @code {
+    // Everything on this page is the CounterPerformanceReportDto the API computed for the
+    // selected range — the JSON sibling of the CSV the Export button downloads. There is no
+    // client-side derivation of any metric.
+    private List<CounterPerformanceDto> allCounters = new();
+    private string utilisationDefinition = "";
+
     private string selectedPeriod = "today";
     private Guid? selectedCounter;
-    private List<CounterDto> counters = new();
-    private List<CounterStat> counterStats = new();
     private bool isLoading = true;
     private bool isExporting;
+    private bool isForbidden;
     private string? errorMessage;
+
+    private const string Dash = "—";
 
     private List<string> periods = new() { "today", "yesterday", "week", "month" };
 
+    /// <summary>The rows actually rendered — the Counter filter is a view filter over the real rows.</summary>
+    private List<CounterPerformanceDto> counterStats =>
+        selectedCounter is null
+            ? allCounters
+            : allCounters.Where(c => c.CounterId == selectedCounter).ToList();
+
+    private string RangeCaption
+    {
+        get
+        {
+            var (from, to) = ResolvePeriod(selectedPeriod);
+            return from == to ? from.ToString("MMM d, yyyy") : $"{from:MMM d, yyyy} – {to:MMM d, yyyy}";
+        }
+    }
+
+    /// <summary>Null means the counter served nothing in the range — an em dash, never "0".</summary>
+    private static string FormatNumber(double? value) => value.HasValue ? value.Value.ToString("0.#") : Dash;
+    private static string FormatPercent(double? value) => value.HasValue ? $"{value.Value:0.#}%" : Dash;
+
+    /// <summary>
+    /// Bar width only — the displayed percentage itself is never clamped. Formatted invariant so
+    /// a comma-decimal locale can't emit "width: 45,5%", which browsers drop silently.
+    /// </summary>
+    private static string BarWidth(double? value) =>
+        (value.HasValue ? Math.Clamp(value.Value, 0, 100) : 0)
+            .ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
     protected override async Task OnInitializedAsync()
     {
-        // Check permission
         if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
 
+        await BranchState.InitializeAsync();
         await LoadData();
+    }
+
+    private async Task OnPeriodChanged(string period)
+    {
+        selectedPeriod = period;
+        await LoadData();
+    }
+
+    private async Task OnCounterChanged(Guid? counterId)
+    {
+        selectedCounter = counterId;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadData()
     {
         isLoading = true;
         errorMessage = null;
-        StateHasChanged();
+        isForbidden = false;
+        await InvokeAsync(StateHasChanged);
 
         try
         {
             var branchId = BranchState.CurrentBranchId;
-
-            // If no branch selected, show empty state (not an error)
             if (branchId == Guid.Empty)
             {
-                counters = new();
-                counterStats = new();
-                isLoading = false;
+                allCounters = new();
+                utilisationDefinition = "";
+                errorMessage = "Select a branch to see its counter performance.";
                 return;
             }
 
-            counters = await QueueApi.GetCountersAsync(branchId) ?? new();
+            var (from, to) = ResolvePeriod(selectedPeriod);
+            var result = await ReportsApi.GetCounterPerformanceAsync(branchId, from, to);
 
-            // No counters is a valid state, not an error
-            if (!counters.Any())
+            if (!result.Success)
             {
-                counterStats = new();
-                isLoading = false;
+                allCounters = new();
+                utilisationDefinition = "";
+                isForbidden = result.IsForbidden;
+                errorMessage = result.DisplayMessage;
                 return;
             }
 
-            var status = await QueueApi.GetQueueStatusAsync(branchId);
+            allCounters = result.Data!.Counters;
+            utilisationDefinition = result.Data.UtilisationDefinition;
 
-            counterStats = counters.Select(c =>
-            {
-                var statusCounter = status?.Counters?.FirstOrDefault(sc => sc.Id == c.Id);
-                return new CounterStat
-                {
-                    Id = c.Id,
-                    DisplayName = c.DisplayName ?? $"Counter {c.CounterNumber}",
-                    IsActive = c.Status == QMgr.Domain.Enums.CounterStatus.Active,
-                    TokensServed = statusCounter?.TokensServedToday ?? Random.Shared.Next(5, 30),
-                    AvgServiceTime = Random.Shared.Next(5, 15),
-                    AvgWaitTime = Random.Shared.Next(3, 12),
-                    Utilization = Random.Shared.Next(40, 95),
-                    CurrentToken = c.CurrentToken?.DisplayNumber,
-                    CurrentCustomer = c.CurrentToken?.Customer?.Name,
-                    ServiceTypes = string.Join(", ", c.ServiceTypes?.Select(s => s.Code) ?? Array.Empty<string>())
-                };
-            }).ToList();
-        }
-        catch (HttpRequestException)
-        {
-            errorMessage = "Unable to connect to the server. Please check if the API is running.";
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Failed to load counter data: {ex.Message}";
+            if (selectedCounter is not null && allCounters.All(c => c.CounterId != selectedCounter))
+                selectedCounter = null;
         }
         finally
         {
             isLoading = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
     private void NavigateToCounters() => Navigation.NavigateTo("/admin/counters");
 
     /// <summary>
-    /// Downloads the per-counter CSV for the selected period from ReportsController — same
-    /// data: URL + downloadDataUrl pattern VisitorReport uses. The date range comes from the
-    /// "Date Range" picker; the "Counter" filter is display-only here (the export always
-    /// includes every counter so idle ones are visible, mirroring the API's own reasoning).
+    /// Downloads the per-counter CSV for exactly the range on screen — same data: URL +
+    /// downloadDataUrl pattern VisitorReport uses. The export always includes every counter so
+    /// idle ones stay visible (mirroring the API's own reasoning), which is why the on-screen
+    /// "Counter" filter is deliberately not applied to the file.
     /// </summary>
     private async Task ExportCsv()
     {
@@ -505,27 +617,14 @@ else
         };
     }
 
-    private string GetUtilizationClass(int utilization)
+    private static string GetUtilizationClass(double? utilization)
     {
-        return utilization switch
+        if (!utilization.HasValue) return "";
+        return utilization.Value switch
         {
             >= 70 => "high",
             >= 40 => "medium",
             _ => "low"
         };
-    }
-
-    private class CounterStat
-    {
-        public Guid Id { get; set; }
-        public string DisplayName { get; set; } = "";
-        public bool IsActive { get; set; }
-        public int TokensServed { get; set; }
-        public int AvgServiceTime { get; set; }
-        public int AvgWaitTime { get; set; }
-        public int Utilization { get; set; }
-        public string? CurrentToken { get; set; }
-        public string? CurrentCustomer { get; set; }
-        public string ServiceTypes { get; set; } = "";
     }
 }

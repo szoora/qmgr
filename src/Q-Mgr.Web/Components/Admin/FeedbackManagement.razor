@@ -30,6 +30,30 @@
         </div>
     </div>
 
+    <div class="tab-bar" role="tablist" aria-label="Feedback sections">
+        <button type="button" role="tab" id="tab-responses"
+                aria-selected="@(activeTab == ResponsesTab ? "true" : "false")"
+                class="tab-btn @(activeTab == ResponsesTab ? "active" : "")"
+                @onclick="@(() => activeTab = ResponsesTab)">
+            <QIcon Name="chat-quote-fill" />
+            <span>Responses &amp; analytics</span>
+        </button>
+        <button type="button" role="tab" id="tab-questions"
+                aria-selected="@(activeTab == QuestionsTab ? "true" : "false")"
+                class="tab-btn @(activeTab == QuestionsTab ? "active" : "")"
+                @onclick="@OpenQuestionsTab">
+            <QIcon Name="ui-checks" />
+            <span>Survey questions</span>
+            @if (questions.Count > 0)
+            {
+                <span class="tab-count">@questions.Count(q => q.IsActive)</span>
+            }
+        </button>
+    </div>
+
+    @if (activeTab == ResponsesTab)
+    {
+
     <!-- Summary Cards -->
     @if (summary != null)
     {
@@ -248,7 +272,175 @@
             </div>
         }
     }
+    }
+
+    @if (activeTab == QuestionsTab)
+    {
+        <QCard Class="questions-card">
+            <div class="questions-intro">
+                <div>
+                    <h3>Survey questions</h3>
+                    <p>
+                        Asked after the star rating on the public feedback form. Keep the list short:
+                        a survey that takes more than about a minute does not get finished.
+                        @if (activeQuestionCount >= MaxActiveQuestions)
+                        {
+                            <strong> You have reached the maximum of @MaxActiveQuestions active questions.</strong>
+                        }
+                    </p>
+                </div>
+                <PermissionGuard Permission="feedback.respond">
+                    <QButton Text="Add question" Icon="plus-lg" Variant="primary"
+                             Disabled="@(activeQuestionCount >= MaxActiveQuestions)"
+                             OnClick="@(() => OpenQuestionEditor(null))" />
+                </PermissionGuard>
+            </div>
+
+            @if (isLoadingQuestions)
+            {
+                <div class="questions-empty"><span>Loading questions…</span></div>
+            }
+            else if (questions.Count == 0)
+            {
+                <div class="questions-empty">
+                    <QIcon Name="ui-checks" />
+                    <span>No survey questions yet. The public form still asks for a star rating, a recommendation score and a comment.</span>
+                </div>
+            }
+            else
+            {
+                <div class="question-list">
+                    @foreach (var q in questions.OrderBy(q => q.DisplayOrder).ToList())
+                    {
+                        <div class="question-row @(q.IsActive ? "" : "is-inactive")">
+                            <div class="question-order">
+                                <button type="button" class="order-btn" title="Move up" aria-label="@($"Move '{q.QuestionText}' up")"
+                                        disabled="@(IsFirst(q))" @onclick="@(() => MoveQuestion(q, -1))">
+                                    <QIcon Name="chevron-up" />
+                                </button>
+                                <button type="button" class="order-btn" title="Move down" aria-label="@($"Move '{q.QuestionText}' down")"
+                                        disabled="@(IsLast(q))" @onclick="@(() => MoveQuestion(q, 1))">
+                                    <QIcon Name="chevron-down" />
+                                </button>
+                            </div>
+                            <div class="question-main">
+                                <span class="question-text">@q.QuestionText</span>
+                                <div class="question-meta">
+                                    <span class="question-chip">@DescribeType(q.QuestionType)</span>
+                                    @if (q.IsRequired)
+                                    {
+                                        <span class="question-chip is-required">Required</span>
+                                    }
+                                    @if (q.ServiceTypeId != null)
+                                    {
+                                        <span class="question-chip">Only @(q.ServiceTypeName ?? "one service")</span>
+                                    }
+                                    @if (!q.IsActive)
+                                    {
+                                        <span class="question-chip is-inactive">Hidden</span>
+                                    }
+                                </div>
+                            </div>
+                            <PermissionGuard Permission="feedback.respond">
+                                <div class="question-actions">
+                                    <QButton Icon="@(q.IsActive ? "eye-slash" : "eye")" Variant="ghost" Size="sm"
+                                             Text="@(q.IsActive ? "Hide" : "Show")" OnClick="@(() => ToggleQuestion(q))" />
+                                    <QButton Icon="pencil-fill" Variant="ghost" Size="sm" Text="Edit"
+                                             OnClick="@(() => OpenQuestionEditor(q))" />
+                                    <QButton Icon="trash-fill" Variant="danger" Size="sm" Text="Delete"
+                                             OnClick="@(() => DeleteQuestion(q))" />
+                                </div>
+                            </PermissionGuard>
+                        </div>
+                    }
+                </div>
+            }
+        </QCard>
+
+        @* A preview beats a description: it is the only way to see what the customer will read. *@
+        <QCard Class="questions-preview" Title="What the customer sees" Icon="phone">
+            <div class="preview-frame">
+                <div class="preview-step"><span class="preview-step-num">1</span> How was your experience? (1 to 5 stars)</div>
+                @{
+                    var previewOrder = 2;
+                }
+                @foreach (var q in questions.Where(q => q.IsActive).OrderBy(q => q.DisplayOrder))
+                {
+                    <div class="preview-step">
+                        <span class="preview-step-num">@previewOrder</span>
+                        @q.QuestionText
+                        @if (q.IsRequired)
+                        {
+                            <span class="preview-required">*</span>
+                        }
+                        <span class="preview-type">@DescribeType(q.QuestionType)</span>
+                    </div>
+                    previewOrder++;
+                }
+                <div class="preview-step"><span class="preview-step-num">@previewOrder</span> How likely are you to recommend us? (0 to 10)</div>
+                <div class="preview-step"><span class="preview-step-num">@(previewOrder + 1)</span> Anything else you would like to tell us? (optional)</div>
+            </div>
+        </QCard>
+    }
 </div>
+
+<QModal @bind-Visible="showQuestionDialog" Title="@(editingQuestionId == null ? "Add question" : "Edit question")" Size="md">
+    <ChildContent>
+        <div class="question-form">
+            <div class="form-group">
+                <label for="q-text">Question</label>
+                <QInput TValue="string" @bind-Value="questionForm.QuestionText" Id="q-text"
+                        Placeholder="e.g. Was the counter easy to find?" MaxLength="200" />
+            </div>
+            <div class="form-group">
+                <label for="q-type">Answer type</label>
+                <QSelect TValue="FeedbackQuestionType" TItem="QuestionTypeOption" Id="q-type"
+                         Data="@questionTypeOptions" TextField="Label" ValueField="Value"
+                         Value="@questionForm.QuestionType" ValueChanged="@OnQuestionTypeChanged" />
+            </div>
+            @if (questionForm.QuestionType == FeedbackQuestionType.SingleChoice)
+            {
+                <div class="form-group">
+                    <label>Choices</label>
+                    @for (var i = 0; i < questionOptions.Count; i++)
+                    {
+                        var index = i;
+                        <div class="choice-row">
+                            <QInput TValue="string" Value="@questionOptions[index]"
+                                    ValueChanged="@(v => questionOptions[index] = v ?? string.Empty)"
+                                    Placeholder="@($"Choice {index + 1}")" MaxLength="80" />
+                            <QButton Icon="trash-fill" Variant="danger" Size="sm"
+                                     OnClick="@(() => questionOptions.RemoveAt(index))" />
+                        </div>
+                    }
+                    <QButton Text="Add choice" Icon="plus-lg" Variant="secondary" Size="sm"
+                             OnClick="@(() => questionOptions.Add(string.Empty))" />
+                </div>
+            }
+            <div class="form-group">
+                <label for="q-service">Ask for</label>
+                <QSelect TValue="Guid?" TItem="ServiceFilterOption" Id="q-service"
+                         Data="@serviceFilterOptions" TextField="Label" ValueField="Value"
+                         Value="@questionForm.ServiceTypeId" ValueChanged="@(v => questionForm.ServiceTypeId = v)" />
+            </div>
+            <div class="settings-toggle-group">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="q-required"
+                           checked="@questionForm.IsRequired"
+                           @onchange="@(e => questionForm.IsRequired = (bool)(e.Value ?? false))" />
+                </div>
+                <div class="settings-toggle-info">
+                    <label class="settings-toggle-label" for="q-required">Answer required</label>
+                    <small>The customer cannot submit without answering. Use sparingly.</small>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showQuestionDialog = false)" />
+        <QButton Text="Save" Variant="primary" OnClick="@SaveQuestion" Loading="@isSavingQuestion" />
+    </FooterContent>
+</QModal>
 
 <QModal @bind-Visible="showDetailDialog" Title="Feedback Details" Size="md">
     <ChildContent>
@@ -696,6 +888,272 @@
 </style>
 
 @code {
+    // ---- Tabs -------------------------------------------------------------------------------
+    private const string ResponsesTab = "responses";
+    private const string QuestionsTab = "questions";
+    private string activeTab = ResponsesTab;
+
+    // Mirrors FeedbackController.MaxActiveQuestionsPerBranch. The server is the authority and
+    // rejects an over-cap save; this only stops the button offering something that will fail.
+    private const int MaxActiveQuestions = 8;
+
+    private List<FeedbackQuestionDto> questions = new();
+    private bool isLoadingQuestions;
+    private bool questionsLoaded;
+    private bool showQuestionDialog;
+    private bool isSavingQuestion;
+    private Guid? editingQuestionId;
+    // A plain mutable class, not the init-only SaveFeedbackQuestionRequest record: @bind-Value
+    // needs a settable property, and an init-only one cannot be assigned outside construction.
+    private sealed class QuestionFormModel
+    {
+        public string QuestionText { get; set; } = string.Empty;
+        public FeedbackQuestionType QuestionType { get; set; } = FeedbackQuestionType.Rating;
+        public Guid? ServiceTypeId { get; set; }
+        public bool IsRequired { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int DisplayOrder { get; set; }
+    }
+
+    private QuestionFormModel questionForm = new();
+    private List<string> questionOptions = new();
+
+    private int activeQuestionCount => questions.Count(q => q.IsActive);
+
+    private record QuestionTypeOption(string Label, FeedbackQuestionType Value);
+    private record ServiceFilterOption(string Label, Guid? Value);
+
+    private readonly List<QuestionTypeOption> questionTypeOptions = new()
+    {
+        new("Rating (1 to 5)", FeedbackQuestionType.Rating),
+        new("Yes or no", FeedbackQuestionType.YesNo),
+        new("Choose one", FeedbackQuestionType.SingleChoice),
+        new("Free text", FeedbackQuestionType.FreeText)
+    };
+
+    private List<ServiceFilterOption> serviceFilterOptions = new() { new("Every service", null) };
+
+    private static string DescribeType(FeedbackQuestionType type) => type switch
+    {
+        FeedbackQuestionType.Rating => "Rating 1-5",
+        FeedbackQuestionType.YesNo => "Yes / no",
+        FeedbackQuestionType.SingleChoice => "Choose one",
+        FeedbackQuestionType.FreeText => "Free text",
+        _ => type.ToString()
+    };
+
+    private bool IsFirst(FeedbackQuestionDto q) =>
+        questions.OrderBy(x => x.DisplayOrder).FirstOrDefault()?.Id == q.Id;
+
+    private bool IsLast(FeedbackQuestionDto q) =>
+        questions.OrderBy(x => x.DisplayOrder).LastOrDefault()?.Id == q.Id;
+
+    private async Task OpenQuestionsTab()
+    {
+        activeTab = QuestionsTab;
+        if (!questionsLoaded)
+        {
+            await LoadQuestions();
+        }
+    }
+
+    private async Task LoadQuestions()
+    {
+        isLoadingQuestions = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty) return;
+
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/feedback-questions?includeInactive=true");
+            if (response.IsSuccessStatusCode)
+            {
+                questions = await response.Content.ReadFromJsonAsync<List<FeedbackQuestionDto>>(JsonOptions) ?? new();
+                questionsLoaded = true;
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not load questions",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The survey questions could not be loaded."));
+            }
+
+            // Service-type filter choices come from the summary the responses tab already loads.
+            var serviceResponse = await Http.GetAsync($"api/v1/branches/{branchId}/service-types");
+            if (serviceResponse.IsSuccessStatusCode)
+            {
+                var serviceTypes = await serviceResponse.Content.ReadFromJsonAsync<List<ServiceTypeDto>>(JsonOptions) ?? new();
+                serviceFilterOptions = new List<ServiceFilterOption> { new("Every service", null) };
+                serviceFilterOptions.AddRange(serviceTypes.Select(s => new ServiceFilterOption(s.Name, s.Id)));
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not load questions", ex.Message);
+        }
+        finally
+        {
+            isLoadingQuestions = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OpenQuestionEditor(FeedbackQuestionDto? existing)
+    {
+        editingQuestionId = existing?.Id;
+        questionOptions = existing?.Options.ToList() ?? new List<string>();
+        questionForm = new QuestionFormModel
+        {
+            QuestionText = existing?.QuestionText ?? string.Empty,
+            QuestionType = existing?.QuestionType ?? FeedbackQuestionType.Rating,
+            ServiceTypeId = existing?.ServiceTypeId,
+            IsRequired = existing?.IsRequired ?? false,
+            IsActive = existing?.IsActive ?? true,
+            DisplayOrder = existing?.DisplayOrder ?? (questions.Count == 0 ? 1 : questions.Max(q => q.DisplayOrder) + 1)
+        };
+        showQuestionDialog = true;
+    }
+
+    private void OnQuestionTypeChanged(FeedbackQuestionType type)
+    {
+        questionForm.QuestionType = type;
+        if (type == FeedbackQuestionType.SingleChoice && questionOptions.Count == 0)
+        {
+            questionOptions = new List<string> { string.Empty, string.Empty };
+        }
+    }
+
+    private async Task SaveQuestion()
+    {
+        if (string.IsNullOrWhiteSpace(questionForm.QuestionText))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Question needed", "Enter the question the customer will read.");
+            return;
+        }
+
+        if (questionForm.QuestionType == FeedbackQuestionType.SingleChoice &&
+            questionOptions.Count(o => !string.IsNullOrWhiteSpace(o)) < 2)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Choices needed", "A choose-one question needs at least two choices.");
+            return;
+        }
+
+        isSavingQuestion = true;
+        try
+        {
+            var branchId = BranchState.CurrentBranchId;
+            var payload = new SaveFeedbackQuestionRequest
+            {
+                QuestionText = questionForm.QuestionText,
+                QuestionType = questionForm.QuestionType,
+                ServiceTypeId = questionForm.ServiceTypeId,
+                IsRequired = questionForm.IsRequired,
+                IsActive = questionForm.IsActive,
+                DisplayOrder = questionForm.DisplayOrder,
+                Options = questionOptions.Where(o => !string.IsNullOrWhiteSpace(o)).ToList()
+            };
+
+            var response = editingQuestionId == null
+                ? await Http.PostAsJsonAsync($"api/v1/branches/{branchId}/feedback-questions", payload)
+                : await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/feedback-questions/{editingQuestionId}", payload);
+
+            if (response.IsSuccessStatusCode)
+            {
+                showQuestionDialog = false;
+                NotificationService.Notify(ToastSeverity.Success, "Saved", "The survey question was saved.");
+                await LoadQuestions();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not save",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The question could not be saved."));
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save", ex.Message);
+        }
+        finally
+        {
+            isSavingQuestion = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ToggleQuestion(FeedbackQuestionDto q)
+    {
+        var branchId = BranchState.CurrentBranchId;
+        var payload = new SaveFeedbackQuestionRequest
+        {
+            QuestionText = q.QuestionText,
+            QuestionType = q.QuestionType,
+            Options = q.Options.ToList(),
+            ServiceTypeId = q.ServiceTypeId,
+            DisplayOrder = q.DisplayOrder,
+            IsRequired = q.IsRequired,
+            IsActive = !q.IsActive
+        };
+
+        var response = await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/feedback-questions/{q.Id}", payload);
+        if (response.IsSuccessStatusCode)
+        {
+            await LoadQuestions();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not update",
+                await ApiErrorService.GetErrorMessageAsync(response, "The question could not be updated."));
+        }
+    }
+
+    private async Task DeleteQuestion(FeedbackQuestionDto q)
+    {
+        var branchId = BranchState.CurrentBranchId;
+        var response = await Http.DeleteAsync($"api/v1/branches/{branchId}/feedback-questions/{q.Id}");
+        if (response.IsSuccessStatusCode)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Deleted", "The survey question was removed.");
+            await LoadQuestions();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not delete",
+                await ApiErrorService.GetErrorMessageAsync(response, "The question could not be deleted."));
+        }
+    }
+
+    /// <summary>
+    /// Swaps a question with its neighbour and persists the whole order, because display order is
+    /// only meaningful relative to the other questions.
+    /// </summary>
+    private async Task MoveQuestion(FeedbackQuestionDto q, int direction)
+    {
+        var ordered = questions.OrderBy(x => x.DisplayOrder).ToList();
+        var index = ordered.FindIndex(x => x.Id == q.Id);
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= ordered.Count) return;
+
+        (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
+
+        var branchId = BranchState.CurrentBranchId;
+        var payload = new ReorderFeedbackQuestionsRequest
+        {
+            QuestionIds = ordered.Select(x => x.Id).ToList()
+        };
+
+        var response = await Http.PutAsJsonAsync($"api/v1/branches/{branchId}/feedback-questions/reorder", payload);
+        if (response.IsSuccessStatusCode)
+        {
+            await LoadQuestions();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not reorder",
+                await ApiErrorService.GetErrorMessageAsync(response, "The new order could not be saved."));
+        }
+    }
+
+    // ---- Responses --------------------------------------------------------------------------
     private List<FeedbackDto> feedbacks = new();
     private FeedbackSummaryDto? summary;
     private bool isLoading = true;

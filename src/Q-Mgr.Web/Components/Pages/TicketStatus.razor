@@ -1,0 +1,702 @@
+@page "/ticket/{BranchId:guid}"
+@page "/ticket/{BranchId:guid}/{DisplayNumber}"
+@layout KioskLayout
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
+@attribute [AllowAnonymous]
+@implements IDisposable
+@inject IQueueApiService QueueApi
+@inject IOrganizationApiService OrganizationApi
+@inject ISignalRService SignalR
+@inject NavigationManager Navigation
+
+@*
+    "Where am I in the queue?" on the customer's own phone.
+
+    The URL is guessable by design (a display number is short and sequential), so the endpoint
+    behind this page — GET api/v1/branches/{id}/queue/tokens/{displayNumber} — returns only what
+    the lobby display board already shows in public: the number, the service, the status, the
+    place in line and the counter. No name, no phone, no email. Do not add any here either.
+*@
+
+<PageTitle>Ticket Status@(branchInfo != null ? $" - {branchInfo.Name}" : "")</PageTitle>
+
+<div class="ts-page">
+    <header class="ts-header">
+        <div class="ts-brand">
+            <QIcon Name="ticket-perforated-fill" aria-hidden="true" />
+            <div class="ts-brand-text">
+                <span class="ts-org">@(branchInfo?.OrganizationName ?? "Q-Mgr")</span>
+                @if (!string.IsNullOrWhiteSpace(branchInfo?.Name))
+                {
+                    <span class="ts-branch">@branchInfo!.Name</span>
+                }
+            </div>
+        </div>
+    </header>
+
+    <main class="ts-main">
+        @if (branchInvalid)
+        {
+            <div class="ts-state" role="alert">
+                <QIcon Name="exclamation-triangle" aria-hidden="true" />
+                <h1>This link is not valid</h1>
+                <p>The branch may have been removed or closed. Please ask a member of staff for a current link.</p>
+            </div>
+        }
+        else if (status == null)
+        {
+            <h1 class="ts-title">Track your ticket</h1>
+            <p class="ts-subtitle">Enter the number printed on your ticket to see your place in the queue.</p>
+
+            <div class="ts-lookup">
+                <QInput TValue="string"
+                        @bind-Value="codeInput"
+                        Label="Ticket number"
+                        Placeholder="e.g. A007"
+                        MaxLength="24"
+                        autocomplete="off"
+                        autocapitalize="characters" />
+
+                @if (!string.IsNullOrEmpty(lookupError))
+                {
+                    <div class="ts-error" role="alert">
+                        <QIcon Name="exclamation-triangle-fill" aria-hidden="true" />
+                        <span>@lookupError</span>
+                    </div>
+                }
+
+                <QButton Variant="primary"
+                         Size="lg"
+                         Block="true"
+                         Class="ts-submit"
+                         Loading="@isLooking"
+                         Disabled="@string.IsNullOrWhiteSpace(codeInput)"
+                         OnClick="LookUpTicket"
+                         aria-label="Look up the ticket number entered above">
+                    <span>@(isLooking ? "Checking..." : "Check my ticket")</span>
+                </QButton>
+            </div>
+
+            <p class="ts-footnote">
+                Don't have a ticket yet? <a href="/join/@BranchId">Join the queue</a>.
+            </p>
+        }
+        else
+        {
+            <h1 class="visually-hidden">Status of ticket @SpellOut(status.DisplayNumber)</h1>
+
+            <div class="ts-card">
+                <span class="ts-label">Your ticket</span>
+                <span class="ts-number">@status.DisplayNumber</span>
+                <span class="ts-service">@status.ServiceTypeName</span>
+            </div>
+
+            @* polite, not assertive: this region re-renders on every poll and every queue
+               broadcast, and an assertive live region here would interrupt the reader
+               constantly. The one moment that genuinely is urgent — "go to the counter now" —
+               gets its own assertive region below. *@
+            <div class="ts-status" role="status" aria-live="polite">
+                @if (IsWaiting)
+                {
+                    <div class="ts-metrics">
+                        <div class="ts-metric">
+                            <span class="ts-metric-value">@status.Position</span>
+                            <span class="ts-metric-label">Your position</span>
+                        </div>
+                        <div class="ts-metric">
+                            <span class="ts-metric-value">@status.PeopleAhead</span>
+                            <span class="ts-metric-label">Ahead of you</span>
+                        </div>
+                        <div class="ts-metric">
+                            <span class="ts-metric-value">@status.EstimatedWaitMinutes</span>
+                            <span class="ts-metric-label">Minutes (est.)</span>
+                        </div>
+                    </div>
+                    <p class="ts-note">
+                        @(status.PeopleAhead == 0
+                            ? "You're next. Please stay close to the counters."
+                            : $"{status.PeopleAhead} {(status.PeopleAhead == 1 ? "person is" : "people are")} ahead of you.")
+                    </p>
+                }
+                else
+                {
+                    <div class="ts-outcome ts-outcome--@status.Status.ToLowerInvariant()">
+                        <QIcon Name="@OutcomeIcon()" aria-hidden="true" />
+                        <span class="ts-outcome-title">@OutcomeTitle()</span>
+                        <span class="ts-outcome-detail">@OutcomeDetail()</span>
+                    </div>
+                }
+            </div>
+
+            @* assertive, and only here: being called to a counter is the one thing on this page
+               that must interrupt whatever the customer is doing. *@
+            @if (IsCalled)
+            {
+                <div class="ts-called" role="alert" aria-live="assertive">
+                    <QIcon Name="megaphone-fill" aria-hidden="true" />
+                    <span>
+                        Ticket @SpellOut(status.DisplayNumber) is being served@(string.IsNullOrWhiteSpace(status.CounterNumber) ? "" : $" at counter {status.CounterNumber}").
+                        Please go to the counter now.
+                    </span>
+                </div>
+            }
+
+            <div class="ts-actions">
+                <button type="button" class="ts-refresh" aria-label="Refresh the status of this ticket now" @onclick="RefreshAsync">
+                    <QIcon Name="arrow-clockwise" aria-hidden="true" />
+                    <span>Refresh</span>
+                </button>
+                <button type="button" class="ts-refresh" aria-label="Look up a different ticket number" @onclick="ClearTicket">
+                    <QIcon Name="search" aria-hidden="true" />
+                    <span>Another ticket</span>
+                </button>
+            </div>
+
+            <p class="ts-footnote" aria-live="off">
+                Updates automatically. Last checked @lastChecked.ToLocalTime().ToString("HH:mm:ss").
+            </p>
+        }
+    </main>
+</div>
+
+<style>
+    /* Mobile-first, --qm-* tokens only, so this page follows the light/dark choice
+       KioskLayout applies to its wrapper. */
+    .ts-page {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--qm-bg-dark);
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+    }
+
+    .ts-header {
+        padding: 16px 20px;
+        background: var(--qm-bg-card);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .ts-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .ts-brand .q-icon {
+        font-size: 26px;
+        color: var(--qm-primary);
+    }
+
+    .ts-brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+        min-width: 0;
+    }
+
+    .ts-org {
+        font-family: var(--qm-font-display);
+        font-size: 17px;
+        font-weight: 700;
+    }
+
+    .ts-branch {
+        font-size: 14px;
+        color: var(--qm-text-secondary);
+    }
+
+    .ts-main {
+        flex: 1;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 20px 20px 40px;
+    }
+
+    .ts-title {
+        margin: 8px 0 6px;
+        font-family: var(--qm-font-display);
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    .ts-subtitle {
+        margin: 0 0 24px;
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+
+    .ts-lookup {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .ts-submit {
+        min-height: 56px;
+        font-size: 17px;
+    }
+
+    .ts-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 28px 20px;
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .ts-label {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+    }
+
+    .ts-number {
+        font-family: var(--qm-font-mono, 'JetBrains Mono', monospace);
+        font-size: 64px;
+        font-weight: 800;
+        line-height: 1.05;
+        color: var(--qm-primary);
+    }
+
+    .ts-service {
+        font-size: 16px;
+        color: var(--qm-text-secondary);
+    }
+
+    .ts-status {
+        margin-top: 20px;
+    }
+
+    .ts-metrics {
+        display: flex;
+        gap: 10px;
+    }
+
+    .ts-metric {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 18px 8px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        text-align: center;
+    }
+
+    .ts-metric-value {
+        font-family: var(--qm-font-mono, 'JetBrains Mono', monospace);
+        font-size: 30px;
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    .ts-metric-label {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+    }
+
+    .ts-note {
+        margin: 16px 0 0;
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+        text-align: center;
+    }
+
+    .ts-outcome {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 26px 20px;
+        border-radius: var(--qm-radius-xl);
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        text-align: center;
+    }
+
+    .ts-outcome .q-icon {
+        font-size: 40px;
+        color: var(--qm-text-muted);
+    }
+
+    .ts-outcome--serving .q-icon,
+    .ts-outcome--called .q-icon {
+        color: var(--qm-success);
+    }
+
+    .ts-outcome--completed .q-icon {
+        color: var(--qm-success);
+    }
+
+    .ts-outcome--cancelled .q-icon,
+    .ts-outcome--noshow .q-icon {
+        color: var(--qm-warning);
+    }
+
+    .ts-outcome-title {
+        font-size: 20px;
+        font-weight: 700;
+    }
+
+    .ts-outcome-detail {
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+
+    .ts-called {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 18px;
+        padding: 18px 20px;
+        border-radius: var(--qm-radius-lg);
+        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
+        border: 2px solid color-mix(in srgb, var(--qm-success) 45%, transparent);
+        font-size: 17px;
+        font-weight: 600;
+        line-height: 1.45;
+    }
+
+    .ts-called .q-icon {
+        font-size: 26px;
+        color: var(--qm-success);
+        flex-shrink: 0;
+    }
+
+    .ts-error {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px 16px;
+        border-radius: var(--qm-radius-lg);
+        background: color-mix(in srgb, var(--qm-warning) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-warning) 35%, transparent);
+        font-size: 15px;
+        line-height: 1.45;
+    }
+
+    .ts-error .q-icon {
+        color: var(--qm-warning);
+        font-size: 20px;
+        flex-shrink: 0;
+    }
+
+    .ts-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 22px;
+    }
+
+    .ts-refresh {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 48px;
+        padding: 12px 16px;
+        background: transparent;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-text-secondary);
+        font-size: 15px;
+        cursor: pointer;
+    }
+
+    .ts-refresh:hover {
+        border-color: var(--qm-primary);
+        color: var(--qm-text-primary);
+    }
+
+    .ts-footnote {
+        margin: 18px 0 0;
+        font-size: 14px;
+        color: var(--qm-text-muted);
+        text-align: center;
+    }
+
+    .ts-footnote a {
+        color: var(--qm-primary);
+        font-weight: 600;
+    }
+
+    .ts-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 56px 20px;
+        text-align: center;
+    }
+
+    .ts-state .q-icon {
+        font-size: 52px;
+        color: var(--qm-text-muted);
+    }
+
+    .ts-state h1 {
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 24px;
+    }
+
+    .ts-state p {
+        margin: 0;
+        max-width: 420px;
+        font-size: 16px;
+        line-height: 1.55;
+        color: var(--qm-text-secondary);
+    }
+
+    .ts-page :focus-visible {
+        outline: 3px solid var(--qm-text-primary);
+        outline-offset: 3px;
+        border-radius: var(--qm-radius-sm);
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .ts-page *,
+        .ts-page *::before,
+        .ts-page *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+
+    @@media (min-width: 640px) {
+        .ts-main {
+            padding: 32px 24px 48px;
+        }
+
+        .ts-number {
+            font-size: 80px;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+    [Parameter] public string? DisplayNumber { get; set; }
+
+    private BranchPublicDto? branchInfo;
+    private bool branchInvalid;
+    private PublicTicketStatusDto? status;
+    private string? codeInput;
+    private string? lookupError;
+    private bool isLooking;
+    private DateTime lastChecked = DateTime.UtcNow;
+
+    private System.Threading.Timer? pollTimer;
+    private bool signalRConnected;
+    private Guid connectedBranchId;
+
+    private bool IsWaiting => status?.Status == "Waiting";
+    private bool IsCalled => status?.Status is "Called" or "Serving";
+
+    protected override async Task OnInitializedAsync()
+    {
+        branchInfo = await OrganizationApi.GetBranchPublicAsync(BranchId);
+        if (branchInfo == null || !branchInfo.IsActive)
+        {
+            branchInvalid = true;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(DisplayNumber))
+        {
+            codeInput = DisplayNumber;
+            await LoadStatusAsync(DisplayNumber!);
+        }
+
+        await ConnectLiveUpdatesAsync();
+        StartPolling();
+    }
+
+    /// <summary>
+    /// The queue hub is anonymous by design (see QueueHub), so a customer's phone can subscribe
+    /// to the same branch broadcasts the lobby display uses. It is best-effort: the poll timer
+    /// below is what actually guarantees the page stays current if the socket never connects.
+    /// </summary>
+    private async Task ConnectLiveUpdatesAsync()
+    {
+        if (signalRConnected && connectedBranchId == BranchId) return;
+
+        try
+        {
+            await SignalR.ConnectAsync(BranchId);
+            SignalR.OnTokenCalled += HandleQueueMoved;
+            SignalR.OnTokenCompleted += HandleTokenCompleted;
+            SignalR.OnQueueUpdated += HandleQueueUpdated;
+            signalRConnected = true;
+            connectedBranchId = BranchId;
+        }
+        catch
+        {
+            // Polling still covers this page; a failed socket must not break it.
+            signalRConnected = false;
+        }
+    }
+
+    private void StartPolling()
+    {
+        pollTimer?.Dispose();
+        // 20s: often enough that the number on screen is trustworthy, rare enough to sit well
+        // inside the anonymous lookup rate limit (120 requests per 5 minutes per device).
+        pollTimer = new System.Threading.Timer(async _ =>
+        {
+            if (status == null) return;
+            await LoadStatusAsync(status.DisplayNumber);
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private void HandleQueueMoved(TokenDto token) => RefreshFromEvent();
+
+    private void HandleTokenCompleted(Guid tokenId) => RefreshFromEvent();
+
+    private void HandleQueueUpdated(QueueStatusDto queueStatus) => RefreshFromEvent();
+
+    private void RefreshFromEvent()
+    {
+        if (status == null) return;
+
+        // Fire-and-forget onto the renderer's context, then re-render — the standing rule for
+        // any async load kicked off outside a lifecycle method.
+        _ = InvokeAsync(async () =>
+        {
+            await LoadStatusAsync(status.DisplayNumber);
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadStatusAsync(string displayNumber)
+    {
+        var fresh = await QueueApi.GetPublicTicketStatusAsync(BranchId, displayNumber);
+        lastChecked = DateTime.UtcNow;
+
+        // A null here on a refresh means the lookup failed or the ticket aged out of today's
+        // queue — keep showing the last known state rather than blanking the page under the
+        // customer, and only treat it as "not found" when they were asking for a new number.
+        if (fresh != null)
+        {
+            status = fresh;
+        }
+    }
+
+    private async Task LookUpTicket()
+    {
+        if (string.IsNullOrWhiteSpace(codeInput) || isLooking) return;
+
+        isLooking = true;
+        lookupError = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await QueueApi.GetPublicTicketStatusAsync(BranchId, codeInput!.Trim());
+            if (result == null)
+            {
+                lookupError = "We could not find that ticket number at this branch today. Check the number on your ticket and try again.";
+            }
+            else
+            {
+                status = result;
+                lastChecked = DateTime.UtcNow;
+                // Keep the address bar honest so the page can be bookmarked or reshared.
+                Navigation.NavigateTo($"/ticket/{BranchId}/{Uri.EscapeDataString(result.DisplayNumber)}", forceLoad: false);
+            }
+        }
+        finally
+        {
+            isLooking = false;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (status == null) return;
+        await LoadStatusAsync(status.DisplayNumber);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearTicket()
+    {
+        status = null;
+        codeInput = null;
+        lookupError = null;
+        Navigation.NavigateTo($"/ticket/{BranchId}", forceLoad: false);
+    }
+
+    private string OutcomeIcon() => status?.Status switch
+    {
+        "Called" or "Serving" => "megaphone-fill",
+        "Completed" => "check-circle-fill",
+        "Cancelled" => "x-circle-fill",
+        "NoShow" => "clock-history",
+        "Transferred" => "arrow-left-right",
+        _ => "info-circle-fill"
+    };
+
+    private string OutcomeTitle() => status?.Status switch
+    {
+        "Called" => "You're being called",
+        "Serving" => "You're being served",
+        "Completed" => "All done",
+        "Cancelled" => "Ticket cancelled",
+        "NoShow" => "Ticket missed",
+        "Transferred" => "Ticket transferred",
+        _ => "Ticket status"
+    };
+
+    private string OutcomeDetail() => status?.Status switch
+    {
+        "Called" or "Serving" => string.IsNullOrWhiteSpace(status?.CounterNumber)
+            ? "Please make your way to the counters."
+            : $"Please go to counter {status!.CounterNumber}.",
+        "Completed" => "Thank you for visiting. This ticket is now closed.",
+        "Cancelled" => "This ticket is no longer in the queue. Please ask a member of staff if you still need to be seen.",
+        "NoShow" => "This ticket was called but not answered. Please ask a member of staff for a new one.",
+        "Transferred" => "This ticket was moved to another counter's queue.",
+        _ => "Please ask a member of staff if you need help."
+    };
+
+    /// <summary>
+    /// "A007" read aloud as "A 0 0 7". A ticket number is a sequence of characters, not a
+    /// quantity, and screen readers otherwise run the digits together into one number.
+    /// </summary>
+    private static string SpellOut(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : string.Join(" ", value.ToCharArray());
+
+    public void Dispose()
+    {
+        pollTimer?.Dispose();
+        pollTimer = null;
+
+        if (signalRConnected)
+        {
+            SignalR.OnTokenCalled -= HandleQueueMoved;
+            SignalR.OnTokenCompleted -= HandleTokenCompleted;
+            SignalR.OnQueueUpdated -= HandleQueueUpdated;
+        }
+    }
+}

@@ -40,17 +40,20 @@ public class CallNextTokenCommandHandler : IRequestHandler<CallNextTokenCommand,
     private readonly ITenantContextAccessor _tenantContextAccessor;
     private readonly IWebhookService _webhookService;
     private readonly IQueueHubService _queueHubService;
+    private readonly IQueueCustomerNotifier _customerNotifier;
 
     public CallNextTokenCommandHandler(
         IUnitOfWork unitOfWork,
         ITenantContextAccessor tenantContextAccessor,
         IWebhookService webhookService,
-        IQueueHubService queueHubService)
+        IQueueHubService queueHubService,
+        IQueueCustomerNotifier customerNotifier)
     {
         _unitOfWork = unitOfWork;
         _tenantContextAccessor = tenantContextAccessor;
         _webhookService = webhookService;
         _queueHubService = queueHubService;
+        _customerNotifier = customerNotifier;
     }
 
     public async ValueTask<TokenDto?> Handle(CallNextTokenCommand request, CancellationToken cancellationToken)
@@ -105,6 +108,13 @@ public class CallNextTokenCommandHandler : IRequestHandler<CallNextTokenCommand,
 
         // Trigger webhook
         await _webhookService.TriggerTokenCalledAsync(token, cancellationToken);
+
+        // Tell the customer, and warn whoever just moved into the front of the queue behind
+        // them. Strictly AFTER the transaction has committed: a call must never be rolled back
+        // because an SMS gateway timed out. Neither call throws or blocks — see
+        // IQueueCustomerNotifier.
+        await _customerNotifier.NotifyCalledToCounterAsync(token.Id, counter!.Id);
+        await _customerNotifier.NotifyApproachingTurnAsync(token.BranchId, token.ServiceTypeId);
 
         return MapToDto(token, counter!);
     }
@@ -234,17 +244,20 @@ public class CallSpecificTokenCommandHandler : IRequestHandler<CallSpecificToken
     private readonly ITenantContextAccessor _tenantContextAccessor;
     private readonly IWebhookService _webhookService;
     private readonly IQueueHubService _queueHubService;
+    private readonly IQueueCustomerNotifier _customerNotifier;
 
     public CallSpecificTokenCommandHandler(
         IUnitOfWork unitOfWork,
         ITenantContextAccessor tenantContextAccessor,
         IWebhookService webhookService,
-        IQueueHubService queueHubService)
+        IQueueHubService queueHubService,
+        IQueueCustomerNotifier customerNotifier)
     {
         _unitOfWork = unitOfWork;
         _tenantContextAccessor = tenantContextAccessor;
         _webhookService = webhookService;
         _queueHubService = queueHubService;
+        _customerNotifier = customerNotifier;
     }
 
     public async ValueTask<TokenDto?> Handle(CallSpecificTokenCommand request, CancellationToken cancellationToken)
@@ -297,6 +310,11 @@ public class CallSpecificTokenCommandHandler : IRequestHandler<CallSpecificToken
 
         await _queueHubService.NotifyTokenCalledAsync(token, counter, cancellationToken);
         await _webhookService.TriggerTokenCalledAsync(token, cancellationToken);
+
+        // Same post-commit customer notification as CallNextTokenCommandHandler — calling a
+        // specific token is the same event from the customer's point of view.
+        await _customerNotifier.NotifyCalledToCounterAsync(token.Id, counter.Id);
+        await _customerNotifier.NotifyApproachingTurnAsync(token.BranchId, token.ServiceTypeId);
 
         return new TokenDto
         {

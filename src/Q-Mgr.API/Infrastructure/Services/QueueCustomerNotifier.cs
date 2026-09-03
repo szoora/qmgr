@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Notification;
-using QMgr.Domain.Entities.Organization;
 using QMgr.Domain.Entities.Queue;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
@@ -54,7 +53,9 @@ public class QueueCustomerNotifier : IQueueCustomerNotifier
             var ctx = await LoadContextAsync(db, token.BranchId, ct);
             if (ctx == null || !ctx.Settings.QueueNotifyOnIssued) return;
 
-            var placeholders = BuildPlaceholders(token, ctx, positionInQueue > 0 ? positionInQueue : null, counter: null);
+            // GetQueuePositionAsync returns 0 for a token that is no longer waiting; treat that
+            // as "no position" rather than printing "#0".
+            var placeholders = BuildPlaceholders(token, ctx, positionInQueue > 0 ? (int?)positionInQueue : null, counter: null);
 
             var sent = await SendAsync(
                 notifications, ctx, token, placeholders,

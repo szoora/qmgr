@@ -22,19 +22,27 @@
         <h1>Share Your Feedback</h1>
         <p>Enter your feedback code to share your experience</p>
 
+        @* ACCESSIBILITY: this page is public, so the single input carries a real associated
+           <label> (for/id), announces its own hint via aria-describedby, and asks for the
+           uppercase alphanumeric keyboard on mobile. *@
         <div class="code-input-section">
-            <label>Feedback Code</label>
+            <label for="feedback-code-input">Feedback Code</label>
             <input type="text"
+                   id="feedback-code-input"
                    @bind="feedbackCode"
                    @bind:event="oninput"
                    @onkeyup="HandleKeyUp"
                    placeholder="e.g., ABC12345"
                    maxlength="10"
+                   autocomplete="off"
+                   autocapitalize="characters"
+                   spellcheck="false"
+                   aria-describedby="feedback-code-hint"
                    class="code-input" />
-            <small>You can find this code on your printed ticket</small>
+            <small id="feedback-code-hint">You can find this code on your printed ticket</small>
         </div>
 
-        <button class="submit-btn" @onclick="GoToFeedback" disabled="@(string.IsNullOrWhiteSpace(feedbackCode))">
+        <button type="button" class="submit-btn" @onclick="GoToFeedback" disabled="@(string.IsNullOrWhiteSpace(feedbackCode))">
             <QIcon Name="arrow-right" />
             <span>Continue</span>
         </button>
@@ -185,6 +193,12 @@
     .submit-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+    }
+
+    .submit-btn:focus-visible,
+    .code-input:focus-visible {
+        outline: 3px solid var(--qm-primary);
+        outline-offset: 3px;
     }
 
     .submit-btn:hover:not(:disabled) {

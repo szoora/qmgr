@@ -321,12 +321,42 @@ public class NotificationsController : ControllerBase
             SmsReminderTemplate = dto.SmsReminderTemplate,
             EmailTokenCreatedSubject = dto.EmailTokenCreatedSubject,
             EmailTokenCreatedTemplate = dto.EmailTokenCreatedTemplate,
+            EmailReminderSubject = dto.EmailReminderSubject,
+            EmailReminderTemplate = dto.EmailReminderTemplate,
             EmailTokenCalledSubject = dto.EmailTokenCalledSubject,
             EmailTokenCalledTemplate = dto.EmailTokenCalledTemplate,
+            QueueNotificationsEnabled = dto.QueueNotificationsEnabled,
+            QueueNotifySms = dto.QueueNotifySms,
+            QueueNotifyEmail = dto.QueueNotifyEmail,
+            QueueNotifyOnIssued = dto.QueueNotifyOnIssued,
+            QueueNotifyOnApproaching = dto.QueueNotifyOnApproaching,
+            QueueNotifyOnCalled = dto.QueueNotifyOnCalled,
             UpdatedBy = GetCurrentUserId()
         };
 
         var saved = await _settingsService.CreateOrUpdateSettingsAsync(settings, cancellationToken);
+
+        // NotificationSettingsService.CreateOrUpdateSettingsAsync copies a hard-coded field list
+        // onto the existing row, and that list predates these fields — on the UPDATE path it
+        // would silently drop everything below (the same pre-existing gap already loses the
+        // Telegram/WhatsApp fields, fixed here too). `saved` is the tracked entity from this same
+        // scoped DbContext, so applying them here and saving once more persists them without
+        // reaching into a file this change doesn't own.
+        saved.TelegramEnabled = dto.TelegramEnabled;
+        saved.TelegramBotToken = dto.TelegramBotToken;
+        saved.WhatsAppEnabled = dto.WhatsAppEnabled;
+        saved.WhatsAppPhoneNumberId = dto.WhatsAppPhoneNumberId;
+        saved.WhatsAppAccessToken = dto.WhatsAppAccessToken;
+        saved.QueueNotificationsEnabled = dto.QueueNotificationsEnabled;
+        saved.QueueNotifySms = dto.QueueNotifySms;
+        saved.QueueNotifyEmail = dto.QueueNotifyEmail;
+        saved.QueueNotifyOnIssued = dto.QueueNotifyOnIssued;
+        saved.QueueNotifyOnApproaching = dto.QueueNotifyOnApproaching;
+        saved.QueueNotifyOnCalled = dto.QueueNotifyOnCalled;
+        saved.EmailReminderSubject = dto.EmailReminderSubject;
+        saved.EmailReminderTemplate = dto.EmailReminderTemplate;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
         return Ok(MapToSettingsDto(saved));
     }
 
@@ -438,8 +468,16 @@ public class NotificationsController : ControllerBase
         SmsReminderTemplate = settings.SmsReminderTemplate,
         EmailTokenCreatedSubject = settings.EmailTokenCreatedSubject,
         EmailTokenCreatedTemplate = settings.EmailTokenCreatedTemplate,
+        EmailReminderSubject = settings.EmailReminderSubject,
+        EmailReminderTemplate = settings.EmailReminderTemplate,
         EmailTokenCalledSubject = settings.EmailTokenCalledSubject,
-        EmailTokenCalledTemplate = settings.EmailTokenCalledTemplate
+        EmailTokenCalledTemplate = settings.EmailTokenCalledTemplate,
+        QueueNotificationsEnabled = settings.QueueNotificationsEnabled,
+        QueueNotifySms = settings.QueueNotifySms,
+        QueueNotifyEmail = settings.QueueNotifyEmail,
+        QueueNotifyOnIssued = settings.QueueNotifyOnIssued,
+        QueueNotifyOnApproaching = settings.QueueNotifyOnApproaching,
+        QueueNotifyOnCalled = settings.QueueNotifyOnCalled
     };
 
     #endregion
@@ -477,6 +515,11 @@ public class NotificationSettingsDto
     public string? SmsPassword { get; set; }
     public string? SmsSenderId { get; set; }
     public string? SmsCustomerId { get; set; }
+
+    /// <summary>
+    /// Doubles as the "nearly your turn" position threshold for queue notifications on both
+    /// channels — see NotificationSettings.SmsLeadTokens.
+    /// </summary>
     public int SmsLeadTokens { get; set; } = 3;
 
     // Email
@@ -506,12 +549,22 @@ public class NotificationSettingsDto
     // Push
     public bool PushEnabled { get; set; }
 
-    // Templates
+    // Queue customer notifications (what the ticket holder receives)
+    public bool QueueNotificationsEnabled { get; set; } = true;
+    public bool QueueNotifySms { get; set; } = true;
+    public bool QueueNotifyEmail { get; set; } = true;
+    public bool QueueNotifyOnIssued { get; set; } = true;
+    public bool QueueNotifyOnApproaching { get; set; } = true;
+    public bool QueueNotifyOnCalled { get; set; } = true;
+
+    // Templates — created = ticket issued, reminder = nearly your turn, called = at the counter.
     public string? SmsTokenCreatedTemplate { get; set; }
     public string? SmsTokenCalledTemplate { get; set; }
     public string? SmsReminderTemplate { get; set; }
     public string? EmailTokenCreatedSubject { get; set; }
     public string? EmailTokenCreatedTemplate { get; set; }
+    public string? EmailReminderSubject { get; set; }
+    public string? EmailReminderTemplate { get; set; }
     public string? EmailTokenCalledSubject { get; set; }
     public string? EmailTokenCalledTemplate { get; set; }
 }

@@ -1,0 +1,548 @@
+@page "/admin/visitors/expected"
+@inject IVisitorApiService VisitorApi
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+<PageTitle>Expected Visitors - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Expected Visitors</h1>
+            <p class="subtitle">Who is booked in to arrive, and one-click check-in when they do</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Visitor Management" Icon="person-badge" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+            <PermissionGuard Permission="visitors.checkin">
+                <QButton Text="Pre-Register Arrivals" Icon="calendar-plus" Variant="primary" OnClick="@OpenCreateModal" />
+            </PermissionGuard>
+        </div>
+    </div>
+
+    <div class="summary-cards">
+        <div class="summary-card">
+            <div class="card-icon"><QIcon Name="calendar-day" /></div>
+            <div class="card-content">
+                <span class="card-value">@TodayGroup.Count</span>
+                <span class="card-label">Due Today</span>
+            </div>
+        </div>
+        <div class="summary-card">
+            <div class="card-icon"><QIcon Name="calendar-week" /></div>
+            <div class="card-content">
+                <span class="card-value">@UpcomingGroup.Count</span>
+                <span class="card-label">Upcoming</span>
+            </div>
+        </div>
+        <div class="summary-card @(OverdueGroup.Any() ? "alert" : "")">
+            <div class="card-icon"><QIcon Name="clock-history" /></div>
+            <div class="card-content">
+                <span class="card-value">@OverdueGroup.Count</span>
+                <span class="card-label">Overdue Today</span>
+            </div>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading expected arrivals...</span></div>
+    }
+    else if (!expected.Any())
+    {
+        <div class="empty-state">
+            <QIcon Name="calendar-event" />
+            <h3>Nobody is expected</h3>
+            <p>Pre-register arrivals so reception knows who is due before they walk through the door.</p>
+        </div>
+    }
+    else
+    {
+        @RenderGroup("Overdue — due earlier today and not arrived", OverdueGroup, "overdue")
+        @RenderGroup("Due today", TodayGroup, "today")
+        @RenderGroup("Upcoming", UpcomingGroup, "upcoming")
+    }
+</div>
+
+<QModal @bind-Visible="showCreateModal" Title="Pre-Register Expected Arrivals" Size="lg">
+    <ChildContent>
+        <p class="settings-hint">
+            One booking covers everyone arriving together for the same reason at the same time — a
+            panel, a crew, a delegation. Each person still becomes their own visitor record and
+            checks in individually on the day.
+        </p>
+        <div class="form-grid">
+            <label>Expected arrival *<input type="datetime-local" @bind="createExpectedAtLocal" /></label>
+            <label>
+                Visitor type
+                <select @bind="createModel.VisitorType">
+                    @foreach (var type in Enum.GetValues<VisitorType>())
+                    {
+                        <option value="@type">@type</option>
+                    }
+                </select>
+            </label>
+            <label>Purpose of visit *<input @bind="createModel.Purpose" placeholder="Interview panel, roof survey, governors' meeting..." /></label>
+            <label>Host name<input @bind="createModel.HostName" placeholder="Who are they here to see?" /></label>
+            <label class="full-width">Notes<textarea @bind="createModel.Notes" rows="2"></textarea></label>
+        </div>
+
+        @if (createModel.VisitorType == VisitorType.Contractor)
+        {
+            <div class="hint-box">
+                <QIcon Name="info-circle" />
+                <span>Contractors are checked against their site induction at check-in. Anyone without a current one will warn the person on the desk — it won't stop them arriving.</span>
+            </div>
+        }
+
+        <div class="settings-section">
+            <h3>People (@createEntries.Count)</h3>
+            @foreach (var entry in createEntries)
+            {
+                var current = entry;
+                <div class="entry-row">
+                    <div class="form-grid entry-grid">
+                        <label>Full name *<input @bind="current.FullName" placeholder="Jane Doe" /></label>
+                        <label>Company<input @bind="current.Company" placeholder="SACC Software Limited" /></label>
+                        <label>Phone<input @bind="current.Phone" placeholder="0753404044" /></label>
+                        <label>Email<input @bind="current.Email" placeholder="support@getsacc.com" /></label>
+                        <label>ID number<input @bind="current.IdNumber" placeholder="Passport / National ID" /></label>
+                        <label>Vehicle plate<input @bind="current.VehiclePlate" placeholder="KDA 123B" /></label>
+                    </div>
+                    @if (createEntries.Count > 1)
+                    {
+                        <QButton Icon="trash" Size="sm" Variant="ghost" OnClick="@(() => createEntries.Remove(current))" />
+                    }
+                </div>
+            }
+            <QButton Text="Add another person" Icon="plus-lg" Size="sm" Variant="secondary" OnClick="@(() => createEntries.Add(new ExpectedVisitorEntry()))" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCreateModal = false)" />
+        <QButton Text="Pre-Register" Icon="calendar-plus" Variant="primary" OnClick="@SubmitCreate" Disabled="@(!CanSubmitCreate)" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showCheckInModal" Title="Check In Expected Visitor" Size="md">
+    <ChildContent>
+        @if (checkInTarget != null)
+        {
+            <p class="confirm-message">Confirm arrival for <strong>@checkInTarget.FullName</strong>@(string.IsNullOrWhiteSpace(checkInTarget.Company) ? "" : $" ({checkInTarget.Company})").</p>
+
+            @if (checkInTarget.IsWatchlisted)
+            {
+                <div class="block-box">
+                    <p><QIcon Name="shield-exclamation" /> <strong>@checkInTarget.FullName is on the watchlist and must not be admitted.</strong></p>
+                    <p class="reason">@(string.IsNullOrWhiteSpace(checkInTarget.WatchlistReason) ? "No reason was recorded." : checkInTarget.WatchlistReason)</p>
+                    @if (isManagerOrAbove)
+                    {
+                        <label class="full-width">Manager override reason *<input @bind="watchlistOverrideReason" placeholder="Why is this person being admitted despite the flag?" /></label>
+                    }
+                    else
+                    {
+                        <p class="reason">A Manager or Admin must authorise this check-in. Do not proceed.</p>
+                    }
+                </div>
+            }
+
+            @if (checkInTarget.VisitorType == VisitorType.Contractor && !checkInTarget.InductionValid)
+            {
+                <div class="warn-box">
+                    <p>
+                        <QIcon Name="exclamation-triangle" />
+                        @(checkInTarget.InductionCompletedAt.HasValue
+                            ? $"Site induction lapsed on {checkInTarget.InductionExpiresAt?.ToLocalTime():MMM dd, yyyy}."
+                            : "No site induction is recorded for this contractor.")
+                        You can still check them in — record the induction here if it has been done.
+                    </p>
+                    <label class="full-width">Induction completed on<input type="date" @bind="inductionCompletedLocal" /></label>
+                    <label class="full-width">Induction note<input @bind="inductionNotes" placeholder="e.g. site safety briefing given by M. Okello" /></label>
+                </div>
+            }
+
+            <div class="form-grid">
+                <label>ID number<input @bind="checkInModel.IdNumber" placeholder="Passport / National ID" /></label>
+                <label>Vehicle plate<input @bind="checkInModel.VehiclePlate" placeholder="KDA 123B" /></label>
+            </div>
+
+            @if (consentRequired)
+            {
+                <label class="consent-check">
+                    <input type="checkbox" checked="@checkInConsentGiven" @onchange="@(e => checkInConsentGiven = (bool)(e.Value ?? false))" />
+                    <span>@consentText</span>
+                </label>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCheckInModal = false)" />
+        <QButton Text="Check In" Icon="box-arrow-in-right" Variant="@(checkInTarget?.IsWatchlisted == true ? "warning" : "primary")"
+                 OnClick="@SubmitCheckIn" Disabled="@(!CanSubmitCheckIn)" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog IsVisible="@showCancelConfirm"
+               Title="Cancel Expected Arrival"
+               Message="@cancelConfirmMessage"
+               ConfirmText="Cancel Arrival"
+               CancelText="Keep"
+               ConfirmButtonClass="btn-danger"
+               OnClose="@HandleCancelConfirm" />
+
+<style>
+    .admin-page { padding: 0; }
+
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .summary-card { display: flex; align-items: center; gap: 14px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 18px; }
+    .summary-card.alert { border-color: var(--qm-danger); }
+    .card-icon { width: 44px; height: 44px; border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
+    .card-content { display: flex; flex-direction: column; }
+    .card-value { font-size: 24px; font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
+    .card-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); text-align: center; }
+    .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
+    .empty-state h3 { margin: 0; color: var(--qm-text-primary); }
+
+    .group-head { margin: 22px 0 10px; font-size: 15px; font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: center; gap: 8px; }
+    .group-head.overdue { color: var(--qm-accent-orange); }
+
+    .expected-list { display: flex; flex-direction: column; gap: 12px; }
+    .expected-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
+    .expected-card.overdue { border-left-color: var(--qm-accent-orange); }
+    .expected-card.watchlisted { border-left-color: var(--qm-danger); }
+    .expected-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .expected-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .expected-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .expected-company { color: var(--qm-text-muted); font-size: 13px; }
+    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: 4px; }
+    .when-badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+    .when-badge.overdue { background: rgba(var(--qm-warning-rgb), 0.15); color: var(--qm-accent-orange); }
+    .type-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--qm-primary-light); color: var(--qm-primary); }
+    .watchlist-flag { color: var(--qm-danger); }
+    .induction-flag { font-size: 11px; color: var(--qm-accent-orange); background: rgba(var(--qm-warning-rgb), 0.12); padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+
+    .expected-details { display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0; font-size: 13px; color: var(--qm-text-muted); }
+    .detail-item { display: inline-flex; align-items: center; gap: 5px; }
+    .expected-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+    .form-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .form-grid label.full-width { grid-column: 1 / -1; }
+    .form-grid input, .form-grid textarea, .form-grid select { width: 100%; box-sizing: border-box; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; font-size: 14px; background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
+
+    .settings-section { margin-top: 20px; }
+    .settings-section h3 { margin: 0 0 6px; font-size: 15px; color: var(--qm-text-primary); }
+    .settings-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 10px; }
+    .confirm-message { font-size: 14px; color: var(--qm-text-primary); margin: 0; }
+
+    .entry-row { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--qm-border); }
+    .entry-row:last-of-type { border-bottom: none; }
+    .entry-grid { flex: 1; margin-top: 0; }
+
+    .hint-box { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 10px 12px; font-size: 12px; line-height: 1.45;
+                border: 1px solid var(--qm-border); background: var(--qm-bg-secondary); color: var(--qm-text-muted); border-radius: var(--qm-radius-sm); }
+
+    .block-box { margin-top: 14px; padding: 12px; border: 1px solid rgba(var(--qm-danger-rgb), 0.40); background: rgba(var(--qm-danger-rgb), 0.08); border-radius: var(--qm-radius-sm); }
+    .block-box p { margin: 0 0 8px; font-size: 13px; color: var(--qm-danger); display: flex; align-items: flex-start; gap: 6px; }
+    .block-box p.reason { color: var(--qm-text-primary); }
+    .block-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); }
+    .block-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
+
+    .warn-box { margin-top: 14px; padding: 12px; border: 1px solid rgba(var(--qm-warning-rgb), 0.35); background: rgba(var(--qm-warning-rgb), 0.08); border-radius: var(--qm-radius-sm); }
+    .warn-box p { margin: 0 0 8px; font-size: 13px; color: var(--qm-accent-orange); display: flex; align-items: flex-start; gap: 6px; }
+    .warn-box label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--qm-text-muted); margin-top: 8px; }
+    .warn-box input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); }
+
+    .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
+    .consent-check input { margin-top: 3px; }
+</style>
+
+@code {
+    private List<VisitorDto> expected = new();
+    private bool isLoading = true;
+    private Guid branchId;
+    private bool isManagerOrAbove;
+
+    private bool consentRequired;
+    private string consentText = "";
+
+    // How far ahead "upcoming" reaches. Two weeks is far enough for the bookings a front desk
+    // actually makes and short enough that the list stays a working list, not an archive.
+    private const int UpcomingWindowDays = 14;
+
+    private List<VisitorDto> OverdueGroup => expected
+        .Where(v => DueAt(v) is { } due && due.ToLocalTime() < DateTime.Now && due.ToLocalTime().Date == DateTime.Today)
+        .ToList();
+
+    private List<VisitorDto> TodayGroup => expected
+        .Where(v => DueAt(v) is { } due && due.ToLocalTime().Date == DateTime.Today && due.ToLocalTime() >= DateTime.Now)
+        .ToList();
+
+    private List<VisitorDto> UpcomingGroup => expected
+        .Where(v => DueAt(v) is { } due && due.ToLocalTime().Date > DateTime.Today)
+        .ToList();
+
+    // An Expected row always carries ExpectedArrivalAt; an older PreRegistered row only ever had
+    // ScheduledAt. Both appear on this page, so both keys are honoured.
+    private static DateTime? DueAt(VisitorDto v) => v.ExpectedArrivalAt ?? v.ScheduledAt;
+
+    private bool showCreateModal;
+    private CreateExpectedVisitorsRequest createModel = new();
+    private List<ExpectedVisitorEntry> createEntries = new();
+    private DateTime createExpectedAtLocal = DateTime.Now.Date.AddHours(9);
+
+    private bool CanSubmitCreate =>
+        !string.IsNullOrWhiteSpace(createModel.Purpose) &&
+        createEntries.Any(e => !string.IsNullOrWhiteSpace(e.FullName));
+
+    private bool showCheckInModal;
+    private VisitorDto? checkInTarget;
+    private CheckInVisitorRequest checkInModel = new();
+    private bool checkInConsentGiven;
+    private string watchlistOverrideReason = "";
+    private DateTime? inductionCompletedLocal;
+    private string inductionNotes = "";
+
+    private bool CanSubmitCheckIn
+    {
+        get
+        {
+            if (checkInTarget == null) return false;
+            if (consentRequired && !checkInConsentGiven) return false;
+            // A watchlisted visitor can only be admitted by a Manager+ supplying a reason. The
+            // server enforces this independently (WatchlistBlock); disabling the button here just
+            // stops staff firing a request that can only ever be refused.
+            if (checkInTarget.IsWatchlisted && (!isManagerOrAbove || string.IsNullOrWhiteSpace(watchlistOverrideReason))) return false;
+            return true;
+        }
+    }
+
+    private bool showCancelConfirm;
+    private string cancelConfirmMessage = "";
+    private VisitorDto? visitorPendingCancel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.VisitorsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        isManagerOrAbove = await PermissionService.IsManagerOrAboveAsync();
+
+        var consent = await VisitorApi.GetConsentSettingsAsync(branchId);
+        consentRequired = consent.Required;
+        consentText = consent.Text;
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        expected = await VisitorApi.GetExpectedVisitorsAsync(branchId, today, today.AddDays(UpcomingWindowDays));
+
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private RenderFragment RenderGroup(string heading, List<VisitorDto> group, string cssClass) => __builder =>
+    {
+        if (group.Count == 0) return;
+
+        <div class="group-head @cssClass">
+            <QIcon Name="@(cssClass == "overdue" ? "exclamation-triangle" : "calendar-event")" />
+            @heading (@group.Count)
+        </div>
+        <div class="expected-list">
+            @foreach (var visitor in group)
+            {
+                var due = DueAt(visitor);
+                <div class="expected-card @cssClass @(visitor.IsWatchlisted ? "watchlisted" : "")">
+                    <div class="expected-main">
+                        <div class="expected-identity">
+                            <span class="badge-code">@visitor.BadgeCode</span>
+                            <span class="expected-name">
+                                @visitor.FullName
+                                @if (visitor.IsWatchlisted)
+                                {
+                                    <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                }
+                            </span>
+                            @if (!string.IsNullOrEmpty(visitor.Company))
+                            {
+                                <span class="expected-company">@visitor.Company</span>
+                            }
+                            @if (visitor.VisitorType != VisitorType.Guest)
+                            {
+                                <span class="type-badge">@visitor.VisitorType</span>
+                            }
+                            @if (visitor.VisitorType == VisitorType.Contractor && !visitor.InductionValid)
+                            {
+                                <span class="induction-flag" title="No current site induction on record">
+                                    <QIcon Name="exclamation-triangle" /> Induction due
+                                </span>
+                            }
+                        </div>
+                        @if (due.HasValue)
+                        {
+                            <span class="when-badge @cssClass">@due.Value.ToLocalTime().ToString("ddd dd MMM, HH:mm")</span>
+                        }
+                    </div>
+
+                    <div class="expected-details">
+                        @if (!string.IsNullOrEmpty(visitor.Purpose))
+                        {
+                            <span class="detail-item"><QIcon Name="briefcase-fill" /> @visitor.Purpose</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.HostName))
+                        {
+                            <span class="detail-item"><QIcon Name="person-fill" /> Host: @visitor.HostName</span>
+                        }
+                        @if (!string.IsNullOrEmpty(visitor.Phone))
+                        {
+                            <span class="detail-item"><QIcon Name="telephone-fill" /> @visitor.Phone</span>
+                        }
+                    </div>
+
+                    <div class="expected-actions">
+                        <PermissionGuard Permission="visitors.checkin">
+                            <QButton Text="Check In" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => OpenCheckInModal(visitor))" />
+                            <QButton Text="Cancel" Icon="x-circle" Size="sm" Variant="ghost" OnClick="@(() => RequestCancel(visitor))" />
+                        </PermissionGuard>
+                    </div>
+                </div>
+            }
+        </div>
+    };
+
+    private void OpenCreateModal()
+    {
+        createModel = new CreateExpectedVisitorsRequest();
+        createEntries = new List<ExpectedVisitorEntry> { new() };
+        createExpectedAtLocal = DateTime.Now.Date.AddHours(9);
+        showCreateModal = true;
+    }
+
+    private async Task SubmitCreate()
+    {
+        try
+        {
+            createModel.ExpectedArrivalAt = createExpectedAtLocal.ToUniversalTime();
+            createModel.Visitors = createEntries.Where(e => !string.IsNullOrWhiteSpace(e.FullName)).ToList();
+
+            var created = await VisitorApi.CreateExpectedVisitorsAsync(branchId, createModel);
+            NotificationService.Notify(ToastSeverity.Success, "Pre-registered",
+                $"{created.Count} visitor{(created.Count == 1 ? "" : "s")} expected on {createExpectedAtLocal:MMM dd} at {createExpectedAtLocal:HH:mm}");
+            showCreateModal = false;
+            await LoadData();
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Cannot pre-register", ex.Message);
+        }
+    }
+
+    private void OpenCheckInModal(VisitorDto visitor)
+    {
+        checkInTarget = visitor;
+        checkInModel = new CheckInVisitorRequest();
+        checkInConsentGiven = false;
+        watchlistOverrideReason = "";
+        inductionCompletedLocal = null;
+        inductionNotes = "";
+        showCheckInModal = true;
+    }
+
+    private async Task SubmitCheckIn()
+    {
+        var visitor = checkInTarget;
+        if (visitor == null) return;
+
+        try
+        {
+            checkInModel.ConsentGiven = checkInConsentGiven;
+            checkInModel.WatchlistOverrideReason = string.IsNullOrWhiteSpace(watchlistOverrideReason) ? null : watchlistOverrideReason;
+            if (inductionCompletedLocal.HasValue)
+            {
+                checkInModel.InductionCompletedAt = DateTime.SpecifyKind(inductionCompletedLocal.Value.Date, DateTimeKind.Utc);
+                checkInModel.InductionNotes = string.IsNullOrWhiteSpace(inductionNotes) ? null : inductionNotes;
+            }
+
+            // Deliberately the SAME action the visitor-management screen uses — every consent,
+            // watchlist and repeat-check-in control lives behind it, so this "one click" is a
+            // shortcut through the UI, never around the rules.
+            var result = await VisitorApi.CheckInExistingAsync(branchId, visitor.Id, checkInModel);
+            showCheckInModal = false;
+            checkInTarget = null;
+
+            NotificationService.Notify(ToastSeverity.Success, "Checked in", $"{result.FullName} checked in — badge {result.BadgeCode}");
+            if (!string.IsNullOrWhiteSpace(result.CheckInWarning))
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "Induction warning", result.CheckInWarning);
+            }
+
+            await LoadData();
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Cannot check in", ex.Message);
+        }
+    }
+
+    private void RequestCancel(VisitorDto visitor)
+    {
+        visitorPendingCancel = visitor;
+        cancelConfirmMessage = $"Cancel the expected arrival for {visitor.FullName} (badge {visitor.BadgeCode})? " +
+                                "The record is kept and marked cancelled, not deleted.";
+        showCancelConfirm = true;
+    }
+
+    private async Task HandleCancelConfirm(bool confirmed)
+    {
+        showCancelConfirm = false;
+        var visitor = visitorPendingCancel;
+        visitorPendingCancel = null;
+        if (!confirmed || visitor == null) return;
+
+        var result = await VisitorApi.CancelExpectedVisitorAsync(branchId, visitor.Id);
+        if (result != null)
+        {
+            NotificationService.Notify(ToastSeverity.Success, "Cancelled", $"{visitor.FullName}'s expected arrival was cancelled");
+            await LoadData();
+        }
+        else
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to cancel the expected arrival");
+        }
+    }
+}

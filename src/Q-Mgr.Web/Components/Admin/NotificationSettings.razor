@@ -59,6 +59,10 @@
                         {
                             <QBadge Text="ON" Variant="success" Size="sm" />
                         }
+                        else if (section.Key == "queue" && settings.QueueNotificationsEnabled)
+                        {
+                            <QBadge Text="ON" Variant="success" Size="sm" />
+                        }
                     </div>
                 }
             </div>
@@ -314,6 +318,227 @@
                         </div>
                     </div>
                 }
+                else if (activeSection == "queue")
+                {
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-person-check"></i> Queue Notifications</h3>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotificationsEnabled" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group @(!settings.QueueNotificationsEnabled ? "disabled" : "")">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <div>
+                                    <p>These are the messages the <strong>customer holding a ticket</strong> receives &mdash; so they don't have to stand and watch the display.</p>
+                                    <p>A message is only ever sent when the customer supplied that contact detail on their ticket <em>and</em> the channel itself is switched on and configured above. A branch with no SMS gateway configured simply sends nothing.</p>
+                                </div>
+                            </div>
+
+                            <h4>Channels</h4>
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>SMS</label>
+                                        <p class="qm-admin-form-hint">
+                                            @if (settings.SmsEnabled)
+                                            {
+                                                <span>Send queue messages by SMS</span>
+                                            }
+                                            else
+                                            {
+                                                <span>SMS is switched off in the SMS section &mdash; nothing will be sent</span>
+                                            }
+                                        </p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifySms" disabled="@(!settings.QueueNotificationsEnabled)" />
+                                    </div>
+                                </div>
+
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Email</label>
+                                        <p class="qm-admin-form-hint">
+                                            @if (settings.EmailEnabled)
+                                            {
+                                                <span>Send queue messages by email</span>
+                                            }
+                                            else
+                                            {
+                                                <span>Email is switched off in the Email section &mdash; nothing will be sent</span>
+                                            }
+                                        </p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyEmail" disabled="@(!settings.QueueNotificationsEnabled)" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>When to send</h4>
+                            <p class="qm-admin-form-hint">Each moment costs a message per customer &mdash; switch off the ones you don't need.</p>
+
+                            <div class="qm-admin-form-grid">
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Ticket issued</label>
+                                        <p class="qm-admin-form-hint">Confirmation with the ticket number and position</p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnIssued" disabled="@(!settings.QueueNotificationsEnabled)" />
+                                    </div>
+                                </div>
+
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Nearly your turn</label>
+                                        <p class="qm-admin-form-hint">Sent once, when they reach the position threshold below</p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnApproaching" disabled="@(!settings.QueueNotificationsEnabled)" />
+                                    </div>
+                                </div>
+
+                                <div class="qm-admin-form-group toggle-item">
+                                    <div>
+                                        <label>Called to counter</label>
+                                        <p class="qm-admin-form-hint">Sent the moment staff call them, naming the counter</p>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" @bind="settings.QueueNotifyOnCalled" disabled="@(!settings.QueueNotificationsEnabled)" />
+                                    </div>
+                                </div>
+
+                                <div class="qm-admin-form-group">
+                                    <QInput TValue="int" @bind-Value="@settings.SmsLeadTokens" Label="'Nearly your turn' threshold" Type="number" Min="1" Max="10"
+                                            HelperText="Warn a customer once they are this many positions from the front (shared with SMS Lead Tokens)"
+                                            Disabled="@(!settings.QueueNotificationsEnabled)" />
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4>Messages</h4>
+
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-braces"></i>
+                                <div>
+                                    <p>Placeholders (case-insensitive) &mdash; anything unavailable for a given moment renders as empty:</p>
+                                    <code>{TicketNumber}</code> <code>{CounterNumber}</code> <code>{Position}</code>
+                                    <code>{BranchName}</code> <code>{OrganizationName}</code> <code>{EstimatedWaitMinutes}</code>
+                                    <code>{ServiceType}</code> <code>{CustomerName}</code>
+                                    <p class="qm-admin-form-hint">Older placeholders still work: <code>{TokenNumber}</code>, <code>{CounterName}</code>, <code>{PositionInQueue}</code>, <code>{WaitTime}</code>.</p>
+                                    <p class="qm-admin-form-hint">Email bodies are content only &mdash; one paragraph per line. The branded header, signature and footer are added automatically.</p>
+                                </div>
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4><i class="bi bi-ticket-perforated"></i> Ticket issued</h4>
+                            <p class="qm-admin-form-hint">Sent as soon as the ticket is created.</p>
+
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsTokenCreatedTemplate" Label="SMS" Type="textarea" Rows="2"
+                                        HelperText="Keep it short - one SMS is 160 characters."
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCreatedSubject" Label="Email subject"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCreatedTemplate" Label="Email body (one paragraph per line)" Type="textarea" Rows="4"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div style="background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 0.85rem 1rem; margin-bottom: 1rem;">
+                                <p class="qm-admin-form-hint" style="margin-bottom: 0.5rem;">Preview with sample values</p>
+                                <p style="margin-bottom: 0.5rem;">
+                                    <i class="bi bi-chat-dots"></i>
+                                    <span style="color: var(--qm-text-secondary);">@RenderPreview(settings.SmsTokenCreatedTemplate)</span>
+                                    <span class="qm-admin-form-hint">(@(RenderPreview(settings.SmsTokenCreatedTemplate).Length) characters)</span>
+                                </p>
+                                <p style="margin-bottom: 0.35rem;">
+                                    <i class="bi bi-envelope"></i>
+                                    <strong>@RenderPreview(settings.EmailTokenCreatedSubject)</strong>
+                                </p>
+                                @foreach (var line in RenderPreviewLines(settings.EmailTokenCreatedTemplate))
+                                {
+                                    <p style="color: var(--qm-text-secondary); margin-bottom: 0.25rem;">@line</p>
+                                }
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4><i class="bi bi-hourglass-split"></i> Nearly your turn</h4>
+                            <p class="qm-admin-form-hint">Sent once, when the customer reaches the threshold above. <code>{Position}</code> is their place in line.</p>
+
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsReminderTemplate" Label="SMS" Type="textarea" Rows="2"
+                                        HelperText="Keep it short - one SMS is 160 characters."
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailReminderSubject" Label="Email subject"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailReminderTemplate" Label="Email body (one paragraph per line)" Type="textarea" Rows="4"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div style="background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 0.85rem 1rem; margin-bottom: 1rem;">
+                                <p class="qm-admin-form-hint" style="margin-bottom: 0.5rem;">Preview with sample values</p>
+                                <p style="margin-bottom: 0.5rem;">
+                                    <i class="bi bi-chat-dots"></i>
+                                    <span style="color: var(--qm-text-secondary);">@RenderPreview(settings.SmsReminderTemplate)</span>
+                                    <span class="qm-admin-form-hint">(@(RenderPreview(settings.SmsReminderTemplate).Length) characters)</span>
+                                </p>
+                                <p style="margin-bottom: 0.35rem;">
+                                    <i class="bi bi-envelope"></i>
+                                    <strong>@RenderPreview(settings.EmailReminderSubject)</strong>
+                                </p>
+                                @foreach (var line in RenderPreviewLines(settings.EmailReminderTemplate))
+                                {
+                                    <p style="color: var(--qm-text-secondary); margin-bottom: 0.25rem;">@line</p>
+                                }
+                            </div>
+
+                            <div class="qm-admin-divider"></div>
+                            <h4><i class="bi bi-megaphone"></i> Called to counter</h4>
+                            <p class="qm-admin-form-hint">Sent the moment staff call this ticket. <code>{CounterNumber}</code> names the counter.</p>
+
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.SmsTokenCalledTemplate" Label="SMS" Type="textarea" Rows="2"
+                                        HelperText="Keep it short - one SMS is 160 characters."
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCalledSubject" Label="Email subject"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div class="qm-admin-form-group">
+                                <QInput TValue="string" @bind-Value="@settings.EmailTokenCalledTemplate" Label="Email body (one paragraph per line)" Type="textarea" Rows="4"
+                                        Disabled="@(!settings.QueueNotificationsEnabled)" />
+                            </div>
+                            <div style="background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 0.85rem 1rem; margin-bottom: 1rem;">
+                                <p class="qm-admin-form-hint" style="margin-bottom: 0.5rem;">Preview with sample values</p>
+                                <p style="margin-bottom: 0.5rem;">
+                                    <i class="bi bi-chat-dots"></i>
+                                    <span style="color: var(--qm-text-secondary);">@RenderPreview(settings.SmsTokenCalledTemplate)</span>
+                                    <span class="qm-admin-form-hint">(@(RenderPreview(settings.SmsTokenCalledTemplate).Length) characters)</span>
+                                </p>
+                                <p style="margin-bottom: 0.35rem;">
+                                    <i class="bi bi-envelope"></i>
+                                    <strong>@RenderPreview(settings.EmailTokenCalledSubject)</strong>
+                                </p>
+                                @foreach (var line in RenderPreviewLines(settings.EmailTokenCalledTemplate))
+                                {
+                                    <p style="color: var(--qm-text-secondary); margin-bottom: 0.25rem;">@line</p>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
                 else if (activeSection == "templates")
                 {
                     <div class="qm-admin-settings-section">
@@ -325,9 +550,12 @@
                             <div class="qm-admin-alert info">
                                 <i class="bi bi-info-circle"></i>
                                 <div>
+                                    <p>These are the same customer messages as the <strong>Queue Messages</strong> section, which also shows a live preview and the "nearly your turn" email.</p>
                                     <p>Available placeholders:</p>
-                                    <code>{TokenNumber}</code> <code>{ServiceType}</code> <code>{CounterName}</code>
-                                    <code>{WaitTime}</code> <code>{PositionInQueue}</code> <code>{TrackingUrl}</code>
+                                    <code>{TicketNumber}</code> <code>{CounterNumber}</code> <code>{Position}</code>
+                                    <code>{BranchName}</code> <code>{OrganizationName}</code> <code>{EstimatedWaitMinutes}</code>
+                                    <code>{ServiceType}</code> <code>{CustomerName}</code>
+                                    <p class="qm-admin-form-hint">Older names still work: <code>{TokenNumber}</code>, <code>{CounterName}</code>, <code>{PositionInQueue}</code>, <code>{WaitTime}</code>. <code>{TrackingUrl}</code> is no longer substituted and renders as empty.</p>
                                 </div>
                             </div>
 
@@ -393,8 +621,57 @@
         new() { Key = "telegram", Name = "Telegram", Icon = "bi-telegram" },
         new() { Key = "whatsapp", Name = "WhatsApp", Icon = "bi-whatsapp" },
         new() { Key = "inapp", Name = "In-App", Icon = "bi-bell" },
+        new() { Key = "queue", Name = "Queue Messages", Icon = "bi-person-check" },
         new() { Key = "templates", Name = "Templates", Icon = "bi-file-text" }
     };
+
+    // Sample values used only for the live preview in the Queue Messages section — they mirror
+    // the placeholders QueueCustomerNotifier substitutes for real, including the legacy aliases.
+    private static readonly Dictionary<string, string> previewValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["TicketNumber"] = "A014",
+        ["TokenNumber"] = "A014",
+        ["CounterNumber"] = "3",
+        ["CounterName"] = "Counter 3",
+        ["Position"] = "2",
+        ["PositionInQueue"] = "2",
+        ["BranchName"] = "Main Branch",
+        ["OrganizationName"] = "Acme Services",
+        ["EstimatedWaitMinutes"] = "12",
+        ["WaitTime"] = "12",
+        ["ServiceType"] = "Account Opening",
+        ["CustomerName"] = "Jane",
+        ["TrackingUrl"] = ""
+    };
+
+    private static string RenderPreview(string? template)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+            return "";
+
+        var result = template;
+        foreach (var kv in previewValues)
+        {
+            result = result.Replace("{" + kv.Key + "}", kv.Value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Tags are stripped rather than rendered: the stored template is admin-authored HTML,
+        // and echoing it back as live markup into another admin's page is not worth the risk
+        // for a preview.
+        result = System.Text.RegularExpressions.Regex.Replace(result, "<[^>]+>", "");
+
+        // Collapse the gaps an empty placeholder leaves behind, the same way the server does.
+        var lines = result.Replace("\r\n", "\n").Split('\n')
+            .Select(line => string.Join(' ', line.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Trim());
+        return string.Join('\n', lines).Trim();
+    }
+
+    private static List<string> RenderPreviewLines(string? template) =>
+        RenderPreview(template)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -596,14 +873,31 @@
         // Push
         public bool PushEnabled { get; set; }
 
-        // Templates
-        public string? SmsTokenCreatedTemplate { get; set; } = "Your queue number is {TokenNumber}. Estimated wait: {WaitTime} mins.";
-        public string? SmsTokenCalledTemplate { get; set; } = "Your number {TokenNumber} is now being called at {CounterName}.";
-        public string? SmsReminderTemplate { get; set; } = "Reminder: You are {PositionInQueue} position(s) away.";
-        public string? EmailTokenCreatedSubject { get; set; } = "Your Queue Ticket - {TokenNumber}";
-        public string? EmailTokenCreatedTemplate { get; set; }
-        public string? EmailTokenCalledSubject { get; set; } = "Your Number is Being Called - {TokenNumber}";
-        public string? EmailTokenCalledTemplate { get; set; }
+        // Queue customer notifications — what the ticket holder receives.
+        public bool QueueNotificationsEnabled { get; set; } = true;
+        public bool QueueNotifySms { get; set; } = true;
+        public bool QueueNotifyEmail { get; set; } = true;
+        public bool QueueNotifyOnIssued { get; set; } = true;
+        public bool QueueNotifyOnApproaching { get; set; } = true;
+        public bool QueueNotifyOnCalled { get; set; } = true;
+
+        // Templates. These defaults mirror NotificationSettings' server-side constants and only
+        // ever show for an organization that has no settings row yet — a saved row always wins.
+        public string? SmsTokenCreatedTemplate { get; set; } =
+            "{OrganizationName}: ticket {TicketNumber} issued at {BranchName}. You are #{Position} in line (about {EstimatedWaitMinutes} min).";
+        public string? SmsTokenCalledTemplate { get; set; } =
+            "{OrganizationName}: it's your turn. Ticket {TicketNumber} - please proceed to counter {CounterNumber} at {BranchName}.";
+        public string? SmsReminderTemplate { get; set; } =
+            "{OrganizationName}: almost your turn. Ticket {TicketNumber} is #{Position} in line at {BranchName}. Please be ready.";
+        public string? EmailTokenCreatedSubject { get; set; } = "Your ticket {TicketNumber} at {BranchName}";
+        public string? EmailTokenCreatedTemplate { get; set; } =
+            "Your ticket number is <strong>{TicketNumber}</strong>.\nYou are currently number {Position} in the queue at {BranchName}.\nThe estimated wait is about {EstimatedWaitMinutes} minutes.\nWe'll message you again when your turn is close.";
+        public string? EmailReminderSubject { get; set; } = "Almost your turn - ticket {TicketNumber}";
+        public string? EmailReminderTemplate { get; set; } =
+            "Ticket <strong>{TicketNumber}</strong> is now number {Position} in the queue at {BranchName}.\nPlease make your way to the waiting area so you don't miss your turn.";
+        public string? EmailTokenCalledSubject { get; set; } = "It's your turn - ticket {TicketNumber}";
+        public string? EmailTokenCalledTemplate { get; set; } =
+            "Ticket <strong>{TicketNumber}</strong> is being called now at counter <strong>{CounterNumber}</strong>, {BranchName}.\nPlease proceed to the counter.";
     }
 
     private class TestResult

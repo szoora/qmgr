@@ -1,6 +1,7 @@
 @page "/feedback/{FeedbackCode}"
 @layout KioskLayout
 @using System.Text.Json
+@using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -117,13 +118,22 @@
                 </div>
             }
 
-            <div class="rating-section">
-                <h3>How would you rate your experience?</h3>
-                <div class="star-rating">
+            @* ACCESSIBILITY: every rating scale on this page is a fieldset element with a real
+               <legend> (so a screen reader announces the question before the options), and each
+               option is a native <button> — natively focusable and activated by Enter/Space —
+               carrying role="radio", aria-checked and a full-sentence aria-label. The visible
+               star glyphs are decorative, so the label is the only thing that has to read well. *@
+            <fieldset class="rating-section">
+                <legend>How would you rate your experience?</legend>
+                <div class="star-rating" role="radiogroup" aria-label="Overall service rating, 1 to 5 stars">
                     @for (int i = 1; i <= 5; i++)
                     {
                         var rating = i;
-                        <button class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
+                        <button type="button"
+                                role="radio"
+                                aria-checked="@(feedbackRating == rating ? "true" : "false")"
+                                aria-label="@($"{rating} out of 5 stars - {RatingWord(rating)}")"
+                                class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
                                 @onclick="@(() => feedbackRating = rating)"
                                 @onmouseenter="@(() => hoverRating = rating)"
                                 @onmouseleave="@(() => hoverRating = 0)">
@@ -131,53 +141,168 @@
                         </button>
                     }
                 </div>
-                <div class="rating-label">
+                <div class="rating-label" aria-live="polite">
                     @GetRatingLabel()
                 </div>
-            </div>
+            </fieldset>
 
-            <div class="category-section">
-                <h3>What area would you like to comment on?</h3>
-                <div class="category-chips">
+            <fieldset class="category-section">
+                <legend>What area would you like to comment on?</legend>
+                <div class="category-chips" role="radiogroup" aria-label="Feedback area">
                     @foreach (var cat in feedbackCategories)
                     {
-                        <button class="category-chip @(selectedCategory == cat.Value ? "selected" : "")"
-                                @onclick="@(() => selectedCategory = cat.Value)">
-                            <QIcon Name="@cat.Icon" />
-                            <span>@cat.Label</span>
+                        var category = cat;
+                        <button type="button"
+                                role="radio"
+                                aria-checked="@(selectedCategory == category.Value ? "true" : "false")"
+                                aria-label="@category.Label"
+                                class="category-chip @(selectedCategory == category.Value ? "selected" : "")"
+                                @onclick="@(() => selectedCategory = category.Value)">
+                            <QIcon Name="@category.Icon" />
+                            <span>@category.Label</span>
                         </button>
                     }
                 </div>
-            </div>
+            </fieldset>
+
+            @* Branch-configured survey questions, rendered in DisplayOrder after the core rating. *@
+            @foreach (var question in questions)
+            {
+                var q = question;
+                var answer = answers.GetValueOrDefault(q.Id, string.Empty);
+
+                if (q.QuestionType == FeedbackQuestionType.FreeText)
+                {
+                    <div class="survey-section">
+                        <label class="survey-legend" for="@($"q-{q.Id}")">
+                            @q.QuestionText
+                            @if (q.IsRequired)
+                            {
+                                <span class="required-mark" aria-hidden="true">*</span>
+                                <span class="visually-hidden">(required)</span>
+                            }
+                        </label>
+                        <textarea id="@($"q-{q.Id}")"
+                                  class="survey-textarea"
+                                  rows="3"
+                                  maxlength="1000"
+                                  required="@q.IsRequired"
+                                  aria-required="@(q.IsRequired ? "true" : "false")"
+                                  value="@answer"
+                                  @oninput="@(e => SetAnswer(q.Id, e.Value?.ToString()))"></textarea>
+                    </div>
+                }
+                else
+                {
+                    <fieldset class="survey-section">
+                        <legend>
+                            @q.QuestionText
+                            @if (q.IsRequired)
+                            {
+                                <span class="required-mark" aria-hidden="true">*</span>
+                                <span class="visually-hidden">(required)</span>
+                            }
+                        </legend>
+
+                        @if (q.QuestionType == FeedbackQuestionType.Rating)
+                        {
+                            <div class="star-rating star-rating--sm" role="radiogroup" aria-label="@q.QuestionText">
+                                @for (int i = 1; i <= 5; i++)
+                                {
+                                    var star = i;
+                                    var selected = int.TryParse(answer, out var current) ? current : 0;
+                                    <button type="button"
+                                            role="radio"
+                                            aria-checked="@(selected == star ? "true" : "false")"
+                                            aria-label="@($"{star} out of 5 stars - {RatingWord(star)}")"
+                                            class="star-btn star-btn--sm @(selected >= star ? "active" : "")"
+                                            @onclick="@(() => SetAnswer(q.Id, star.ToString()))">
+                                        <QIcon Name="@(selected >= star ? "star-fill" : "star")" />
+                                    </button>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="category-chips" role="radiogroup" aria-label="@q.QuestionText">
+                                @foreach (var option in OptionsFor(q))
+                                {
+                                    var value = option;
+                                    <button type="button"
+                                            role="radio"
+                                            aria-checked="@(string.Equals(answer, value, StringComparison.OrdinalIgnoreCase) ? "true" : "false")"
+                                            aria-label="@value"
+                                            class="category-chip @(string.Equals(answer, value, StringComparison.OrdinalIgnoreCase) ? "selected" : "")"
+                                            @onclick="@(() => SetAnswer(q.Id, value))">
+                                        <span>@value</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </fieldset>
+                }
+            }
+
+            @* Net Promoter Score — deliberately its own step, visually separated from the 1-5
+               service rating above so the two scales don't get confused with each other. Always
+               optional; a skipped NPS is stored as null, never as a 0. *@
+            <fieldset class="nps-section">
+                <legend>How likely are you to recommend us to a friend or colleague?</legend>
+                <div class="nps-scale" role="radiogroup" aria-label="Likelihood to recommend, 0 to 10">
+                    @for (int i = 0; i <= 10; i++)
+                    {
+                        var score = i;
+                        <button type="button"
+                                role="radio"
+                                aria-checked="@(npsScore == score ? "true" : "false")"
+                                aria-label="@($"{score} out of 10 - {NpsWord(score)}")"
+                                class="nps-btn @(npsScore == score ? "selected" : "") @NpsBandClass(score)"
+                                @onclick="@(() => npsScore = npsScore == score ? null : score)">
+                            @score
+                        </button>
+                    }
+                </div>
+                <div class="nps-anchors" aria-hidden="true">
+                    <span>Not at all likely</span>
+                    <span>Extremely likely</span>
+                </div>
+                <p class="nps-hint">Optional &mdash; tap a number again to clear it.</p>
+            </fieldset>
 
             <div class="comment-section">
-                <h3>Tell us more (optional)</h3>
-                <textarea @bind="feedbackComment"
+                <label class="survey-legend" for="feedback-comment">Tell us more (optional)</label>
+                <textarea id="feedback-comment"
+                          @bind="feedbackComment"
                           placeholder="Share any additional thoughts or suggestions..."
                           rows="4"></textarea>
             </div>
 
-            <div class="contact-section">
-                <h3>Contact Information (optional)</h3>
+            <details class="contact-section">
+                <summary>Add your contact details (optional)</summary>
                 <p class="contact-hint">Leave your details if you'd like us to follow up</p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" @bind="customerName" placeholder="Your name" />
+                        <label for="feedback-name">Name</label>
+                        <input id="feedback-name" type="text" autocomplete="name" @bind="customerName" placeholder="Your name" />
                     </div>
                     <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" @bind="customerEmail" placeholder="your@email.com" />
+                        <label for="feedback-email">Email</label>
+                        <input id="feedback-email" type="email" autocomplete="email" @bind="customerEmail" placeholder="your@email.com" />
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Phone</label>
-                    <input type="tel" @bind="customerPhone" placeholder="+1234567890" />
+                    <label for="feedback-phone">Phone</label>
+                    <input id="feedback-phone" type="tel" autocomplete="tel" @bind="customerPhone" placeholder="+1234567890" />
                 </div>
-            </div>
+            </details>
+
+            @if (!string.IsNullOrEmpty(validationError))
+            {
+                <p class="validation-error" role="alert">@validationError</p>
+            }
 
             <div class="submit-section">
-                <button class="submit-btn" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmitting)">
+                <button type="button" class="submit-btn" @onclick="SubmitFeedback" disabled="@(feedbackRating == 0 || isSubmitting)">
                     @if (isSubmitting)
                     {
                         <QSpinner Size="sm" />
@@ -430,16 +555,199 @@
         font-weight: 600;
     }
 
-    /* Sections */
-    .rating-section, .category-section, .comment-section, .contact-section {
-        margin-bottom: 32px;
+    /* Sections.
+       The rating, category, survey and NPS groups are real fieldset elements now (each option is a
+       role="radio" button inside them), so the browser's default fieldset chrome has to be
+       reset before the existing spacing rules apply. */
+    .rating-section, .category-section, .comment-section, .contact-section,
+    .survey-section, .nps-section {
+        margin: 0 0 32px;
+        padding: 0;
+        border: 0;
+        min-width: 0; /* fieldsets default to min-content, which breaks flex wrapping */
     }
 
-    .rating-section h3, .category-section h3, .comment-section h3, .contact-section h3 {
+    .rating-section legend, .category-section legend,
+    .survey-section legend, .nps-section legend,
+    .survey-legend {
+        display: block;
+        width: 100%;
+        padding: 0;
         font-size: 18px;
         font-weight: 600;
         margin: 0 0 16px;
         text-align: center;
+        color: var(--qm-text-primary);
+    }
+
+    .survey-section legend, .survey-legend {
+        font-size: 16px;
+    }
+
+    .required-mark {
+        color: var(--qm-danger);
+        margin-left: 4px;
+    }
+
+    /* Screen-reader-only text: this form is public, so the "(required)" cue has to reach
+       assistive tech even though the visual cue is just an asterisk. */
+    .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    /* Every interactive control here is keyboard-reachable; make that visible. */
+    .star-btn:focus-visible,
+    .category-chip:focus-visible,
+    .nps-btn:focus-visible,
+    .submit-btn:focus-visible,
+    .action-btn:focus-visible,
+    .contact-section summary:focus-visible {
+        outline: 3px solid var(--qm-primary);
+        outline-offset: 2px;
+    }
+
+    /* Survey questions */
+    .survey-textarea {
+        width: 100%;
+        padding: 14px 16px;
+        background: var(--qm-bg-elevated);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+        font-size: 15px;
+        color: var(--qm-text-primary);
+        resize: vertical;
+        font-family: inherit;
+        transition: all 0.3s ease;
+    }
+
+    .survey-textarea:focus {
+        outline: none;
+        border-color: var(--qm-primary);
+        background: var(--qm-bg-card-hover);
+    }
+
+    .star-rating--sm {
+        gap: 8px;
+    }
+
+    .star-btn--sm {
+        width: 48px;
+        height: 48px;
+    }
+
+    .star-btn--sm .rzi {
+        font-size: 24px;
+    }
+
+    /* Net Promoter Score */
+    .nps-section {
+        padding: 24px 20px;
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-xl);
+    }
+
+    .nps-scale {
+        display: grid;
+        grid-template-columns: repeat(11, minmax(0, 1fr));
+        gap: 6px;
+    }
+
+    .nps-btn {
+        aspect-ratio: 1;
+        min-height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--qm-bg-card);
+        border: 2px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .nps-btn:hover {
+        border-color: var(--qm-text-muted);
+    }
+
+    .nps-btn.selected.detractor {
+        background: color-mix(in srgb, var(--qm-danger) 18%, transparent);
+        border-color: var(--qm-danger);
+        color: var(--qm-danger);
+    }
+
+    .nps-btn.selected.passive {
+        background: color-mix(in srgb, var(--qm-warning) 18%, transparent);
+        border-color: var(--qm-warning);
+        color: var(--qm-warning);
+    }
+
+    .nps-btn.selected.promoter {
+        background: color-mix(in srgb, var(--qm-success) 18%, transparent);
+        border-color: var(--qm-success);
+        color: var(--qm-success);
+    }
+
+    .nps-anchors {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .nps-hint {
+        margin: 8px 0 0;
+        text-align: center;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    /* Contact details are collapsed by default — the whole point is a form a customer will
+       finish, and three optional inputs on screen make it look twice as long as it is. */
+    .contact-section summary {
+        cursor: pointer;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        padding: 12px 0;
+        text-align: center;
+        list-style: none;
+    }
+
+    .contact-section summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .contact-section summary::after {
+        content: " +";
+        color: var(--qm-primary);
+    }
+
+    .contact-section[open] summary::after {
+        content: " -";
+    }
+
+    .validation-error {
+        margin: 0 0 16px;
+        padding: 12px 16px;
+        text-align: center;
+        font-size: 14px;
+        color: var(--qm-danger);
+        background: color-mix(in srgb, var(--qm-danger) 12%, transparent);
+        border: 1px solid var(--qm-danger);
+        border-radius: var(--qm-radius-md);
     }
 
     /* Star Rating */
@@ -681,6 +989,26 @@
             font-size: 28px;
         }
 
+        .star-btn--sm {
+            width: 42px;
+            height: 42px;
+        }
+
+        .star-btn--sm .rzi {
+            font-size: 20px;
+        }
+
+        /* 11 columns won't fit a phone: wrap to two rows of six/five instead of shrinking the
+           tap targets below the 38px minimum. */
+        .nps-scale {
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .nps-section {
+            padding: 20px 16px;
+        }
+
         .form-row {
             grid-template-columns: 1fr;
         }
@@ -711,11 +1039,19 @@
 
     private int feedbackRating = 0;
     private int hoverRating = 0;
+    private int? npsScore;
     private FeedbackCategory selectedCategory = FeedbackCategory.General;
     private string? feedbackComment;
     private string? customerName;
     private string? customerEmail;
     private string? customerPhone;
+    private string? validationError;
+
+    /// <summary>Branch-configured survey questions, already ordered by the API.</summary>
+    private List<FeedbackQuestionDto> questions = new();
+
+    /// <summary>QuestionId -> the customer's current answer, as text.</summary>
+    private readonly Dictionary<Guid, string> answers = new();
 
     private readonly List<(FeedbackCategory Value, string Label, string Icon)> feedbackCategories = new()
     {
@@ -740,7 +1076,7 @@
 
             if (response.IsSuccessStatusCode)
             {
-                var info = await response.Content.ReadFromJsonAsync<FeedbackInfoResponse>(JsonOptions);
+                var info = await response.Content.ReadFromJsonAsync<FeedbackCodeInfoDto>(JsonOptions);
                 if (info != null)
                 {
                     tokenDisplayNumber = info.TokenDisplayNumber;
@@ -749,6 +1085,10 @@
                     serviceDate = info.ServiceDate;
                     alreadySubmitted = info.AlreadySubmitted;
                     existingRating = info.ExistingRating ?? 0;
+
+                    // Survey questions come back with the code lookup — one round trip for the
+                    // whole form, so nothing pops in after the customer has started answering.
+                    questions = info.Questions ?? new List<FeedbackQuestionDto>();
                 }
             }
             else
@@ -765,40 +1105,89 @@
         finally
         {
             isLoading = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
-    private string GetRatingLabel()
+    private void SetAnswer(Guid questionId, string? value)
     {
-        return feedbackRating switch
-        {
-            1 => "Very Poor",
-            2 => "Poor",
-            3 => "Average",
-            4 => "Good",
-            5 => "Excellent!",
-            _ => "Tap a star to rate"
-        };
+        if (string.IsNullOrWhiteSpace(value))
+            answers.Remove(questionId);
+        else
+            answers[questionId] = value;
+
+        validationError = null;
     }
+
+    private static List<string> OptionsFor(FeedbackQuestionDto question)
+        => question.QuestionType == FeedbackQuestionType.YesNo
+            ? new List<string> { "Yes", "No" }
+            : question.Options ?? new List<string>();
+
+    private string GetRatingLabel() => feedbackRating == 0 ? "Tap a star to rate" : RatingWord(feedbackRating);
+
+    private static string RatingWord(int rating) => rating switch
+    {
+        1 => "Very Poor",
+        2 => "Poor",
+        3 => "Average",
+        4 => "Good",
+        5 => "Excellent",
+        _ => "Not rated"
+    };
+
+    /// <summary>
+    /// Plain-language reading of an NPS point, used for the button's aria-label so a screen
+    /// reader user isn't just hearing bare numbers. These are the standard NPS bands:
+    /// 0-6 detractor, 7-8 passive, 9-10 promoter.
+    /// </summary>
+    private static string NpsWord(int score) => score switch
+    {
+        <= 6 => "not likely",
+        <= 8 => "neutral",
+        _ => "very likely"
+    };
+
+    private static string NpsBandClass(int score) => score switch
+    {
+        <= 6 => "detractor",
+        <= 8 => "passive",
+        _ => "promoter"
+    };
 
     private async Task SubmitFeedback()
     {
         if (feedbackRating == 0) return;
 
+        // Client-side required check purely so the customer gets a pointed message instead of a
+        // generic 400 — the API validates required answers again, and it is the authority.
+        var missing = questions.FirstOrDefault(q => q.IsRequired && !answers.ContainsKey(q.Id));
+        if (missing != null)
+        {
+            validationError = $"Please answer: {missing.QuestionText}";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        validationError = null;
         isSubmitting = true;
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
 
         try
         {
-            var request = new
+            var request = new SubmitFeedbackByCodeRequest
             {
                 FeedbackCode = FeedbackCode,
                 Rating = feedbackRating,
+                NpsScore = npsScore,
                 Comment = feedbackComment,
                 Category = selectedCategory,
                 CustomerName = customerName,
                 CustomerPhone = customerPhone,
-                CustomerEmail = customerEmail
+                CustomerEmail = customerEmail,
+                Answers = answers
+                    .Select(kvp => new SubmitFeedbackAnswer { QuestionId = kvp.Key, Answer = kvp.Value })
+                    .ToList()
             };
 
             var response = await Http.PostAsJsonAsync("api/v1/feedback/submit", request, JsonOptions);
@@ -809,8 +1198,8 @@
             }
             else
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to submit feedback. Please try again.");
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
             }
         }
         catch (Exception ex)
@@ -820,23 +1209,12 @@
         finally
         {
             isSubmitting = false;
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
     private void GoHome()
     {
         Navigation.NavigateTo("/");
-    }
-
-    private record FeedbackInfoResponse
-    {
-        public string FeedbackCode { get; init; } = string.Empty;
-        public string? TokenDisplayNumber { get; init; }
-        public string? ServiceTypeName { get; init; }
-        public string? BranchName { get; init; }
-        public DateTime? ServiceDate { get; init; }
-        public bool AlreadySubmitted { get; init; }
-        public int? ExistingRating { get; init; }
     }
 }
