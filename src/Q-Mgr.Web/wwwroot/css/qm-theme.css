@@ -74,14 +74,13 @@
     --qm-brand-facebook: #1877f2;
     --qm-brand-telegram: #0088cc;
     --qm-brand-google: #ea4335;
-    --qm-brand-linkedin: #0a66c2;
     --qm-brand-x: #000000;
     --qm-brand-youtube: #ff0000;
     --qm-brand-vimeo: #1ab7ea;
+    --qm-brand-tiktok: #fe2c55;
     --qm-brand-spotify: #1ed760;
     --qm-brand-soundcloud: #ff5500;
     --qm-brand-gdrive: #4285f4;
-    --qm-brand-office: #d83b01;
 
     /* Student Welfare Ledger — three case-type accents, deliberately distinct from
        success/warning/danger (those are semantic status colors, not category identity; a

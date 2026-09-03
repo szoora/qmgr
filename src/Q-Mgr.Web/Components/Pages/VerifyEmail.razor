@@ -25,7 +25,7 @@
         {
             <h1>Email verified!</h1>
             <p class="verify-subtext">@message</p>
-            <button class="btn-primary" @onclick="GoToLogin">Continue to Login</button>
+            <QButton Text="Continue to Login" Variant="primary" Block="true" OnClick="@GoToLogin" />
         }
         else if (state == VerifyState.MissingLink)
         {
@@ -34,7 +34,7 @@
                 This link is missing the information needed to verify your account. If you copied
                 it from an email, make sure the whole link came through.
             </p>
-            <button class="btn-primary" @onclick="GoToLogin">Go to Login</button>
+            <QButton Text="Go to Login" Variant="primary" Block="true" OnClick="@GoToLogin" />
         }
         else
         {
@@ -52,9 +52,9 @@
                                placeholder="you@company.com"
                                @bind="resendEmail"
                                disabled="@isResending" />
-                        <button class="btn-secondary" @onclick="ResendVerification" disabled="@(isResending || string.IsNullOrWhiteSpace(resendEmail))">
-                            @(isResending ? "Sending..." : "Resend")
-                        </button>
+                        <QButton Text="@(isResending ? "Sending..." : "Resend")" Variant="secondary"
+                                 OnClick="@ResendVerification"
+                                 Disabled="@(isResending || string.IsNullOrWhiteSpace(resendEmail))" />
                     </div>
                 </div>
             }
@@ -65,7 +65,7 @@
                 </p>
             }
 
-            <button class="btn-link" @onclick="GoToLogin">Back to Login</button>
+            <QButton Text="Back to Login" Variant="link" Class="back-link" OnClick="@GoToLogin" />
         }
     </div>
 </div>
@@ -120,47 +120,9 @@
         margin: 0 0 24px 0;
     }
 
-    .btn-primary {
-        width: 100%;
-        padding: 12px 20px;
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        border: none;
-        border-radius: var(--qm-radius-md);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-    }
-
-    .btn-primary:hover {
-        background: var(--qm-primary-dark);
-    }
-
-    .btn-secondary {
-        padding: 12px 16px;
-        background: var(--qm-bg-elevated);
-        color: var(--qm-text-primary);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-md);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        white-space: nowrap;
-    }
-
-    .btn-secondary:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .btn-link {
+    /* Buttons are QButton (q-components.css) — only page-specific spacing lives here. */
+    .back-link {
         margin-top: 16px;
-        background: none;
-        border: none;
-        color: var(--qm-primary);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
     }
 
     .resend-section {
