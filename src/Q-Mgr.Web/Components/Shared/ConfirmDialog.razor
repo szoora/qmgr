@@ -53,9 +53,9 @@
     {
         return ConfirmButtonClass switch
         {
-            "btn-danger" => "danger",
-            "btn-warning" => "warning",
-            "btn-success" => "success",
+            "btn-danger" or "danger" => "danger",
+            "btn-warning" or "warning" => "warning",
+            "btn-success" or "success" => "success",
             _ => "primary"
         };
     }
@@ -68,9 +68,9 @@
     {
         return ConfirmButtonClass switch
         {
-            "btn-danger" => "trash-fill",
-            "btn-warning" => "exclamation-triangle-fill",
-            "btn-success" => "check-lg",
+            "btn-danger" or "danger" => "trash-fill",
+            "btn-warning" or "warning" => "exclamation-triangle-fill",
+            "btn-success" or "success" => "check-lg",
             _ => "check-lg"
         };
     }

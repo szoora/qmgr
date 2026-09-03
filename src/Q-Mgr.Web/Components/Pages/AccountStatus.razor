@@ -21,9 +21,9 @@
         <div class="status-actions">
             @if (!string.IsNullOrEmpty(PrimaryActionText))
             {
-                <button class="btn-primary" @onclick="GoToPrimaryAction">@PrimaryActionText</button>
+                <QButton Text="@PrimaryActionText" Variant="primary" OnClick="@GoToPrimaryAction" />
             }
-            <button class="btn-secondary" @onclick="HandleLogout">Log Out</button>
+            <QButton Text="Log Out" Variant="outline-secondary" OnClick="@HandleLogout" />
         </div>
     </div>
 </div>
@@ -81,41 +81,11 @@
         margin: 0 0 28px 0;
     }
 
+    /* Buttons are QButton (q-components.css) — this only stacks them. */
     .status-actions {
         display: flex;
         flex-direction: column;
         gap: 10px;
-    }
-
-    .btn-primary {
-        padding: 12px 20px;
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        border: none;
-        border-radius: var(--qm-radius-md);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-    }
-
-    .btn-primary:hover {
-        background: var(--qm-primary-dark);
-    }
-
-    .btn-secondary {
-        padding: 12px 20px;
-        background: none;
-        color: var(--qm-text-muted);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-md);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-    }
-
-    .btn-secondary:hover {
-        color: var(--qm-text-primary);
-        border-color: var(--qm-text-muted);
     }
 </style>
 

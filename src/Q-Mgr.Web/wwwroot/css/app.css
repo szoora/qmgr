@@ -1263,3 +1263,9 @@ html, body {
     right: 1rem;
     top: 0.75rem;
 }
+
+/* Themed replacement for Bootstrap's .text-muted (which is fixed gray #6c757d and ignores
+   --qm-* in both themes). Use this on any inline helper text instead of text-muted. */
+.qm-text-muted {
+    color: var(--qm-text-muted);
+}

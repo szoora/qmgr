@@ -99,7 +99,7 @@
                                         }
                                         else
                                         {
-                                            <span class="text-muted">N/A</span>
+                                            <span class="qm-text-muted">N/A</span>
                                         }
                                     </td>
                                     <td>
@@ -117,19 +117,19 @@
                                                          Loading="@(resendingId == tenant.Id)" />
                                                 <QButton Icon="patch-check-fill" Variant="ghost" Size="sm"
                                                          OnClick="@(() => VerifyTenantNow(tenant))" Title="Verify Now (skip email)"
-                                                         Class="btn-success" Loading="@(verifyingId == tenant.Id)" />
+                                                         Class="tone-success" Loading="@(verifyingId == tenant.Id)" />
                                             }
                                             @if (tenant.Status == TenantStatus.Active || tenant.Status == TenantStatus.Trialing)
                                             {
                                                 <QButton Icon="pause-circle-fill" Variant="ghost" Size="sm"
                                                          OnClick="@(() => ShowSuspendDialog(tenant))" Title="Suspend"
-                                                         Class="btn-warning" />
+                                                         Class="tone-warning" />
                                             }
                                             else if (tenant.Status == TenantStatus.Suspended)
                                             {
                                                 <QButton Icon="play-circle-fill" Variant="ghost" Size="sm"
                                                          OnClick="@(() => ReactivateTenant(tenant))" Title="Reactivate"
-                                                         Class="btn-success" />
+                                                         Class="tone-success" />
                                             }
                                         </div>
                                     </td>
@@ -354,7 +354,7 @@
             <p>Modules active for <strong>@selectedTenant.Name</strong></p>
             @if (loadingModules)
             {
-                <p class="text-muted">Loading...</p>
+                <p class="qm-text-muted">Loading...</p>
             }
             else
             {
@@ -366,11 +366,11 @@
                                 <strong>@module.ModuleName</strong>
                                 @if (module.GrantedByPlatformAdmin && module.Purchased)
                                 {
-                                    <span class="text-muted"> &middot; granted</span>
+                                    <span class="qm-text-muted"> &middot; granted</span>
                                 }
                                 else if (module.Purchased)
                                 {
-                                    <span class="text-muted"> &middot; @module.Status</span>
+                                    <span class="qm-text-muted"> &middot; @module.Status</span>
                                 }
                             </div>
                             <label class="qm-switch">
@@ -554,11 +554,11 @@
         gap: 4px;
     }
 
-    .btn-warning {
+    .tone-warning {
         color: var(--qm-warning);
     }
 
-    .btn-success {
+    .tone-success {
         color: var(--qm-success);
     }
 
@@ -632,9 +632,6 @@
         margin-bottom: 20px;
     }
 
-    .text-muted {
-        color: var(--qm-text-muted);
-    }
 
     .modules-toggle-list {
         display: flex;

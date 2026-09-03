@@ -97,7 +97,7 @@ else
                     </h2>
                 </div>
             </div>
-            <p class="text-muted">
+            <p class="qm-text-muted">
                 @if (IsTrialExpired)
                 {
                     <text>Choose a plan below to keep using Q-Mgr — your data is safe and waiting.</text>
@@ -199,7 +199,7 @@ else
         {
             @if (!string.IsNullOrEmpty(upgradeError))
             {
-                <div class="alert alert-danger">@upgradeError</div>
+                <div class="qm-admin-alert error">@upgradeError</div>
             }
             @if (currentPlan == null)
             {
@@ -210,7 +210,7 @@ else
                         <strong>@selectedPlan.Currency @selectedPlan.MonthlyPrice.ToString("N2")/month</strong>
                     </div>
                 </div>
-                <p class="text-muted small mt-3">Your subscription starts immediately.</p>
+                <p class="qm-text-muted small mt-3">Your subscription starts immediately.</p>
             }
             else
             {
@@ -229,7 +229,7 @@ else
                         <strong>@selectedPlan.Currency @dueToday.ToString("N2")</strong>
                     </div>
                 </div>
-                <p class="text-muted small mt-3">Your new plan will take effect immediately and you'll be charged the prorated amount for the remainder of this billing period.</p>
+                <p class="qm-text-muted small mt-3">Your new plan will take effect immediately and you'll be charged the prorated amount for the remainder of this billing period.</p>
             }
         }
     </ChildContent>
@@ -243,7 +243,7 @@ else
 <QModal @bind-Visible="showCancelDialog" Title="Cancel Subscription" Icon="exclamation-triangle-fill" Size="md">
     <ChildContent>
         <p>Are you sure you want to cancel your subscription?</p>
-        <ul class="text-muted">
+        <ul class="qm-text-muted">
             <li>Your account will remain active until @currentPlan?.NextBillingDate?.ToString("MMMM dd, yyyy")</li>
             <li>After that, you'll be downgraded to the Free plan</li>
             <li>You can reactivate anytime before the end of your billing period</li>

@@ -170,6 +170,16 @@
     color: var(--qm-success);
 }
 
+.qm-admin-alert.warning {
+    background: color-mix(in srgb, var(--qm-warning) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--qm-warning) 30%, transparent);
+    color: var(--qm-text-primary);
+}
+
+.qm-admin-alert.warning i {
+    color: var(--qm-warning);
+}
+
 .qm-admin-alert.error {
     background: color-mix(in srgb, var(--qm-danger) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--qm-danger) 30%, transparent);

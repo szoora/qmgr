@@ -23,7 +23,7 @@
     With fallback content:
     <PermissionGuard Permission="Permissions.UsersCreate">
         <Authorized><button>Create User</button></Authorized>
-        <NotAuthorized><span class="text-muted">No permission to create users</span></NotAuthorized>
+        <NotAuthorized><span class="qm-text-muted">No permission to create users</span></NotAuthorized>
     </PermissionGuard>
 *@
 
@@ -53,7 +53,7 @@ else
     }
     else if (ShowUnauthorizedMessage)
     {
-        <div class="alert alert-warning">
+        <div class="qm-admin-alert warning">
             <i class="bi bi-shield-x"></i> You don't have permission to view this content.
         </div>
     }

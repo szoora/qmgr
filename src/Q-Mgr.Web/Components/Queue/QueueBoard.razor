@@ -11,105 +11,105 @@
 
 <PageTitle>Queue Board - Q-Mgr</PageTitle>
 
-<div class="queue-board">
+<div class="qb-queue-board">
     <!-- Header -->
-    <div class="board-header">
-        <div class="header-left">
+    <div class="qb-board-header">
+        <div class="qb-header-left">
             <h1>Queue Management Board</h1>
             <span class="qb-branch-name">@BranchName</span>
         </div>
-        <div class="header-right">
-            <span class="current-time">@currentTime.ToString("HH:mm:ss")</span>
-            <span class="current-date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
+        <div class="qb-header-right">
+            <span class="qb-current-time">@currentTime.ToString("HH:mm:ss")</span>
+            <span class="qb-current-date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
         </div>
     </div>
 
-    <div class="board-content">
+    <div class="qb-board-content">
         <!-- Now Serving Section -->
         <div class="qb-now-serving-section">
             <h2>Now Serving</h2>
-            <div class="counters-grid">
+            <div class="qb-counters-grid">
                 @if (counters != null && counters.Any())
                 {
                     @foreach (var counter in counters.Where(c => c.Status == CounterStatus.Active))
                     {
-                        <div class="counter-card @(counter.CurrentToken != null ? "serving" : "available")">
-                            <div class="counter-number">@counter.DisplayName</div>
+                        <div class="qb-counter-card @(counter.CurrentToken != null ? "qb-serving" : "qb-available")">
+                            <div class="qb-counter-number">@counter.DisplayName</div>
                             @if (counter.CurrentToken != null)
                             {
-                                <div class="token-display @(IsNewToken(counter.CurrentToken.Id) ? "flash" : "")">
+                                <div class="qb-token-display @(IsNewToken(counter.CurrentToken.Id) ? "qb-flash" : "")">
                                     @counter.CurrentToken.DisplayNumber
                                 </div>
-                                <div class="customer-name">@(counter.CurrentToken.Customer?.Name ?? "Customer")</div>
+                                <div class="qb-customer-name">@(counter.CurrentToken.Customer?.Name ?? "Customer")</div>
                             }
                             else
                             {
-                                <div class="token-display empty">---</div>
-                                <div class="status-text">Available</div>
+                                <div class="qb-token-display qb-empty">---</div>
+                                <div class="qb-status-text">Available</div>
                             }
                         </div>
                     }
                 }
                 else
                 {
-                    <div class="no-counters">No active counters</div>
+                    <div class="qb-no-counters">No active counters</div>
                 }
             </div>
         </div>
 
         <!-- Waiting Queue Section -->
-        <div class="waiting-section">
-            <h2>Waiting Queue <span class="count">(@(waitingTokens?.Count ?? 0))</span></h2>
-            <div class="waiting-list">
+        <div class="qb-waiting-section">
+            <h2>Waiting Queue <span class="qb-count">(@(waitingTokens?.Count ?? 0))</span></h2>
+            <div class="qb-waiting-list">
                 @if (waitingTokens != null && waitingTokens.Any())
                 {
                     @foreach (var token in waitingTokens.Take(20))
                     {
-                        <div class="waiting-item @(token.Priority == TokenPriority.Priority ? "priority" : "") @(token.Priority == TokenPriority.VIP ? "vip" : "")">
-                            <span class="token-number">@token.DisplayNumber</span>
-                            <span class="service-type">@(token.ServiceType?.Name ?? "General")</span>
+                        <div class="qb-waiting-item @(token.Priority == TokenPriority.Priority ? "qb-priority" : "") @(token.Priority == TokenPriority.VIP ? "qb-vip" : "")">
+                            <span class="qb-token-number">@token.DisplayNumber</span>
+                            <span class="qb-service-type">@(token.ServiceType?.Name ?? "General")</span>
                             @if (token.Priority != TokenPriority.Normal)
                             {
-                                <span class="priority-badge">@token.Priority</span>
+                                <span class="qb-priority-badge">@token.Priority</span>
                             }
                         </div>
                     }
                     @if (waitingTokens.Count > 20)
                     {
-                        <div class="more-waiting">+@(waitingTokens.Count - 20) more waiting...</div>
+                        <div class="qb-more-waiting">+@(waitingTokens.Count - 20) more waiting...</div>
                     }
                 }
                 else
                 {
-                    <div class="no-waiting">No customers waiting</div>
+                    <div class="qb-no-waiting">No customers waiting</div>
                 }
             </div>
         </div>
     </div>
 
     <!-- Statistics Footer -->
-    <div class="board-footer">
-        <div class="stat-item">
-            <span class="stat-value">@(waitingTokens?.Count ?? 0)</span>
-            <span class="stat-label">Waiting</span>
+    <div class="qb-board-footer">
+        <div class="qb-stat-item">
+            <span class="qb-stat-value">@(waitingTokens?.Count ?? 0)</span>
+            <span class="qb-stat-label">Waiting</span>
         </div>
-        <div class="stat-item">
-            <span class="stat-value">@(counters?.Count(c => c.Status == CounterStatus.Active) ?? 0)</span>
-            <span class="stat-label">Active Counters</span>
+        <div class="qb-stat-item">
+            <span class="qb-stat-value">@(counters?.Count(c => c.Status == CounterStatus.Active) ?? 0)</span>
+            <span class="qb-stat-label">Active Counters</span>
         </div>
-        <div class="stat-item">
-            <span class="stat-value">@avgWaitTime min</span>
-            <span class="stat-label">Avg Wait Time</span>
+        <div class="qb-stat-item">
+            <span class="qb-stat-value">@avgWaitTime min</span>
+            <span class="qb-stat-label">Avg Wait Time</span>
         </div>
-        <div class="stat-item">
-            <span class="stat-value">@servedToday</span>
-            <span class="stat-label">Served Today</span>
+        <div class="qb-stat-item">
+            <span class="qb-stat-value">@servedToday</span>
+            <span class="qb-stat-label">Served Today</span>
         </div>
     </div>
 </div>
 
 <style>
-    .queue-board {
+    .qb-queue-board {
         display: flex;
         flex-direction: column;
         height: 100vh;
@@ -119,7 +119,7 @@
         overflow: hidden;
     }
 
-    .board-header {
+    .qb-board-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -128,7 +128,7 @@
         border-bottom: 2px solid var(--qm-primary);
     }
 
-    .board-header h1 {
+    .qb-board-header h1 {
         margin: 0;
         font-size: 28px;
         font-weight: 600;
@@ -140,23 +140,23 @@
         font-size: 16px;
     }
 
-    .header-right {
+    .qb-header-right {
         text-align: right;
     }
 
-    .current-time {
+    .qb-current-time {
         display: block;
         font-size: 36px;
         font-weight: bold;
         color: var(--qm-primary);
     }
 
-    .current-date {
+    .qb-current-date {
         font-size: 14px;
         color: var(--qm-text-secondary);
     }
 
-    .board-content {
+    .qb-board-content {
         flex: 1;
         display: flex;
         gap: 20px;
@@ -171,7 +171,7 @@
     }
 
     .qb-now-serving-section h2,
-    .waiting-section h2 {
+    .qb-waiting-section h2 {
         margin: 0 0 20px 0;
         font-size: 24px;
         color: var(--qm-primary);
@@ -179,18 +179,18 @@
         padding-bottom: 10px;
     }
 
-    .count {
+    .qb-count {
         color: var(--qm-warning);
     }
 
-    .counters-grid {
+    .qb-counters-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 20px;
         flex: 1;
     }
 
-    .counter-card {
+    .qb-counter-card {
         background: var(--qm-bg-card);
         border-radius: var(--qm-radius-xl);
         padding: 25px;
@@ -199,53 +199,53 @@
         transition: all 0.3s ease;
     }
 
-    .counter-card.serving {
+    .qb-counter-card.qb-serving {
         border-color: var(--qm-success);
         background: color-mix(in srgb, var(--qm-success) 15%, var(--qm-bg-card));
     }
 
-    .counter-card.available {
+    .qb-counter-card.qb-available {
         border-color: var(--qm-primary);
     }
 
-    .counter-number {
+    .qb-counter-number {
         font-size: 18px;
         font-weight: 600;
         color: var(--qm-text-secondary);
         margin-bottom: 15px;
     }
 
-    .token-display {
+    .qb-token-display {
         font-size: 48px;
         font-weight: bold;
         color: var(--qm-primary);
         margin: 10px 0;
     }
 
-    .token-display.empty {
+    .qb-token-display.qb-empty {
         color: var(--qm-text-muted);
     }
 
-    .token-display.flash {
-        animation: flash 0.5s ease-in-out 3;
+    .qb-token-display.qb-flash {
+        animation: qb-flash 0.5s ease-in-out 3;
     }
 
-    @@keyframes flash {
+    @@keyframes qb-flash {
         0%, 100% { opacity: 1; transform: scale(1); }
         50% { opacity: 0.5; transform: scale(1.1); }
     }
 
-    .customer-name {
+    .qb-customer-name {
         color: var(--qm-text-secondary);
         font-size: 14px;
     }
 
-    .status-text {
+    .qb-status-text {
         color: var(--qm-primary);
         font-size: 14px;
     }
 
-    .waiting-section {
+    .qb-waiting-section {
         flex: 1;
         display: flex;
         flex-direction: column;
@@ -254,12 +254,12 @@
         padding: 20px;
     }
 
-    .waiting-list {
+    .qb-waiting-list {
         flex: 1;
         overflow-y: auto;
     }
 
-    .waiting-item {
+    .qb-waiting-item {
         display: flex;
         align-items: center;
         gap: 15px;
@@ -270,29 +270,29 @@
         border-left: 4px solid var(--qm-primary);
     }
 
-    .waiting-item.priority {
+    .qb-waiting-item.qb-priority {
         border-left-color: var(--qm-warning);
         background: color-mix(in srgb, var(--qm-warning) 10%, var(--qm-bg-card));
     }
 
-    .waiting-item.vip {
+    .qb-waiting-item.qb-vip {
         border-left-color: var(--qm-accent-pink);
         background: color-mix(in srgb, var(--qm-accent-pink) 10%, var(--qm-bg-card));
     }
 
-    .token-number {
+    .qb-token-number {
         font-size: 18px;
         font-weight: bold;
         min-width: 80px;
     }
 
-    .service-type {
+    .qb-service-type {
         flex: 1;
         color: var(--qm-text-secondary);
         font-size: 14px;
     }
 
-    .priority-badge {
+    .qb-priority-badge {
         background: var(--qm-warning);
         color: var(--qm-text-dark);
         padding: 2px 8px;
@@ -301,26 +301,26 @@
         font-weight: bold;
     }
 
-    .waiting-item.vip .priority-badge {
+    .qb-waiting-item.qb-vip .qb-priority-badge {
         background: var(--qm-accent-pink);
         color: var(--qm-text-on-primary);
     }
 
-    .no-counters, .no-waiting {
+    .qb-no-counters, .qb-no-waiting {
         text-align: center;
         color: var(--qm-text-muted);
         padding: 40px;
         font-size: 18px;
     }
 
-    .more-waiting {
+    .qb-more-waiting {
         text-align: center;
         color: var(--qm-primary);
         padding: 10px;
         font-style: italic;
     }
 
-    .board-footer {
+    .qb-board-footer {
         display: flex;
         justify-content: space-around;
         padding: 20px 40px;
@@ -328,33 +328,33 @@
         border-top: 2px solid var(--qm-primary);
     }
 
-    .stat-item {
+    .qb-stat-item {
         text-align: center;
     }
 
-    .stat-value {
+    .qb-stat-value {
         display: block;
         font-size: 32px;
         font-weight: bold;
         color: var(--qm-primary);
     }
 
-    .stat-label {
+    .qb-stat-label {
         font-size: 14px;
         color: var(--qm-text-secondary);
     }
 
     /* Scrollbar styling */
-    .waiting-list::-webkit-scrollbar {
+    .qb-waiting-list::-webkit-scrollbar {
         width: 8px;
     }
 
-    .waiting-list::-webkit-scrollbar-track {
+    .qb-waiting-list::-webkit-scrollbar-track {
         background: var(--qm-bg-dark);
         border-radius: var(--qm-radius-sm);
     }
 
-    .waiting-list::-webkit-scrollbar-thumb {
+    .qb-waiting-list::-webkit-scrollbar-thumb {
         background: var(--qm-primary);
         border-radius: var(--qm-radius-sm);
     }
@@ -460,7 +460,7 @@
     {
         if (token.BranchId == BranchId)
         {
-            // Add to new tokens for flash effect
+            // Add to new tokens for qb-flash effect
             newTokenIds.Add(token.Id);
 
             // Remove from waiting list
@@ -479,7 +479,7 @@
 
             await InvokeAsync(StateHasChanged);
 
-            // Remove flash effect after 3 seconds
+            // Remove qb-flash effect after 3 seconds
             _ = Task.Delay(3000).ContinueWith(async _ =>
             {
                 newTokenIds.Remove(token.Id);
@@ -490,7 +490,7 @@
 
     private async void HandleTokenCompleted(Guid tokenId)
     {
-        // Update counter to show available
+        // Update counter to show qb-available
         if (counters != null)
         {
             var counter = counters.FirstOrDefault(c => c.CurrentToken?.Id == tokenId);

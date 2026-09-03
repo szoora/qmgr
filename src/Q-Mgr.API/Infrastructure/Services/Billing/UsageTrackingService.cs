@@ -459,11 +459,34 @@ public class UsageTrackingService : IUsageTrackingService
 
     #region Private Helpers
 
+    /// <summary>
+    /// Returns this month's usage row for the organization, creating it if it doesn't exist yet.
+    /// <para>
+    /// Two failure modes this has to survive, both seen live in the daily usage-limits job:
+    /// a concurrent writer (a web request tracking usage while the Hangfire job runs) can insert
+    /// the same (OrganizationId, Year, Month) between our read and our write, which the unique
+    /// index rejects; and — worse — a failed insert leaves the entity tracked as Added, so every
+    /// later <c>SaveChangesAsync</c> on the same shared scoped context re-attempts it and throws
+    /// again. Since <c>BillingJobs.CheckUsageLimitsAsync</c> loops over every organization on one
+    /// context and swallows per-organization exceptions, a single collision silently poisoned the
+    /// rest of the run: the job reported success having done nothing for any subsequent tenant.
+    /// So: check the change tracker first, and on a unique violation detach the doomed entity and
+    /// re-read the row the other writer committed.
+    /// </para>
+    /// </summary>
     private async Task<UsageRecord> GetOrCreateCurrentRecordAsync(Guid organizationId)
     {
         var now = DateTime.UtcNow;
         var year = now.Year;
         var month = now.Month;
+
+        // A row this unit of work already added but hasn't saved is invisible to a database query.
+        var local = _dbContext.UsageRecords.Local.FirstOrDefault(r =>
+            r.OrganizationId == organizationId && r.Year == year && r.Month == month);
+        if (local != null)
+        {
+            return local;
+        }
 
         var record = await _dbContext.UsageRecords
             .FirstOrDefaultAsync(r =>
@@ -471,22 +494,53 @@ public class UsageTrackingService : IUsageTrackingService
                 r.Year == year &&
                 r.Month == month);
 
-        if (record == null)
+        if (record != null)
         {
-            record = new UsageRecord
-            {
-                OrganizationId = organizationId,
-                Year = year,
-                Month = month,
-                LastUpdatedAt = now,
-                CreatedAt = now
-            };
-            _dbContext.UsageRecords.Add(record);
-            await _dbContext.SaveChangesAsync();
+            return record;
         }
 
-        return record;
+        record = new UsageRecord
+        {
+            OrganizationId = organizationId,
+            Year = year,
+            Month = month,
+            LastUpdatedAt = now,
+            CreatedAt = now
+        };
+        _dbContext.UsageRecords.Add(record);
+
+        try
+        {
+            await _dbContext.SaveChangesAsync();
+            return record;
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            _dbContext.Entry(record).State = EntityState.Detached;
+
+            var existing = await _dbContext.UsageRecords
+                .FirstOrDefaultAsync(r =>
+                    r.OrganizationId == organizationId &&
+                    r.Year == year &&
+                    r.Month == month);
+
+            if (existing == null)
+            {
+                // The index rejected the insert but nothing is there to read back — a different
+                // constraint than the one we're handling for. Don't paper over it.
+                throw;
+            }
+
+            _logger.LogDebug(
+                "Usage record for organization {OrganizationId} {Year}-{Month} was created concurrently; using the committed row",
+                organizationId, year, month);
+
+            return existing;
+        }
     }
+
+    private static bool IsUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is Npgsql.PostgresException { SqlState: "23505" };
 
     private async Task IncrementCounterAsync(Guid organizationId, string counterName, int count)
     {

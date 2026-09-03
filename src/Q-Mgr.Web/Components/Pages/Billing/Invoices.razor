@@ -117,7 +117,7 @@ else
                                     <strong>@invoice.Currency @invoice.Total.ToString("N2")</strong>
                                     @if (invoice.Subtotal != invoice.Total)
                                     {
-                                        <span class="text-muted small d-block">
+                                        <span class="qm-text-muted small d-block">
                                             Subtotal: @invoice.Currency @invoice.Subtotal.ToString("N2")
                                         </span>
                                     }
@@ -126,14 +126,14 @@ else
                                     <QBadge Variant="@GetStatusBadgeVariant(invoice.Status)" Text="@invoice.Status" />
                                     @if (invoice.PaidAt.HasValue)
                                     {
-                                        <span class="text-muted small d-block mt-1">
+                                        <span class="qm-text-muted small d-block mt-1">
                                             Paid @invoice.PaidAt.Value.ToString("MMM dd")
                                         </span>
                                     }
                                 </td>
                                 <td>
                                     <div class="action-buttons">
-                                        <button class="btn btn-sm btn-outline-primary"
+                                        <button class="q-btn q-btn--outline-primary q-btn--sm"
                                                 @onclick="@(() => ViewInvoice(invoice))"
                                                 @onclick:stopPropagation="true"
                                                 title="View Details">
@@ -141,7 +141,7 @@ else
                                         </button>
                                         @if (!string.IsNullOrEmpty(invoice.PdfUrl))
                                         {
-                                            <button class="btn btn-sm btn-outline-secondary"
+                                            <button class="q-btn q-btn--outline-secondary q-btn--sm"
                                                     @onclick="@(() => DownloadInvoice(invoice))"
                                                     @onclick:stopPropagation="true"
                                                     title="Download PDF">
@@ -205,7 +205,7 @@ else
                     {
                         <div class="text-center py-4">
                             <div class="webster-spinner"></div>
-                            <p class="text-muted mt-2">Loading invoice details...</p>
+                            <p class="qm-text-muted mt-2">Loading invoice details...</p>
                         </div>
                     }
                     else if (invoiceDetails != null)
