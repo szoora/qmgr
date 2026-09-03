@@ -239,7 +239,9 @@ else
                 }
 
                 <!-- Reports & Analytics -->
-                @if (canViewReports)
+                @* Every report belongs to some module, so the whole group disappears rather than
+                   opening onto an empty submenu when none of them are available. *@
+                @if (canViewReports && (ModuleAllows("/reports") || (canViewVisitors && ModuleAllows("/reports/visitors"))))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("reports") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("reports"))" @onclick:preventDefault>
@@ -248,7 +250,10 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
+                            @if (ModuleAllows("/reports"))
+                            {
+                                <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
+                            }
                             @if (ModuleAllows("/reports/queue"))
                             {
                                 <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
