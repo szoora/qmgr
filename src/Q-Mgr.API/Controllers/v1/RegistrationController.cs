@@ -17,14 +17,23 @@ public class RegistrationController : ControllerBase
     private readonly IMediator _mediator;
     private readonly ITenantProvisioningService _provisioningService;
     private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly IRegistrationGuardService _registrationGuard;
+    private readonly IPhoneVerificationService _phoneVerification;
     private readonly ILogger<RegistrationController> _logger;
+
+    /// <summary>The platform's own organization, whose SMS configuration sends sign-up codes.</summary>
+    private static readonly Guid PlatformOrganizationId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
     public RegistrationController(
         IMediator mediator,
         ITenantProvisioningService provisioningService,
         IPlatformSettingsService platformSettingsService,
+        IRegistrationGuardService registrationGuard,
+        IPhoneVerificationService phoneVerification,
         ILogger<RegistrationController> logger)
     {
+        _registrationGuard = registrationGuard;
+        _phoneVerification = phoneVerification;
         _mediator = mediator;
         _provisioningService = provisioningService;
         _platformSettingsService = platformSettingsService;
@@ -51,6 +60,58 @@ public class RegistrationController : ControllerBase
     }
 
     /// <summary>
+    /// Sends a one-time code to a phone number so the applicant can prove they control it.
+    /// </summary>
+    /// <remarks>
+    /// Anonymous by necessity, since no account exists yet. Abuse is bounded two ways: the number
+    /// itself is capped at a few codes an hour inside the service, and the caller's connection is
+    /// charged against the same sign-up budget the registration endpoint uses, so this cannot be
+    /// turned into a free SMS pump.
+    /// </remarks>
+    [HttpPost("phone/send-code")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> SendPhoneCode([FromBody] SendPhoneCodeRequest request)
+    {
+        var clientAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var (allowed, retryAfterSeconds) = await _registrationGuard.TryConsumeAttemptAsync(clientAddress);
+        if (!allowed)
+        {
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+            return StatusCode(StatusCodes.Status429TooManyRequests, new ErrorResponse
+            {
+                Error = "TOO_MANY_ATTEMPTS",
+                Message = "Too many attempts from this connection. Please try again later."
+            });
+        }
+
+        // No organization exists during sign-up, so this goes out through the platform's own SMS
+        // configuration rather than a tenant's.
+        var result = await _phoneVerification.SendCodeAsync(PlatformOrganizationId, request.Phone ?? string.Empty);
+
+        return result.Sent
+            ? Ok(new { sent = true, expiresInSeconds = result.ExpiresInSeconds })
+            : BadRequest(new ErrorResponse { Error = "CODE_NOT_SENT", Message = result.Message ?? "Could not send the code." });
+    }
+
+    /// <summary>
+    /// Checks a one-time code and, on success, returns the proof token the sign-up request needs.
+    /// </summary>
+    [HttpPost("phone/verify-code")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifyPhoneCode([FromBody] VerifyPhoneCodeRequest request)
+    {
+        var result = await _phoneVerification.VerifyCodeAsync(request.Phone ?? string.Empty, request.Code ?? string.Empty);
+
+        return result.Verified
+            ? Ok(new { verified = true, token = result.ProofToken })
+            : BadRequest(new ErrorResponse { Error = "CODE_INVALID", Message = result.Message ?? "That code is not right." });
+    }
+
+    /// <summary>
     /// Register a new organization on the platform
     /// </summary>
     /// <remarks>
@@ -64,8 +125,54 @@ public class RegistrationController : ControllerBase
     [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
+        var clientAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        // Velocity budget first, before any database work, so a script cannot make the expensive
+        // duplicate check run over and over.
+        var (allowed, retryAfterSeconds) = await _registrationGuard.TryConsumeAttemptAsync(clientAddress);
+        if (!allowed)
+        {
+            Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+            return StatusCode(StatusCodes.Status429TooManyRequests, new ErrorResponse
+            {
+                Error = "TOO_MANY_ATTEMPTS",
+                Message = "Too many sign-up attempts from this connection. Please try again later."
+            });
+        }
+
+        // A phone number is only treated as verified when the caller can produce the proof token
+        // issued by the SMS step. Without this the flag could simply be asserted in the request.
+        var phoneVerified = await _phoneVerification.IsProofValidAsync(request.PhoneVerificationToken, request.Phone);
+
+        var riskInput = new RegistrationRiskInput
+        {
+            Email = request.Email,
+            Phone = request.Phone,
+            PhoneVerified = phoneVerified,
+            OrganizationName = request.OrganizationName,
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            ClientAddress = clientAddress,
+            HoneypotValue = request.ContactReference,
+            FormRenderedAt = request.FormRenderedAt
+        };
+
+        var assessment = await _registrationGuard.AssessAsync(riskInput);
+        if (assessment.IsBlocked)
+        {
+            await _registrationGuard.RecordAsync(riskInput, assessment, null);
+            _logger.LogInformation("Registration blocked for {Email}: {Signals}", request.Email, string.Join(" | ", assessment.Signals));
+
+            return StatusCode(StatusCodes.Status409Conflict, new ErrorResponse
+            {
+                Error = "DUPLICATE_REGISTRATION",
+                Message = assessment.ApplicantMessage ?? "An account already exists for these details."
+            });
+        }
+
         var command = new RegisterOrganizationCommand
         {
+            PhoneVerifiedAt = phoneVerified ? DateTime.UtcNow : null,
             OrganizationName = request.OrganizationName,
             Slug = request.Slug,
             Email = request.Email,
@@ -84,6 +191,15 @@ public class RegistrationController : ControllerBase
         };
 
         var result = await _mediator.Send(command);
+
+        // Record every outcome, successful or not. A flagged account has to be reviewable, and the
+        // weights can only be tuned against real decisions rather than guesses.
+        await _registrationGuard.RecordAsync(riskInput, assessment, result.Success ? result.OrganizationId : null);
+
+        if (result.Success && phoneVerified)
+        {
+            await _phoneVerification.ConsumeProofAsync(request.PhoneVerificationToken);
+        }
 
         if (!result.Success)
         {
@@ -246,8 +362,37 @@ public class RegistrationController : ControllerBase
 /// <summary>
 /// Registration request model
 /// </summary>
+public record SendPhoneCodeRequest
+{
+    public string? Phone { get; init; }
+}
+
+public record VerifyPhoneCodeRequest
+{
+    public string? Phone { get; init; }
+    public string? Code { get; init; }
+}
+
 public record RegisterRequest
 {
+    /// <summary>
+    /// Proof token from the SMS verification step. Without it the phone is treated as unverified,
+    /// no matter what the client claims.
+    /// </summary>
+    public string? PhoneVerificationToken { get; init; }
+
+    /// <summary>
+    /// Honeypot. The field is hidden from people by CSS, so anything in it means a script filled
+    /// the form. Named to look worth completing to a bot scanning for plausible inputs.
+    /// </summary>
+    public string? ContactReference { get; init; }
+
+    /// <summary>
+    /// When the form was rendered, so an implausibly fast submission can be spotted. Advisory only:
+    /// a client can lie about it, which is why it contributes to a score rather than blocking.
+    /// </summary>
+    public DateTime? FormRenderedAt { get; init; }
+
     /// <summary>Organization/Company name</summary>
     public string OrganizationName { get; init; } = string.Empty;
 

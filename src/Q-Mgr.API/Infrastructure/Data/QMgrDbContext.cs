@@ -95,6 +95,7 @@ public class QMgrDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
+    public DbSet<RegistrationAttempt> RegistrationAttempts => Set<RegistrationAttempt>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();

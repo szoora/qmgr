@@ -1,0 +1,479 @@
+@page "/platform/registration-review"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+
+<PageTitle>Registration Review - Q-Mgr</PageTitle>
+
+<div class="page-header">
+    <div class="header-content">
+        <h1><QIcon Name="person-badge-fill" Size="32" /> Registration Review</h1>
+        <p class="page-subtitle">Sign-ups that looked like a repeat of an existing customer</p>
+    </div>
+</div>
+
+<div class="admin-content">
+    <div class="summary-strip">
+        <QCard Class="summary-card">
+            <div class="summary-value">@summary.AwaitingReview</div>
+            <div class="summary-label">Awaiting review</div>
+        </QCard>
+        <QCard Class="summary-card">
+            <div class="summary-value tone-warn">@summary.FlaggedLast30Days</div>
+            <div class="summary-label">Flagged, last 30 days</div>
+        </QCard>
+        <QCard Class="summary-card">
+            <div class="summary-value tone-bad">@summary.BlockedLast30Days</div>
+            <div class="summary-label">Blocked, last 30 days</div>
+        </QCard>
+        <QCard Class="summary-card">
+            <div class="summary-value tone-good">@summary.AllowedLast30Days</div>
+            <div class="summary-label">Allowed, last 30 days</div>
+        </QCard>
+    </div>
+
+    <QCard Class="mb-4">
+        <div class="filters">
+            <QInput TValue="string" @bind-Value="searchQuery" Placeholder="Search email or organization..."
+                    Icon="search" @bind-Value:after="@(() => LoadAttempts())" />
+            <QSelect TValue="string" TItem="string" @bind-Value="decisionFilter" Items="@decisionOptions"
+                     Placeholder="All decisions" @bind-Value:after="@(() => LoadAttempts())" />
+            <label class="pending-toggle">
+                <input type="checkbox" checked="@pendingOnly" @onchange="OnPendingOnlyChanged" />
+                <span>Only those awaiting a decision</span>
+            </label>
+        </div>
+    </QCard>
+
+    @if (isLoading)
+    {
+        <div class="loading-state">
+            <QSpinner Size="lg" />
+            <span>Loading registration attempts...</span>
+        </div>
+    }
+    else if (hasError)
+    {
+        <QCard>
+            <div class="error-state">
+                <QIcon Name="exclamation-triangle-fill" Size="48" />
+                <h4>Could not load registration attempts</h4>
+                <p>@errorMessage</p>
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadAttempts" />
+            </div>
+        </QCard>
+    }
+    else if (!attempts.Any())
+    {
+        <QCard>
+            <div class="empty-state">
+                <QIcon Name="check2-circle" Size="48" />
+                <h4>Nothing to review</h4>
+                <p>No sign-up attempts match this filter.</p>
+            </div>
+        </QCard>
+    }
+    else
+    {
+        <QCard Title="@($"Attempts ({attempts.Count})")" Icon="list-ul">
+            <div class="table-responsive">
+                <table class="review-table">
+                    <thead>
+                        <tr>
+                            <th>Applicant</th>
+                            <th>Organization</th>
+                            <th>Decision</th>
+                            <th>Score</th>
+                            <th>Why</th>
+                            <th>When</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var attempt in attempts)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="applicant">
+                                        <div class="applicant-name">@(string.IsNullOrWhiteSpace(attempt.ContactName) ? "Not given" : attempt.ContactName)</div>
+                                        <div class="applicant-email">@attempt.Email</div>
+                                        @if (!string.IsNullOrWhiteSpace(attempt.Phone))
+                                        {
+                                            <div class="applicant-phone">
+                                                @attempt.Phone
+                                                @if (attempt.PhoneWasVerified)
+                                                {
+                                                    <QIcon Name="patch-check-fill" Size="14" />
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="org-name">@attempt.OrganizationName</div>
+                                    @if (!string.IsNullOrWhiteSpace(attempt.MatchedOrganizationName))
+                                    {
+                                        <div class="org-match">resembles @attempt.MatchedOrganizationName</div>
+                                    }
+                                </td>
+                                <td>
+                                    <QBadge Text="@attempt.Decision.ToString()" Variant="@DecisionVariant(attempt.Decision)" />
+                                    @if (attempt.ReviewedAt.HasValue)
+                                    {
+                                        <div class="reviewed-note">
+                                            @OutcomeLabel(attempt.ReviewOutcome)
+                                            @if (!string.IsNullOrWhiteSpace(attempt.ReviewedByName))
+                                            {
+                                                <span> by @attempt.ReviewedByName</span>
+                                            }
+                                        </div>
+                                    }
+                                </td>
+                                <td><span class="score">@attempt.RiskScore</span></td>
+                                <td>
+                                    @if (attempt.Signals.Any())
+                                    {
+                                        <ul class="signal-list">
+                                            @foreach (var signal in attempt.Signals)
+                                            {
+                                                <li>@signal</li>
+                                            }
+                                        </ul>
+                                    }
+                                    else
+                                    {
+                                        <span class="qm-text-muted">Nothing notable</span>
+                                    }
+                                </td>
+                                <td><div class="date-cell">@attempt.CreatedAt.ToLocalTime().ToString("MMM d, yyyy HH:mm")</div></td>
+                                <td>
+                                    @if (attempt.ReviewedAt.HasValue)
+                                    {
+                                        <span class="qm-text-muted">Reviewed</span>
+                                    }
+                                    else
+                                    {
+                                        <QButton Text="Review" Icon="clipboard-check" Variant="ghost" Size="sm"
+                                                 OnClick="@(() => OpenReview(attempt))" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+    }
+</div>
+
+<QModal @bind-Visible="showReviewModal" Title="Review this sign-up" Size="md">
+    <ChildContent>
+        @if (selected != null)
+        {
+            <p>
+                <strong>@selected.OrganizationName</strong> signed up as @selected.Email.
+                The check scored it @selected.RiskScore and decided @selected.Decision.ToString().
+            </p>
+
+            @if (selected.Signals.Any())
+            {
+                <ul class="signal-list modal-signals">
+                    @foreach (var signal in selected.Signals)
+                    {
+                        <li>@signal</li>
+                    }
+                </ul>
+            }
+
+            <div class="form-group">
+                <QSelect TValue="string" TItem="string" @bind-Value="reviewOutcome"
+                         Items="@outcomeOptions" Label="Verdict *" />
+            </div>
+
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="reviewNotes" Label="Notes"
+                        Type="textarea" Rows="3" Placeholder="What did you find?" />
+            </div>
+
+            @if (selected.OrganizationId.HasValue && reviewOutcome == nameof(RegistrationReviewOutcome.DuplicateRejected))
+            {
+                <label class="suspend-toggle">
+                    <input type="checkbox" checked="@suspendOrganization" @onchange="OnSuspendChanged" />
+                    <span>Also suspend the account this sign-up created. It can be restored later.</span>
+                </label>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showReviewModal = false)" />
+        <QButton Text="Save verdict" Icon="check-lg" Variant="primary" OnClick="@SubmitReview" Loading="@isSubmitting" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .summary-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .summary-card {
+        text-align: center;
+    }
+
+    .summary-value {
+        font-family: var(--qm-font-display);
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .summary-label {
+        font-size: 0.8125rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .tone-good { color: var(--qm-success, #22a05a); }
+    .tone-warn { color: var(--qm-warning, #c98a1a); }
+    .tone-bad { color: var(--qm-danger, #c0392b); }
+
+    .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .pending-toggle,
+    .suspend-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        color: var(--qm-text-secondary);
+        cursor: pointer;
+    }
+
+    .suspend-toggle {
+        margin-top: 0.5rem;
+    }
+
+    .review-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .review-table th {
+        text-align: left;
+        padding: 0.75rem 1rem;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--qm-text-secondary);
+        border-bottom: 1px solid var(--qm-border);
+    }
+
+    .review-table td {
+        padding: 0.875rem 1rem;
+        border-bottom: 1px solid var(--qm-border);
+        vertical-align: top;
+    }
+
+    .applicant-name,
+    .org-name {
+        font-weight: 600;
+        color: var(--qm-text-primary);
+    }
+
+    .applicant-email,
+    .applicant-phone,
+    .org-match,
+    .reviewed-note {
+        font-size: 0.8125rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .org-match {
+        font-style: italic;
+    }
+
+    .score {
+        font-family: var(--qm-font-display);
+        font-weight: 700;
+    }
+
+    .signal-list {
+        margin: 0;
+        padding-left: 1.1rem;
+        font-size: 0.8125rem;
+        color: var(--qm-text-secondary);
+    }
+
+    .modal-signals {
+        margin-bottom: 1rem;
+    }
+
+    .date-cell {
+        font-size: 0.8125rem;
+        white-space: nowrap;
+    }
+
+    .loading-state,
+    .error-state,
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 3rem 1rem;
+        color: var(--qm-text-secondary);
+    }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool hasError;
+    private string errorMessage = "";
+    private bool isSubmitting;
+
+    private string searchQuery = "";
+    private string decisionFilter = "";
+    private bool pendingOnly = true;
+
+    private List<RegistrationAttemptDto> attempts = new();
+    private RegistrationAttemptSummaryDto summary = new();
+
+    private bool showReviewModal;
+    private RegistrationAttemptDto? selected;
+    private string reviewOutcome = nameof(RegistrationReviewOutcome.Legitimate);
+    private string reviewNotes = "";
+    private bool suspendOrganization;
+
+    private readonly List<string> decisionOptions = new()
+    {
+        "", nameof(RegistrationRiskDecision.Flag), nameof(RegistrationRiskDecision.Block), nameof(RegistrationRiskDecision.Allow)
+    };
+
+    private readonly List<string> outcomeOptions = new()
+    {
+        nameof(RegistrationReviewOutcome.Legitimate),
+        nameof(RegistrationReviewOutcome.DuplicateAllowed),
+        nameof(RegistrationReviewOutcome.DuplicateRejected)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAttempts();
+    }
+
+    private async Task LoadAttempts()
+    {
+        isLoading = true;
+        hasError = false;
+
+        try
+        {
+            var queryParams = new List<string> { $"pendingOnly={pendingOnly.ToString().ToLowerInvariant()}" };
+
+            if (!string.IsNullOrWhiteSpace(searchQuery))
+                queryParams.Add($"search={Uri.EscapeDataString(searchQuery)}");
+            if (!string.IsNullOrWhiteSpace(decisionFilter))
+                queryParams.Add($"decision={decisionFilter}");
+
+            attempts = await Http.GetFromJsonAsync<List<RegistrationAttemptDto>>(
+                $"api/v1/admin/registration-attempts?{string.Join("&", queryParams)}", JsonOptions) ?? new();
+
+            summary = await Http.GetFromJsonAsync<RegistrationAttemptSummaryDto>(
+                "api/v1/admin/registration-attempts/summary", JsonOptions) ?? new();
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPendingOnlyChanged(ChangeEventArgs e)
+    {
+        pendingOnly = e.Value is bool value && value;
+        await LoadAttempts();
+    }
+
+    private void OnSuspendChanged(ChangeEventArgs e)
+    {
+        suspendOrganization = e.Value is bool value && value;
+    }
+
+    private void OpenReview(RegistrationAttemptDto attempt)
+    {
+        selected = attempt;
+        reviewOutcome = nameof(RegistrationReviewOutcome.Legitimate);
+        reviewNotes = "";
+        suspendOrganization = false;
+        showReviewModal = true;
+    }
+
+    private async Task SubmitReview()
+    {
+        if (selected == null) return;
+
+        isSubmitting = true;
+
+        try
+        {
+            var outcome = Enum.Parse<RegistrationReviewOutcome>(reviewOutcome);
+            var response = await Http.PostAsJsonAsync(
+                $"api/v1/admin/registration-attempts/{selected.Id}/review",
+                new ReviewRegistrationAttemptRequest
+                {
+                    Outcome = outcome,
+                    Notes = string.IsNullOrWhiteSpace(reviewNotes) ? null : reviewNotes,
+                    SuspendOrganization = suspendOrganization
+                });
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Verdict saved.");
+                showReviewModal = false;
+                await LoadAttempts();
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not save that verdict.", "Please try again.");
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save that verdict.", ex.Message);
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private static string DecisionVariant(RegistrationRiskDecision decision) => decision switch
+    {
+        RegistrationRiskDecision.Block => "danger",
+        RegistrationRiskDecision.Flag => "warning",
+        _ => "success"
+    };
+
+    private static string OutcomeLabel(RegistrationReviewOutcome? outcome) => outcome switch
+    {
+        RegistrationReviewOutcome.Legitimate => "Cleared",
+        RegistrationReviewOutcome.DuplicateAllowed => "Duplicate, allowed",
+        RegistrationReviewOutcome.DuplicateRejected => "Duplicate, rejected",
+        _ => "Reviewed"
+    };
+}

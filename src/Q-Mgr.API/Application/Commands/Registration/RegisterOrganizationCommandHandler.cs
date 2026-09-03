@@ -64,6 +64,7 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
                 AdminFirstName = request.FirstName,
                 AdminLastName = request.LastName,
                 AdminPhone = request.Phone,
+                PhoneVerifiedAt = request.PhoneVerifiedAt,
                 ContactPhone = request.ContactPhone,
                 IndustryType = request.IndustryType,
                 PreferredCurrency = request.PreferredCurrency,

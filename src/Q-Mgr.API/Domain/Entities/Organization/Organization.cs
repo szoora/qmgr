@@ -68,6 +68,22 @@ public class Organization : BaseAuditableEntity
     public string Slug { get; set; } = string.Empty;
 
     /// <summary>
+    /// Canonical form of <see cref="Name"/> for duplicate detection: lower-cased, punctuation and
+    /// legal suffixes removed, words sorted, so "Kampala Pharmacy Ltd." and "The Pharmacy, Kampala"
+    /// reduce to the same value. Indexed but deliberately NOT unique, because two genuinely different
+    /// customers can share a name, and a second branch of one business is a legitimate sign-up.
+    /// This feeds a review queue, not a refusal.
+    /// </summary>
+    public string? NormalizedName { get; set; }
+
+    /// <summary>
+    /// Coarse bucket for <see cref="NormalizedName"/>, so a near-match search compares a handful of
+    /// rows rather than scanning the table. Exists because fuzzy matching happens in process: no
+    /// database extension is used for this.
+    /// </summary>
+    public string? NameBlockingKey { get; set; }
+
+    /// <summary>
     /// Custom domain for white-label (e.g., "queue.getsacc.com")
     /// </summary>
     public string? CustomDomain { get; set; }

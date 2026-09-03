@@ -139,6 +139,14 @@ public class SaasSettings
     public bool AllowCustomDomains { get; set; } = true;
     public bool RequireEmailVerification { get; set; } = true;
     public int MaxOrganizationsPerUser { get; set; } = 5;
+
+    /// <summary>
+    /// Extra throwaway-mailbox domains to treat as suspicious at sign-up, on top of the built-in
+    /// list in DisposableEmailDomains. Lets an administrator react to a new provider without a
+    /// deploy, which is what makes shipping the list as data rather than calling a reputation API
+    /// workable.
+    /// </summary>
+    public List<string> BlockedEmailDomains { get; set; } = new();
 }
 
 /// <summary>

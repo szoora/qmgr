@@ -240,8 +240,58 @@
 
                         <div class="form-group">
                             <label for="phone"><QIcon Name="telephone" Size="16" /><span>Phone Number</span></label>
-                            <input type="tel" id="phone" @bind="formData.Phone"
-                                   placeholder="0753404044" class="form-control" />
+                            <div class="phone-verify-row">
+                                <input type="tel" id="phone" @bind="formData.Phone" @bind:event="oninput"
+                                       placeholder="0753404044" class="form-control"
+                                       disabled="@phoneVerified" />
+                                @if (phoneVerified)
+                                {
+                                    <span class="phone-verified-badge">
+                                        <QIcon Name="patch-check-fill" Size="16" />
+                                        <span>Verified</span>
+                                    </span>
+                                }
+                                else if (!phoneCodeSent)
+                                {
+                                    <button type="button" class="btn-verify" @onclick="SendPhoneCode"
+                                            disabled="@(sendingPhoneCode || string.IsNullOrWhiteSpace(formData.Phone))">
+                                        <span>@(sendingPhoneCode ? "Sending..." : "Verify")</span>
+                                    </button>
+                                }
+                            </div>
+
+                            @if (phoneCodeSent && !phoneVerified)
+                            {
+                                <div class="phone-verify-row phone-code-row">
+                                    <input type="text" inputmode="numeric" maxlength="6" id="phoneCode"
+                                           @bind="phoneCodeEntry" @bind:event="oninput"
+                                           placeholder="6-digit code" class="form-control" />
+                                    <button type="button" class="btn-verify" @onclick="ConfirmPhoneCode"
+                                            disabled="@(verifyingPhoneCode || string.IsNullOrWhiteSpace(phoneCodeEntry))">
+                                        <span>@(verifyingPhoneCode ? "Checking..." : "Confirm")</span>
+                                    </button>
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrEmpty(phoneMessage))
+                            {
+                                <small class="form-hint @(phoneVerified ? "hint-good" : "hint-warn")">@phoneMessage</small>
+                            }
+                            else
+                            {
+                                <small class="form-hint">Optional, but verifying it speeds up approval and helps us recognise you later.</small>
+                            }
+                        </div>
+
+                        @* A field no person can see or tab to. Automated form fillers populate every
+                           input they find, so anything arriving here says the submission was not
+                           typed by a human. Left in the normal document flow and hidden off-screen
+                           rather than with display:none, because the cruder scripts skip inputs
+                           that are explicitly hidden. *@
+                        <div class="offscreen-field" aria-hidden="true">
+                            <label for="contactReference">Do not fill this in</label>
+                            <input type="text" id="contactReference" name="contact_reference"
+                                   @bind="formData.ContactReference" tabindex="-1" autocomplete="off" />
                         </div>
 
                         <div class="form-group">
@@ -408,6 +458,87 @@
     .verify-hint {
         color: var(--qm-text-secondary);
         font-size: 14px;
+    }
+
+
+    /* Field hints had no rule anywhere, so they inherited a colour that is invisible against the
+       sign-up card. The phone hint matters here, since it is what tells an applicant that verifying
+       is worth doing but not required. */
+    .login-container .form-hint {
+        display: block;
+        margin-top: 0.375rem;
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        color: var(--qm-text-secondary);
+    }
+
+    /* Phone verification sits inline with the number, so the two read as one action rather than a
+       separate step the applicant has to go looking for. */
+    .phone-verify-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: stretch;
+    }
+
+    .phone-verify-row .form-control {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .phone-code-row {
+        margin-top: 0.5rem;
+    }
+
+    .btn-verify {
+        flex: 0 0 auto;
+        padding: 0 1rem;
+        border: 1px solid var(--qm-primary);
+        border-radius: var(--qm-radius-md);
+        background: transparent;
+        color: var(--qm-primary);
+        font-family: var(--qm-font-primary);
+        font-weight: 600;
+        font-size: 0.875rem;
+        cursor: pointer;
+        transition: background var(--qm-transition-fast), color var(--qm-transition-fast);
+        white-space: nowrap;
+    }
+
+    .btn-verify:hover:not(:disabled) {
+        background: var(--qm-primary);
+        color: #fff;
+    }
+
+    .btn-verify:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .phone-verified-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0 0.875rem;
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-success-light, rgba(34, 160, 90, 0.12));
+        color: var(--qm-success, #22a05a);
+        font-weight: 600;
+        font-size: 0.875rem;
+        white-space: nowrap;
+    }
+
+    .hint-good { color: var(--qm-success, #22a05a); }
+    .hint-warn { color: var(--qm-warning, #c98a1a); }
+
+    /* The honeypot. Positioned away from the viewport rather than hidden outright, so that a
+       script reading the DOM still finds a normal-looking text input to fill in. */
+    .offscreen-field {
+        position: absolute;
+        left: -9999px;
+        top: auto;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
     }
 
     .step-indicator {
@@ -698,6 +829,20 @@
     private string? selectedModuleCode;
     private bool loadingModules = true;
 
+    // Phone verification state. A verified number is the strongest duplicate signal we have, so
+    // the form offers it prominently, but it stays optional: no SMS gateway is configured on a
+    // fresh install, and a sign-up form that cannot be completed is worse than a weaker signal.
+    private bool phoneCodeSent;
+    private bool phoneVerified;
+    private bool sendingPhoneCode;
+    private bool verifyingPhoneCode;
+    private string? phoneCodeEntry;
+    private string? phoneMessage;
+    private string? phoneVerificationToken;
+
+    /// <summary>When the form first rendered, so the server can see a submission no person could have typed.</summary>
+    private DateTime formRenderedAt = DateTime.UtcNow;
+
     private HttpClient Http => HttpClientFactory.CreateClient("QMgrAuthApi");
 
     protected override async Task OnInitializedAsync()
@@ -824,7 +969,10 @@
                 contactPhone = formData.ContactPhone,
                 industryType = formData.IndustryType,
                 acceptTerms = formData.AcceptTerms,
-                selectedModuleCodes = selectedModuleCode != null ? new List<string> { selectedModuleCode } : new List<string>()
+                selectedModuleCodes = selectedModuleCode != null ? new List<string> { selectedModuleCode } : new List<string>(),
+                phoneVerificationToken = phoneVerificationToken,
+                contactReference = formData.ContactReference,
+                formRenderedAt = formRenderedAt
             };
 
             var response = await Http.PostAsJsonAsync("api/v1/register", request);
@@ -851,6 +999,95 @@
         {
             isSubmitting = false;
         }
+    }
+
+
+    /// <summary>
+    /// Asks the API to text a one-time code to the number the applicant typed.
+    /// </summary>
+    private async Task SendPhoneCode()
+    {
+        if (string.IsNullOrWhiteSpace(formData.Phone)) return;
+
+        sendingPhoneCode = true;
+        phoneMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/v1/register/phone/send-code", new { phone = formData.Phone });
+            if (response.IsSuccessStatusCode)
+            {
+                phoneCodeSent = true;
+                phoneMessage = "We sent a code to that number. It expires in 10 minutes.";
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                // Verification is a bonus, not a gate, so a failure here says so plainly instead of
+                // reading like the sign-up itself has stalled.
+                phoneMessage = error?.Message ?? "We could not send a code right now. You can continue without verifying.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not request a phone verification code");
+            phoneMessage = "We could not send a code right now. You can continue without verifying.";
+        }
+        finally
+        {
+            sendingPhoneCode = false;
+        }
+    }
+
+    /// <summary>
+    /// Checks the code and keeps the proof token, which the sign-up request carries.
+    /// </summary>
+    private async Task ConfirmPhoneCode()
+    {
+        if (string.IsNullOrWhiteSpace(phoneCodeEntry)) return;
+
+        verifyingPhoneCode = true;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/v1/register/phone/verify-code",
+                new { phone = formData.Phone, code = phoneCodeEntry });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<PhoneVerifyResponse>();
+                if (result?.Verified == true && !string.IsNullOrEmpty(result.Token))
+                {
+                    phoneVerified = true;
+                    phoneVerificationToken = result.Token;
+                    phoneMessage = "Number verified.";
+                }
+                else
+                {
+                    phoneMessage = "That code is not right. Please try again.";
+                }
+            }
+            else
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                phoneMessage = error?.Message ?? "That code is not right. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not check a phone verification code");
+            phoneMessage = "We could not check that code right now.";
+        }
+        finally
+        {
+            verifyingPhoneCode = false;
+        }
+    }
+
+    private record PhoneVerifyResponse
+    {
+        public bool Verified { get; init; }
+        public string? Token { get; init; }
     }
 
     private void GoToLogin()
@@ -909,6 +1146,9 @@
         public string? ContactPhone { get; set; }
         public string? IndustryType { get; set; }
         public bool AcceptTerms { get; set; }
+
+        /// <summary>Honeypot. Always empty when a person fills the form in.</summary>
+        public string? ContactReference { get; set; }
     }
 
     // API response models

@@ -6,6 +6,109 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION ADDENDUM (written 2026-09-03, later than the handover below) — duplicate-registration defence
+
+The request: *"make recommendations to block same user / subscriber registering many times. the
+feature needs intelligence to detect already existing customer, so the system is not overwhelmed
+by bogus accounts"*, then *"also do not plan for pg_trgm"*, then *"build it"*. Built and verified
+live against the local API and the sign-up page.
+
+### The shape of the decision, because it constrains anything built on top of it
+
+**Only near-proof blocks. Everything else scores and, past a threshold, flags for review.** There
+are exactly two hard blocks: the same canonical email address, and the same phone number that an
+existing account has already verified. A wrongly refused sign-up is a lost customer who cannot
+appeal, so name similarity, shared unverified phone, shared contact name, shared network and
+throwaway-mailbox domains all feed a score rather than a refusal. That trade is only honest if
+somebody looks at the flags, which is why the Platform Admin review queue is part of this work
+rather than a follow-up.
+
+**No Postgres extensions, per explicit instruction — no `pg_trgm`, and by the same reasoning no
+`citext` or `fuzzystrmatch`.** Name similarity is therefore computed in process, over a small
+candidate set narrowed by a blocking key, not in SQL.
+
+### What normalization means here
+
+`Q-Mgr.Shared/Domain/Identity/RegistrationIdentity.cs` is the single source of truth for the
+canonical forms, and it is shared deliberately so the API and any future caller cannot drift:
+
+- **Email** — lower-cased and trimmed; Gmail and Googlemail collapse to one domain and lose dots
+  in the local part; the providers that alias on `+` lose the tag. An address whose local part
+  folds away entirely keeps its original form rather than colliding with every other such address.
+- **Phone** — digits only, a single leading zero swapped for the country code (256), an
+  international `00` prefix dropped.
+- **Organization name** — lower-cased, punctuation flattened, legal-form and filler words dropped
+  (`ltd`, `limited`, `sacco`, `group`, `the`, `of` …), then **the remaining words sorted**, so
+  "Kampala Dental Ltd" and "Dental Kampala Limited" produce the same key. The blocking key is the
+  first three characters of the first sorted word plus a coarse length band.
+
+### Files
+
+| Area | File |
+| --- | --- |
+| Normalization | `Q-Mgr.Shared/Domain/Identity/RegistrationIdentity.cs`, `DisposableEmailDomains.cs` |
+| Scoring | `Q-Mgr.API/Infrastructure/Services/RegistrationGuardService.cs` |
+| Phone proof | `Q-Mgr.API/Infrastructure/Services/PhoneVerificationService.cs` |
+| Audit row | `Q-Mgr.API/Domain/Entities/Identity/RegistrationAttempt.cs` |
+| Indexes | `Q-Mgr.API/Infrastructure/Data/Configurations/RegistrationIdentityConfiguration.cs` |
+| Review API | `Q-Mgr.API/Controllers/v1/RegistrationReviewController.cs` |
+| Review UI | `Q-Mgr.Web/Components/Pages/Platform/RegistrationReview.razor` |
+| Sign-up wizard | `Q-Mgr.Web/Components/Pages/Register.razor` |
+| Migration | `Infrastructure/Migrations/20260903191859_AddRegistrationDuplicateDetection.cs` |
+
+### The migration is not just DDL — read it before changing it
+
+The unique index on `Users.NormalizedEmail` cannot be built over rows that all hold the column
+default, so the migration **backfills every existing user and organization first**, in SQL that
+mirrors the C# normalization step for step. The organization-name backfill sorts words with
+`COLLATE "C"` on purpose: that is byte-wise ordering, which is what `StringComparer.Ordinal` does
+on the C# side. A locale-aware sort would produce keys that never match the ones written at
+sign-up. Verified against the dev database: 8 users and 7 organizations backfilled correctly.
+
+### Verified live
+
+| Case | Result |
+| --- | --- |
+| First sign-up | 201, recorded as Allow, score 0 |
+| `a.m.o.s.dup.test+signup@googlemail.com` against an existing `amos.dup.test@gmail.com` | 409 `DUPLICATE_REGISTRATION` |
+| Same business, words reordered, legal suffix swapped | 201, flagged at 110 with four named signals |
+| `@mailinator.com` | 201, flagged at 50 |
+| Honeypot field filled | 201, flagged at 120 |
+| Fourth attempt within the hour from one address | 429 with a correct `Retry-After` |
+| Review endpoints without a token | 401 on all three |
+
+### Two bugs found and fixed while testing
+
+1. **`PhoneVerificationService` cached the code before sending it.** When no SMS gateway is
+   configured the send fails, but a live code was left in the cache, so the check endpoint started
+   counting down attempts for a number that never received anything, and a send-budget slot was
+   spent on a message nobody got. Codes are now stored only after the message genuinely goes out.
+2. **`.form-hint` had no CSS rule anywhere in the app**, so every hint on the sign-up form
+   inherited a colour invisible against the white card — including the pre-existing "This will be
+   your admin login email". Styled in `Register.razor`.
+
+### Not verified, and why
+
+The review queue's authenticated views were not exercised in a browser. The endpoints are
+confirmed to exist and to reject unauthenticated callers, and the page compiles and routes, but
+signing in requires typing a password, which I do not do. Worth a click-through on
+`/platform/registration-review` as the platform admin.
+
+Phone verification has never delivered a real message, because no SMS gateway is configured
+anywhere yet. The failure path is verified and degrades cleanly: the applicant sees a plain
+message and the sign-up still completes without verifying. **Once a gateway is configured, the
+verified-phone block becomes the strongest signal in the system** — a SIM costs money and is
+registered against an identity document here, whereas an email address is free and unlimited.
+
+### Deliberately not done
+
+Blocking on a tripped honeypot. A password manager can fill an off-screen field, so a hard block
+there would refuse real people. Bogus accounts are contained instead by three other things: they
+land `Pending` until email verification and can do nothing meanwhile, the per-address velocity
+budget caps volume at 3 an hour and 10 a day, and every one of them lands in the review queue.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-03 — supersedes every handover below as the "read first" entry; the ones below remain accurate for what they cover)
 
 **The request this session was "fix and close all open items, except for Stripe — I do not have

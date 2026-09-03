@@ -12,6 +12,27 @@ public class User : BaseAuditableEntity
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string? Phone { get; set; }
+
+    /// <summary>
+    /// Canonical form of <see cref="Email"/>, used to stop one mailbox opening unlimited trials:
+    /// provider aliasing is folded so "j.o.h.n+2@gmail.com" and "john@gmail.com" share a value. A
+    /// unique index sits on this, so the exact-match check on Email is no longer the only guard.
+    /// Populated by RegistrationIdentity.NormalizeEmail; never shown to the user, who keeps seeing
+    /// whatever they typed.
+    /// </summary>
+    public string NormalizedEmail { get; set; } = string.Empty;
+
+    /// <summary>Digits-only form of <see cref="Phone"/>, with the local trunk prefix folded to a
+    /// country code so "0753404044" and "+256753404044" compare equal.</summary>
+    public string? NormalizedPhone { get; set; }
+
+    /// <summary>
+    /// When this number passed an SMS one-time code. A verified phone is the strongest identity
+    /// signal available here: a SIM costs money and is registered against an ID, whereas an email
+    /// address is free and unlimited. Null means unverified, and unverified numbers only ever
+    /// contribute to a risk score rather than blocking anyone.
+    /// </summary>
+    public DateTime? PhoneVerifiedAt { get; set; }
     public string? EmployeeNumber { get; set; }
 
     /// <summary>

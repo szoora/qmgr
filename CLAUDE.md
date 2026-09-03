@@ -227,6 +227,38 @@ to any new feature's data-model planning, and say so explicitly in the plan (whi
 table/field is being widened, and why a new table wasn't the first choice) rather than silently
 defaulting to "just add a table" the way a fresh design tends to.
 
+## Identity normalization has one home, and no Postgres extensions (decided 2026-09-03)
+
+Duplicate-registration detection turns emails, phone numbers and organization names into canonical
+forms. Every one of those forms is produced by `Q-Mgr.Shared/Domain/Identity/RegistrationIdentity.cs`
+and nowhere else. If you need a normalized value — in a new endpoint, a background job, an import,
+a report — call that class. Do not write a second lower-case-and-trim helper next to the code that
+needs one; this codebase's recurring SSoT failure (see the DTO section above) is exactly a second
+copy of a rule that then drifts from the first.
+
+**No Postgres extensions, by explicit user instruction: no `pg_trgm`, and by the same reasoning no
+`citext` and no `fuzzystrmatch`.** This is why name similarity is scored in process, over a handful
+of rows narrowed by an indexed blocking key, rather than by a fuzzy-match index in SQL. It is also
+why `Users.NormalizedEmail` is a real stored column with a unique index rather than a case-
+insensitive type. Treat this as part of the standing "no third-party server dependencies" rule
+above — a database extension is a server dependency.
+
+**Two related rules that are easy to break by accident:**
+
+- **A schema change that adds a column feeding a unique index must backfill in the same
+  migration.** `20260903191859_AddRegistrationDuplicateDetection` does this: existing rows all hold
+  the column default, and Postgres will not build a unique index over a column where every row
+  reads the same empty string. Its backfill SQL mirrors the C# normalization step for step, and
+  sorts organization-name words with `COLLATE "C"` because that is byte-wise ordering, matching
+  `StringComparer.Ordinal` on the C# side. A locale-aware sort silently produces keys that never
+  match the ones written at sign-up.
+- **Refusing a sign-up needs near-proof; anything softer flags for review.** Only a matching
+  canonical email, or a phone number an existing account has *verified*, blocks. Name similarity,
+  a shared unverified phone, a shared contact name, a shared network and throwaway-mailbox domains
+  all add to a score that flags. A wrongly refused sign-up is a lost customer who cannot appeal, so
+  if you are tempted to promote a heuristic to a hard block, that is a decision to put to the user,
+  not to infer. The flags are reviewed at `/platform/registration-review`.
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

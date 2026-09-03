@@ -54,6 +54,9 @@ public record RegisterOrganizationCommand : IRequest<RegisterOrganizationResult>
     /// re-checked here). Starts that module's no-card trial; this is the organization's only
     /// trial, ever — see ModulesController's TRIAL_IN_PROGRESS gate.</summary>
     public List<string> SelectedModuleCodes { get; init; } = new();
+
+    /// <summary>Set when the admin phone passed SMS verification, so the user record records it.</summary>
+    public DateTime? PhoneVerifiedAt { get; init; }
 }
 
 /// <summary>

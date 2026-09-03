@@ -110,6 +110,13 @@ public record ProvisionTenantRequest
 
     /// <summary>Referral code if applicable</summary>
     public string? ReferralCode { get; init; }
+
+    /// <summary>
+    /// When the admin phone passed an SMS one-time code, or null if it was never verified. A
+    /// verified number is the strongest identity signal available, so it is carried through to the
+    /// user record rather than being recomputed later.
+    /// </summary>
+    public DateTime? PhoneVerifiedAt { get; init; }
 }
 
 /// <summary>

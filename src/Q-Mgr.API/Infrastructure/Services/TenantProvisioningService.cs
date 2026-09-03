@@ -12,6 +12,7 @@ using QMgr.Domain.Entities.Organization;
 using QMgr.Domain.Entities.Platform;
 using QMgr.Infrastructure.Email;
 using QMgr.Domain.Enums;
+using QMgr.Domain.Identity;
 using QMgr.Domain.Interfaces;
 using QMgr.Infrastructure.Data;
 using Role = QMgr.Domain.Entities.Identity.Role;
@@ -67,9 +68,11 @@ public class TenantProvisioningService : ITenantProvisioningService
         ProvisionTenantRequest request,
         CancellationToken cancellationToken = default)
     {
-        // Check if email already exists
+        // Compare canonical forms, not raw strings: "j.o.h.n+2@gmail.com" and "john@gmail.com"
+        // are one mailbox, and matching exactly on Email let one person open unlimited trials.
+        var normalizedEmail = RegistrationIdentity.NormalizeEmail(request.AdminEmail) ?? request.AdminEmail.ToLowerInvariant();
         var existingUser = await _unitOfWork.Users.FirstOrDefaultAsync(
-            u => u.Email.ToLower() == request.AdminEmail.ToLower(),
+            u => u.NormalizedEmail == normalizedEmail,
             cancellationToken);
 
         if (existingUser != null)
@@ -120,6 +123,10 @@ public class TenantProvisioningService : ITenantProvisioningService
                 {
                     Name = request.OrganizationName,
                     Slug = slug,
+                    // Canonical forms for duplicate detection, computed once at creation so the
+                    // sign-up path can narrow candidates with an indexed lookup instead of scanning.
+                    NormalizedName = RegistrationIdentity.NormalizeOrganizationName(request.OrganizationName),
+                    NameBlockingKey = RegistrationIdentity.BuildNameBlockingKey(request.OrganizationName),
                     ContactEmail = request.AdminEmail,
                     ContactPhone = request.ContactPhone,
                     BillingEmail = request.AdminEmail,
@@ -148,6 +155,11 @@ public class TenantProvisioningService : ITenantProvisioningService
                     OrganizationId = organization.Id,
                     Username = request.AdminEmail, // Use email as username
                     Email = request.AdminEmail,
+                    // Provider aliasing folded, so one mailbox cannot open unlimited trials via
+                    // dotted or plus-tagged variants. A unique index enforces this.
+                    NormalizedEmail = RegistrationIdentity.NormalizeEmail(request.AdminEmail) ?? request.AdminEmail.ToLowerInvariant(),
+                    NormalizedPhone = RegistrationIdentity.NormalizePhone(request.AdminPhone),
+                    PhoneVerifiedAt = request.PhoneVerifiedAt,
                     PasswordHash = passwordHash,
                     FirstName = request.AdminFirstName,
                     LastName = request.AdminLastName,
