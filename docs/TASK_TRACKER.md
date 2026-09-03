@@ -177,6 +177,47 @@ duplicates; `KioskMode` had a `Dispose()` that never ran (no `@implements IDispo
 punctuation rendering as `â€"` / `â¢`) which are repaired — worth knowing that this can happen, and
 that `git ls-files | perl -ne 'exit 1 if /\xc3\xa2\xc2\x80/'` finds it.
 
+### Visitor & Safeguarding split into two modules (2026-09-03, end of session)
+
+The user asked whether "Visitor & Safeguarding" was a descriptive label. It was not, for anyone but
+a school: *safeguarding* is education-sector language, and the module bundled a general-purpose
+capability (the visitor book) with a vertical-specific one (the student welfare ledger), so a bank
+or clinic had to buy a ledger it would never open in order to get visitor check-in. The label was a
+symptom; the bundling was the problem. On the user's instruction it is now two modules.
+
+| Module | Covers | Price |
+|---|---|---|
+| **Visitor Management** (`visitor-management`) | Check-in and out, badges, group passes, pre-registered arrivals, watchlist, contractor induction, evacuation roll-call | UGX 95,000/mo |
+| **Student Welfare** (`student-welfare`) | Student roster and guardians, visiting-day passes, the welfare ledger, welfare reports | UGX 105,000/mo, badged "For schools" |
+
+Either half alone costs less than the old bundle (UGX 150,000); a school buying both pays somewhat
+more for what is now materially more feature. **Those numbers are a judgement call, not a
+requirement — change them in `DbSeeder.SeedModulesAsync` if the commercial view differs.**
+
+**Nobody loses access.** `DbSeeder.SeedVisitorSafeguardingSplitAsync` runs on every boot and is
+idempotent: it grants both successors to any organization holding the retired module, carrying that
+row's status, activation date, trial end and billing cycle across rather than resetting anyone to a
+fresh trial, then marks the old plan inactive. The original grant rows are deliberately kept so the
+record of what was actually purchased survives. `ModuleCodes.LegacyVisitorSafeguarding` and
+`LegacyVisitorSafeguardingSuccessors` exist for exactly this and should not be deleted until the
+split has demonstrably run in production.
+
+**One subtlety in the route map worth remembering**: the student roster lives at
+`/admin/visitors/roster` for historical reasons but belongs to Student Welfare, so it is listed
+*ahead* of the `/admin/visitors` prefix, because matching is first-hit. Any future route that sits
+under one module's path but belongs to another needs the same treatment.
+
+Verified live: the catalog serves five modules with the retired one absent; every prior holder now
+holds both successors; and with Student Welfare revoked while Visitor Management was kept, the
+visitor and evacuation endpoints answered normally while the student and welfare endpoints returned
+`MODULE_NOT_PURCHASED` naming `student-welfare`. The sidebar renders the two groups separately and
+the marketplace shows both cards with their own prices.
+
+**Deploy note:** this is a catalog and entitlement change, not a schema one — no migration is
+involved. The grandfathering happens on API startup, so the first boot after deploying is what
+performs it; check the log line "Split the retired visitor-safeguarding module into its two
+successors" and spot-check a tenant's module list afterwards.
+
 ### Product-gap pass (2026-09-03, later the same day)
 
 Prompted by two questions from the user: what feature and UI/UX gaps the end-to-end work had
@@ -369,7 +410,7 @@ checking remains blocked by the browser tooling's non-functional viewport resize
    set `StripePriceIdMonthly`/`StripePriceIdAnnual` on the 4 module rows, and run a real test-mode
    checkout plus a webhook replay.
 2. **Production is still running the old build — but the package is built and waiting.**
-   `scripts/deploy/dist/qmgr-0.2.0-20260903.1954.tar.gz` (108.8 MB, ports 8586/8587, gitignored) contains everything above. Deploying it is a live-system action that was
+   `scripts/deploy/dist/qmgr-0.2.0-20260903.2111.tar.gz` (108.8 MB, ports 8586/8587, gitignored) contains everything above. Deploying it is a live-system action that was
    deliberately left for the user's explicit go-ahead. Two things to know before running it:
    the deploy carries **two migrations that have only ever been applied locally**
    (`AddIndustryCategoryConsolidation` from the previous session, plus
