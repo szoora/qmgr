@@ -6,6 +6,147 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-09-03, late) — read this one first
+
+Supersedes the two 2026-09-03 entries below, which remain accurate for what they cover. Four
+commits, all on `master`, working tree clean:
+
+| Commit | What |
+| --- | --- |
+| `2262bde` | Duplicate-registration detection: canonical identity, phone proof, review queue |
+| `ec7bb8a` | Canonical identity derived centrally; trunk-zero phone fix |
+| `ce95af2` / `d1b2bcb` | `scripts/seed-modules.sql`, then made GUI-safe |
+| `3183c03` | Platform Admin module catalog editor |
+
+### Production state
+
+The five modules are **live on qmgr.cashbook.ug** and render with prices on
+`/billing/modules`. They got there by running `scripts/seed-modules.sql` by hand against the
+production database, **not** by a deploy. So production is still running an older build: it has
+the module rows but none of this session's code. A deployment package was built and is waiting at
+`scripts/deploy/dist/qmgr-0.2.0-20260903.2257.tar.gz`, ports 8586 API / 8587 Web.
+
+**Nothing in this session's code has ever run in production.** The duplicate-registration system,
+the review queue and the module catalog editor are all local-only so far.
+
+When that package does land, watch the first start: the new migration backfills every user and
+organization before building a unique index on the canonical email. If two live accounts share a
+canonical address, the index build fails and the migration rolls back rather than corrupting
+anything. `journalctl -u qmgr-api` will say so.
+
+---
+
+## NEXT TASK — price grandfathering
+
+The user asked for this explicitly at the end of the session: *"build the price grandfathering
+too in the next session."*
+
+### The problem, stated accurately
+
+Nothing records the price a customer agreed to. `BillingService.GenerateInvoiceAsync`
+(`BillingService.cs:521-522`) reads `plan.MonthlyPriceUgx` / `AnnualPriceUsd` etc. at the moment
+it generates each invoice. So an edit in the new Module Catalog page changes what a renewal costs.
+
+**Be careful about the blast radius — I overstated it to the user once and had to correct it.**
+Confirm this before designing anything:
+
+- The **recurring** path is the tier `Subscription` one. `GenerateInvoiceAsync` is called from
+  `BillingJobs.cs:385` and prices from `subscription.Plan`.
+- **Modules have no recurring invoice path today.** A module purchase
+  (`ModulesController.cs:132`) is a one-off Mobile Money charge for
+  `AnnualPriceUgx`/`MonthlyPriceUgx`. `OrganizationModule.CurrentPeriodEnd` exists on the entity
+  but a repo-wide grep found nothing that writes or reads it for renewal; the only recurring job
+  touching `OrganizationModule` expires trials to `PastDue` (`BillingJobs.cs:170-231`).
+- `BillingService.CreateSubscriptionAsync` takes a bare plan code, so a `Subscription` could in
+  principle point at a module row. Whether that ever happens in practice was not established.
+
+So today an edited module price hits **new purchases**, and would hit existing holders the moment
+a module renewal path exists. Both want the locked price; the tier path needs it more urgently.
+
+### Design, following the standing "enhance before you add" rule
+
+Nullable columns on rows that already exist. No new table — a purchase is not a new resource, and
+"what this customer agreed to pay" is an attribute of the row that already represents the
+purchase.
+
+- **`Subscription`** — `AgreedUnitPrice decimal?` and `AgreedCurrency text?`, captured in
+  `CreateSubscriptionAsync` and on plan change. `GenerateInvoiceAsync` prefers it and falls back to
+  the plan's current price when null.
+- **`OrganizationModule`** — `AgreedPriceUgx decimal?` and `AgreedPriceUsd decimal?`, captured at
+  purchase in `ModulesController`. Read by whatever renewal path gets built, and worth showing on
+  the tenant's own billing screen so a customer can see what they are actually on.
+
+Null meaning "track the list price" makes the change safe to ship without a backfill: every
+existing row behaves exactly as it does today until somebody edits a price.
+
+### Three decisions that are the user's, not the implementer's
+
+1. **Backfill or not.** Leaving nulls means today's customers keep tracking the list price, so the
+   very first edit in the new UI reprices them — which is the thing being fixed. Backfilling from
+   the current plan price at migration time freezes everyone at today's price and protects them
+   from that first edit. My recommendation is to backfill, but ask.
+2. **Price cuts.** A locked price protects a customer from an increase and also withholds a
+   decrease. The clean answer is an **"Apply to existing subscribers" checkbox in the Module
+   Catalog editor, default off**, which rewrites the locked prices when ticked — so passing on a
+   cut is deliberate rather than automatic.
+3. **Whether tier subscriptions are in scope**, or only modules. The user asked in the context of
+   the module catalog, but the recurring exposure is on the tier path.
+
+### One gotcha worth catching in the same pass
+
+`PlatformAnalyticsController.cs:55` and `:194` compute MRR from `s.Plan?.MonthlyPriceUsd`. Once
+agreed prices exist, MRR read from the list price will overstate or understate real revenue by
+exactly the grandfathered difference. Update both call sites in the same change or the reporting
+quietly goes wrong.
+
+---
+
+## What was built this session
+
+### Duplicate-registration detection
+
+Only near-proof refuses a sign-up: a matching canonical email, or a phone an existing account has
+verified. Similar names, shared unverified phone, shared contact name, shared network, throwaway
+domains, a filled honeypot and an implausibly fast submission all score and, past 50, flag for
+review at `/platform/registration-review`. A wrongly refused customer cannot appeal, which is why
+the softer signals go to a person. No Postgres extensions, per instruction.
+
+`Q-Mgr.Shared/Domain/Identity/RegistrationIdentity.cs` is the single source for canonical forms,
+and `QMgrDbContext.SaveChangesAsync` derives the stored columns so no call site can forget them —
+five of the six places that create a `User` originally did, which would have broken a fresh
+install once the unique index existed.
+
+Verified live: folded Gmail variant refused (409); reordered business name flagged at 110;
+honeypot flagged at 120; throwaway domain flagged at 50; fourth attempt in an hour rejected (429);
+review endpoints reject anonymous callers.
+
+### Module catalog editor
+
+`/platform/module-catalog`. Edits name, description, badge, sort order, trial length, all four
+prices, seven limits, live/public flags. Editing only — a module code is referenced by
+`ModuleCodes`, the route map and the enforcing middleware, so a code invented in the database
+would be unusable and deleting one would strip access. `IsActive` retires a module without
+affecting organizations that already hold it.
+
+`DbSeeder`'s limits-sync loop is scoped to the four tier plans, so administrator edits to module
+rows survive a restart. Its comment claiming sole ownership was stale and now says so.
+
+### Not verified, both needing a signed-in click-through
+
+- **`/platform/registration-review`** — compiles, routes, rejects anonymous callers; authenticated
+  views never opened.
+- **`/platform/module-catalog`** — same; the save path is unproven.
+
+Both gaps have the same cause: signing in means typing a password, which I do not do. I tried
+minting a local dev JWT to test the catalog endpoints and that was correctly blocked as credential
+forgery. If the user signs in on the browser, the next session can drive both pages directly.
+
+Phone verification has never sent a real message — no SMS gateway is configured anywhere. The
+failure path degrades cleanly and sign-up completes without it. Once a gateway exists, the
+verified-phone block becomes the strongest signal in the system.
+
+---
+
 ## 🧭 SESSION ADDENDUM (written 2026-09-03, later than the handover below) — duplicate-registration defence
 
 The request: *"make recommendations to block same user / subscriber registering many times. the
