@@ -586,7 +586,11 @@ else
     // instead of staying stale until a full page reload — MainLayout persists across navigation
     // in Blazor Server and never re-runs OnInitializedAsync on its own.
     private int unpurchasedModuleCount => ModuleState.UnpurchasedCount;
-    private bool HasModule(string moduleCode) => isSuperAdmin || ModuleState.ActiveModuleCodes.Contains(moduleCode);
+    // Fails open when the module list could not be fetched: an empty set then means "we don't
+    // know", not "you own nothing", and hiding a customer's paid features during an API blip is
+    // worse than briefly showing an item the API would refuse anyway.
+    private bool HasModule(string moduleCode) =>
+        isSuperAdmin || !ModuleState.LoadSucceeded || ModuleState.ActiveModuleCodes.Contains(moduleCode);
     private bool tokensInitialized = false;
     private string ApiDocsUrl = "/api/docs";
 
@@ -908,8 +912,9 @@ else
     /// </summary>
     private void EnforceModuleAccessForCurrentPage()
     {
-        // Until the module list has actually loaded, everything would look unpurchased.
-        if (!ModuleState.IsLoaded || isSuperAdmin) return;
+        // Until the module list has actually loaded — or if the call failed — everything would
+        // look unpurchased, so never redirect on that basis. The API enforces this regardless.
+        if (!ModuleState.IsLoaded || !ModuleState.LoadSucceeded || isSuperAdmin) return;
 
         var path = "/" + NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
         var required = ModuleRouteMap.RequiredModuleForPage(path);
