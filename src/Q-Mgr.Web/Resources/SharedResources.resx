@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence><xsd:element name="value" type="xsd:string" minOccurs="0" /></xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence><xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" /></xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="Welcome!" xml:space="preserve">
+    <value>Welcome!</value>
+  </data>
+  <data name="Please select the service you require to receive your queue number" xml:space="preserve">
+    <value>Please select the service you require to receive your queue number</value>
+  </data>
+  <data name="Tap to Get Ticket" xml:space="preserve">
+    <value>Tap to Get Ticket</value>
+  </data>
+  <data name="Waiting" xml:space="preserve">
+    <value>Waiting</value>
+  </data>
+  <data name="Minutes" xml:space="preserve">
+    <value>Minutes</value>
+  </data>
+  <data name="Now Serving" xml:space="preserve">
+    <value>Now Serving</value>
+  </data>
+  <data name="Waiting for customers..." xml:space="preserve">
+    <value>Waiting for customers...</value>
+  </data>
+  <data name="in queue" xml:space="preserve">
+    <value>in queue</value>
+  </data>
+  <data name="Your ticket number" xml:space="preserve">
+    <value>Your ticket number</value>
+  </data>
+  <data name="Please wait for your number to be called" xml:space="preserve">
+    <value>Please wait for your number to be called</value>
+  </data>
+  <data name="Counter" xml:space="preserve">
+    <value>Counter</value>
+  </data>
+  <data name="Join the queue" xml:space="preserve">
+    <value>Join the queue</value>
+  </data>
+  <data name="Your name" xml:space="preserve">
+    <value>Your name</value>
+  </data>
+  <data name="Phone number" xml:space="preserve">
+    <value>Phone number</value>
+  </data>
+  <data name="Optional" xml:space="preserve">
+    <value>Optional</value>
+  </data>
+  <data name="Continue" xml:space="preserve">
+    <value>Continue</value>
+  </data>
+  <data name="Check your place in the queue" xml:space="preserve">
+    <value>Check your place in the queue</value>
+  </data>
+  <data name="People ahead of you" xml:space="preserve">
+    <value>People ahead of you</value>
+  </data>
+  <data name="Estimated wait" xml:space="preserve">
+    <value>Estimated wait</value>
+  </data>
+  <data name="Your turn has arrived" xml:space="preserve">
+    <value>Your turn has arrived</value>
+  </data>
+  <data name="Please go to counter" xml:space="preserve">
+    <value>Please go to counter</value>
+  </data>
+  <data name="Share your feedback" xml:space="preserve">
+    <value>Share your feedback</value>
+  </data>
+  <data name="How was your experience?" xml:space="preserve">
+    <value>How was your experience?</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Submit</value>
+  </data>
+  <data name="Thank you" xml:space="preserve">
+    <value>Thank you</value>
+  </data>
+  <data name="Something went wrong. Please try again." xml:space="preserve">
+    <value>Something went wrong. Please try again.</value>
+  </data>
+  <data name="No branch selected" xml:space="preserve">
+    <value>No branch selected</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+</root>

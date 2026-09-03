@@ -39,6 +39,25 @@ public class Visitor : BaseEntity
 
     public VisitorStatus Status { get; set; } = VisitorStatus.PreRegistered;
 
+    // What kind of visit this is (Guest/Contractor/Staff/Other). Deliberately per-VISIT rather
+    // than on VisitorProfile: the same person legitimately arrives in different capacities on
+    // different days, so "is this person a contractor" is not a stable fact about them — "was
+    // THIS trip a contractor visit" is. The contractor induction itself is the opposite kind of
+    // fact (a thing the person did once that follows them everywhere) and lives on the profile.
+    public VisitorType VisitorType { get; set; } = VisitorType.Guest;
+
+    // --- Pre-registration of an expected arrival (Status = Expected) ---
+
+    // When this person is due to arrive. Distinct from ScheduledAt, which the older
+    // PreRegistered flow set and which several existing queries (GetVisitors' default "today"
+    // view, GetSummary) already key off — both are populated for an Expected visit so those
+    // queries keep working untouched, but this is the field the expected-arrivals screens read.
+    public DateTime? ExpectedArrivalAt { get; set; }
+
+    // Who booked them in ahead of time. Nullable because pre-registration can also arrive
+    // through a badge scan or an unauthenticated path in future; a plain walk-in has no value.
+    public Guid? PreRegisteredByUserId { get; set; }
+
     public DateTime? ScheduledAt { get; set; }
     public DateTime? CheckedInAt { get; set; }
     public DateTime? CheckedOutAt { get; set; }

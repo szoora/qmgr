@@ -16,19 +16,22 @@ public class CreateTokenCommandHandler : IRequestHandler<CreateTokenCommand, Tok
     private readonly IWebhookService _webhookService;
     private readonly IUsageTrackingService _usageTrackingService;
     private readonly ITenantContextAccessor _tenantContextAccessor;
+    private readonly IQueueCustomerNotifier _customerNotifier;
 
     public CreateTokenCommandHandler(
         IUnitOfWork unitOfWork,
         IQueueService queueService,
         IWebhookService webhookService,
         IUsageTrackingService usageTrackingService,
-        ITenantContextAccessor tenantContextAccessor)
+        ITenantContextAccessor tenantContextAccessor,
+        IQueueCustomerNotifier customerNotifier)
     {
         _unitOfWork = unitOfWork;
         _queueService = queueService;
         _webhookService = webhookService;
         _usageTrackingService = usageTrackingService;
         _tenantContextAccessor = tenantContextAccessor;
+        _customerNotifier = customerNotifier;
     }
 
     public async ValueTask<TokenDto> Handle(CreateTokenCommand request, CancellationToken cancellationToken)

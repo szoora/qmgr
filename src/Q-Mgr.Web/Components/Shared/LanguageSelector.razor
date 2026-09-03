@@ -1,0 +1,73 @@
+@using System.Globalization
+@using QMgr.Web.Services
+@inject NavigationManager Navigation
+
+@*
+    Language picker for the customer-facing screens. Changing culture in Blazor Server cannot be
+    done by setting CultureInfo on the circuit alone, because the already-rendered markup and the
+    request-localization middleware both need to agree: the selection is written to a cookie by a
+    plain HTTP endpoint, which then redirects back, so the new circuit starts in the chosen
+    language. That is why this navigates rather than calling a service.
+*@
+
+<div class="qm-language-selector" role="group" aria-label="Choose a language">
+    @foreach (var (code, englishName, nativeName) in SupportedCultures.All)
+    {
+        var isCurrent = string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, code, StringComparison.OrdinalIgnoreCase);
+        <a class="qm-language-option @(isCurrent ? "is-current" : "")"
+           href="@BuildSwitchUrl(code)"
+           lang="@code"
+           hreflang="@code"
+           aria-current="@(isCurrent ? "true" : null)"
+           aria-label="@($"Switch to {englishName}")">@nativeName</a>
+    }
+</div>
+
+<style>
+    .qm-language-selector {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border-radius: var(--qm-radius-full);
+        background: var(--qm-bg-elevated);
+        border: 1px solid var(--qm-border);
+    }
+
+    .qm-language-option {
+        padding: 6px 14px;
+        border-radius: var(--qm-radius-full);
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: var(--qm-text-secondary);
+        text-decoration: none;
+        transition: var(--qm-transition-fast);
+    }
+
+    .qm-language-option:hover,
+    .qm-language-option:focus-visible {
+        color: var(--qm-text-primary);
+        background: var(--qm-bg-card-hover);
+    }
+
+    /* Public terminals are used by keyboard and assistive tech too, so focus must be obvious. */
+    .qm-language-option:focus-visible {
+        outline: 3px solid var(--qm-primary);
+        outline-offset: 2px;
+    }
+
+    .qm-language-option.is-current {
+        color: var(--qm-text-on-primary);
+        background: var(--qm-primary);
+    }
+</style>
+
+@code {
+    /// <summary>Where to return after the cookie is set. Defaults to the current page.</summary>
+    [Parameter] public string? ReturnUrl { get; set; }
+
+    private string BuildSwitchUrl(string culture)
+    {
+        var target = ReturnUrl ?? new Uri(Navigation.Uri).PathAndQuery;
+        return $"/culture/set?culture={Uri.EscapeDataString(culture)}&redirectUri={Uri.EscapeDataString(target)}";
+    }
+}

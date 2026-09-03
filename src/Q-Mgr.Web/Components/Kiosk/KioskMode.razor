@@ -34,14 +34,14 @@
     <div class="kiosk-container @GetIndustryClass()">
         @if (branchState == BranchResolveState.Resolving)
         {
-            <div class="branch-state">
-                <QSpinner Size="lg" />
+            <div class="branch-state" role="status" aria-live="polite">
+                <QSpinner Size="lg" Text="Loading the services at this branch" />
             </div>
         }
         else if (branchState == BranchResolveState.NoBranch)
         {
-            <div class="branch-state">
-                <QIcon Name="geo-alt" />
+            <div class="branch-state" role="alert">
+                <QIcon Name="geo-alt" aria-hidden="true" />
                 <h1>No branch selected</h1>
                 <p>
                     Open this screen from <strong>Customer Links</strong> in the admin, or add the

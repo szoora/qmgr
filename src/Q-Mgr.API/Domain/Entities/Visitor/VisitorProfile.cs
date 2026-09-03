@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Common;
 
 namespace QMgr.Domain.Entities.Visitor;
@@ -32,6 +33,24 @@ public class VisitorProfile : BaseEntity
     // follows them to every branch and every future visit.
     public bool IsWatchlisted { get; set; }
     public string? WatchlistReason { get; set; }
+
+    // Who flagged them and when. A watchlist entry now BLOCKS check-in outright (see
+    // VisitorsController.WatchlistBlock), which makes it a decision someone is accountable for —
+    // "barred, no idea by whom or since when" is not a defensible answer to a safeguarding audit.
+    // Both are cleared together with the flag itself when a visitor is unflagged.
+    public DateTime? WatchlistAddedAt { get; set; }
+    public Guid? WatchlistAddedByUserId { get; set; }
+
+    // --- Contractor site induction ---
+    // On the PROFILE, not the visit: completing a site induction is something the PERSON did
+    // once, and it has to be checkable at the moment of check-in — before this trip's Visitor row
+    // exists. (Whether a given trip is a contractor visit at all is the opposite kind of fact and
+    // lives on Visitor.VisitorType.) Deliberately just a date and a note — this is a flag, not a
+    // documents module; nothing here stores or verifies a certificate.
+    public DateTime? InductionCompletedAt { get; set; }
+
+    [MaxLength(500)]
+    public string? InductionNotes { get; set; }
 
     public DateTime? DeletedAt { get; set; }
     public Guid? DeletedByUserId { get; set; }

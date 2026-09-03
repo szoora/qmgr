@@ -186,14 +186,47 @@ public class PrintController : ControllerBase
     }
 
     /// <summary>
-    /// Get kiosk settings for a branch
+    /// Verifies the branch for an endpoint that anonymous callers may also reach. A signed-in
+    /// caller is still held to <see cref="VerifyBranchOwnership"/> (so nobody reads another
+    /// tenant's branch while carrying a session); an anonymous caller — a lobby kiosk with no
+    /// staff logged in — only has to name a branch that exists and is active.
+    /// </summary>
+    private async Task<IActionResult?> VerifyBranchForPublicRead(Guid branchId)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext is { IsResolved: true })
+            return await VerifyBranchOwnership(branchId);
+
+        var branchExists = await _context.Branches
+            .AnyAsync(b => b.Id == branchId && b.IsActive);
+
+        if (!branchExists)
+            return NotFound(new ProblemDetails
+            {
+                Title = "Branch not found",
+                Detail = $"Branch with ID '{branchId}' was not found.",
+                Status = StatusCodes.Status404NotFound
+            });
+
+        return null;
+    }
+
+    /// <summary>
+    /// Get kiosk settings for a branch.
+    /// <para>
+    /// Anonymous on purpose, and only this action: an unattended kiosk has no staff session, so
+    /// requiring settings.view here meant a lobby terminal could never read the display
+    /// preferences (ticket timeout, countdown, auto-print-before-redirect) it needs to style
+    /// itself. Nothing in KioskSettingsDto is sensitive — it is presentation timing, not
+    /// configuration secrets. The PUT below stays authorized, as do all printer settings.
+    /// </para>
     /// </summary>
     [HttpGet("branches/{branchId:guid}/kiosk-settings")]
-    [RequirePermission(Permissions.SettingsView)]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(KioskSettingsDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetKioskSettings(Guid branchId)
     {
-        var verifyResult = await VerifyBranchOwnership(branchId);
+        var verifyResult = await VerifyBranchForPublicRead(branchId);
         if (verifyResult != null) return verifyResult;
 
         var settings = await _context.BranchSettings

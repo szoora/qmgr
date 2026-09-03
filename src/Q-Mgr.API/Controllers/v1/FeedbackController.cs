@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,6 +19,32 @@ namespace QMgr.API.Controllers.v1;
 [Produces("application/json")]
 public class FeedbackController : ControllerBase
 {
+    /// <summary>
+    /// Hard cap on how many survey questions a branch can have live at once. A public feedback
+    /// form that takes more than about a minute simply doesn't get completed, so this is a real
+    /// product constraint, not defensive plumbing: core rating + category + comment + NPS is
+    /// already four steps, and eight extra questions is the outer edge of tolerable.
+    /// Counted per effective scope (branch-specific + organization-wide) on create/activate.
+    /// </summary>
+    public const int MaxActiveQuestionsPerBranch = 8;
+
+    /// <summary>Longest free-text survey answer accepted (silently trimmed, never rejected).</summary>
+    private const int MaxFreeTextAnswerLength = 1000;
+
+    /// <summary>
+    /// Options used for Feedback.ResponsesJson and FeedbackQuestion.OptionsJson only. Enums are
+    /// written as strings so a stored answer stays readable/greppable in the DB, and reads are
+    /// case-insensitive so a row written by any earlier casing convention still parses.
+    /// </summary>
+    private static readonly JsonSerializerOptions StoredJson = CreateStoredJsonOptions();
+
+    private static JsonSerializerOptions CreateStoredJsonOptions()
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly ILogger<FeedbackController> _logger;
@@ -88,6 +116,16 @@ public class FeedbackController : ControllerBase
             });
         }
 
+        if (request.NpsScore is < 0 or > 10)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid NPS Score",
+                Detail = "The recommendation score must be between 0 and 10",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
         // Get the token
         var token = await _context.Tokens
             .Include(t => t.ServiceType)
@@ -118,6 +156,20 @@ public class FeedbackController : ControllerBase
             });
         }
 
+        // Survey answers: validate against the questions that were actually active for this
+        // branch/service, so a client can't post answers to questions it was never shown.
+        var questions = await GetActiveQuestionsAsync(branchId, token.ServiceTypeId);
+        var (answers, answerError) = BuildAnswers(request.Answers, questions);
+        if (answerError != null)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid Survey Answer",
+                Detail = answerError,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
         // Generate unique feedback code
         var feedbackCode = GenerateFeedbackCode();
 
@@ -130,6 +182,8 @@ public class FeedbackController : ControllerBase
             CounterId = token.CounterId,
             FeedbackCode = feedbackCode,
             Rating = request.Rating,
+            NpsScore = request.NpsScore,
+            ResponsesJson = SerializeAnswers(answers),
             Comment = request.Comment,
             Category = request.Category,
             Source = FeedbackSource.Kiosk,
@@ -192,6 +246,16 @@ public class FeedbackController : ControllerBase
             });
         }
 
+        if (request.NpsScore is < 0 or > 10)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid NPS Score",
+                Detail = "The recommendation score must be between 0 and 10",
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+
         // Find the feedback by code
         var feedback = await _context.Feedbacks
             .Include(f => f.ServiceType)
@@ -219,6 +283,19 @@ public class FeedbackController : ControllerBase
             });
         }
 
+        var questions = await GetActiveQuestionsAsync(feedback.BranchId, feedback.ServiceTypeId);
+        var (answers, answerError) = BuildAnswers(request.Answers, questions);
+        if (answerError != null)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid Survey Answer",
+                Detail = answerError,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        var responsesJson = SerializeAnswers(answers);
+
         // CONCURRENCY: the check above is racy on its own — two near-simultaneous submissions of
         // the same code could both read Rating == 0 before either writes. ExecuteUpdateAsync's
         // WHERE clause re-checks Rating == 0 as part of the same atomic UPDATE statement, so only
@@ -228,6 +305,8 @@ public class FeedbackController : ControllerBase
             .Where(f => f.Id == feedback.Id && f.Rating == 0)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(f => f.Rating, request.Rating)
+                .SetProperty(f => f.NpsScore, request.NpsScore)
+                .SetProperty(f => f.ResponsesJson, responsesJson)
                 .SetProperty(f => f.Comment, request.Comment)
                 .SetProperty(f => f.Category, request.Category)
                 .SetProperty(f => f.Source, FeedbackSource.Link)
@@ -343,11 +422,14 @@ public class FeedbackController : ControllerBase
     }
 
     /// <summary>
-    /// Get feedback details by code (for offsite page)
+    /// Get feedback details by code (for offsite page).
+    /// Returns the branch's active survey questions inline so the public page renders the whole
+    /// form from one round trip. The original fields are all still present and unchanged, so an
+    /// existing feedback link keeps working exactly as before.
     /// </summary>
     [HttpGet("feedback/{code}")]
     [AllowAnonymous] // Public for customers via link
-    [ProducesResponseType(typeof(FeedbackLinkDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(FeedbackCodeInfoDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetFeedbackByCode(string code)
     {
@@ -370,15 +452,22 @@ public class FeedbackController : ControllerBase
         // Check if already submitted
         var alreadySubmitted = feedback.Rating > 0;
 
-        return Ok(new
+        var questions = alreadySubmitted
+            ? new List<Domain.Entities.Queue.FeedbackQuestion>()
+            : await GetActiveQuestionsAsync(feedback.BranchId, feedback.ServiceTypeId);
+
+        return Ok(new FeedbackCodeInfoDto
         {
             FeedbackCode = feedback.FeedbackCode,
+            BranchId = feedback.BranchId,
+            ServiceTypeId = feedback.ServiceTypeId,
             TokenDisplayNumber = feedback.TokenDisplayNumber,
             ServiceTypeName = feedback.ServiceType?.Name,
             BranchName = feedback.Branch?.Name,
             ServiceDate = feedback.ServiceDate,
             AlreadySubmitted = alreadySubmitted,
-            ExistingRating = alreadySubmitted ? feedback.Rating : (int?)null
+            ExistingRating = alreadySubmitted ? feedback.Rating : null,
+            Questions = questions.Select(q => MapQuestionToDto(q, null)).ToList()
         });
     }
 

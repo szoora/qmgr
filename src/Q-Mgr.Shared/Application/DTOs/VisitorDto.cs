@@ -29,13 +29,34 @@ public record VisitorDto
     public string? StudentName { get; init; }
 
     public VisitorStatus Status { get; init; }
+    public VisitorType VisitorType { get; init; }
 
     public DateTime? ScheduledAt { get; init; }
+
+    // Set on a pre-registered EXPECTED arrival (Status = Expected) — when they're due.
+    public DateTime? ExpectedArrivalAt { get; init; }
     public DateTime? CheckedInAt { get; init; }
     public DateTime? CheckedOutAt { get; init; }
     public DateTime CreatedAt { get; init; }
 
     public string? Notes { get; init; }
+
+    // --- Contractor site induction (lives on the person's profile, flattened in like the
+    // identity fields above). InductionValid is server-computed against the same validity window
+    // the check-in warning uses, so no client has to know or duplicate that rule.
+    public DateTime? InductionCompletedAt { get; init; }
+    public DateTime? InductionExpiresAt { get; init; }
+    public bool InductionValid { get; init; }
+    public string? InductionNotes { get; init; }
+
+    // When the watchlist flag was added, for the staff-facing profile panel. The REASON is
+    // already on WatchlistReason above — neither is ever rendered on a kiosk/public surface.
+    public DateTime? WatchlistAddedAt { get; init; }
+
+    // Populated only on a check-in response, and only when something needed saying but wasn't
+    // serious enough to refuse the visit — currently a contractor with a missing or lapsed site
+    // induction. A blocking condition (watchlist) is never reported here; it's a 409 instead.
+    public string? CheckInWarning { get; init; }
 
     // Frequency signal for staff, not a hard limit — an unusually high count here (badge
     // sharing, tailgating) is something to notice, not something the system blocks on its own.
@@ -79,6 +100,8 @@ public record PreRegisterVisitorRequest
 
     public DateTime? ScheduledAt { get; set; }
     public string? Notes { get; set; }
+
+    public VisitorType VisitorType { get; set; } = VisitorType.Guest;
 }
 
 // Walk-in check-in creates and checks in a visitor in one step; checking in an existing
@@ -104,6 +127,27 @@ public record CheckInVisitorRequest
 
     public string? Notes { get; set; }
     public bool ConsentGiven { get; set; }
+
+    // Nullable so CheckInExisting can tell "the caller didn't say" (keep whatever the
+    // pre-registered record already carries) from "the caller said Guest".
+    public VisitorType? VisitorType { get; set; }
+
+    // Contractor induction captured at the desk — written through to the person's profile when
+    // supplied, so the next site they visit already knows. Null means "don't touch what's there".
+    public DateTime? InductionCompletedAt { get; set; }
+    public string? InductionNotes { get; set; }
+
+    // Manager-or-above escape hatch for a watchlisted visitor. Check-in is refused outright for
+    // anyone on the watchlist; supplying a reason here lets a Manager/Admin (and ONLY them —
+    // Staff supplying one changes nothing) admit them anyway, with the reason written into the
+    // visit's Notes so the override is on the record rather than in someone's memory.
+    public string? WatchlistOverrideReason { get; set; }
+
+    // The visiting-day repeat-check-in gate's self-service path for front-desk Staff: supplying a
+    // reason both satisfies the gate AND flags the guardian's card, in one atomic server-side
+    // action. It used to be two client calls (flag, then check in) — which cannot work now that a
+    // watchlisted profile is blocked from checking in, since the first call would bar the second.
+    public string? CardFlagReason { get; set; }
 }
 
 // Stored inside Branch.Settings under the "VisitingDay" key, alongside VisitorConsent and
@@ -147,8 +191,102 @@ public record VisitorSummaryDto
 {
     public int CurrentlyOnSite { get; init; }
     public int TotalToday { get; init; }
+
+    // Counts BOTH pre-registration statuses (PreRegistered and Expected) — reception cares that
+    // someone is due, not which of the two code paths booked them.
     public int PreRegisteredUpcoming { get; init; }
     public int WatchlistedOnSite { get; init; }
+
+    // Expected arrivals still outstanding today (not yet checked in or cancelled).
+    public int ExpectedToday { get; init; }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Evacuation roll-call — "who is inside the building right now", the first artefact a fire drill
+// or a safeguarding audit asks for. Point-in-time by construction: nothing here is stored, it is
+// recomputed on every request from the same check-in data the visitor log already keeps.
+// ---------------------------------------------------------------------------------------------
+
+public record EvacuationReportDto
+{
+    public DateTime GeneratedAt { get; init; }
+    public string BranchName { get; init; } = string.Empty;
+
+    // CheckedInVisitorCount + GroupPassOccupantCount. The number that goes on the clipboard.
+    public int TotalOnSite { get; init; }
+    public int CheckedInVisitorCount { get; init; }
+    public int GroupPassOccupantCount { get; init; }
+
+    // Whether roster students are represented in these numbers. Currently always false — see
+    // StudentsNote; kept as an explicit field so a roll-call sheet can say so out loud rather
+    // than leaving a marshal to assume the headcount already covers the school roll.
+    public bool StudentsIncluded { get; init; }
+    public string? StudentsNote { get; init; }
+
+    public List<EvacuationPersonDto> People { get; init; } = new();
+    public List<EvacuationGroupPassDto> GroupPasses { get; init; } = new();
+}
+
+public record EvacuationPersonDto
+{
+    public Guid VisitorId { get; init; }
+    public string BadgeCode { get; init; } = string.Empty;
+    public string FullName { get; init; } = string.Empty;
+    public string? Company { get; init; }
+    public string HostName { get; init; } = string.Empty;
+    public string? Phone { get; init; }
+    public DateTime? CheckedInAt { get; init; }
+    public VisitorType VisitorType { get; init; }
+    public string? StudentName { get; init; }
+}
+
+// A group pass admits a crew under ONE badge and only tracks a headcount — individual members
+// are never named anywhere, so a roll call can report the number under each pass and who to ask,
+// but cannot list them. Marshals need to know that explicitly, not discover it in the car park.
+public record EvacuationGroupPassDto
+{
+    public Guid PassId { get; init; }
+    public string Label { get; init; } = string.Empty;
+    public int OccupantCount { get; init; }
+    public DateTime ExpiresAt { get; init; }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pre-registration of expected visitors
+// ---------------------------------------------------------------------------------------------
+
+// Mutable for the same @bind reason as the other request records on this page.
+public record ExpectedVisitorEntry
+{
+    public Guid? VisitorProfileId { get; set; }
+    public string FullName { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Company { get; set; }
+    public string? IdNumber { get; set; }
+    public string? VehiclePlate { get; set; }
+}
+
+// One booking covering one or many people arriving together for the same reason at the same time
+// — the realistic shape (an interview panel, a contractor crew, a governors' meeting), rather
+// than making reception repeat the host/purpose/time for every name.
+public record CreateExpectedVisitorsRequest
+{
+    public DateTime ExpectedArrivalAt { get; set; }
+    public string Purpose { get; set; } = string.Empty;
+    public Guid? HostUserId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public VisitorType VisitorType { get; set; } = VisitorType.Guest;
+    public string? Notes { get; set; }
+    public List<ExpectedVisitorEntry> Visitors { get; set; } = new();
+}
+
+// Records that a person completed a site induction. Null CompletedAt clears it (induction
+// withdrawn / entered in error), which makes their next contractor check-in warn again.
+public record SetInductionRequest
+{
+    public DateTime? CompletedAt { get; set; }
+    public string? Notes { get; set; }
 }
 
 // A match returned by the returning-visitor search — used both for the staff-facing typeahead

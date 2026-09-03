@@ -1,72 +1,144 @@
 @page "/reports"
 @using QMgr.Application.DTOs
 @inject IQueueApiService QueueApi
+@inject IReportsApiService ReportsApi
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
 @inject IJSRuntime JS
 
-<PageTitle>Reports & Analytics - Q-Mgr</PageTitle>
+<PageTitle>Reports &amp; Analytics - Q-Mgr</PageTitle>
 
 <div class="page-header">
-    <h1>Reports & Analytics</h1>
+    <h1>Reports &amp; Analytics</h1>
     <div class="breadcrumb">
         <span>Overview of queue performance and analytics</span>
     </div>
 </div>
 
 <div class="reports-overview">
-    <!-- Quick Stats Summary -->
-    <div class="stats-row">
-        <div class="stats-card primary">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@todayServed</span>
-                    <span class="stats-label">Served Today</span>
+    <!-- Date Range — drives every figure on this page AND the CSV export below -->
+    <QCard Class="filter-card">
+        <div class="filter-row">
+            <div class="filter-item">
+                <QDatePicker Label="From Date" Value="@fromDate" ValueChanged="@OnFromDateChanged" />
+            </div>
+            <div class="filter-item">
+                <QDatePicker Label="To Date" Value="@toDate" ValueChanged="@OnToDateChanged" />
+            </div>
+            <div class="filter-item quick-ranges">
+                <QButton Text="Today" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(0))" />
+                <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(6))" />
+                <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(29))" />
+            </div>
+            <div class="filter-item">
+                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
+            </div>
+        </div>
+        <p class="range-caption">Showing @RangeCaption</p>
+    </QCard>
+
+    @if (!string.IsNullOrEmpty(loadError))
+    {
+        <div class="error-banner @(isForbidden ? "warn" : "")">
+            <QIcon Name="exclamation-triangle-fill" />
+            <span>@loadError</span>
+            @if (isForbidden)
+            {
+                <QButton Text="View plans" Icon="box-seam" Variant="secondary" Size="sm" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
+            }
+            else
+            {
+                <QButton Text="Retry" Icon="arrow-clockwise" Variant="danger" Size="sm" OnClick="@LoadData" />
+            }
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading report data...</span>
+        </div>
+    }
+    else
+    {
+        <!-- Quick Stats Summary — every figure below is measured over the selected range -->
+        <div class="stats-row">
+            <div class="stats-card primary">
+                <div class="stats-content">
+                    <div class="stats-info">
+                        <span class="stats-number">@(overview?.TotalServed.ToString() ?? Dash)</span>
+                        <span class="stats-label">Tokens Served</span>
+                        <span class="stats-sub">@ServedSubLabel</span>
+                    </div>
+                    <div class="stats-icon">
+                        <QIcon Name="check-circle-fill" />
+                    </div>
                 </div>
-                <div class="stats-icon">
-                    <QIcon Name="check-circle-fill" />
+            </div>
+
+            <div class="stats-card success">
+                <div class="stats-content">
+                    <div class="stats-info">
+                        <span class="stats-number">@FormatMinutes(overview?.AvgWaitMinutes)</span>
+                        <span class="stats-label">Avg Wait Time</span>
+                        <span class="stats-sub">@AverageSubLabel</span>
+                    </div>
+                    <div class="stats-icon">
+                        <QIcon Name="clock-fill" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-card warning">
+                <div class="stats-content">
+                    <div class="stats-info">
+                        <span class="stats-number">@FormatMinutes(overview?.AvgServiceMinutes)</span>
+                        <span class="stats-label">Avg Service Time</span>
+                        <span class="stats-sub">@AverageSubLabel</span>
+                    </div>
+                    <div class="stats-icon">
+                        <QIcon Name="stopwatch-fill" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-card info">
+                <div class="stats-content">
+                    <div class="stats-info">
+                        <span class="stats-number">@(overview is null ? Dash : $"{overview.ActiveCounters}/{overview.TotalCounters}")</span>
+                        <span class="stats-label">Active Counters</span>
+                        <span class="stats-sub">Right now, not over the range</span>
+                    </div>
+                    <div class="stats-icon">
+                        <QIcon Name="door-open-fill" />
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="stats-card success">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@avgWaitTime min</span>
-                    <span class="stats-label">Avg Wait Time</span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="clock-fill" />
-                </div>
-            </div>
-        </div>
-
-        <div class="stats-card warning">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@avgServiceTime min</span>
-                    <span class="stats-label">Avg Service Time</span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="stopwatch-fill" />
-                </div>
-            </div>
-        </div>
-
-        <div class="stats-card info">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@activeCounters</span>
-                    <span class="stats-label">Active Counters</span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="door-open-fill" />
-                </div>
-            </div>
-        </div>
-    </div>
+        <!-- Daily series -->
+        <QCard Class="chart-card">
+            <h4>Tokens per Day</h4>
+            @if (dailyChartData.Any(d => d.Issued > 0 || d.Served > 0))
+            {
+                <RadzenChart Style="height: 280px;">
+                    <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Issued" Title="Issued" Smooth="true" />
+                    <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Served" Title="Served" Smooth="true" />
+                    <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                    <RadzenValueAxis>
+                        <RadzenGridLines Visible="true" />
+                    </RadzenValueAxis>
+                </RadzenChart>
+            }
+            else
+            {
+                <p class="chart-empty">No tokens were issued in this range.</p>
+            }
+        </QCard>
+    }
 
     <!-- Report Cards -->
     <div class="report-cards">
@@ -98,47 +170,42 @@
         </QCard>
     </div>
 
-    <!-- Date Range Selector -->
+    <!-- Export -->
     <QCard Class="filter-card">
-        <h4>Generate Custom Report</h4>
+        <h4>Download This Report</h4>
         <div class="filter-row">
-            <div class="filter-item">
-                <label class="q-input__label">From Date</label>
-                <QDatePicker @bind-Value="@fromDate" />
-            </div>
-            <div class="filter-item">
-                <label class="q-input__label">To Date</label>
-                <QDatePicker @bind-Value="@toDate" />
-            </div>
             <div class="filter-item">
                 <QSelect TValue="string" TItem="ReportTypeOption" @bind-Value="@selectedReportType" Items="@reportTypes"
                     TextSelector="@(r => r.Text)" ValueSelector="@(r => r.Value)" Label="Report Type" />
             </div>
             <div class="filter-item filter-actions">
-                <QButton Text="Generate Report" Icon="file-earmark-text-fill" Variant="primary" OnClick="@GenerateReport" Loading="@isExporting" Disabled="@isExporting" />
+                <QButton Text="Export CSV" Icon="file-earmark-text-fill" Variant="primary" OnClick="@GenerateReport" Loading="@isExporting" Disabled="@isExporting" />
                 <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="secondary" OnClick="@PrintSummary" />
             </div>
         </div>
+        <p class="range-caption">The download covers exactly the range shown above — @RangeCaption.</p>
     </QCard>
 </div>
 
 <style>
     .reports-overview {
         padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
     }
 
     .stats-row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 20px;
-        margin-bottom: 30px;
     }
 
     .stats-card {
         background: var(--qm-bg-card);
         border-radius: var(--qm-radius-xl);
         padding: 24px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        box-shadow: var(--qm-shadow-sm);
         border-left: 4px solid;
     }
 
@@ -170,6 +237,11 @@
         color: var(--qm-text-secondary);
     }
 
+    .stats-sub {
+        font-size: 11px;
+        color: var(--qm-text-muted);
+    }
+
     .stats-icon {
         font-size: 48px;
         opacity: 0.3;
@@ -179,18 +251,17 @@
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: 20px;
-        margin-bottom: 30px;
     }
 
     .report-card {
         cursor: pointer;
-        transition: transform 0.2s, box-shadow 0.2s;
+        transition: var(--qm-transition-fast);
         padding: 24px;
     }
 
     .report-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        box-shadow: var(--qm-shadow-md);
     }
 
     .report-card-icon {
@@ -202,12 +273,12 @@
         justify-content: center;
         font-size: 28px;
         margin-bottom: 16px;
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
-    .report-card-icon.queue { background: var(--qm-gradient-primary); }
-    .report-card-icon.counters { background: linear-gradient(135deg, #47393f 0%, #2e242a 100%); }
-    .report-card-icon.feedback { background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); }
+    .report-card-icon.queue { background: var(--qm-primary); }
+    .report-card-icon.counters { background: var(--qm-secondary); }
+    .report-card-icon.feedback { background: var(--qm-accent-pink); }
 
     .report-card h3 {
         margin: 0 0 8px 0;
@@ -233,10 +304,20 @@
         padding: 24px;
     }
 
-    .filter-card h4 {
+    .filter-card h4, .chart-card h4 {
         margin: 0 0 20px 0;
         font-size: 16px;
         font-weight: 600;
+    }
+
+    .chart-card {
+        padding: 20px;
+    }
+
+    .chart-empty {
+        font-size: 13px;
+        color: var(--qm-text-muted);
+        margin: 0;
     }
 
     .filter-row {
@@ -252,31 +333,73 @@
         gap: 8px;
     }
 
-    .filter-actions {
+    .filter-actions, .quick-ranges {
         display: flex;
         gap: 10px;
         flex-direction: row;
     }
+
+    .range-caption {
+        margin: 14px 0 0 0;
+        font-size: 12px;
+        color: var(--qm-text-muted);
+    }
+
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        gap: 16px;
+        color: var(--qm-text-secondary);
+    }
+
+    .error-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        background: color-mix(in srgb, var(--qm-danger) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--qm-danger) 35%, transparent);
+        border-radius: var(--qm-radius-lg);
+        color: var(--qm-danger);
+    }
+
+    .error-banner.warn {
+        background: color-mix(in srgb, var(--qm-warning) 12%, transparent);
+        border-color: color-mix(in srgb, var(--qm-warning) 35%, transparent);
+        color: var(--qm-warning);
+    }
+
+    .error-banner .rzi {
+        font-size: 24px;
+    }
 </style>
 
 @code {
-    private int todayServed = 0;
-    private int avgWaitTime = 0;
-    private int avgServiceTime = 0;
-    private int activeCounters = 0;
-    private DateTime? fromDate = DateTime.Today.AddDays(-7);
+    // Every number on this page comes from this one payload, which is the JSON sibling of the
+    // CSV the Export button downloads for the same range — screen and download cannot disagree.
+    private QueueOverviewReportDto? overview;
+    private bool isLoading = true;
+    private bool isForbidden;
+    private string? loadError;
+
+    private DateTime? fromDate = DateTime.Today.AddDays(-6);
     private DateTime? toDate = DateTime.Today;
     private string selectedReportType = "summary";
     private bool isExporting;
     private Guid currentBranchId;
     private string currentBranchName = "";
 
-    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+    private const string Dash = "—";
+
+    private record DayChartPoint(DateTime Day, int Issued, int Served);
+    private List<DayChartPoint> dailyChartData = new();
 
     private List<ReportTypeOption> reportTypes = new()
     {
-        new ReportTypeOption { Text = "Summary Report", Value = "summary" },
-        new ReportTypeOption { Text = "Detailed Queue Report", Value = "queue" },
+        new ReportTypeOption { Text = "Daily Queue Summary", Value = "summary" },
         new ReportTypeOption { Text = "Counter Performance", Value = "counters" },
         new ReportTypeOption { Text = "Service Type Analysis", Value = "services" }
     };
@@ -287,53 +410,119 @@
         public string Value { get; set; } = "";
     }
 
+    private string RangeCaption
+    {
+        get
+        {
+            var (from, to) = ResolveRange();
+            return from == to
+                ? from.ToString("MMM d, yyyy")
+                : $"{from:MMM d, yyyy} – {to:MMM d, yyyy}";
+        }
+    }
+
+    private string ServedSubLabel => overview is null
+        ? "No data loaded"
+        : overview.TotalIssued == 0
+            ? "No tokens were issued in this range"
+            : $"of {overview.TotalIssued} issued";
+
+    private string AverageSubLabel => overview is null
+        ? "No data loaded"
+        : overview.TotalServed == 0
+            ? "No tokens were served in this range"
+            : $"across {overview.TotalServed} served tokens";
+
+    /// <summary>
+    /// A null average means nothing was served, so there is nothing to average — it is rendered
+    /// as an em dash, never as "0 min", which would read as a measurement rather than an absence.
+    /// </summary>
+    private static string FormatMinutes(double? minutes) =>
+        minutes.HasValue ? $"{minutes.Value:0.#} min" : Dash;
+
     protected override async Task OnInitializedAsync()
     {
-        // Check permission
         if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
 
+        await BranchState.InitializeAsync();
+        currentBranchId = BranchState.CurrentBranchId;
+        currentBranchName = BranchState.CurrentBranchName ?? "";
+        await LoadData();
+    }
+
+    private async Task OnFromDateChanged(DateTime? value)
+    {
+        fromDate = value;
+        await LoadData();
+    }
+
+    private async Task OnToDateChanged(DateTime? value)
+    {
+        toDate = value;
+        await LoadData();
+    }
+
+    private async Task ApplyQuickRange(int daysBack)
+    {
+        toDate = DateTime.Today;
+        fromDate = DateTime.Today.AddDays(-daysBack);
         await LoadData();
     }
 
     private async Task LoadData()
     {
+        isLoading = true;
+        loadError = null;
+        isForbidden = false;
+        await InvokeAsync(StateHasChanged);
+
         try
         {
-            await BranchState.InitializeAsync();
-            var branchId = BranchState.CurrentBranchId != Guid.Empty
-                ? BranchState.CurrentBranchId
-                : Guid.Empty;
-            currentBranchId = branchId;
-            currentBranchName = BranchState.CurrentBranchName ?? "";
-            var status = await QueueApi.GetQueueStatusAsync(branchId);
-            if (status != null)
+            if (currentBranchId == Guid.Empty)
             {
-                todayServed = status.Summary.TotalCompletedToday;
-                avgWaitTime = (int)status.Summary.AverageWaitMinutes;
-                avgServiceTime = (int)status.Summary.AverageServiceMinutes;
-                activeCounters = status.Counters?.Count(c => c.Status == "Active") ?? 0;
+                overview = null;
+                dailyChartData = new();
+                loadError = "Select a branch to see its report figures.";
+                return;
             }
+
+            var (from, to) = ResolveRange();
+            var result = await ReportsApi.GetOverviewAsync(currentBranchId, from, to);
+
+            if (!result.Success)
+            {
+                overview = null;
+                dailyChartData = new();
+                isForbidden = result.IsForbidden;
+                loadError = result.DisplayMessage;
+                return;
+            }
+
+            overview = result.Data;
+            dailyChartData = overview!.ByDay
+                .Select(d => new DayChartPoint(d.Day.ToDateTime(TimeOnly.MinValue), d.Issued, d.Served))
+                .ToList();
         }
-        catch (Exception ex)
+        finally
         {
-            Console.WriteLine($"Error loading report data: {ex.Message}");
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
     private void NavigateToReport(string report)
     {
-        NavigationManager.NavigateTo($"/reports/{report}");
+        Navigation.NavigateTo($"/reports/{report}");
     }
 
     /// <summary>
     /// Downloads the selected report as CSV from ReportsController — same data: URL +
-    /// downloadDataUrl pattern VisitorReport uses. "Summary" and "Detailed Queue" both map to
-    /// the daily queue summary export (the API has no separate per-token dump, and the daily
-    /// series is what both options were always going to show).
+    /// downloadDataUrl pattern VisitorReport uses, and the same from/to the figures above were
+    /// computed for, so the download can never cover a different period than the screen.
     /// </summary>
     private async Task GenerateReport()
     {
@@ -375,12 +564,17 @@
     /// Opens a printable page of the on-screen summary via the shared print helper (same
     /// QMgrPrint.init("browser") + autoPrint:false flow WelfareReports/StudentRoster use) —
     /// the browser's own print dialog is the "Save as PDF" path, with no server-side PDF
-    /// dependency (see CLAUDE.md's no-third-party-server-deps constraint).
+    /// dependency (see CLAUDE.md's no-third-party-server-deps constraint). It prints exactly
+    /// what is on screen, including the em dashes where there was nothing to measure.
     /// </summary>
     private async Task PrintSummary()
     {
         var branchLabel = string.IsNullOrWhiteSpace(currentBranchName) ? "" : $" — {System.Net.WebUtility.HtmlEncode(currentBranchName)}";
         var (from, to) = ResolveRange();
+        var served = overview?.TotalServed.ToString() ?? Dash;
+        var issued = overview?.TotalIssued.ToString() ?? Dash;
+        var noShow = overview?.TotalNoShow.ToString() ?? Dash;
+        var counters = overview is null ? Dash : $"{overview.ActiveCounters} of {overview.TotalCounters}";
         var html = $$"""
             <html>
             <head>
@@ -398,15 +592,17 @@
             </head>
             <body>
                 <h1>Queue Summary{{branchLabel}}</h1>
-                <div class="meta-line">Today's figures as of {{DateTime.Now:MMM d, yyyy h:mm tt}} · Selected range {{from:MMM d, yyyy}} – {{to:MMM d, yyyy}}</div>
+                <div class="meta-line">Range {{from:MMM d, yyyy}} – {{to:MMM d, yyyy}} · Printed {{DateTime.Now:MMM d, yyyy h:mm tt}}</div>
                 <table>
                     <tr><th>Metric</th><th style="text-align:right">Value</th></tr>
-                    <tr><td>Served today</td><td class="value">{{todayServed}}</td></tr>
-                    <tr><td>Average wait time</td><td class="value">{{avgWaitTime}} min</td></tr>
-                    <tr><td>Average service time</td><td class="value">{{avgServiceTime}} min</td></tr>
-                    <tr><td>Active counters</td><td class="value">{{activeCounters}}</td></tr>
+                    <tr><td>Tokens issued</td><td class="value">{{issued}}</td></tr>
+                    <tr><td>Tokens served</td><td class="value">{{served}}</td></tr>
+                    <tr><td>No-shows</td><td class="value">{{noShow}}</td></tr>
+                    <tr><td>Average wait time</td><td class="value">{{FormatMinutes(overview?.AvgWaitMinutes)}}</td></tr>
+                    <tr><td>Average service time</td><td class="value">{{FormatMinutes(overview?.AvgServiceMinutes)}}</td></tr>
+                    <tr><td>Active counters (now)</td><td class="value">{{counters}}</td></tr>
                 </table>
-                <p class="note">Use "Generate Report" for the full day-by-day CSV over the selected range. Choose "Save as PDF" in the print dialog to keep a PDF copy.</p>
+                <p class="note">A dash means there was nothing to measure in this range, not a value of zero. Averages cover served tokens only. Use "Export CSV" for the full day-by-day figures.</p>
             </body>
             </html>
             """;
@@ -425,7 +621,7 @@
     private (DateOnly From, DateOnly To) ResolveRange()
     {
         var to = DateOnly.FromDateTime(toDate ?? DateTime.Today);
-        var from = DateOnly.FromDateTime(fromDate ?? (toDate ?? DateTime.Today).AddDays(-7));
+        var from = DateOnly.FromDateTime(fromDate ?? (toDate ?? DateTime.Today).AddDays(-6));
         if (from > to) (from, to) = (to, from);
         return (from, to);
     }
