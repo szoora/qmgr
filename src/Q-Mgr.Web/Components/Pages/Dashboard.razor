@@ -930,11 +930,10 @@ else if (queueStatus != null)
             return;
         }
 
-        hasCoreQueue = ModuleState.ActiveModuleCodes.Contains(ModuleCodes.CoreQueue);
-
         try
         {
             var catalog = await ModuleApi.GetMineAsync();
+            hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
             activeModuleNames = catalog
                 .Where(m => m.Purchased && m.ModuleCode != ModuleCodes.CoreQueue)
                 .Select(m => m.ModuleName)
@@ -942,6 +941,9 @@ else if (queueStatus != null)
         }
         catch
         {
+            // Fail open: if we can't tell, show the normal dashboard rather than telling a paying
+            // customer they don't own Core Queue Management. Its data calls are gated server-side.
+            hasCoreQueue = true;
             activeModuleNames = new();
         }
     }
