@@ -14,8 +14,16 @@
 --   or did not take effect.
 --
 -- HOW TO RUN
---   psql -h localhost -U qmgr_app -d qmgr -f seed-modules.sql
---   (or: sudo -u postgres psql -d qmgr -f seed-modules.sql)
+--   This is plain SQL with no psql meta-commands, so it runs either from the
+--   command line or pasted whole into pgAdmin, DBeaver, Azure Data Studio or
+--   any other SQL editor.
+--
+--     psql -v ON_ERROR_STOP=1 -h localhost -U qmgr_app -d qmgr -f seed-modules.sql
+--     (or: sudo -u postgres psql -v ON_ERROR_STOP=1 -d qmgr -f seed-modules.sql)
+--
+--   In a GUI client, run the whole file in one go rather than statement by
+--   statement — the BEGIN below and the COMMIT near the end are what make a
+--   failure leave the database untouched.
 --
 -- SAFETY
 --   Idempotent, and safe to run more than once. It only ever touches rows whose
@@ -29,8 +37,6 @@
 --   existing customer is already being charged — a purchase records its own
 --   price on the OrganizationModule row.
 -- =============================================================================
-
-\set ON_ERROR_STOP on
 
 BEGIN;
 
