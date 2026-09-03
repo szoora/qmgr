@@ -6,6 +6,151 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-09-02, end of session — supersedes the handover directly below, which covered the same session but only up through the initial Stripe/module-system commit)
+
+## 🚨 Read this first: 38 files of uncommitted work, and the last real commit was never pushed
+
+`git log` shows `991d10b` ("Add modular subscription system, Stripe multi-item billing, and prior
+session features") as the tip of `master`, but `git status --branch` reports **`ahead 1` of
+`origin/master`** — that commit was made locally but the push attempt was blocked by this
+session's auto-mode tool classifier, and was never retried successfully. **On top of that, `git
+status` currently shows 36 modified files + 2 new (untracked) migration files — everything this
+session did after that commit — sitting entirely uncommitted in the working tree.** Nothing past
+Stripe billing has been committed at all. Do not assume any of the work described below is safe
+in the usual git sense until it's actually committed and pushed — check with the user first
+(don't commit unprompted; that's this repo's own standing instruction, not just caution).
+
+### What's built since the Stripe-billing commit (all uncommitted)
+
+1. **Aggressive live E2E test of the whole modular subscription system** — registered a real org
+   through the browser, purchased all 4 modules progressively via Mobile Money, tested the Stripe
+   card path's clean `STRIPE_NOT_CONFIGURED` fallback, tested Platform Admin grant/revoke. Found
+   and fixed 4 real bugs along the way (detailed below): a raw-enum leak on the registration
+   confirm screen, a missing industry category, an incomplete nav consolidation, and a page-shell
+   render gap when a module is removed mid-session.
+2. **`IndustryType` enum fully overhauled twice** (`src/Q-Mgr.Shared/Domain/Enums/IndustryType.cs`):
+   first renamed `ElectronicsShop` → `Retail` (a pure identifier fix, zero data impact — the enum
+   is int-backed), then consolidated the whole 9-category list down to 5 broader ones per the
+   user's own direction ("most of this is a duplication of Service"): **Service=0, Business=1,
+   Health=2, Education=3, Communications=4**. This *did* need a real data migration — new EF
+   migration `20260902111917_AddIndustryCategoryConsolidation` remaps every existing
+   `Organization.IndustryType` / `DocArticle.Industry` int from the old 9-value numbering to the
+   new 5-value one via a `CASE` expression in raw SQL (`migrationBuilder.Sql`). **This migration
+   is untracked in git (new file) and has only been applied to the local dev DB** — verify it runs
+   cleanly on any other environment (including whenever qmgr.cashbook.ug is finally upgraded) since
+   a raw-SQL data migration is exactly the kind of thing this repo's own `CLAUDE.md` calls out as
+   needing to actually be executed once, not just code-reviewed.
+3. **Single-module trial rule** (a deliberate policy change, requested and approved via Plan Mode
+   — plan text no longer on disk, it lived at `C:\Users\SACC\.claude\plans\purring-gliding-
+   stardust.md` which has since been overwritten by later planning in this same session, but the
+   artifact is still live: https://claude.ai/code/artifact/9caf3969-58ef-448a-9a4e-dfc38d26d2f9):
+   - Registration now accepts **exactly one** module, not "at least one" — `Register.razor`'s
+     picker is a true radio control now (`selectedModuleCode` singular, was a `HashSet`);
+     `RegisterOrganizationCommandHandler.ValidateRequest` enforces `Count != 1`.
+   - New `IModuleAccessService.GetBlockingTrialModuleAsync(orgId, excludingModuleCode)` — returns
+     the org's other currently-Trialing module, if any. `ModulesController.PurchaseModule` /
+     `PurchaseModuleCard` both call this and return `400 TRIAL_IN_PROGRESS` if it's non-null,
+     **except** when the module being purchased is the trialing one itself (so paying it off isn't
+     blocked by itself).
+   - New "Pay Now" action on `Modules.razor` for a Trialing card — didn't exist before this session
+     at all; there was previously no self-service way to convert a trial to paid early. Reuses the
+     exact same purchase modal as "Add Module," just retitled contextually.
+   - Verified live end-to-end: registered with 1 module → other 3 correctly disabled with "Pay for
+     X first" → Pay Now converted the trial → other 3 unlocked → second purchase landed as Active
+     immediately with zero trial fields ever populated (confirmed via direct DB query).
+4. **Nav bugs found and fixed** (`MainLayout.razor`):
+   - `IsActive(path)` used to fall back to `StartsWith` for prefix matching, which double-
+     highlighted **any** nav item whose route was a literal string-prefix of another's — e.g.
+     `/admin/visitors` matching `/admin/visitors/roster` (both showed active at once), and
+     separately `/reports` (Overview) matching every `/reports/*` sub-page. Fixed to exact-match
+     only; the two genuinely-dynamic routes (Customer Display, Full-Screen Signage, which append a
+     runtime branch ID) now pass their fully-resolved path into `IsActive` instead of relying on
+     prefix matching.
+   - `Student Roster` had **no direct sidebar link at all** — the only way to reach it was a button
+     buried inside the Visitor Management page. Added a proper link inside the "Visitor &
+     Safeguarding" group, gated on `Permissions.StudentsView` (new `canViewStudents` field, wasn't
+     loaded in `MainLayout` before).
+   - `Engagement & Communications` was the one module never fully consolidated into a single nav
+     group during the original build (Visitor & Safeguarding and Integrations & API were) — fixed,
+     now one group covering Digital Signage + Campaign Marketing + Feedback, matching the others.
+5. **Removed literal emoji from the codebase**, per explicit direction that this project needs to
+   read as deliberately, originally designed rather than AI-generated — swept every `.razor`/`.cs`
+   file in both projects for emoji characters. Found exactly one real instance:
+   `App.razor`'s `#blazor-error-ui` dismiss button used a literal 🗙 (original Blazor project-
+   template boilerplate, not something any session wrote) — replaced with
+   `<i class="bi bi-x-lg">`, the same Bootstrap Icons set used everywhere else. (One other thing
+   I'd written **in chat, not in code** — a 🔒 describing what a `<QIcon Name="lock-fill">` renders
+   as — got flagged too; worth remembering not to represent real UI elements with literal emoji in
+   conversation, since it reads as "this is what's in the product.")
+6. **Root-caused and fixed the exact bug the user hit live on `qmgr.cashbook.ug`** (screenshot:
+   "Bad Request: Unknown module code 'core-queue'" plus a JSON deserialization error on
+   `$.organizations[0].status`). Reproduced the "Migrate" action locally against current code first
+   — it worked flawlessly, which is what proved this wasn't a code bug at all, just production
+   running a stale build whose `subscription_plans` table was never seeded with the current module
+   catalog. **But investigating it surfaced a second, real, currently-existing bug**: `Tenants.razor`
+   keeps its own **local duplicate** of the API's `TenantStatus` enum (the recurring DTO-duplication
+   bug class this repo's `CLAUDE.md` already documents four other instances of), and that local copy
+   was missing `Pending` and `Deleted` entirely, and misspelled `Cancelled` as `Canceled`. Since
+   enums serialize as JSON strings, any org sitting in one of those states — and a brand-new,
+   not-yet-verified registration is *always* `Pending` — broke deserialization for the **entire**
+   tenant list, not just that row. Fixed the local enum to match the real one exactly (values,
+   names, spelling) plus the status filter dropdown and badge-color switch, which had the same gaps.
+   Verified live: registered a fresh org, left it genuinely `Pending` (no manual DB workaround this
+   time), confirmed the tenant list now loads cleanly with that row visible and correctly labeled.
+7. **Removed the "Migrate Legacy Tenants to Modules" manual admin UI entirely** — the user's own
+   call: this is a new project with no real legacy tenants, so a manual dry-run/confirm button for
+   a scenario that can only ever apply to a couple of pre-existing seed rows (Demo Organization,
+   Platform Administration) was the wrong shape. Converted the same logic into an automatic,
+   idempotent step in `DbSeeder.SeedLegacyTenantModuleGrantsAsync`, called from `SeedAsync()` on
+   every boot — silently no-ops once nothing's left to migrate. Removed
+   `SuperAdminController.MigrateLegacyTenantsToModules` and all the related UI/state from
+   `Tenants.razor`.
+8. **New Platform Admin capability: Resend Verification / Verify Now**, requested directly by the
+   user after noticing there was no admin-side remedy for a verification email that never sent
+   (this dev environment's own unconfigured SMTP hit this same wall all session — every "couldn't
+   send a verification email" screen you've seen was this exact gap). Refactored the shared
+   "what happens when verification succeeds" logic out of `TenantProvisioningService.VerifyEmailAsync`
+   into a private `MarkVerifiedAsync` helper (status, `VerifiedAt`, clears the cached token, seeds
+   the default branch/service-types) so a new `AdminVerifyAsync(orgId)` — no token, admin vouching
+   directly — does the *exact* same real effect as a working email link, not a shortcut that leaves
+   the org half-set-up. Also added `ResendVerificationEmailAsync(orgId)`, refactoring the existing
+   self-service `ResendVerificationCommandHandler` to delegate to it instead of duplicating the
+   email-template code. New endpoints: `POST /api/v1/admin/tenants/{id}/verify` and
+   `POST /api/v1/admin/tenants/{id}/resend-verification`; new UI: two icon buttons on
+   `Tenants.razor`'s row actions, shown only when `Status == Pending`. Verified live both ways —
+   Verify Now correctly seeded a real default branch (proving the full side-effect chain runs, not
+   just a status flip — which also means every test org *earlier* in this session that I manually
+   verified via raw `psql UPDATE` is missing its default branch, since that workaround bypassed
+   this seeding step entirely); Resend Verification correctly attempted a real send and honestly
+   surfaced the "SMTP not configured" failure rather than masking it.
+
+### Production status: still not deployed, but a fresh package is ready
+
+`qmgr.cashbook.ug` is running an old build from before the module catalog was seeded and before
+today's `TenantStatus` fix — that's the entire explanation for both errors the user hit live (see
+item 6 above). **Two fresh deployment packages were built this session** (both via
+`scripts/deploy/build-linux.ps1 -ApiPort 8586 -WebPort 8587`, the real ports for this box per
+`feedback_deploy_ports` — not the script's own 8581/8582 defaults): an earlier one before the
+`TenantStatus`/migration-automation work, and the current one,
+**`scripts/deploy/dist/qmgr-0.1.0-20260902.2251.tar.gz`** (108.5 MB, gitignored, not in the repo),
+which has everything through item 8 above. Building is purely local (self-contained publish +
+tarball, touches nothing remote) — **actual deployment** (`scp` the tarball to the server, then
+`sudo bash install.sh` there) has deliberately **not** been done without the user's explicit
+go-ahead, since it's a live production system. Next session: confirm with the user before deploying,
+and remember the new `AddIndustryCategoryConsolidation` migration will run automatically as part of
+that (EF migrations apply on API boot) — it's additive/safe by construction but touches every
+existing org row's `IndustryType`, worth a quick sanity check on the server's data afterward.
+
+### Immediate next steps for whoever picks this up
+
+- Ask the user whether to commit + push everything above before doing anything else — it's a lot
+  of real, live-verified work sitting only in the local working tree.
+- Once committed, ask whether to actually deploy the built package to `qmgr.cashbook.ug`.
+- The Stripe test-mode purchase path is still code-reviewed-correct but never live-verified against
+  a real Stripe account (no test keys in this environment) — unchanged from the prior handover.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-02 — supersedes all handovers below as the "read first" entry, though they're still accurate for what they cover)
 
 **This session built the entire Modular Subscription System from scratch** — the user's request to

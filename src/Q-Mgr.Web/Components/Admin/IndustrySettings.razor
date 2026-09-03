@@ -431,7 +431,7 @@
 </style>
 
 @code {
-    private IndustryType currentIndustry = IndustryType.General;
+    private IndustryType currentIndustry = IndustryType.Service;
     private bool isSaving = false;
     private List<IndustryFeature> features = new();
     private Guid organizationId;
@@ -454,7 +454,7 @@
         organizationId = user.OrganizationId;
 
         var saved = await OrganizationApi.GetIndustrySettingsAsync(organizationId);
-        currentIndustry = saved?.IndustryType ?? IndustryType.General;
+        currentIndustry = saved?.IndustryType ?? IndustryType.Service;
         features = GetIndustryFeatures(currentIndustry);
         ApplySavedFeatureStates(saved?.Features);
     }
@@ -513,7 +513,7 @@
 
     private void ResetDefaults()
     {
-        currentIndustry = IndustryType.General;
+        currentIndustry = IndustryType.Service;
         features = GetIndustryFeatures(currentIndustry);
         StateHasChanged();
     }
@@ -527,59 +527,43 @@
 
     private string GetIndustryIcon(IndustryType industry) => industry switch
     {
-        IndustryType.General => "building",
-        IndustryType.Hospital => "hospital",
-        IndustryType.Bank => "bank",
-        IndustryType.Pharmacy => "capsule",
-        IndustryType.ElectronicsShop => "laptop",
-        IndustryType.Government => "bank2",
-        IndustryType.Telecom => "broadcast-pin",
-        IndustryType.Restaurant => "cup-hot",
+        IndustryType.Health => "hospital",
+        IndustryType.Business => "briefcase",
+        IndustryType.Communications => "broadcast-pin",
+        IndustryType.Education => "mortarboard",
         _ => "building"
     };
 
     private string GetIndustryDisplayName(IndustryType industry) => industry switch
     {
-        IndustryType.General => "General Purpose",
-        IndustryType.Hospital => "Hospital / Healthcare",
-        IndustryType.Bank => "Bank / Financial",
-        IndustryType.Pharmacy => "Pharmacy / Drugstore",
-        IndustryType.ElectronicsShop => "Electronics Shop",
-        IndustryType.Government => "Government Office",
-        IndustryType.Telecom => "Telecom / Service Center",
-        IndustryType.Restaurant => "Restaurant / Food Service",
-        _ => "General Purpose"
+        IndustryType.Health => "Health",
+        IndustryType.Business => "Business",
+        IndustryType.Communications => "Communications",
+        IndustryType.Education => "Education",
+        _ => "Service"
     };
 
     private string GetIndustryShortDesc(IndustryType industry) => industry switch
     {
-        IndustryType.General => "Generic queue management",
-        IndustryType.Hospital => "Medical services & patients",
-        IndustryType.Bank => "Banking & transactions",
-        IndustryType.Pharmacy => "Prescriptions & consultation",
-        IndustryType.ElectronicsShop => "Sales, repairs & support",
-        IndustryType.Government => "Public services & permits",
-        IndustryType.Telecom => "Phone & internet services",
-        IndustryType.Restaurant => "Tables & order pickup",
-        _ => "Generic queue management"
+        IndustryType.Health => "Medical services & patients",
+        IndustryType.Business => "Office, banking & document services",
+        IndustryType.Communications => "Telecom & connectivity services",
+        IndustryType.Education => "Admissions, fees & records",
+        _ => "Retail, hospitality & general walk-in service"
     };
 
     private string GetIndustryDescription(IndustryType industry) => industry switch
     {
-        IndustryType.General => "A versatile queue management setup suitable for any type of business or organization. Customize service types to match your specific needs.",
-        IndustryType.Hospital => "Optimized for healthcare facilities with patient management, department routing, and medical terminology. Includes appointment integration and priority queuing for emergencies.",
-        IndustryType.Bank => "Designed for financial institutions with transaction types, priority customers, and secure queue management. Supports VIP banking and investment services.",
-        IndustryType.Pharmacy => "Tailored for pharmacies with prescription pickup, consultation services, and medication counseling. Integrates with pharmacy management systems.",
-        IndustryType.ElectronicsShop => "Perfect for electronics retailers with sales assistance, repair services, and technical support queues. Supports product categories and warranty services.",
-        IndustryType.Government => "Built for government offices with document processing, permit applications, and citizen services. Supports multiple departments and appointment scheduling.",
-        IndustryType.Telecom => "Ideal for telecom service centers with billing inquiries, technical support, and new service registration. Includes account management features.",
-        IndustryType.Restaurant => "Configured for restaurants with table management, takeout orders, and reservation handling. Supports waitlist and order pickup notifications.",
-        _ => "A versatile queue management setup suitable for any type of business."
+        IndustryType.Health => "Optimized for healthcare facilities with patient management, department routing, and medical terminology. Includes appointment integration and priority queuing for emergencies.",
+        IndustryType.Business => "Designed for banks, government offices, and other document/appointment-driven businesses, with transaction types, priority customers, and secure queue management.",
+        IndustryType.Communications => "Ideal for telecom and connectivity service centers with billing inquiries, technical support, and new service registration. Includes account management features.",
+        IndustryType.Education => "Built for schools and colleges with admissions, fee payment, and student records queues. Pairs with the Visitor & Safeguarding module's Student Roster and Welfare Ledger for guardian check-in and visiting-day passes.",
+        _ => "A versatile setup for retail, restaurants, and any general walk-in service business. Customize service types to match your specific needs."
     };
 
     private List<ServicePreview> GetIndustryDefaultServices(IndustryType industry) => industry switch
     {
-        IndustryType.Hospital => new()
+        IndustryType.Health => new()
         {
             new("General Consultation", "clipboard2-pulse"),
             new("Emergency", "exclamation-triangle"),
@@ -588,43 +572,16 @@
             new("Radiology", "x-ray"),
             new("Appointments", "calendar-check")
         },
-        IndustryType.Bank => new()
+        IndustryType.Business => new()
         {
             new("Deposits & Withdrawals", "cash-coin"),
-            new("Account Services", "wallet2"),
-            new("Loans & Credit", "credit-card"),
-            new("Foreign Exchange", "currency-exchange"),
-            new("Investment Services", "graph-up-arrow"),
-            new("Customer Support", "headset")
-        },
-        IndustryType.Pharmacy => new()
-        {
-            new("Prescription Pickup", "receipt"),
-            new("Pharmacist Consultation", "person-badge"),
-            new("Health Screening", "heart-pulse"),
-            new("OTC Products", "basket"),
-            new("Refill Request", "arrow-repeat"),
-            new("Insurance Claims", "file-text")
-        },
-        IndustryType.ElectronicsShop => new()
-        {
-            new("Sales Assistance", "cart"),
-            new("Product Returns", "box-arrow-left"),
-            new("Repair Services", "tools"),
-            new("Technical Support", "question-circle"),
-            new("Warranty Claims", "shield-check"),
-            new("Installation", "gear-wide-connected")
-        },
-        IndustryType.Government => new()
-        {
-            new("ID & Documents", "person-badge"),
+            new("Account/Document Services", "wallet2"),
             new("Permits & Licenses", "file-earmark-text"),
             new("Tax Services", "receipt-cutoff"),
-            new("Social Services", "people"),
-            new("Land Registry", "map"),
-            new("General Inquiry", "question-circle")
+            new("Loans & Credit", "credit-card"),
+            new("Customer Support", "headset")
         },
-        IndustryType.Telecom => new()
+        IndustryType.Communications => new()
         {
             new("New Connection", "plus-circle"),
             new("Billing & Payments", "cash"),
@@ -633,21 +590,21 @@
             new("Device Repair", "phone"),
             new("Complaints", "exclamation-circle")
         },
-        IndustryType.Restaurant => new()
+        IndustryType.Education => new()
         {
-            new("Table Seating", "table"),
-            new("Takeout Order", "bag"),
-            new("Reservation", "calendar-event"),
-            new("Online Order Pickup", "truck"),
-            new("Catering Inquiry", "balloon"),
-            new("Feedback", "chat-quote")
+            new("Admissions", "mortarboard"),
+            new("Fees Payment", "cash-coin"),
+            new("Student Records", "folder2-open"),
+            new("Visitor Check-In", "person-check"),
+            new("Guardian Meetings", "people"),
+            new("General Inquiry", "question-circle")
         },
         _ => new()
         {
-            new("Service A", "1-circle"),
-            new("Service B", "2-circle"),
-            new("Service C", "3-circle"),
-            new("Information", "info-circle"),
+            new("Sales Assistance", "cart"),
+            new("Product Returns", "box-arrow-left"),
+            new("Reservations", "calendar-event"),
+            new("Takeout/Pickup", "bag"),
             new("Support", "headset"),
             new("Other", "three-dots")
         }
@@ -664,29 +621,22 @@
 
         var industryFeatures = industry switch
         {
-            IndustryType.Hospital => new List<IndustryFeature>
+            IndustryType.Health => new List<IndustryFeature>
             {
                 new("Emergency Priority", "Automatic priority for emergency cases", "exclamation-triangle", true),
                 new("Appointment Integration", "Link with hospital appointment system", "calendar-check", false),
-                new("Patient History", "Show patient visit history to staff", "clock-history", false)
+                new("Prescription Ready Alert", "Notify when prescription is ready", "bell", false)
             },
-            IndustryType.Bank => new List<IndustryFeature>
+            IndustryType.Business => new List<IndustryFeature>
             {
                 new("VIP Detection", "Automatically detect VIP account holders", "star-fill", true),
                 new("Transaction Limits", "Show estimated transaction time", "stopwatch", false),
                 new("Multi-Currency Display", "Show exchange rates on display", "currency-exchange", false)
             },
-            IndustryType.Pharmacy => new List<IndustryFeature>
-            {
-                new("Prescription Ready Alert", "Notify when prescription is ready", "bell", true),
-                new("Drug Interaction Warnings", "Show important medication alerts", "exclamation-triangle", false),
-                new("Insurance Verification", "Quick insurance card scanning", "patch-check", false)
-            },
-            IndustryType.ElectronicsShop => new List<IndustryFeature>
+            IndustryType.Communications => new List<IndustryFeature>
             {
                 new("Repair Status Tracking", "Real-time repair progress updates", "tools", true),
-                new("Product Availability", "Show stock status to customers", "box-seam", false),
-                new("Warranty Lookup", "Quick warranty status check", "shield-check", false)
+                new("Plan Availability", "Show live plan/stock status to customers", "box-seam", false)
             },
             _ => new List<IndustryFeature>()
         };

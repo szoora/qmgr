@@ -2,6 +2,9 @@
 @inject IQueueApiService QueueApi
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>Customer Feedback - Q-Mgr</PageTitle>
 
@@ -437,6 +440,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.ReportsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

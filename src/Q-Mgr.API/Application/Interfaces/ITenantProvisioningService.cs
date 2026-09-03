@@ -37,6 +37,23 @@ public interface ITenantProvisioningService
     /// </summary>
     Task<string> GenerateVerificationTokenAsync(Guid organizationId, CancellationToken cancellationToken = default);
 
+    /// <summary>Regenerates the verification token and re-sends the verification email for this
+    /// organization's admin user — the single source of truth for "send/resend a verification
+    /// email," used by both the self-service ResendVerificationCommandHandler (looked up by
+    /// email) and SuperAdminController's platform-admin "Resend Verification" action (looked up
+    /// by organization ID directly). False if the org doesn't exist, isn't Pending, or has no
+    /// user to send to.</summary>
+    Task<bool> ResendVerificationEmailAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>Platform-admin override: marks an organization verified without a token — for
+    /// when the verification email never arrived (e.g. unconfigured SMTP) and the admin has
+    /// otherwise confirmed the account is legitimate. Does exactly what a token-verified
+    /// VerifyEmailAsync does (status, VerifiedAt, default branch/service-type seeding) via the
+    /// same shared path, just skipping the token check since the admin is vouching for the
+    /// account directly rather than the customer proving email ownership. False if the org
+    /// doesn't exist or isn't Pending.</summary>
+    Task<bool> AdminVerifyAsync(Guid organizationId, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Suspend a tenant
     /// </summary>

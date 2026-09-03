@@ -92,6 +92,17 @@ public class ModulesController : ControllerBase
         if (module == null)
             return NotFound(new { message = $"Module '{moduleCode}' is not in the catalog." });
 
+        var blocking = await _moduleAccessService.GetBlockingTrialModuleAsync(OrganizationId, moduleCode);
+        if (blocking != null)
+        {
+            return BadRequest(new
+            {
+                error = "TRIAL_IN_PROGRESS",
+                message = $"Complete payment for {blocking.Value.Name} before adding another module.",
+                blockingModuleCode = blocking.Value.Code
+            });
+        }
+
         var cycle = request.BillingCycle.Equals("Annual", StringComparison.OrdinalIgnoreCase) ? BillingCycle.Annual : BillingCycle.Monthly;
         var amount = cycle == BillingCycle.Annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
 
@@ -174,6 +185,17 @@ public class ModulesController : ControllerBase
         var plan = await _dbContext.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == moduleCode);
         if (plan == null)
             return NotFound(new { message = $"Module '{moduleCode}' is not in the catalog." });
+
+        var blocking = await _moduleAccessService.GetBlockingTrialModuleAsync(OrganizationId, moduleCode);
+        if (blocking != null)
+        {
+            return BadRequest(new
+            {
+                error = "TRIAL_IN_PROGRESS",
+                message = $"Complete payment for {blocking.Value.Name} before adding another module.",
+                blockingModuleCode = blocking.Value.Code
+            });
+        }
 
         var cycle = request.BillingCycle.Equals("Annual", StringComparison.OrdinalIgnoreCase) ? BillingCycle.Annual : BillingCycle.Monthly;
         var priceId = cycle == BillingCycle.Annual ? plan.StripePriceIdAnnual : plan.StripePriceIdMonthly;

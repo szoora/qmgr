@@ -7,7 +7,10 @@
 @inject IPermissionService PermissionService
 @inject IStudentApiService StudentApi
 @inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
@@ -543,6 +546,13 @@
             if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
             {
                 Navigation.NavigateTo("/unauthorized", forceLoad: true);
+                return;
+            }
+
+            await ModuleState.LoadAsync(ModuleApi);
+            if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+            {
+                Navigation.NavigateTo("/billing/modules", forceLoad: false);
                 return;
             }
 

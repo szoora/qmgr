@@ -26,6 +26,13 @@ public interface IModuleAccessService
     /// <summary>Registration: start a no-card trial for a module the new tenant selected.</summary>
     Task StartTrialAsync(Guid organizationId, string moduleCode);
 
+    /// <summary>The org's currently-trialing module, if any, excluding <paramref name="excludingModuleCode"/> —
+    /// null means no *other* module is mid-trial, so purchasing <paramref name="excludingModuleCode"/>
+    /// may proceed. This is also how paying off a trial early ("Pay Now") passes the check: the
+    /// module being paid for always excludes itself. Enforces the single-trial-at-a-time rule —
+    /// a subscriber can't add a second module until the first is fully paid or removed.</summary>
+    Task<(string Code, string Name)?> GetBlockingTrialModuleAsync(Guid organizationId, string excludingModuleCode);
+
     /// <summary>Self-service or job-driven activation after a successful payment collection.
     /// stripeSubscriptionItemId is set only for a card/Stripe purchase — null for Mobile Money,
     /// which has no per-module subscription-item concept at all.</summary>

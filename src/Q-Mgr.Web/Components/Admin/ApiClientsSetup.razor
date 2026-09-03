@@ -7,6 +7,9 @@
 @inject IToastService NotificationService
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>API Clients - Q-Mgr</PageTitle>
 
@@ -381,6 +384,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.ApiClientsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.IntegrationsApi))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

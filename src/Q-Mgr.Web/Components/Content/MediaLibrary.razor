@@ -8,6 +8,9 @@
 @inject NavigationManager NavigationManager
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>Media Library - Q-Mgr</PageTitle>
 
@@ -1275,6 +1278,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
         {
             NavigationManager.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            NavigationManager.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

@@ -11,6 +11,6 @@ namespace QMgr.Application.DTOs;
 /// </summary>
 public record IndustrySettingsDto
 {
-    public IndustryType IndustryType { get; set; } = IndustryType.General;
+    public IndustryType IndustryType { get; set; } = IndustryType.Service;
     public Dictionary<string, bool> Features { get; set; } = new();
 }

@@ -297,79 +297,58 @@ public class SuperAdminController : ControllerBase
 
     public record GrantModuleRequest(string? Note);
 
-    /// <summary>
-    /// One-time data migration: every organization currently on a paid legacy Tier
-    /// (Starter/Professional/Enterprise) gets all 4 modules grandfathered in as Active with no new
-    /// charge, preserving continuity for existing paying customers. Free-tier organizations
-    /// (which today have no Subscription row at all — the established "no subscription IS the
-    /// free tier" convention) get zero OrganizationModule rows, matching their current state.
-    ///
-    /// Deliberately NOT run automatically anywhere (no startup hook, no recurring job) — this
-    /// touches real customer access on a live production app and must be triggered explicitly by
-    /// a platform admin who has reviewed the dry-run output first. Idempotent either way: an
-    /// organization that already has any OrganizationModule rows (already migrated, or already
-    /// self-served/admin-granted a module) is skipped, never double-granted or overwritten.
-    /// </summary>
-    [HttpPost("migrate-legacy-tenants-to-modules")]
-    [ProducesResponseType(typeof(MigrationReport), StatusCodes.Status200OK)]
-    public async Task<IActionResult> MigrateLegacyTenantsToModules([FromQuery] bool dryRun = true)
+    /// <summary>Re-sends the verification email for a tenant still Pending — for when the
+    /// original send failed (e.g. platform SMTP wasn't configured yet) or the 24-hour token
+    /// expired before the customer got to it.</summary>
+    [HttpPost("tenants/{id:guid}/resend-verification")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResendTenantVerification(Guid id)
     {
-        var paidOrgs = await _dbContext.Organizations
-            .Where(o => o.Tier != TenantTier.Free && o.Status != TenantStatus.Deleted)
-            .ToListAsync();
-
-        var orgIdsWithModules = (await _dbContext.OrganizationModules
-            .Select(om => om.OrganizationId)
-            .Distinct()
-            .ToListAsync())
-            .ToHashSet();
-
-        var toMigrate = paidOrgs.Where(o => !orgIdsWithModules.Contains(o.Id)).ToList();
-        var alreadyMigrated = paidOrgs.Where(o => orgIdsWithModules.Contains(o.Id))
-            .Select(o => new MigrationOrgSummary(o.Id, o.Name, o.Tier.ToString()))
-            .ToList();
-
-        var migrated = new List<MigrationOrgSummary>();
-
-        if (!dryRun)
+        var sent = await _provisioningService.ResendVerificationEmailAsync(id);
+        if (!sent)
         {
-            var operatorUserId = CurrentUserId() ?? Guid.Empty;
-            foreach (var org in toMigrate)
+            return BadRequest(new
             {
-                foreach (var moduleCode in ModuleCodes.All)
-                {
-                    await _moduleAccessService.GrantAsync(org.Id, moduleCode, operatorUserId,
-                        $"Migrated from legacy {org.Tier} tier");
-                }
-                migrated.Add(new MigrationOrgSummary(org.Id, org.Name, org.Tier.ToString()));
-
-                _logger.LogInformation(
-                    "Migrated organization {OrgId} ({OrgName}) from legacy {Tier} tier to all 4 modules",
-                    org.Id, org.Name, org.Tier);
-            }
+                error = "RESEND_FAILED",
+                message = "Could not resend — the organization doesn't exist, isn't pending verification, or the platform's email settings aren't configured."
+            });
         }
 
-        var report = new MigrationReport(
-            DryRun: dryRun,
-            TotalPaidOrganizations: paidOrgs.Count,
-            AlreadyMigrated: alreadyMigrated,
-            Migrated: dryRun ? toMigrate.Select(o => new MigrationOrgSummary(o.Id, o.Name, o.Tier.ToString())).ToList() : migrated,
-            Message: dryRun
-                ? $"Dry run: {toMigrate.Count} organization(s) would be migrated. Re-run with dryRun=false to actually grant modules."
-                : $"Migrated {migrated.Count} organization(s)."
-        );
-
-        return Ok(report);
+        _logger.LogInformation("Super admin resent verification email for tenant {TenantId}", id);
+        return Ok(new { message = "Verification email resent." });
     }
 
-    public record MigrationOrgSummary(Guid Id, string Name, string Tier);
+    /// <summary>Platform-admin override: verifies a tenant directly, no token, no email round
+    /// trip. For when the verification email can never arrive (SMTP genuinely unconfigured) and
+    /// the admin has otherwise confirmed the account is legitimate — the same real effect as the
+    /// customer clicking a working verification link (branch/service-type seeding included), not
+    /// a shortcut that leaves the account in a half-set-up state.</summary>
+    [HttpPost("tenants/{id:guid}/verify")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifyTenant(Guid id)
+    {
+        var verified = await _provisioningService.AdminVerifyAsync(id);
+        if (!verified)
+        {
+            return BadRequest(new
+            {
+                error = "VERIFY_FAILED",
+                message = "Could not verify — the organization doesn't exist or isn't pending verification."
+            });
+        }
 
-    public record MigrationReport(
-        bool DryRun,
-        int TotalPaidOrganizations,
-        List<MigrationOrgSummary> AlreadyMigrated,
-        List<MigrationOrgSummary> Migrated,
-        string Message);
+        _logger.LogInformation("Tenant {TenantId} verified directly by super admin {AdminId}", id, CurrentUserId());
+        return Ok(new { message = "Organization verified." });
+    }
+
+    // Legacy-tier -> modules grandfathering used to live here as a manual, platform-admin-
+    // triggered dry-run/confirm action. Converted to an automatic idempotent seeder step
+    // (DbSeeder.SeedLegacyTenantModuleGrantsAsync) instead — there's no ongoing "legacy tenant"
+    // scenario for a manual admin UI to guard: every registration since the module system shipped
+    // creates orgs at Tier=Free and goes straight through OrganizationModule, so this could only
+    // ever apply to pre-existing seed/demo rows, not a real customer risk needing manual review.
 
     private Guid? CurrentUserId()
     {

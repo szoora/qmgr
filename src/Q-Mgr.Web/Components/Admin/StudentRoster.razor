@@ -9,8 +9,11 @@
 @inject IJSRuntime JS
 @inject HttpClient Http
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
@@ -891,6 +894,13 @@
         if (!await PermissionService.HasPermissionAsync(Permissions.StudentsView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorSafeguarding))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
 

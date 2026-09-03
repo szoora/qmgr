@@ -76,9 +76,10 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
                 return RegisterOrganizationResult.Failed("PROVISIONING_FAILED", provisionResult.ErrorMessage ?? "Failed to create organization.");
             }
 
-            // Start a no-card trial for every module picked in the registration wizard — the
-            // decision (confirmed with the user) was "customer picks module(s) at signup, real
-            // payment only collected once the trial ends," so nothing is charged here.
+            // Start a no-card trial for the one module picked in the registration wizard —
+            // ValidateRequest above already enforces exactly one. This is the organization's only
+            // trial, ever: every module purchased afterward (via ModulesController) always
+            // collects real payment immediately, never a trial.
             foreach (var moduleCode in request.SelectedModuleCodes.Distinct())
             {
                 try
@@ -172,9 +173,12 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
             return RegisterOrganizationResult.Failed("TERMS_NOT_ACCEPTED", "You must accept the terms and conditions to register.");
         }
 
-        if (request.SelectedModuleCodes.Count == 0)
+        // Exactly one, not "at least one" — the trial privilege is used once per organization,
+        // at registration, and never granted again (see ModulesController's TRIAL_IN_PROGRESS
+        // gate). A subscriber unlocks further modules by fully paying for this first one.
+        if (request.SelectedModuleCodes.Count != 1)
         {
-            return RegisterOrganizationResult.Failed("NO_MODULES_SELECTED", "Select at least one module to continue.");
+            return RegisterOrganizationResult.Failed("MODULE_SELECTION_INVALID", "Select exactly one module to start your trial — you can add more once this one is fully paid.");
         }
 
         var unknownModule = request.SelectedModuleCodes.FirstOrDefault(m => !ModuleCodes.All.Contains(m));
