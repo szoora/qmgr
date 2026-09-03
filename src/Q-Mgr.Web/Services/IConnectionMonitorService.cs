@@ -128,7 +128,20 @@ public class ConnectionMonitorService : IConnectionMonitorService
         }
         finally
         {
-            _checkLock.Release();
+            // The circuit can be torn down mid-check (the user navigates away while the health
+            // request is in flight), which disposes this scoped service and its semaphore before
+            // the request returns. Releasing a disposed SemaphoreSlim throws out of the finally
+            // block, and because this runs from ConnectionIndicator.OnInitializedAsync that
+            // exception surfaces as "An unhandled error has occurred" and kills the circuit —
+            // observed repeatedly while navigating quickly between admin pages.
+            try
+            {
+                _checkLock.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Nothing left to release; the circuit this belonged to is already gone.
+            }
         }
     }
 

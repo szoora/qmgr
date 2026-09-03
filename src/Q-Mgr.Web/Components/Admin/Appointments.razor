@@ -41,8 +41,8 @@
                     <input type="checkbox" checked="@showWholeWeek" @onchange="OnRangeToggled" />
                     <span>Show the whole week</span>
                 </label>
-                <QSelect TValue="AppointmentStatus?" TItem="StatusOption" Data="@statusOptions"
-                         TextField="Label" ValueField="Value" Value="@filterStatus"
+                <QSelect TValue="AppointmentStatus?" TItem="StatusOption" Items="@statusOptions"
+                         TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Value="@filterStatus"
                          ValueChanged="@OnStatusFilterChanged" Placeholder="Any status" />
             </div>
         </div>
@@ -141,8 +141,8 @@
                 </div>
                 <div class="form-group">
                     <label for="apt-service">Service</label>
-                    <QSelect TValue="Guid?" TItem="ServiceOption" Id="apt-service" Data="@serviceOptions"
-                             TextField="Label" ValueField="Value" Value="@formServiceTypeId"
+                    <QSelect TValue="Guid?" TItem="ServiceOption" Items="@serviceOptions"
+                             TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Value="@formServiceTypeId"
                              ValueChanged="@OnFormServiceChanged" Placeholder="Choose a service" />
                 </div>
             }
@@ -174,8 +174,8 @@
                     }
                     else
                     {
-                        <QSelect TValue="DateTime?" TItem="SlotOption" Id="apt-slot" Data="@freeSlots"
-                                 TextField="Label" ValueField="Value" Value="@formSlot"
+                        <QSelect TValue="DateTime?" TItem="SlotOption" Items="@freeSlots"
+                                 TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Value="@formSlot"
                                  ValueChanged="@(v => formSlot = v)" Placeholder="Choose a time" />
                     }
                 </div>
