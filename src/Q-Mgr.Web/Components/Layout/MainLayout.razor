@@ -159,29 +159,40 @@ else
                     </li>
                 }
 
-                <!-- Visitor & Safeguarding (Visitor Management + the Welfare Ledger — one module,
-                     was 2 scattered nav homes before: a standalone Visitor Management item, and
-                     3 Welfare pages buried inside Administration) -->
-                @if ((canViewVisitors || canViewStudents || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.VisitorSafeguarding))
+                @* These were one "Visitor & Safeguarding" group until the module was split. They are
+                   separate now because they sell separately: a bank or clinic buys the visitor book
+                   and never opens a welfare ledger, and "safeguarding" is school language that means
+                   nothing to them. A school buys both and sees both groups. *@
+                @if (canViewVisitors && HasModule(ModuleCodes.VisitorManagement))
                 {
-                    <li class="nav-item has-submenu @(IsMenuExpanded("visitor-safeguarding") ? "open" : "")">
-                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("visitor-safeguarding"))" @onclick:preventDefault>
+                    <li class="nav-item has-submenu @(IsMenuExpanded("visitor-management") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("visitor-management"))" @onclick:preventDefault>
                             <i class="bi bi-person-badge"></i>
-                            <span>Visitor & Safeguarding</span>
+                            <span>Visitor Management</span>
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            @if (canViewVisitors)
-                            {
-                                <li><a href="admin/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitor Management</a></li>
-                                <li><a href="admin/visitors/expected" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/expected") ? "active" : "")"><i class="bi bi-calendar-check"></i>Expected Visitors</a></li>
-                                @* Roll-call has to be findable in a hurry, so it earns a top-level row
-                                   rather than living behind a menu on the visitor page. *@
-                                <li><a href="admin/visitors/evacuation" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/evacuation") ? "active" : "")"><i class="bi bi-fire"></i>Evacuation Roll-Call</a></li>
-                            }
+                            <li><a href="admin/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors On Site</a></li>
+                            <li><a href="admin/visitors/expected" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/expected") ? "active" : "")"><i class="bi bi-calendar-check"></i>Expected Visitors</a></li>
+                            @* Roll-call has to be findable in a hurry, so it earns its own row
+                               rather than living behind a menu on the visitor page. *@
+                            <li><a href="admin/visitors/evacuation" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/evacuation") ? "active" : "")"><i class="bi bi-fire"></i>Evacuation Roll-Call</a></li>
+                        </ul>
+                    </li>
+                }
+
+                @if ((canViewStudents || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.StudentWelfare))
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("student-welfare") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("student-welfare"))" @onclick:preventDefault>
+                            <i class="bi bi-mortarboard-fill"></i>
+                            <span>Student Welfare</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
                             @if (canViewStudents)
                             {
-                                <li><a href="admin/visitors/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/roster") ? "active" : "")"><i class="bi bi-mortarboard-fill"></i>Student Roster</a></li>
+                                <li><a href="admin/visitors/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Student Roster</a></li>
                             }
                             @if (canViewWelfare)
                             {

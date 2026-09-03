@@ -47,6 +47,9 @@ public class DbSeeder
             // moment FeatureFlagService's old Tier-based fallback is fully retired.
             await SeedLegacyTenantModuleGrantsAsync();
 
+            // Must run after the module catalog is seeded, so both successor plans exist to grant.
+            await SeedVisitorSafeguardingSplitAsync();
+
             // Check if demo data already exists (exclude platform org)
             var platformOrgId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
             if (await _context.Organizations.AnyAsync(o => o.Id != platformOrgId))
@@ -514,20 +517,33 @@ public class DbSeeder
                 MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 120_000m, AnnualPriceUgx: 1_200_000m,
                 Description: "Digital signage, campaign marketing (SMS/WhatsApp/email broadcasts), and customer feedback & surveys.",
                 Badge: "Most Popular", SortOrder: 1),
-            [ModuleCodes.VisitorSafeguarding] = new(
-                Name: "Visitor & Safeguarding", Code: ModuleCodes.VisitorSafeguarding, ShowAds: false, DedicatedSchema: false,
+            // "Visitor & Safeguarding" used to be one module covering both of these. It was split
+            // because they sell to different people: a bank or clinic wants a visitor book and has
+            // no use for a student welfare ledger, while "safeguarding" is education-sector
+            // language those buyers do not recognise. Priced so either half alone costs less than
+            // the old bundle, and a school buying both pays slightly more than before for what is
+            // now materially more feature.
+            [ModuleCodes.VisitorManagement] = new(
+                Name: "Visitor Management", Code: ModuleCodes.VisitorManagement, ShowAds: false, DedicatedSchema: false,
+                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
+                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 1_000,
+                MonthlyPriceUsd: 22m, AnnualPriceUsd: 220m, MonthlyPriceUgx: 95_000m, AnnualPriceUgx: 950_000m,
+                Description: "Visitor check-in and check-out, badges and group passes, pre-registered arrivals, watchlist and contractor induction, and the evacuation roll-call.",
+                Badge: null, SortOrder: 2),
+            [ModuleCodes.StudentWelfare] = new(
+                Name: "Student Welfare", Code: ModuleCodes.StudentWelfare, ShowAds: false, DedicatedSchema: false,
                 MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
                 MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 2_000,
-                MonthlyPriceUsd: 35m, AnnualPriceUsd: 350m, MonthlyPriceUgx: 150_000m, AnnualPriceUgx: 1_500_000m,
-                Description: "Visitor check-in/out, student roster & visiting-day passes, and the student welfare ledger.",
-                Badge: null, SortOrder: 2),
+                MonthlyPriceUsd: 25m, AnnualPriceUsd: 250m, MonthlyPriceUgx: 105_000m, AnnualPriceUgx: 1_050_000m,
+                Description: "Student roster and guardians, visiting-day passes, and the welfare ledger: achievements, behaviour, safeguarding concerns, assigned actions, statements and reports.",
+                Badge: "For schools", SortOrder: 3),
             [ModuleCodes.IntegrationsApi] = new(
                 Name: "Integrations & API Access", Code: ModuleCodes.IntegrationsApi, ShowAds: false, DedicatedSchema: false,
                 MaxBranches: 3, MaxDisplays: 1, MaxUsersPerBranch: 5, MaxCountersPerBranch: 2,
                 MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 200,
                 MonthlyPriceUsd: 15m, AnnualPriceUsd: 150m, MonthlyPriceUgx: 60_000m, AnnualPriceUgx: 600_000m,
                 Description: "API clients, webhooks, and partner integration adapters (hospital/pharmacy/banking).",
-                Badge: null, SortOrder: 3),
+                Badge: null, SortOrder: 4),
         };
 
         var changed = false;
@@ -615,6 +631,89 @@ public class DbSeeder
 
         await _context.SaveChangesAsync();
         _logger.LogInformation("Grandfathered {Count} legacy-tier organization(s) onto all modules", toMigrate.Count);
+    }
+
+    /// <summary>
+    /// Moves anyone holding the retired "Visitor &amp; Safeguarding" module onto both of its
+    /// successors, Visitor Management and Student Welfare, so the split costs nobody access to
+    /// something they already paid for.
+    /// <para>
+    /// Runs on every boot and is idempotent: it only adds a successor row where one does not
+    /// already exist, and it carries the original row's status, activation date, trial end and
+    /// billing cycle across rather than resetting anyone to a fresh trial. The old row is left in
+    /// place and its plan is retired from the catalog by <see cref="SeedModulesAsync"/> being the
+    /// only writer of module rows — deleting it would break the audit trail of what was bought.
+    /// </para>
+    /// </summary>
+    private async Task SeedVisitorSafeguardingSplitAsync()
+    {
+        var legacyPlan = await _context.SubscriptionPlans
+            .FirstOrDefaultAsync(p => p.Code == ModuleCodes.LegacyVisitorSafeguarding);
+        if (legacyPlan == null) return;
+
+        var legacyGrants = await _context.OrganizationModules
+            .Where(om => om.ModuleId == legacyPlan.Id)
+            .ToListAsync();
+        if (legacyGrants.Count == 0) return;
+
+        var successorPlans = await _context.SubscriptionPlans
+            .Where(p => ModuleCodes.LegacyVisitorSafeguardingSuccessors.Contains(p.Code))
+            .ToListAsync();
+        if (successorPlans.Count == 0)
+        {
+            _logger.LogWarning(
+                "Cannot split the retired visitor-safeguarding module: neither successor plan is seeded yet");
+            return;
+        }
+
+        var existing = (await _context.OrganizationModules
+            .Where(om => successorPlans.Select(p => p.Id).Contains(om.ModuleId))
+            .Select(om => new { om.OrganizationId, om.ModuleId })
+            .ToListAsync())
+            .Select(x => (x.OrganizationId, x.ModuleId))
+            .ToHashSet();
+
+        var added = 0;
+        foreach (var grant in legacyGrants)
+        {
+            foreach (var plan in successorPlans)
+            {
+                if (existing.Contains((grant.OrganizationId, plan.Id))) continue;
+
+                _context.OrganizationModules.Add(new OrganizationModule
+                {
+                    OrganizationId = grant.OrganizationId,
+                    ModuleId = plan.Id,
+                    Status = grant.Status,
+                    ActivatedAt = grant.ActivatedAt,
+                    TrialEndsAt = grant.TrialEndsAt,
+                    BillingCycle = grant.BillingCycle,
+                    GrantedByPlatformAdmin = true,
+                    AdminNote = "Carried over automatically when Visitor & Safeguarding was split into Visitor Management and Student Welfare"
+                });
+                added++;
+            }
+        }
+
+        // Retire the old plan row once its holders are safely on the successors. GetCatalogAsync
+        // already filters to ModuleCodes.All, which no longer lists this code, so it could not be
+        // bought either way — but leaving an active-looking row behind invites the next person to
+        // query the table directly and conclude it is still on sale.
+        var retired = false;
+        if (legacyPlan.IsActive)
+        {
+            legacyPlan.IsActive = false;
+            legacyPlan.Description =
+                "Retired. Split into Visitor Management and Student Welfare; existing holders were granted both.";
+            retired = true;
+        }
+
+        if (added == 0 && !retired) return;
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation(
+            "Split the retired visitor-safeguarding module into its two successors for {Count} organization grant(s)",
+            added);
     }
 
     /// <summary>

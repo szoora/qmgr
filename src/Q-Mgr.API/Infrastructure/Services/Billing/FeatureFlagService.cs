@@ -244,7 +244,9 @@ public class FeatureFlagService : IFeatureFlagService
         var coreQueue = activeModules.Contains(ModuleCodes.CoreQueue);
         var engagement = activeModules.Contains(ModuleCodes.EngagementCommunications);
         var integrations = activeModules.Contains(ModuleCodes.IntegrationsApi);
-        var anyModule = coreQueue || engagement || integrations || activeModules.Contains(ModuleCodes.VisitorSafeguarding);
+        // Any purchased module counts, including the retired visitor-safeguarding code, which some
+        // rows still carry until the split migration has run everywhere.
+        var anyModule = activeModules.Count > 0;
 
         return features with
         {

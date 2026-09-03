@@ -59,16 +59,21 @@ public static class ModuleRouteMap
         ("/admin/feedback", ModuleCodes.EngagementCommunications),
         ("/reports/feedback", ModuleCodes.EngagementCommunications),
 
-        // ---- Visitor & Safeguarding ----
+        // ---- Visitor Management ----
         // Matching is per whole segment, so "/admin/welfare" would not cover "/admin/welfare-reports".
         // That strictness is deliberate (it stops "/admin/visitors" swallowing an unrelated
         // "/admin/visitors-something"), which means each hyphenated route is listed on its own.
-        ("/admin/visitors", ModuleCodes.VisitorSafeguarding),
-        ("/admin/students", ModuleCodes.VisitorSafeguarding),
-        ("/admin/welfare-categories", ModuleCodes.VisitorSafeguarding),
-        ("/admin/welfare-my-actions", ModuleCodes.VisitorSafeguarding),
-        ("/admin/welfare-reports", ModuleCodes.VisitorSafeguarding),
-        ("/reports/visitors", ModuleCodes.VisitorSafeguarding),
+        // The student roster sits under /admin/visitors/roster for historical reasons but belongs
+        // to Student Welfare, so it is listed first to win the match.
+        ("/admin/visitors/roster", ModuleCodes.StudentWelfare),
+        ("/admin/visitors", ModuleCodes.VisitorManagement),
+        ("/reports/visitors", ModuleCodes.VisitorManagement),
+
+        // ---- Student Welfare ----
+        ("/admin/students", ModuleCodes.StudentWelfare),
+        ("/admin/welfare-categories", ModuleCodes.StudentWelfare),
+        ("/admin/welfare-my-actions", ModuleCodes.StudentWelfare),
+        ("/admin/welfare-reports", ModuleCodes.StudentWelfare),
 
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
@@ -119,12 +124,14 @@ public static class ModuleRouteMap
         // working after a tenant drops the module, or previously-sent mail becomes a dead end.
         ("api/v1/spotify", ModuleCodes.EngagementCommunications),
 
-        // ---- Visitor & Safeguarding ----
-        ("api/v1/branches/{branchId}/visitors", ModuleCodes.VisitorSafeguarding),
-        ("api/v1/branches/{branchId}/visitor-passes", ModuleCodes.VisitorSafeguarding),
-        ("api/v1/branches/{branchId}/students", ModuleCodes.VisitorSafeguarding),
-        ("api/v1/branches/{branchId}/welfare", ModuleCodes.VisitorSafeguarding),
-        ("api/v1/branches/{branchId}/welfare-records", ModuleCodes.VisitorSafeguarding),
+        // ---- Visitor Management ----
+        ("api/v1/branches/{branchId}/visitors", ModuleCodes.VisitorManagement),
+        ("api/v1/branches/{branchId}/visitor-passes", ModuleCodes.VisitorManagement),
+
+        // ---- Student Welfare ----
+        ("api/v1/branches/{branchId}/students", ModuleCodes.StudentWelfare),
+        ("api/v1/branches/{branchId}/welfare", ModuleCodes.StudentWelfare),
+        ("api/v1/branches/{branchId}/welfare-records", ModuleCodes.StudentWelfare),
 
         // ---- Integrations & API Access ----
         ("api/v1/api-clients", ModuleCodes.IntegrationsApi),
