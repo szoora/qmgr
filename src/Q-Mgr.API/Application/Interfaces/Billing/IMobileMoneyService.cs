@@ -8,6 +8,11 @@ namespace QMgr.Application.Interfaces.Billing;
 public interface IMobileMoneyService
 {
     /// <summary>
+    /// True when the gateway is switched on and has a base URL (Platform Settings row first, then configuration).
+    /// </summary>
+    Task<bool> IsConfiguredAsync();
+
+    /// <summary>
     /// Initiate a payment collection from a customer's mobile money account
     /// </summary>
     Task<MobileMoneyPaymentResult> CollectPaymentAsync(

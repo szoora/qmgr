@@ -3,7 +3,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
+using QMgr.Domain.Entities.Platform;
 
 namespace QMgr.Infrastructure.Services.Billing;
 
@@ -15,9 +17,11 @@ public class MobileMoneyService : IMobileMoneyService
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
+    private readonly IPlatformSettingsService _platformSettings;
     private readonly ILogger<MobileMoneyService> _logger;
-    private readonly string _apiKey;
-    private readonly bool _isEnabled;
+    private string _apiKey = string.Empty;
+    private bool _isEnabled;
+    private bool _configured;
 
     private static readonly MobileMoneyChannel[] SupportedChannels =
     {
@@ -29,23 +33,65 @@ public class MobileMoneyService : IMobileMoneyService
     public MobileMoneyService(
         HttpClient httpClient,
         IConfiguration configuration,
+        IPlatformSettingsService platformSettings,
         ILogger<MobileMoneyService> logger)
     {
         _httpClient = httpClient;
         _configuration = configuration;
+        _platformSettings = platformSettings;
         _logger = logger;
+    }
 
-        var baseUrl = _configuration["MobileMoney:CrmApiUrl"];
-        if (!string.IsNullOrEmpty(baseUrl))
+    /// <summary>
+    /// Resolves the effective gateway settings. The Platform Settings admin UI (PlatformSetting
+    /// row, Category="MobileMoney") is the primary source so an edit there takes effect on the
+    /// next request; appsettings / environment variables fill any field left blank. Previously
+    /// the constructor read IConfiguration only, so the admin UI looked functional but changed
+    /// nothing. Runs once per service instance (the typed HttpClient is transient per scope).
+    /// </summary>
+    private async Task EnsureConfiguredAsync()
+    {
+        if (_configured) return;
+
+        MobileMoneySettings? db = null;
+        try
         {
-            _httpClient.BaseAddress = new Uri(baseUrl);
+            db = await _platformSettings.GetSettingsAsync<MobileMoneySettings>("MobileMoney");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read Mobile Money platform settings; falling back to configuration");
         }
 
-        _apiKey = _configuration["MobileMoney:ApiKey"] ?? string.Empty;
-        _isEnabled = _configuration.GetValue<bool>("MobileMoney:Enabled", false);
+        var baseUrl = FirstNonEmpty(db?.CrmApiUrl, _configuration["MobileMoney:CrmApiUrl"]);
+        _apiKey = FirstNonEmpty(db?.ApiKey, _configuration["MobileMoney:ApiKey"]) ?? string.Empty;
+        _isEnabled = db != null
+            ? db.Enabled && !string.IsNullOrWhiteSpace(baseUrl)
+            : _configuration.GetValue<bool>("MobileMoney:Enabled", false);
 
-        // Set default headers
-        _httpClient.DefaultRequestHeaders.Add("X-Api-Key", _apiKey);
+        if (!string.IsNullOrEmpty(baseUrl) && Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        {
+            // BaseAddress can only be set before the first request on this HttpClient instance.
+            try { _httpClient.BaseAddress = uri; }
+            catch (InvalidOperationException) { /* already used — keep the existing address */ }
+        }
+
+        _httpClient.DefaultRequestHeaders.Remove("X-Api-Key");
+        if (!string.IsNullOrEmpty(_apiKey))
+        {
+            _httpClient.DefaultRequestHeaders.Add("X-Api-Key", _apiKey);
+        }
+
+        _configured = true;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    public async Task<bool> IsConfiguredAsync()
+    {
+        await EnsureConfiguredAsync();
+        return _isEnabled;
     }
 
     public async Task<MobileMoneyPaymentResult> CollectPaymentAsync(
@@ -56,6 +102,7 @@ public class MobileMoneyService : IMobileMoneyService
         string narrative,
         string? externalReference = null)
     {
+        await EnsureConfiguredAsync();
         if (!_isEnabled)
         {
             return new MobileMoneyPaymentResult(
@@ -143,6 +190,7 @@ public class MobileMoneyService : IMobileMoneyService
 
     public async Task<MobileMoneyStatusResult> CheckPaymentStatusAsync(string transactionId)
     {
+        await EnsureConfiguredAsync();
         if (!_isEnabled)
         {
             return new MobileMoneyStatusResult(
@@ -225,6 +273,7 @@ public class MobileMoneyService : IMobileMoneyService
 
     public async Task<MobileMoneyPaymentResult> RetryPaymentAsync(string originalTransactionId)
     {
+        await EnsureConfiguredAsync();
         if (!_isEnabled)
         {
             return new MobileMoneyPaymentResult(

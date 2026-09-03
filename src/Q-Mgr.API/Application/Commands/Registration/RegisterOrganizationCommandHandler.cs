@@ -94,14 +94,29 @@ public class RegisterOrganizationCommandHandler : IRequestHandler<RegisterOrgani
                 }
             }
 
-            // Send verification email
-            var emailSent = await SendVerificationEmailAsync(
-                request.Email,
-                request.FirstName,
-                provisionResult.OrganizationId,
-                provisionResult.VerificationToken!,
-                provisionResult.Slug,
-                cancellationToken);
+            // Platform Settings > SaaS > "Require email verification" — when switched off the org is
+            // verified straight away through the same path an admin's "Verify Now" uses (status,
+            // default branch, service types), so nothing is left half-provisioned.
+            var saasSettings = await _platformSettingsService.GetSettingsAsync<SaasSettings>("SaaS");
+            var requireVerification = saasSettings?.RequireEmailVerification ?? true;
+
+            bool emailSent;
+            if (requireVerification)
+            {
+                emailSent = await SendVerificationEmailAsync(
+                    request.Email,
+                    request.FirstName,
+                    provisionResult.OrganizationId,
+                    provisionResult.VerificationToken!,
+                    provisionResult.Slug,
+                    cancellationToken);
+            }
+            else
+            {
+                await _provisioningService.AdminVerifyAsync(provisionResult.OrganizationId, cancellationToken);
+                emailSent = true; // nothing to send; the client treats this as "no email problem to report"
+                _logger.LogInformation("Email verification disabled in Platform Settings — organization {OrganizationId} auto-verified", provisionResult.OrganizationId);
+            }
 
             _logger.LogInformation(
                 "Organization {OrganizationId} registered successfully with slug {Slug}",

@@ -141,17 +141,31 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddRbacAuthorization();
 builder.Services.AddRbacPolicyProvider();
 
-// Add CORS - configured for SignalR which requires credentials
+// Add CORS - configured for SignalR which requires credentials.
+// Origins are the UNION of appsettings/environment ("Cors:AllowedOrigins") and the Platform
+// Settings "CORS" row edited in the admin UI, read once here at startup (same pattern as rate
+// limiting). A union — not DB-wins — so a freshly seeded CORS row (localhost defaults) can never
+// knock out the production origin the deploy script bakes into appsettings.Production.json.
+var corsFromDb = QMgr.API.Extensions.ServiceExtensions.TryLoadCorsSettingsFromDatabase(connectionString);
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowWebUI", policy =>
     {
-        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+        var configured = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
             ?? new[] { "https://localhost:5002", "http://localhost:5003" };
+        var origins = configured
+            .Concat(corsFromDb?.AllowedOrigins ?? new List<string>())
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Select(o => o.Trim().TrimEnd('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         policy.WithOrigins(origins)
               .AllowAnyMethod()
-              .AllowAnyHeader()
-              .AllowCredentials(); // Required for SignalR
+              .AllowAnyHeader();
+        if (corsFromDb?.AllowCredentials ?? true)
+        {
+            policy.AllowCredentials(); // Required for SignalR
+        }
     });
 });
 

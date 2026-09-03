@@ -1,6 +1,7 @@
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using QMgr.Application.Interfaces.Billing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +23,7 @@ public class HealthController : ControllerBase
     private readonly ILogger<HealthController> _logger;
     private readonly QMgrDbContext _dbContext;
     private readonly IConfiguration _configuration;
+    private readonly IStripeService _stripeService;
     private readonly IDistributedCache? _distributedCache;
     private readonly IRequestMetricsService _requestMetrics;
     private readonly IHostEnvironment _hostEnvironment;
@@ -33,9 +35,11 @@ public class HealthController : ControllerBase
         IConfiguration configuration,
         IServiceProvider serviceProvider,
         IRequestMetricsService requestMetrics,
-        IHostEnvironment hostEnvironment)
+        IHostEnvironment hostEnvironment,
+        IStripeService stripeService)
     {
         _logger = logger;
+        _stripeService = stripeService;
         _dbContext = dbContext;
         _configuration = configuration;
         // Redis is only registered when a connection string is configured
@@ -275,9 +279,8 @@ public class HealthController : ControllerBase
             LastChecked = DateTime.UtcNow
         });
 
-        // Stripe API (if configured)
-        var stripeKey = _configuration["Stripe:SecretKey"];
-        if (!string.IsNullOrEmpty(stripeKey))
+        // Stripe API (if configured — Platform Settings row first, then configuration)
+        if (await _stripeService.IsConfiguredAsync())
         {
             services.Add(new ServiceHealthDto
             {

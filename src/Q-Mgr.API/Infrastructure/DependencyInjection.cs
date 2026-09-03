@@ -142,14 +142,11 @@ public static class DependencyInjection
         });
 
         // HTTP Client for Mobile Money (CRM Epay Gateway)
+        // BaseAddress and the API key are resolved by the service itself from Platform Settings
+        // (with configuration as fallback), so nothing config-specific is baked in here.
         services.AddHttpClient<IMobileMoneyService, MobileMoneyService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(60); // Mobile money can be slow
-            var crmApiUrl = configuration["MobileMoney:CrmApiUrl"];
-            if (!string.IsNullOrEmpty(crmApiUrl))
-            {
-                client.BaseAddress = new Uri(crmApiUrl);
-            }
         });
 
         // Redis caching (optional)

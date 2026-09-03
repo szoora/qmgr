@@ -16,6 +16,7 @@ public class PlatformSettingsController : ControllerBase
 {
     private readonly IPlatformSettingsService _settingsService;
     private readonly IPasswordValidationService _passwordValidationService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<PlatformSettingsController> _logger;
 
     // Stable synthetic id for the Security category card — it has no PlatformSetting DB row
@@ -25,10 +26,12 @@ public class PlatformSettingsController : ControllerBase
     public PlatformSettingsController(
         IPlatformSettingsService settingsService,
         IPasswordValidationService passwordValidationService,
+        IConfiguration configuration,
         ILogger<PlatformSettingsController> logger)
     {
         _settingsService = settingsService;
         _passwordValidationService = passwordValidationService;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -142,7 +145,7 @@ public class PlatformSettingsController : ControllerBase
         // Update based on category (with validation)
         bool success = category switch
         {
-            "JWT" => await UpdateTypedSettings<JwtSettings>(category, request.SettingsJson),
+            "JWT" => await UpdateJwtSettingsAsync(request.SettingsJson),
             "CORS" => await UpdateTypedSettings<CorsSettings>(category, request.SettingsJson),
             "RateLimiting" => await UpdateTypedSettings<RateLimitSettings>(category, request.SettingsJson),
             "SaaS" => await UpdateTypedSettings<SaasSettings>(category, request.SettingsJson),
@@ -162,6 +165,38 @@ public class PlatformSettingsController : ControllerBase
             category, User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value);
 
         return Ok(new { message = "Settings updated successfully" });
+    }
+
+    /// <summary>
+    /// JWT: only the token lifetime is a genuine runtime setting (AuthController reads it per
+    /// login). The signing secret, issuer and audience are bound into bearer validation at startup
+    /// from server configuration (JWT__Secret / JWT:Issuer / JWT:Audience), so whatever the UI
+    /// posts for those is discarded here rather than persisted as a misleading, never-read copy —
+    /// and in particular a secret is never written to the database.
+    /// </summary>
+    private async Task<bool> UpdateJwtSettingsAsync(string json)
+    {
+        JwtSettings? posted;
+        try
+        {
+            posted = JsonSerializer.Deserialize<JwtSettings>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (posted == null || posted.ExpiryMinutes < 5 || posted.ExpiryMinutes > 24 * 60)
+            return false;
+
+        var sanitized = new JwtSettings
+        {
+            Secret = string.Empty,
+            Issuer = _configuration["JWT:Issuer"] ?? string.Empty,
+            Audience = _configuration["JWT:Audience"] ?? string.Empty,
+            ExpiryMinutes = posted.ExpiryMinutes
+        };
+        return await _settingsService.UpdateSettingsAsync("JWT", sanitized);
     }
 
     /// <summary>

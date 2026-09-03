@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -75,7 +76,28 @@ public class ModulesController : ControllerBase
         return Ok(status);
     }
 
-    public record PurchaseModuleRequest(string PhoneNumber, string BillingCycle = "Monthly");
+    public record PurchaseModuleRequest([property: Required] string PhoneNumber, string BillingCycle = "Monthly");
+
+    private const int MaxReasonLength = 500;
+
+    /// <summary>Strict parse — an unrecognised cycle is a 400, not a silent fall-through to Monthly
+    /// (the previous behaviour, which would have billed the wrong amount for a typo).</summary>
+    private static bool TryParseCycle(string? value, out BillingCycle cycle)
+    {
+        cycle = BillingCycle.Monthly;
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        return Enum.TryParse(value, ignoreCase: true, out cycle) && Enum.IsDefined(cycle);
+    }
+
+    /// <summary>Checkout return URLs must point back at this deployment — anything else would let a
+    /// crafted request turn the Stripe redirect into an open redirect.</summary>
+    private bool IsSameOriginUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return true;
+        if (url.StartsWith('/') && !url.StartsWith("//")) return true;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Host, Request.Host.Host, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Self-service add — collects payment via Mobile Money and activates on success.
     /// In Development with no gateway configured, simulates an instant success so the flow can be
@@ -103,7 +125,10 @@ public class ModulesController : ControllerBase
             });
         }
 
-        var cycle = request.BillingCycle.Equals("Annual", StringComparison.OrdinalIgnoreCase) ? BillingCycle.Annual : BillingCycle.Monthly;
+        if (!TryParseCycle(request.BillingCycle, out var cycle))
+            return BadRequest(new { error = "INVALID_BILLING_CYCLE", message = "Billing cycle must be Monthly or Annual." });
+        if (string.IsNullOrWhiteSpace(request.PhoneNumber))
+            return BadRequest(new { error = "INVALID_PHONE", message = "A mobile money phone number is required." });
         var amount = cycle == BillingCycle.Annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
 
         if (_environment.IsDevelopment())
@@ -143,8 +168,12 @@ public class ModulesController : ControllerBase
 
     /// <summary>Poll after PurchaseModule — activates the pending module once the gateway confirms success.</summary>
     [HttpGet("purchase-status/{transactionId}")]
+    [RequirePermission(Permissions.BillingView)]
     public async Task<IActionResult> CheckPurchaseStatus(string transactionId)
     {
+        if (string.IsNullOrWhiteSpace(transactionId) || transactionId.Length > 128)
+            return BadRequest(new { message = "Invalid transaction id." });
+
         var result = await _mobileMoneyService.CheckPaymentStatusAsync(transactionId);
 
         if (result.Status == MobileMoneyPaymentStatus.Succeeded)
@@ -153,9 +182,14 @@ public class ModulesController : ControllerBase
             if (pendingJson != null)
             {
                 var pending = JsonSerializer.Deserialize<PendingPurchase>(pendingJson);
+                // The pending record names the org that started the purchase; only that org may
+                // complete it. Anyone else polling a guessed transaction id gets a plain 404.
+                if (pending != null && pending.OrganizationId != OrganizationId)
+                    return NotFound(new { message = "No pending purchase found for this transaction." });
+
                 if (pending != null)
                 {
-                    var cycle = pending.BillingCycle == "Annual" ? BillingCycle.Annual : BillingCycle.Monthly;
+                    TryParseCycle(pending.BillingCycle, out var cycle);
                     await _moduleAccessService.ActivateAsync(pending.OrganizationId, pending.ModuleCode, cycle);
                     await _cache.RemoveAsync($"{PendingPurchasePrefix}{transactionId}");
                 }
@@ -197,10 +231,16 @@ public class ModulesController : ControllerBase
             });
         }
 
-        var cycle = request.BillingCycle.Equals("Annual", StringComparison.OrdinalIgnoreCase) ? BillingCycle.Annual : BillingCycle.Monthly;
+        if (!TryParseCycle(request.BillingCycle, out var cycle))
+            return BadRequest(new { error = "INVALID_BILLING_CYCLE", message = "Billing cycle must be Monthly or Annual." });
+        if (!IsSameOriginUrl(request.SuccessUrl) || !IsSameOriginUrl(request.CancelUrl))
+            return BadRequest(new { error = "INVALID_RETURN_URL", message = "Return URLs must point back to this site." });
+
         var priceId = cycle == BillingCycle.Annual ? plan.StripePriceIdAnnual : plan.StripePriceIdMonthly;
 
-        if (string.IsNullOrEmpty(priceId))
+        // Two independent prerequisites: platform-level credentials (Platform Settings / config)
+        // and a per-module Stripe price id on the catalog row.
+        if (string.IsNullOrEmpty(priceId) || !await _stripeService.IsConfiguredAsync())
         {
             return BadRequest(new
             {
@@ -247,6 +287,9 @@ public class ModulesController : ControllerBase
     [RequirePermission(Permissions.BillingManage)]
     public async Task<IActionResult> RemoveModule(string moduleCode, [FromQuery] string? reason)
     {
+        if (reason?.Length > MaxReasonLength)
+            return BadRequest(new { message = $"Reason must be at most {MaxReasonLength} characters." });
+
         if (!ModuleCodes.All.Contains(moduleCode))
             return NotFound(new { message = $"Unknown module '{moduleCode}'." });
 

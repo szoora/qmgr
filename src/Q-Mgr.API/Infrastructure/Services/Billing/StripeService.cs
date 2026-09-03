@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Entities.Organization;
+using QMgr.Domain.Entities.Platform;
 using Stripe;
 using Stripe.Checkout;
 
@@ -13,21 +15,64 @@ namespace QMgr.Infrastructure.Services.Billing;
 public class StripeService : IStripeService
 {
     private readonly IConfiguration _configuration;
+    private readonly IPlatformSettingsService _platformSettings;
     private readonly ILogger<StripeService> _logger;
-    private readonly string _webhookSecret;
+    private string _webhookSecret = string.Empty;
+    private bool _configured;
+    private bool _enabled;
 
-    public StripeService(IConfiguration configuration, ILogger<StripeService> logger)
+    public StripeService(
+        IConfiguration configuration,
+        IPlatformSettingsService platformSettings,
+        ILogger<StripeService> logger)
     {
         _configuration = configuration;
+        _platformSettings = platformSettings;
         _logger = logger;
+    }
 
-        // Configure Stripe
-        StripeConfiguration.ApiKey = _configuration["Stripe:SecretKey"];
-        _webhookSecret = _configuration["Stripe:WebhookSecret"] ?? string.Empty;
+    /// <summary>
+    /// Resolves the effective Stripe credentials. The Platform Settings admin UI (PlatformSetting
+    /// row, Category="Stripe") is the primary source, so an edit there takes effect on the next
+    /// request (the settings service caches per category and clears that key on save);
+    /// appsettings / environment variables are the fallback for any field left blank in the UI.
+    /// Previously the constructor read IConfiguration only, so the admin UI looked functional
+    /// but changed nothing.
+    /// </summary>
+    private async Task EnsureConfiguredAsync()
+    {
+        if (_configured) return;
+
+        StripeSettings? db = null;
+        try
+        {
+            db = await _platformSettings.GetSettingsAsync<StripeSettings>("Stripe");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read Stripe platform settings; falling back to configuration");
+        }
+
+        var secretKey = FirstNonEmpty(db?.SecretKey, _configuration["Stripe:SecretKey"]);
+        _webhookSecret = FirstNonEmpty(db?.WebhookSecret, _configuration["Stripe:WebhookSecret"]) ?? string.Empty;
+        _enabled = (db?.Enabled ?? true) && !string.IsNullOrWhiteSpace(secretKey);
+
+        StripeConfiguration.ApiKey = secretKey;
+        _configured = true;
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    public async Task<bool> IsConfiguredAsync()
+    {
+        await EnsureConfiguredAsync();
+        return _enabled;
     }
 
     public async Task<string> CreateCustomerAsync(Organization organization)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new CustomerCreateOptions
@@ -60,6 +105,7 @@ public class StripeService : IStripeService
 
     public async Task UpdateCustomerAsync(string customerId, Organization organization)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new CustomerUpdateOptions
@@ -86,6 +132,7 @@ public class StripeService : IStripeService
         string priceId,
         int? trialDays = null)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new SubscriptionCreateOptions
@@ -126,6 +173,7 @@ public class StripeService : IStripeService
 
     public async Task CancelSubscriptionAsync(string subscriptionId, bool immediately = false)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var service = new SubscriptionService();
@@ -156,6 +204,7 @@ public class StripeService : IStripeService
         string subscriptionId,
         string newPriceId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var service = new SubscriptionService();
@@ -196,6 +245,7 @@ public class StripeService : IStripeService
         string cancelUrl,
         string? customerId = null)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new SessionCreateOptions
@@ -258,6 +308,7 @@ public class StripeService : IStripeService
         string? customerId = null,
         string billingCycle = "Monthly")
     {
+        await EnsureConfiguredAsync();
         try
         {
             var metadata = new Dictionary<string, string>
@@ -310,6 +361,7 @@ public class StripeService : IStripeService
 
     public async Task<string> CreateBillingPortalSessionAsync(string customerId, string returnUrl)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new Stripe.BillingPortal.SessionCreateOptions
@@ -334,6 +386,7 @@ public class StripeService : IStripeService
 
     public async Task<WebhookProcessResult> HandleWebhookAsync(string payload, string signature)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var stripeEvent = EventUtility.ConstructEvent(payload, signature, _webhookSecret);
@@ -414,6 +467,7 @@ public class StripeService : IStripeService
 
     public async Task<StripeSubscriptionResult?> GetSubscriptionAsync(string subscriptionId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var service = new SubscriptionService();
@@ -429,6 +483,7 @@ public class StripeService : IStripeService
 
     public async Task<IEnumerable<PaymentMethodInfo>> GetPaymentMethodsAsync(string customerId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new PaymentMethodListOptions
@@ -464,6 +519,7 @@ public class StripeService : IStripeService
 
     public async Task<bool> SetDefaultPaymentMethodAsync(string customerId, string paymentMethodId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var pmService = new PaymentMethodService();
@@ -498,6 +554,7 @@ public class StripeService : IStripeService
 
     public async Task<bool> RemovePaymentMethodAsync(string customerId, string paymentMethodId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var pmService = new PaymentMethodService();
@@ -526,6 +583,7 @@ public class StripeService : IStripeService
         string currency,
         string? description = null)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var options = new PaymentIntentCreateOptions
@@ -565,6 +623,7 @@ public class StripeService : IStripeService
         string currency,
         string description)
     {
+        await EnsureConfiguredAsync();
         try
         {
             // Get customer's default payment method
@@ -655,6 +714,7 @@ public class StripeService : IStripeService
 
     public async Task<string> AddSubscriptionItemAsync(string subscriptionId, string priceId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var itemService = new SubscriptionItemService();
@@ -680,6 +740,7 @@ public class StripeService : IStripeService
 
     public async Task RemoveSubscriptionItemAsync(string subscriptionItemId)
     {
+        await EnsureConfiguredAsync();
         try
         {
             var itemService = new SubscriptionItemService();
