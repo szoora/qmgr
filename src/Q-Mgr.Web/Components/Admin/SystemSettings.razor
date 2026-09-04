@@ -7,6 +7,9 @@
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IBranchStateService BranchState
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
 
 <PageTitle>System Settings - Q-Mgr</PageTitle>
 
@@ -30,7 +33,7 @@
     {
         <div class="settings-container">
             <div class="settings-nav">
-                @foreach (var navSection in sections)
+                @foreach (var navSection in VisibleSections)
                 {
                     <div class="settings-nav-item @(activeSection == navSection.Key ? "active" : "")" @onclick="@(() => activeSection = navSection.Key)">
                         <QIcon Name="@navSection.Icon" />
@@ -382,15 +385,31 @@
     // wired through the whole app — see docs/TASK_TRACKER.md.
     private Guid branchId = Guid.Empty; // resolved from BranchState; no demo-branch fallback
 
+    /// <summary>
+    /// <summary>
+    /// The settings sections this organization can actually use. A section configuring a module
+    /// nobody bought is noise at best and a broken promise at worst: before this the Queue tab
+    /// offered token formats and auto-call to an organization holding no Core Queue Management.
+    /// </summary>
+    /// <remarks>
+    /// Same rule as the sidebar's <c>HasModule</c>, deliberately — including failing open when the
+    /// module list could not be fetched. An empty set then means "we don't know", not "you own
+    /// nothing", and hiding settings a customer pays for during an API blip is worse than showing
+    /// a tab whose saves the API would refuse anyway.
+    /// </remarks>
+    private IEnumerable<SectionInfo> VisibleSections =>
+        sections.Where(s => s.RequiresModule == null
+                            || !ModuleState.LoadSucceeded
+                            || ModuleState.ActiveModuleCodes.Contains(s.RequiresModule));
+
     private List<SectionInfo> sections = new()
     {
         new() { Key = "general", Name = "General", Icon = "gear" },
-        new() { Key = "queue", Name = "Queue", Icon = "list-ul" },
-        new() { Key = "display", Name = "Display", Icon = "tv" },
-        new() { Key = "notifications", Name = "Notifications", Icon = "bell" },
+        new() { Key = "queue", Name = "Queue", Icon = "list-ul", RequiresModule = ModuleCodes.CoreQueue },
+        new() { Key = "display", Name = "Display", Icon = "tv", RequiresModule = ModuleCodes.CoreQueue },
+        new() { Key = "notifications", Name = "Notifications", Icon = "bell", RequiresModule = ModuleCodes.EngagementCommunications },
         new() { Key = "security", Name = "Security", Icon = "shield-lock" }
     };
-
     private List<string> languages = new() { "English", "Spanish", "French", "Arabic", "Chinese" };
     private List<string> timeZones = new() { "UTC", "America/New_York", "Europe/London", "Asia/Dubai", "Asia/Singapore" };
     private List<string> dateFormats = new() { "MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD" };
@@ -405,6 +424,7 @@
             return;
         }
 
+        await ModuleState.LoadAsync(ModuleApi);
         await BranchState.InitializeAsync();
         if (BranchState.CurrentBranchId != Guid.Empty)
         {
@@ -471,5 +491,7 @@
         public string Key { get; set; } = "";
         public string Name { get; set; } = "";
         public string Icon { get; set; } = "";
+        /// <summary>Module code this section configures, or null when it applies to everyone.</summary>
+        public string? RequiresModule { get; set; }
     }
 }

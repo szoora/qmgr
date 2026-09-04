@@ -68,14 +68,10 @@ else
                     </div>
                 </div>
                 <div class="card-actions">
-                    <QButton Text="Upgrade Plan"
+                    <QButton Text="Manage Modules"
                              Icon="arrow-up-circle-fill"
                              Variant="primary"
-                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
-                    <QButton Text="Manage Subscription"
-                             Icon="gear-fill"
-                             Variant="secondary"
-                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
+                             OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
                 </div>
             </ChildContent>
         </QCard>
@@ -221,10 +217,10 @@ else
                     }
                 </p>
                 <div class="card-actions">
-                    <QButton Text="Choose a Plan"
+                    <QButton Text="Add a Module"
                              Icon="arrow-up-circle-fill"
                              Variant="primary"
-                             OnClick="@(() => Navigation.NavigateTo("/billing/subscription"))" />
+                             OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
                 </div>
             </ChildContent>
         </QCard>

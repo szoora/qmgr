@@ -131,30 +131,6 @@
                             <ValidationMessage For="@(() => formData.OrganizationName)" class="validation-message" />
                         </div>
 
-                        <div class="form-group">
-                            <label for="industry"><QIcon Name="tags" Size="16" /><span>Industry Type</span></label>
-                            @* Option values must match real QMgr.Domain.Enums.IndustryType member names —
-                               RegisterOrganizationCommandHandler does Enum.TryParse<IndustryType>(...) and a
-                               failed parse silently falls back to IndustryType.Service, seeding the wrong
-                               default service types for a brand-new org. Consolidated 2026-09-02 from 9 narrow
-                               verticals down to 5 broader categories — see IndustryType.cs's own doc comment
-                               for the reasoning and the data migration that remapped existing orgs. *@
-                            <select id="industry" @bind="formData.IndustryType" class="form-control">
-                                <option value="">Select your industry</option>
-                                <option value="Service">Retail, Hospitality &amp; General Service</option>
-                                <option value="Business">Business (Banking, Government &amp; Offices)</option>
-                                <option value="Health">Health</option>
-                                <option value="Education">Education</option>
-                                <option value="Communications">Communications</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="contactPhone"><QIcon Name="telephone" Size="16" /><span>Organization Phone</span></label>
-                            <input type="tel" id="contactPhone" @bind="formData.ContactPhone"
-                                   placeholder="0753404044" class="form-control" />
-                        </div>
-
                         <div class="form-actions">
                             <button type="button" class="btn-login" @onclick="NextStep"
                                     disabled="@(!CanProceedStep1())">
@@ -348,13 +324,6 @@
                                 <span class="summary-label">Organization:</span>
                                 <span class="summary-value">@formData.OrganizationName</span>
                             </div>
-                            @if (!string.IsNullOrEmpty(formData.IndustryType))
-                            {
-                                <div class="summary-row">
-                                    <span class="summary-label">Industry:</span>
-                                    <span class="summary-value">@IndustryLabel(formData.IndustryType)</span>
-                                </div>
-                            }
                         </div>
 
                         <div class="summary-section">
@@ -966,8 +935,6 @@
                 firstName = formData.FirstName,
                 lastName = formData.LastName,
                 phone = formData.Phone,
-                contactPhone = formData.ContactPhone,
-                industryType = formData.IndustryType,
                 acceptTerms = formData.AcceptTerms,
                 selectedModuleCodes = selectedModuleCode != null ? new List<string> { selectedModuleCode } : new List<string>(),
                 phoneVerificationToken = phoneVerificationToken,
@@ -1117,22 +1084,6 @@
         }
     }
 
-    // Mirrors the <option> label text in the Industry Type <select> above — the option values are
-    // real QMgr.Domain.Enums.IndustryType member names, not all human-readable as-is (e.g.
-    // "Service" for "Retail, Hospitality & General Service"), so the step-4 confirmation summary
-    // needs this to show the friendly label instead of the raw enum value the user never saw on screen.
-    private static readonly Dictionary<string, string> IndustryLabels = new()
-    {
-        ["Service"] = "Retail, Hospitality & General Service",
-        ["Business"] = "Business (Banking, Government & Offices)",
-        ["Health"] = "Health",
-        ["Education"] = "Education",
-        ["Communications"] = "Communications",
-    };
-
-    private string IndustryLabel(string? value) =>
-        value != null && IndustryLabels.TryGetValue(value, out var label) ? label : value ?? "";
-
     // Form model
     private class RegisterFormData
     {
@@ -1143,8 +1094,6 @@
         public string FirstName { get; set; } = "";
         public string LastName { get; set; } = "";
         public string? Phone { get; set; }
-        public string? ContactPhone { get; set; }
-        public string? IndustryType { get; set; }
         public bool AcceptTerms { get; set; }
 
         /// <summary>Honeypot. Always empty when a person fills the form in.</summary>
