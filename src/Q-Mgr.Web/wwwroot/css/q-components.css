@@ -857,12 +857,29 @@
 /* ==========================================================================
    QCheckbox Component
    ========================================================================== */
-.q-checkbox {
+/* The doubled class is deliberate, not a typo.
+   QCheckbox renders a <label>, and app.css plus roughly a dozen page style blocks all carry a
+   generic `.form-group label { display: block; font-weight: 600; text-transform: uppercase; ... }`
+   at specificity 0,1,1. A bare `.q-checkbox` is 0,1,0 and loses, so every checkbox inside a form
+   group was laid out as a block — the box on one line, its label stacked underneath in bold
+   uppercase, as if the person's name were a field heading. `label.q-checkbox` only ties, and a
+   page's own <style> block loads after this file, so a tie still loses. Repeating the class
+   reaches 0,2,0 and settles it without needing !important or a :not() chase through every page
+   that has ever written a label rule. */
+.q-checkbox.q-checkbox {
     display: inline-flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.5rem;
     cursor: pointer;
     user-select: none;
+
+    /* Undo what those generic label rules inject. A checkbox label is a sentence the user reads,
+       not a field heading. */
+    margin-bottom: 0;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--qm-text-primary);
 }
 
 .q-checkbox--disabled {
@@ -904,11 +921,21 @@
     font-size: 0.875rem;
 }
 
-.q-checkbox__label {
+/* Doubled for the same reason as .q-checkbox above — the span inherits from the <label>, so the
+   generic rules' uppercase and bold reach it too. */
+.q-checkbox__label.q-checkbox__label {
     font-size: 0.875rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
     color: var(--qm-text-primary);
     line-height: 1.4;
-    padding-top: 0.0625rem;
+    margin-bottom: 0;
+}
+
+/* The box must not be squeezed by a long label, and must not stretch when the label wraps. */
+.q-checkbox__box {
+    flex: 0 0 auto;
 }
 
 /* ==========================================================================
