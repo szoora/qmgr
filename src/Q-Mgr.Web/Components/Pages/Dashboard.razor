@@ -1176,12 +1176,31 @@ else if (hasCoreQueue && queueStatus != null)
         // LoadAsync is idempotent, so this is a no-op when MainLayout already populated it; it
         // matters when the dashboard is the first page rendered on a fresh circuit.
         await ModuleState.LoadAsync(ModuleApi);
-        await ResolveModulesAsync();
+
+        // Held as a task, not just awaited: Blazor renders the component as soon as this method
+        // yields at an await and then fires OnAfterRenderAsync, so the data loaders there could
+        // start while the catalog call was still in flight and read `hasCoreQueue` at its `= true`
+        // default. A welfare-only tenant then made a queue request the API refused, and the
+        // resulting "Unable to load queue data" banner stayed on screen even once the flag
+        // resolved to false. The loaders await this first.
+        moduleResolution = ResolveModulesAsync();
+        await moduleResolution;
 
         // Note: We'll load data in OnAfterRenderAsync when BranchState is properly initialized
     }
 
     private bool hasCoreQueue = true;
+
+    /// <summary>
+    /// The in-flight module resolution. Anything that reads the `has*` flags awaits this first,
+    /// so it sees the tenant's real holdings rather than the optimistic defaults.
+    /// </summary>
+    private Task? moduleResolution;
+
+    private async Task EnsureModulesResolvedAsync()
+    {
+        if (moduleResolution != null) await moduleResolution;
+    }
 
     /// <summary>Which module sections to render. Each is resolved once, from the same catalog call.</summary>
     private bool hasStudentWelfare;
@@ -1347,6 +1366,7 @@ else if (hasCoreQueue && queueStatus != null)
     /// </summary>
     private async Task LoadWelfareSummaryAsync()
     {
+        await EnsureModulesResolvedAsync();
         if (!hasStudentWelfare || !branchReady) return;
 
         try
@@ -1373,6 +1393,7 @@ else if (hasCoreQueue && queueStatus != null)
     /// </summary>
     private async Task LoadVisitorSummaryAsync()
     {
+        await EnsureModulesResolvedAsync();
         if (!hasVisitorManagement || !branchReady) return;
 
         try
@@ -1391,6 +1412,7 @@ else if (hasCoreQueue && queueStatus != null)
     /// </summary>
     private async Task LoadEngagementSummaryAsync()
     {
+        await EnsureModulesResolvedAsync();
         if (!hasEngagement || !branchReady) return;
 
         try
@@ -1430,8 +1452,12 @@ else if (hasCoreQueue && queueStatus != null)
         // ensure the API is running and the selected branch is valid." — an alarming, misleading
         // banner sitting directly above the empty state that already explains the real situation.
         // A welfare-only tenant saw it every time they opened their dashboard.
+        await EnsureModulesResolvedAsync();
+
         if (!hasCoreQueue)
         {
+            // Cleared as well as skipped: a previous pass may have set it before the flag resolved.
+            errorMessage = null;
             isLoading = false;
             return;
         }
