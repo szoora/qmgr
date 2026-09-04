@@ -257,10 +257,6 @@ public class QMgrDbContext : DbContext
                 .WithMany(o => o.Subscriptions)
                 .HasForeignKey(e => e.OrganizationId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne(e => e.Plan)
-                .WithMany(p => p.Subscriptions)
-                .HasForeignKey(e => e.PlanId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // Invoice configuration

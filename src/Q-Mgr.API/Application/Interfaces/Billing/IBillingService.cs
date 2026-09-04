@@ -27,14 +27,14 @@ public interface IBillingService
 
     #endregion
 
-    #region Subscriptions
+    #region Billing account
 
     /// <summary>
-    /// Create a new subscription for an organization
+    /// Open the organization's billing account — when it is invoiced and how it pays. What it
+    /// is billed for comes from the modules it holds.
     /// </summary>
     Task<SubscriptionResult> CreateSubscriptionAsync(
         Guid organizationId,
-        string planCode,
         BillingCycle billingCycle,
         PaymentMethod paymentMethod,
         string? stripePaymentMethodId = null,
@@ -50,14 +50,6 @@ public interface IBillingService
     /// payload carries, as opposed to our own local Guid.
     /// </summary>
     Task<Subscription?> GetSubscriptionByStripeIdAsync(string stripeSubscriptionId);
-
-    /// <summary>
-    /// Change subscription plan (upgrade/downgrade)
-    /// </summary>
-    Task<SubscriptionResult> ChangePlanAsync(
-        Guid subscriptionId,
-        string newPlanCode,
-        bool immediateChange = false);
 
     /// <summary>
     /// Cancel a subscription
@@ -108,14 +100,10 @@ public interface IBillingService
     #region Invoices
 
     /// <summary>
-    /// Generate an invoice for a subscription period
+    /// Raises one invoice covering every module whose billing period has run out.
+    /// Returns null when nothing is due. This is the recurring-billing entry point.
     /// </summary>
-    Task<Invoice> GenerateInvoiceAsync(Guid subscriptionId, DateTime periodStart, DateTime periodEnd);
-
-    /// <summary>
-    /// Generate invoice for current billing period
-    /// </summary>
-    Task<Invoice> GenerateInvoiceAsync(Guid subscriptionId);
+    Task<Invoice?> GenerateInvoiceForDueModulesAsync(Guid organizationId, DateTime asOf);
 
     /// <summary>
     /// Attempt to collect payment for an invoice
@@ -170,6 +158,12 @@ public interface IBillingService
 
     #endregion
 
+    /// <summary>
+    /// Monthly recurring revenue across the platform in USD, summed from the modules
+    /// organizations hold at the price each of them agreed to.
+    /// </summary>
+    Task<decimal> GetPlatformMonthlyRecurringRevenueUsdAsync();
+
     #region Limits
 
     /// <summary>
@@ -202,11 +196,6 @@ public interface IBillingService
     #region Trial
 
     /// <summary>
-    /// Start a trial for an organization
-    /// </summary>
-    Task StartTrialAsync(Guid organizationId, string planCode, int trialDays);
-
-    /// <summary>
     /// Check if trial has expired
     /// </summary>
     Task<bool> IsTrialExpiredAsync(Guid organizationId);
@@ -235,9 +224,10 @@ public record SubscriptionResult(
 /// <summary>
 /// Subscription with plan details
 /// </summary>
+// The plan is gone with the tier system; this now pairs the billing account with the limits its
+// modules grant. Kept under the old name so every call site did not have to churn in one pass.
 public record SubscriptionWithPlan(
     Subscription Subscription,
-    SubscriptionPlan Plan,
     EffectiveLimits Limits);
 
 /// <summary>
@@ -264,7 +254,6 @@ public record LimitCheckResult(
 /// </summary>
 public record OrganizationLimits(
     Guid OrganizationId,
-    TenantTier Tier,
     Dictionary<string, LimitCheckResult> Limits);
 
 /// <summary>

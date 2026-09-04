@@ -20,7 +20,6 @@ public interface ITenantContext
     string? SchemaName { get; }
 
     /// <summary>Current subscription tier</summary>
-    TenantTier Tier { get; }
 
     /// <summary>Current tenant status</summary>
     TenantStatus Status { get; }
@@ -32,7 +31,6 @@ public interface ITenantContext
     bool UsesDedicatedSchema { get; }
 
     /// <summary>Whether to show ads (free tier only)</summary>
-    bool ShowAds { get; }
 
     /// <summary>Whether the tenant is in an active state (can access features)</summary>
     bool IsActive { get; }

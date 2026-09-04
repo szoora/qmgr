@@ -126,29 +126,6 @@ public enum PaymentStatus
     Cancelled = 5
 }
 
-/// <summary>
-/// Tenant tier for feature gating.
-/// SUPERSEDED 2026-09-02 by the modular subscription system (see <see cref="OrganizationModuleStatus"/>
-/// / <see cref="QMgr.Domain.Entities.Billing.OrganizationModule"/>) — a tenant's access is now
-/// determined by which modules they've purchased, not one flat tier. Left in place rather than
-/// deleted so the existing single-plan billing code paths (`BillingController.Subscribe`,
-/// `Tenants.razor`'s legacy tier display, etc.) keep compiling; new code should never read this.
-/// </summary>
-public enum TenantTier
-{
-    /// <summary>Free tier with ads</summary>
-    Free = 0,
-
-    /// <summary>Starter paid tier</summary>
-    Starter = 1,
-
-    /// <summary>Professional tier</summary>
-    Professional = 2,
-
-    /// <summary>Enterprise tier with dedicated schema</summary>
-    Enterprise = 3
-}
-
 /// <summary>Status of one organization's purchase of one module</summary>
 public enum OrganizationModuleStatus
 {

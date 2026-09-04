@@ -18,6 +18,9 @@ public class BillingService : IBillingService
     private readonly IStripeService _stripeService;
     private readonly IMobileMoneyService _mobileMoneyService;
     private readonly IUsageTrackingService _usageTrackingService;
+    private readonly IFeatureFlagService _featureFlags;
+    private readonly IModuleLimitResolver _limitResolver;
+    private readonly IBillingAccountProvider _accountProvider;
     private readonly IConfiguration _configuration;
     private readonly ILogger<BillingService> _logger;
 
@@ -26,6 +29,9 @@ public class BillingService : IBillingService
         IStripeService stripeService,
         IMobileMoneyService mobileMoneyService,
         IUsageTrackingService usageTrackingService,
+        IFeatureFlagService featureFlags,
+        IModuleLimitResolver limitResolver,
+        IBillingAccountProvider accountProvider,
         IConfiguration configuration,
         ILogger<BillingService> logger)
     {
@@ -33,6 +39,9 @@ public class BillingService : IBillingService
         _stripeService = stripeService;
         _mobileMoneyService = mobileMoneyService;
         _usageTrackingService = usageTrackingService;
+        _featureFlags = featureFlags;
+        _limitResolver = limitResolver;
+        _accountProvider = accountProvider;
         _configuration = configuration;
         _logger = logger;
     }
@@ -71,11 +80,15 @@ public class BillingService : IBillingService
 
     #endregion
 
-    #region Subscriptions
+    #region Billing account
 
+    /// <summary>
+    /// Opens the organization's billing account: when it is invoiced and how it pays. What it is
+    /// billed for comes from the modules it holds, not from a plan — this used to take a plan code
+    /// and set a tier.
+    /// </summary>
     public async Task<SubscriptionResult> CreateSubscriptionAsync(
         Guid organizationId,
-        string planCode,
         BillingCycle billingCycle,
         PaymentMethod paymentMethod,
         string? stripePaymentMethodId = null,
@@ -91,29 +104,21 @@ public class BillingService : IBillingService
                 return new SubscriptionResult(false, null, "ORG_NOT_FOUND", "Organization not found");
             }
 
-            var plan = await GetPlanByCodeAsync(planCode);
-            if (plan == null)
-            {
-                return new SubscriptionResult(false, null, "PLAN_NOT_FOUND", "Subscription plan not found");
-            }
-
-            // Check if organization already has an active subscription
-            var existingSubscription = await _dbContext.Subscriptions
+            var existing = await _dbContext.Subscriptions
                 .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
                                          (s.Status == SubscriptionStatus.Active ||
                                           s.Status == SubscriptionStatus.Trialing));
 
-            if (existingSubscription != null)
+            if (existing != null)
             {
                 return new SubscriptionResult(false, null, "ALREADY_SUBSCRIBED",
-                    "Organization already has an active subscription");
+                    "Organization already has a billing account");
             }
 
             var now = DateTime.UtcNow;
             var subscription = new Subscription
             {
                 OrganizationId = organizationId,
-                PlanId = plan.Id,
                 Status = SubscriptionStatus.Active,
                 BillingCycle = billingCycle,
                 PreferredPaymentMethod = paymentMethod,
@@ -123,65 +128,26 @@ public class BillingService : IBillingService
                     ? now.AddYears(1)
                     : now.AddMonths(1),
                 MobileMoneyPhone = mobileMoneyPhone,
-                // Grandfathering: lock in what this customer is agreeing to pay right now, so a
-                // later edit to the plan's price does not silently reprice them on renewal.
-                AgreedCurrency = organization.PreferredCurrency,
-                AgreedUnitPrice = ListPriceFor(plan, billingCycle, organization.PreferredCurrency),
+                StripePaymentMethodId = stripePaymentMethodId,
                 CreatedAt = now
             };
 
-            // Handle Stripe subscription if card payment
-            if (paymentMethod == PaymentMethod.Card && !string.IsNullOrEmpty(stripePaymentMethodId))
-            {
-                // Ensure organization has Stripe customer
-                if (string.IsNullOrEmpty(organization.StripeCustomerId))
-                {
-                    organization.StripeCustomerId = await _stripeService.CreateCustomerAsync(organization);
-                }
-
-                var priceId = billingCycle == BillingCycle.Annual
-                    ? plan.StripePriceIdAnnual
-                    : plan.StripePriceIdMonthly;
-
-                if (!string.IsNullOrEmpty(priceId))
-                {
-                    var stripeResult = await _stripeService.CreateSubscriptionAsync(
-                        organization.StripeCustomerId,
-                        priceId,
-                        plan.TrialDays > 0 ? plan.TrialDays : null);
-
-                    subscription.StripeSubscriptionId = stripeResult.SubscriptionId;
-                    subscription.StripeCustomerId = stripeResult.CustomerId;
-                    subscription.StripePaymentMethodId = stripePaymentMethodId;
-
-                    if (stripeResult.TrialEnd.HasValue)
-                    {
-                        subscription.Status = SubscriptionStatus.Trialing;
-                        subscription.TrialEnd = stripeResult.TrialEnd;
-                    }
-                }
-            }
-
             _dbContext.Subscriptions.Add(subscription);
 
-            // Update organization
             organization.SubscriptionId = subscription.Id;
-            organization.Tier = plan.Tier;
-            organization.Status = subscription.Status == SubscriptionStatus.Trialing
-                ? TenantStatus.Trialing
-                : TenantStatus.Active;
+            organization.Status = TenantStatus.Active;
 
             await _dbContext.SaveChangesAsync();
 
             _logger.LogInformation(
-                "Created subscription {SubscriptionId} for organization {OrganizationId} on plan {PlanCode}",
-                subscription.Id, organizationId, planCode);
+                "Opened billing account {SubscriptionId} for organization {OrganizationId}",
+                subscription.Id, organizationId);
 
             return new SubscriptionResult(true, subscription, null, null);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create subscription for organization {OrganizationId}", organizationId);
+            _logger.LogError(ex, "Failed to open a billing account for organization {OrganizationId}", organizationId);
             return new SubscriptionResult(false, null, "CREATE_FAILED", ex.Message);
         }
     }
@@ -189,7 +155,6 @@ public class BillingService : IBillingService
     public async Task<Subscription?> GetSubscriptionAsync(Guid organizationId)
     {
         return await _dbContext.Subscriptions
-            .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
                                       (s.Status == SubscriptionStatus.Active ||
                                        s.Status == SubscriptionStatus.Trialing ||
@@ -200,79 +165,6 @@ public class BillingService : IBillingService
     {
         return await _dbContext.Subscriptions
             .FirstOrDefaultAsync(s => s.StripeSubscriptionId == stripeSubscriptionId);
-    }
-
-    public async Task<SubscriptionResult> ChangePlanAsync(
-        Guid subscriptionId,
-        string newPlanCode,
-        bool immediateChange = false)
-    {
-        try
-        {
-            var subscription = await _dbContext.Subscriptions
-                .Include(s => s.Plan)
-                .Include(s => s.Organization)
-                .FirstOrDefaultAsync(s => s.Id == subscriptionId);
-
-            if (subscription == null)
-            {
-                return new SubscriptionResult(false, null, "NOT_FOUND", "Subscription not found");
-            }
-
-            var newPlan = await GetPlanByCodeAsync(newPlanCode);
-            if (newPlan == null)
-            {
-                return new SubscriptionResult(false, null, "PLAN_NOT_FOUND", "New plan not found");
-            }
-
-            // Update Stripe subscription if exists
-            if (!string.IsNullOrEmpty(subscription.StripeSubscriptionId))
-            {
-                var priceId = subscription.BillingCycle == BillingCycle.Annual
-                    ? newPlan.StripePriceIdAnnual
-                    : newPlan.StripePriceIdMonthly;
-
-                if (!string.IsNullOrEmpty(priceId))
-                {
-                    await _stripeService.UpdateSubscriptionAsync(
-                        subscription.StripeSubscriptionId, priceId);
-                }
-            }
-
-            // Read before the foreign key moves: assigning PlanId makes EF's navigation fixup drop
-            // subscription.Plan, so reading it in the log line below threw a NullReferenceException
-            // and every plan change came back as CHANGE_FAILED. Found live 2026-09-04.
-            var previousPlanCode = subscription.Plan?.Code ?? "(unknown)";
-
-            subscription.PlanId = newPlan.Id;
-
-            // A plan change is a fresh agreement, so the agreed price is recaptured from the new
-            // plan rather than carried over — carrying it would let a customer move onto a more
-            // expensive plan while still paying the old plan's price.
-            var agreedCurrency = subscription.Organization?.PreferredCurrency ?? "USD";
-            subscription.AgreedCurrency = agreedCurrency;
-            subscription.AgreedUnitPrice = ListPriceFor(newPlan, subscription.BillingCycle, agreedCurrency);
-            subscription.UpdatedAt = DateTime.UtcNow;
-
-            // Update organization tier
-            if (subscription.Organization != null)
-            {
-                subscription.Organization.Tier = newPlan.Tier;
-            }
-
-            await _dbContext.SaveChangesAsync();
-
-            _logger.LogInformation(
-                "Changed subscription {SubscriptionId} from plan {OldPlan} to {NewPlan}",
-                subscriptionId, previousPlanCode, newPlanCode);
-
-            return new SubscriptionResult(true, subscription, null, null);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to change plan for subscription {SubscriptionId}", subscriptionId);
-            return new SubscriptionResult(false, null, "CHANGE_FAILED", ex.Message);
-        }
     }
 
     public async Task<SubscriptionResult> CancelSubscriptionAsync(
@@ -311,7 +203,6 @@ public class BillingService : IBillingService
                 if (subscription.Organization != null)
                 {
                     subscription.Organization.Status = TenantStatus.Cancelled;
-                    subscription.Organization.Tier = TenantTier.Free;
                     subscription.Organization.SubscriptionId = null;
                 }
             }
@@ -338,7 +229,6 @@ public class BillingService : IBillingService
         {
             var subscription = await _dbContext.Subscriptions
                 .Include(s => s.Organization)
-                .Include(s => s.Plan)
                 .FirstOrDefaultAsync(s => s.Id == subscriptionId);
 
             if (subscription == null)
@@ -369,7 +259,6 @@ public class BillingService : IBillingService
             if (subscription.Organization != null)
             {
                 subscription.Organization.Status = TenantStatus.Active;
-                subscription.Organization.Tier = subscription.Plan.Tier;
                 subscription.Organization.SubscriptionId = subscription.Id;
             }
 
@@ -391,7 +280,6 @@ public class BillingService : IBillingService
         try
         {
             var subscription = await _dbContext.Subscriptions
-                .Include(s => s.Plan)
                 .FirstOrDefaultAsync(s => s.Id == subscriptionId);
 
             if (subscription == null)
@@ -493,7 +381,6 @@ public class BillingService : IBillingService
     public async Task<SubscriptionWithPlan?> GetSubscriptionWithPlanAsync(Guid organizationId)
     {
         var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
                                       (s.Status == SubscriptionStatus.Active ||
                                        s.Status == SubscriptionStatus.Trialing));
@@ -502,7 +389,7 @@ public class BillingService : IBillingService
 
         var limits = await GetEffectiveLimitsBySubscriptionIdAsync(subscription.Id);
 
-        return new SubscriptionWithPlan(subscription, subscription.Plan, limits);
+        return new SubscriptionWithPlan(subscription, limits);
     }
 
     public async Task<OrganizationTrialInfo?> GetOrganizationTrialInfoAsync(Guid organizationId)
@@ -522,65 +409,134 @@ public class BillingService : IBillingService
 
     #region Invoices
 
-    public async Task<Invoice> GenerateInvoiceAsync(Guid subscriptionId, DateTime periodStart, DateTime periodEnd)
+    /// <summary>
+    /// Raises one invoice for every module an organization holds whose billing period has run out.
+    /// Returns null when nothing is due.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what replaced tier billing on 2026-09-04. Until then the only thing that generated a
+    /// recurring invoice was a tier subscription, and a module was charged once at purchase and
+    /// never again — <see cref="OrganizationModule.CurrentPeriodEnd"/> was written at activation and
+    /// read by nothing. It is now the due date that drives this method, so a monthly module is
+    /// billed every month and an annual one appears on an invoice once a year, without either
+    /// having to be repriced onto a shared cadence.
+    /// </para>
+    /// <para>
+    /// Everything due on the same run lands on one document, one line per module, so a customer
+    /// receives a single invoice rather than one per module. Each line is priced from that module's
+    /// agreed price and falls back to the catalog's list price, exactly as
+    /// <c>GetChargeableUgxPriceAsync</c> does for a purchase — a renewal must never quietly cost
+    /// more than what the customer agreed to.
+    /// </para>
+    /// <para>
+    /// A module still in its trial is not billed. Its period starts when it activates.
+    /// </para>
+    /// </remarks>
+    public async Task<Invoice?> GenerateInvoiceForDueModulesAsync(Guid organizationId, DateTime asOf)
     {
-        var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .Include(s => s.Organization)
-            .FirstOrDefaultAsync(s => s.Id == subscriptionId);
+        var organization = await _dbContext.Organizations
+            .FirstOrDefaultAsync(o => o.Id == organizationId);
 
-        if (subscription == null)
-            throw new InvalidOperationException("Subscription not found");
+        if (organization == null)
+            throw new InvalidOperationException("Organization not found");
 
-        var plan = subscription.Plan ?? throw new InvalidOperationException("Subscription has no plan loaded");
-        var currency = subscription.Organization?.PreferredCurrency ?? "USD";
+        var due = await _dbContext.OrganizationModules
+            .Include(om => om.Module)
+            .Where(om => om.OrganizationId == organizationId &&
+                         om.Status == OrganizationModuleStatus.Active &&
+                         om.CurrentPeriodEnd != null &&
+                         om.CurrentPeriodEnd <= asOf)
+            .ToListAsync();
 
-        // The agreed price wins over the plan's current list price. This is the whole point of
-        // grandfathering: an administrator editing a plan's price must not change what an existing
-        // subscriber's next invoice comes to. A null agreed price tracks the list price, which is
-        // how every row behaved before those columns existed.
-        var price = subscription.GetEffectiveUnitPrice(
-            ListPriceFor(plan, subscription.BillingCycle, currency), currency);
+        if (due.Count == 0) return null;
+
+        var currency = organization.PreferredCurrency ?? "USD";
+        var isUgx = string.Equals(currency, "UGX", StringComparison.OrdinalIgnoreCase);
+
+        var account = await _accountProvider.GetOrOpenAsync(organizationId, asOf);
+
+        var lines = new List<object>();
+        decimal subtotal = 0;
+        var periodStart = asOf;
+        var periodEnd = asOf;
+
+        foreach (var hold in due)
+        {
+            var module = hold.Module;
+            if (module == null) continue;
+
+            var annual = hold.BillingCycle == BillingCycle.Annual;
+            var listPrice = annual
+                ? (isUgx ? module.AnnualPriceUgx : module.AnnualPriceUsd)
+                : (isUgx ? module.MonthlyPriceUgx : module.MonthlyPriceUsd);
+
+            var unitPrice = isUgx
+                ? hold.GetEffectivePriceUgx(listPrice)
+                : hold.GetEffectivePriceUsd(listPrice);
+
+            var lineStart = hold.CurrentPeriodEnd!.Value;
+            var lineEnd = annual ? lineStart.AddYears(1) : lineStart.AddMonths(1);
+
+            lines.Add(new
+            {
+                moduleCode = module.Code,
+                description = $"{module.Name} — {hold.BillingCycle}",
+                quantity = 1,
+                unitPrice,
+                total = unitPrice,
+                periodStart = lineStart,
+                periodEnd = lineEnd
+            });
+
+            subtotal += unitPrice;
+            if (lineStart < periodStart) periodStart = lineStart;
+            if (lineEnd > periodEnd) periodEnd = lineEnd;
+
+            // Roll this module's own period forward. Done here rather than on payment so a failed
+            // collection dunning the existing invoice cannot also raise a second one next run.
+            hold.CurrentPeriodEnd = lineEnd;
+            hold.UpdatedAt = asOf;
+        }
 
         var invoice = new Invoice
         {
-            OrganizationId = subscription.OrganizationId,
-            SubscriptionId = subscriptionId,
+            OrganizationId = organizationId,
+            SubscriptionId = account.Id,
             InvoiceNumber = GenerateInvoiceNumber(),
             Status = InvoiceStatus.Open,
             Currency = currency,
-            Subtotal = price,
+            Subtotal = subtotal,
             TaxAmount = 0,
             DiscountAmount = 0,
-            Total = price,
+            Total = subtotal,
             PeriodStart = periodStart,
             PeriodEnd = periodEnd,
-            InvoiceDate = DateTime.UtcNow,
-            DueDate = DateTime.UtcNow.AddDays(7),
-            BillingEmail = subscription.Organization?.EffectiveBillingEmail,
-            BillingName = subscription.Organization?.Name,
-            LineItems = JsonSerializer.Serialize(new[]
-            {
-                new
-                {
-                    description = $"{plan.Name} - {subscription.BillingCycle}",
-                    quantity = 1,
-                    unitPrice = price,
-                    total = price
-                }
-            }),
-            CreatedAt = DateTime.UtcNow
+            InvoiceDate = asOf,
+            DueDate = asOf.AddDays(7),
+            BillingEmail = organization.EffectiveBillingEmail,
+            BillingName = organization.Name,
+            LineItems = JsonSerializer.Serialize(lines),
+            CreatedAt = asOf
         };
 
         _dbContext.Invoices.Add(invoice);
+
+        account.CurrentPeriodStart = periodStart;
+        account.CurrentPeriodEnd = periodEnd;
+        account.NextBillingDate = periodEnd;
+        account.UpdatedAt = asOf;
+
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation(
-            "Generated invoice {InvoiceNumber} for subscription {SubscriptionId}",
-            invoice.InvoiceNumber, subscriptionId);
+            "Generated invoice {InvoiceNumber} for organization {OrganizationId}: {LineCount} module(s), {Total} {Currency}",
+            invoice.InvoiceNumber, organizationId, due.Count, subtotal, currency);
 
         return invoice;
     }
+
+    /// <summary>
 
     public async Task<IEnumerable<Invoice>> GetInvoicesAsync(Guid organizationId, int page = 1, int pageSize = 20)
     {
@@ -624,18 +580,6 @@ public class BillingService : IBillingService
         invoice.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
-    }
-
-    public async Task<Invoice> GenerateInvoiceAsync(Guid subscriptionId)
-    {
-        var subscription = await _dbContext.Subscriptions.FindAsync(subscriptionId);
-        if (subscription == null)
-            throw new InvalidOperationException("Subscription not found");
-
-        return await GenerateInvoiceAsync(
-            subscriptionId,
-            subscription.CurrentPeriodStart,
-            subscription.CurrentPeriodEnd);
     }
 
     public async Task<PaymentCollectionResult> CollectPaymentAsync(Guid invoiceId)
@@ -833,106 +777,31 @@ public class BillingService : IBillingService
             limits[limitType] = await CheckLimitAsync(organizationId, limitType);
         }
 
-        return new OrganizationLimits(organizationId, organization.Tier, limits);
+        return new OrganizationLimits(organizationId, limits);
     }
 
     public async Task<EffectiveLimits> GetEffectiveLimitsAsync(Guid organizationId)
     {
-        // Resolves the organization's active subscription first, then delegates to the
-        // subscription-keyed overload below. Found while wiring storage-quota enforcement:
-        // both existing callers of that overload (SuperAdminController.GetTenant,
-        // BillingJobs.CheckUsageLimitsAsync) were passing an organizationId where a
-        // subscriptionId was expected — since a Subscription's own Id essentially never
-        // equals its owning Organization's Id, that lookup always missed and silently fell
-        // back to hardcoded free-tier limits (100 tokens, 0 API calls, 100MB storage)
-        // regardless of the org's real plan. This name is now accurate; the old
-        // subscription-keyed method is renamed below to make the distinction unambiguous.
-        var subscription = await _dbContext.Subscriptions
-            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
-                                       s.Status == SubscriptionStatus.Active);
-
-        return await GetEffectiveLimitsBySubscriptionIdAsync(subscription?.Id ?? Guid.Empty);
+        return await _limitResolver.ResolveAsync(organizationId);
     }
 
     public async Task<EffectiveLimits> GetEffectiveLimitsBySubscriptionIdAsync(Guid subscriptionId)
     {
-        var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .FirstOrDefaultAsync(s => s.Id == subscriptionId);
+        var organizationId = await _dbContext.Subscriptions
+            .AsNoTracking()
+            .Where(s => s.Id == subscriptionId)
+            .Select(s => (Guid?)s.OrganizationId)
+            .FirstOrDefaultAsync();
 
-        if (subscription == null)
-        {
-            // Return free tier limits
-            return new EffectiveLimits(
-                MaxBranches: 1,
-                MaxUsersPerBranch: 2,
-                MaxCountersPerBranch: 3,
-                MaxTokensPerMonth: 100,
-                MaxApiCallsPerMonth: 0,
-                MaxStorageMb: 100,
-                HasApiAccess: false,
-                HasSmsNotifications: false,
-                HasCustomBranding: false,
-                HasAdvancedAnalytics: false,
-                ShowAds: true);
-        }
-
-        var plan = subscription.Plan;
-        var features = ParseFeatures(plan.Features);
-
-        return new EffectiveLimits(
-            MaxBranches: subscription.MaxBranchesOverride ?? plan.MaxBranches,
-            MaxUsersPerBranch: subscription.MaxUsersOverride ?? plan.MaxUsersPerBranch,
-            MaxCountersPerBranch: plan.MaxCountersPerBranch,
-            MaxTokensPerMonth: subscription.MaxTokensOverride ?? plan.MaxTokensPerMonth,
-            MaxApiCallsPerMonth: subscription.MaxApiCallsOverride ?? plan.MaxApiCallsPerMonth,
-            MaxStorageMb: subscription.MaxStorageOverride ?? plan.MaxStorageMb,
-            HasApiAccess: features.GetValueOrDefault("api_access", false),
-            HasSmsNotifications: features.GetValueOrDefault("sms_notifications", false),
-            HasCustomBranding: features.GetValueOrDefault("custom_branding", false),
-            HasAdvancedAnalytics: features.GetValueOrDefault("advanced_analytics", false),
-            ShowAds: plan.ShowAds);
+        return organizationId.HasValue
+            ? await _limitResolver.ResolveAsync(organizationId.Value)
+            : await _limitResolver.ResolveAsync(Guid.Empty);
     }
+
 
     #endregion
 
     #region Trial
-
-    public async Task StartTrialAsync(Guid organizationId, string planCode, int trialDays)
-    {
-        var organization = await _dbContext.Organizations.FindAsync(organizationId);
-        if (organization == null) return;
-
-        var plan = await GetPlanByCodeAsync(planCode);
-        if (plan == null) return;
-
-        var now = DateTime.UtcNow;
-        var subscription = new Subscription
-        {
-            OrganizationId = organizationId,
-            PlanId = plan.Id,
-            Status = SubscriptionStatus.Trialing,
-            BillingCycle = BillingCycle.Monthly,
-            StartDate = now,
-            CurrentPeriodStart = now,
-            CurrentPeriodEnd = now.AddDays(trialDays),
-            TrialEnd = now.AddDays(trialDays),
-            CreatedAt = now
-        };
-
-        _dbContext.Subscriptions.Add(subscription);
-
-        organization.SubscriptionId = subscription.Id;
-        organization.Status = TenantStatus.Trialing;
-        organization.Tier = plan.Tier;
-        organization.TrialEndsAt = subscription.TrialEnd;
-
-        await _dbContext.SaveChangesAsync();
-
-        _logger.LogInformation(
-            "Started {Days}-day trial for organization {OrganizationId} on plan {PlanCode}",
-            trialDays, organizationId, planCode);
-    }
 
     public async Task<bool> IsTrialExpiredAsync(Guid organizationId)
     {
@@ -952,7 +821,6 @@ public class BillingService : IBillingService
         string? mobileMoneyPhone = null)
     {
         var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
             .Include(s => s.Organization)
             .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
                                       s.Status == SubscriptionStatus.Trialing);
@@ -987,6 +855,43 @@ public class BillingService : IBillingService
     }
 
     #endregion
+
+
+    /// <summary>
+    /// Monthly recurring revenue across the platform, in USD.
+    /// </summary>
+    /// <remarks>
+    /// Summed from the modules organizations actually hold, each at the price that organization
+    /// agreed to and falling back to the catalog's list price. Until 2026-09-04 this was computed
+    /// from tier subscriptions, which meant a customer who only ever bought modules — by then most
+    /// of them — counted as zero revenue. An annual holding contributes a twelfth of its price.
+    /// A module granted by a platform administrator is excluded: nothing is charged for it.
+    /// </remarks>
+    public async Task<decimal> GetPlatformMonthlyRecurringRevenueUsdAsync()
+    {
+        var held = await _dbContext.OrganizationModules
+            .AsNoTracking()
+            .Where(om => om.Status == OrganizationModuleStatus.Active && !om.GrantedByPlatformAdmin)
+            .Select(om => new
+            {
+                om.BillingCycle,
+                om.AgreedPriceUsd,
+                ListMonthly = om.Module!.MonthlyPriceUsd,
+                ListAnnual = om.Module.AnnualPriceUsd
+            })
+            .ToListAsync();
+
+        decimal mrr = 0;
+        foreach (var h in held)
+        {
+            var annual = h.BillingCycle == BillingCycle.Annual;
+            var listPrice = annual ? h.ListAnnual : h.ListMonthly;
+            var price = h.AgreedPriceUsd ?? listPrice;
+            mrr += annual ? price / 12 : price;
+        }
+
+        return mrr;
+    }
 
     #region Private Helpers
 

@@ -63,6 +63,8 @@ public static class DependencyInjection
         services.AddScoped<IStripeService, StripeService>();
         services.AddScoped<IUsageTrackingService, UsageTrackingService>();
         services.AddScoped<IFeatureFlagService, FeatureFlagService>();
+        services.AddScoped<IModuleLimitResolver, ModuleLimitResolver>();
+        services.AddScoped<IBillingAccountProvider, BillingAccountProvider>();
         services.AddScoped<IModuleAccessService, ModuleAccessService>();
 
         // Tenant Provisioning Service (for self-service onboarding)

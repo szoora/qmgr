@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using QMgr.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using QMgr.API.Authorization;
 using QMgr.Application.Interfaces;
@@ -19,6 +21,7 @@ namespace QMgr.Controllers.v1;
 [Authorize]
 public class BillingController : ControllerBase
 {
+    private readonly QMgrDbContext _dbContext;
     private readonly IBillingService _billingService;
     private readonly IStripeService _stripeService;
     private readonly IMobileMoneyService _mobileMoneyService;
@@ -30,6 +33,7 @@ public class BillingController : ControllerBase
     private readonly ILogger<BillingController> _logger;
 
     public BillingController(
+        QMgrDbContext dbContext,
         IBillingService billingService,
         IStripeService stripeService,
         IMobileMoneyService mobileMoneyService,
@@ -40,6 +44,7 @@ public class BillingController : ControllerBase
         IPlatformSettingsService platformSettingsService,
         ILogger<BillingController> logger)
     {
+        _dbContext = dbContext;
         _billingService = billingService;
         _stripeService = stripeService;
         _mobileMoneyService = mobileMoneyService;
@@ -75,6 +80,9 @@ public class BillingController : ControllerBase
         var usage = await _usageTrackingService.GetCurrentUsageAsync(OrganizationId);
         var limits = await _billingService.GetLimitsAsync(OrganizationId);
 
+        var moduleSummary = await SummariseHeldModulesAsync(OrganizationId);
+
+
         if (subscription == null)
         {
             var trialInfo = await _billingService.GetOrganizationTrialInfoAsync(OrganizationId);
@@ -90,12 +98,13 @@ public class BillingController : ControllerBase
         return Ok(new BillingOverviewDto
         {
             // Subscription Info
-            PlanName = subscription.Plan.Name,
-            PlanCode = subscription.Plan.Code,
+            // What the organization is actually on. There is no plan any more, so the "plan" the
+            // customer sees is the set of modules they hold and the amount is the sum of what they
+            // agreed to pay for them.
+            PlanName = moduleSummary.Names,
+            PlanCode = moduleSummary.Codes,
             BillingCycle = subscription.Subscription.BillingCycle.ToString(),
-            // What this customer actually pays, agreed price included — showing the plan's list
-            // price to somebody on a grandfathered one would contradict their own invoice.
-            MonthlyAmount = subscription.Subscription.GetMonthlyRecurringRevenueUsd(),
+            MonthlyAmount = moduleSummary.MonthlyUsd,
             Currency = "USD",
             Status = subscription.Subscription.Status.ToString(),
             NextBillingDate = subscription.Subscription.CurrentPeriodEnd,
@@ -135,7 +144,6 @@ public class BillingController : ControllerBase
             Name = p.Name,
             Code = p.Code,
             Description = p.Description,
-            Tier = p.Tier.ToString(),
             MonthlyPriceUsd = p.MonthlyPriceUsd,
             AnnualPriceUsd = p.AnnualPriceUsd,
             MonthlyPriceUgx = p.MonthlyPriceUgx,
@@ -170,7 +178,6 @@ public class BillingController : ControllerBase
             Name = plan.Name,
             Code = plan.Code,
             Description = plan.Description,
-            Tier = plan.Tier.ToString(),
             MonthlyPriceUsd = plan.MonthlyPriceUsd,
             AnnualPriceUsd = plan.AnnualPriceUsd,
             MonthlyPriceUgx = plan.MonthlyPriceUgx,
@@ -187,6 +194,47 @@ public class BillingController : ControllerBase
     }
 
     #endregion
+
+
+    /// <summary>
+    /// The modules an organization holds, as the customer-facing "what am I paying for" summary
+    /// that used to be a single plan name and price.
+    /// </summary>
+    private async Task<(string Names, string Codes, decimal MonthlyUsd)> SummariseHeldModulesAsync(Guid organizationId)
+    {
+        var held = await _dbContext.OrganizationModules
+            .AsNoTracking()
+            .Where(om => om.OrganizationId == organizationId &&
+                         (om.Status == OrganizationModuleStatus.Active ||
+                          om.Status == OrganizationModuleStatus.Trialing))
+            .Select(om => new
+            {
+                om.Module!.Name,
+                om.Module.Code,
+                om.BillingCycle,
+                om.AgreedPriceUsd,
+                om.GrantedByPlatformAdmin,
+                ListMonthly = om.Module.MonthlyPriceUsd,
+                ListAnnual = om.Module.AnnualPriceUsd
+            })
+            .OrderBy(m => m.Name)
+            .ToListAsync();
+
+        if (held.Count == 0) return ("No modules", string.Empty, 0m);
+
+        decimal monthly = 0;
+        foreach (var m in held)
+        {
+            if (m.GrantedByPlatformAdmin) continue;
+            var annual = m.BillingCycle == BillingCycle.Annual;
+            var price = m.AgreedPriceUsd ?? (annual ? m.ListAnnual : m.ListMonthly);
+            monthly += annual ? price / 12 : price;
+        }
+
+        return (string.Join(", ", held.Select(m => m.Name)),
+                string.Join(",", held.Select(m => m.Code)),
+                monthly);
+    }
 
     #region Subscriptions
 
@@ -212,20 +260,15 @@ public class BillingController : ControllerBase
         return Ok(new SubscriptionDto
         {
             Id = subscription.Subscription.Id,
-            PlanCode = subscription.Plan.Code,
-            PlanName = subscription.Plan.Name,
-            Status = subscription.Subscription.Status.ToString(),
-            BillingCycle = subscription.Subscription.BillingCycle.ToString(),
-            CurrentPeriodStart = subscription.Subscription.CurrentPeriodStart,
-            CurrentPeriodEnd = subscription.Subscription.CurrentPeriodEnd,
-            TrialEnd = subscription.Subscription.TrialEnd,
+            PlanCode = (await SummariseHeldModulesAsync(OrganizationId)).Codes,
             CancelAtPeriodEnd = subscription.Subscription.CancelAtPeriodEnd,
             Limits = subscription.Limits
         });
     }
 
     /// <summary>
-    /// Create a new subscription
+    /// Open a billing account for this organization — when it is invoiced and how it pays.
+    /// What it is billed for comes from the modules it holds.
     /// </summary>
     [HttpPost("subscribe")]
     [RequirePermission(Permissions.BillingManage)]
@@ -233,7 +276,6 @@ public class BillingController : ControllerBase
     {
         var result = await _billingService.CreateSubscriptionAsync(
             OrganizationId,
-            request.PlanCode,
             request.BillingCycle,
             request.PaymentMethod,
             request.StripePaymentMethodId,
@@ -245,27 +287,6 @@ public class BillingController : ControllerBase
         return Ok(new { subscriptionId = result.Subscription?.Id, message = "Subscription created successfully" });
     }
 
-    /// <summary>
-    /// Change subscription plan
-    /// </summary>
-    [HttpPost("change-plan")]
-    [RequirePermission(Permissions.BillingManage)]
-    public async Task<IActionResult> ChangePlan([FromBody] ChangePlanRequest request)
-    {
-        var subscription = await _billingService.GetSubscriptionAsync(OrganizationId);
-        if (subscription == null)
-            return NotFound(new { message = "No active subscription found" });
-
-        var result = await _billingService.ChangePlanAsync(
-            subscription.Id,
-            request.NewPlanCode,
-            request.ImmediateChange);
-
-        if (!result.Success)
-            return BadRequest(new { error = result.ErrorCode, message = result.ErrorMessage });
-
-        return Ok(new { message = "Plan changed successfully" });
-    }
 
     /// <summary>
     /// Cancel subscription
@@ -503,14 +524,10 @@ public class BillingController : ControllerBase
             ? plan.AnnualPriceUgx
             : plan.MonthlyPriceUgx;
 
-        // This endpoint pays a renewal as well as a first purchase, so an organization already on
-        // this plan and cycle is charged the price it agreed to rather than today's list price.
-        // Anything else — a different plan, a different cycle, no subscription yet — is a new
-        // agreement and pays list.
-        var current = await _billingService.GetSubscriptionAsync(OrganizationId);
-        var amount = current != null && current.PlanId == plan.Id && current.BillingCycle == request.BillingCycle
-            ? current.GetEffectiveUnitPrice(listAmount, "UGX")
-            : listAmount;
+        // A module purchase collects through ModulesController, which prices from the module's own
+        // agreed price. This endpoint stays for settling an open invoice by Mobile Money, so it
+        // charges what the invoice says rather than looking a price up.
+        var amount = listAmount;
 
         var narrative = $"Q-Mgr {plan.Name} subscription ({request.BillingCycle})";
 
@@ -771,7 +788,6 @@ public class BillingController : ControllerBase
         return Ok(new
         {
             organizationId = limits.OrganizationId,
-            tier = limits.Tier.ToString(),
             limits = limits.Limits.ToDictionary(
                 kv => kv.Key,
                 kv => new
@@ -862,8 +878,11 @@ public class BillingController : ControllerBase
 
 public class BillingOverviewDto
 {
-    public string PlanName { get; set; } = string.Empty;
+    /// <summary>Comma-separated codes of the modules this organization holds. Named PlanCode for
+    /// wire compatibility with the Web client; there is no plan behind it any more.</summary>
     public string PlanCode { get; set; } = string.Empty;
+    public string PlanName { get; set; } = string.Empty;
+    // PlanCode removed with the tier system; modules are bought through ModulesController.
     public string BillingCycle { get; set; } = string.Empty;
     public decimal MonthlyAmount { get; set; }
     public string Currency { get; set; } = string.Empty;
@@ -890,7 +909,6 @@ public class PlanDto
     public string Name { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
     public string? Description { get; set; }
-    public string Tier { get; set; } = string.Empty;
     public decimal MonthlyPriceUsd { get; set; }
     public decimal AnnualPriceUsd { get; set; }
     public decimal MonthlyPriceUgx { get; set; }
@@ -907,8 +925,10 @@ public class PlanDto
 
 public class SubscriptionDto
 {
-    public Guid Id { get; set; }
+    /// <summary>Comma-separated codes of the modules held. See BillingOverviewDto.PlanCode.</summary>
     public string PlanCode { get; set; } = string.Empty;
+    public Guid Id { get; set; }
+    // PlanCode removed with the tier system; modules are bought through ModulesController.
     public string PlanName { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public string BillingCycle { get; set; } = string.Empty;
@@ -921,20 +941,12 @@ public class SubscriptionDto
 
 public class SubscribeRequest
 {
-    [Required]
-    public string PlanCode { get; set; } = string.Empty;
     public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;
     public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Card;
     public string? StripePaymentMethodId { get; set; }
     public string? MobileMoneyPhone { get; set; }
 }
 
-public class ChangePlanRequest
-{
-    [Required]
-    public string NewPlanCode { get; set; } = string.Empty;
-    public bool ImmediateChange { get; set; }
-}
 
 public class CancelRequest
 {
@@ -944,8 +956,10 @@ public class CancelRequest
 
 public class CheckoutRequest
 {
-    [Required]
+    /// <summary>The module code being checked out.</summary>
     public string PlanCode { get; set; } = string.Empty;
+    [Required]
+    // PlanCode removed with the tier system; modules are bought through ModulesController.
     public BillingCycle BillingCycle { get; set; } = BillingCycle.Monthly;
 }
 
@@ -962,7 +976,7 @@ public class ValidatePhoneRequest
 
 public class MobileMoneyPayRequest
 {
-    [Required]
+    /// <summary>The module code the payment is for.</summary>
     public string PlanCode { get; set; } = string.Empty;
     [Required]
     public string PhoneNumber { get; set; } = string.Empty;

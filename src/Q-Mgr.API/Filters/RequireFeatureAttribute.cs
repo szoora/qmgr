@@ -126,61 +126,6 @@ public class RequireModuleAttribute : Attribute, IAsyncActionFilter
     }
 }
 
-/// <summary>
-/// Attribute to require a minimum subscription tier.
-/// Returns 403 Forbidden if the current tier is lower than required.
-/// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public class RequireTierAttribute : Attribute, IAsyncActionFilter
-{
-    public string RequiredTier { get; }
-    public string? ErrorMessage { get; set; }
-
-    public RequireTierAttribute(string requiredTier)
-    {
-        RequiredTier = requiredTier;
-    }
-
-    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
-    {
-        var tenantAccessor = context.HttpContext.RequestServices.GetRequiredService<ITenantContextAccessor>();
-        var featureFlagService = context.HttpContext.RequestServices.GetRequiredService<IFeatureFlagService>();
-
-        var tenantContext = tenantAccessor.TenantContext;
-
-        if (tenantContext == null || !tenantContext.IsResolved)
-        {
-            context.Result = new UnauthorizedObjectResult(new
-            {
-                error = "TENANT_NOT_RESOLVED",
-                message = "Unable to determine tenant context"
-            });
-            return;
-        }
-
-        var hasMinTier = await featureFlagService.HasMinimumTierAsync(tenantContext.OrganizationId, RequiredTier);
-
-        if (!hasMinTier)
-        {
-            var message = ErrorMessage ?? $"This feature requires a '{RequiredTier}' plan or higher. Please upgrade your subscription.";
-
-            context.Result = new ObjectResult(new
-            {
-                error = "TIER_REQUIRED",
-                requiredTier = RequiredTier,
-                currentTier = tenantContext.Tier.ToString(),
-                message,
-                upgradeUrl = "/billing/plans"
-            })
-            {
-                StatusCode = StatusCodes.Status403Forbidden
-            };
-            return;
-        }
-
-        await next();
-    }
-}
 
 /// <summary>
 /// Attribute to check a usage limit before executing an action.

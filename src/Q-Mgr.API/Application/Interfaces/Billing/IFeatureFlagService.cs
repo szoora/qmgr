@@ -20,10 +20,6 @@ public interface IFeatureFlagService
     /// </summary>
     Task<Dictionary<string, bool>> CheckFeaturesAsync(Guid organizationId, params string[] featureCodes);
 
-    /// <summary>
-    /// Check if organization can access a specific tier feature
-    /// </summary>
-    Task<bool> HasMinimumTierAsync(Guid organizationId, string requiredTier);
 }
 
 /// <summary>
@@ -31,7 +27,6 @@ public interface IFeatureFlagService
 /// </summary>
 public record FeatureFlags(
     Guid OrganizationId,
-    string Tier,
     bool ApiAccess,
     bool SmsNotifications,
     bool EmailNotifications,

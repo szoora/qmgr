@@ -16,6 +16,7 @@ public class UsageTrackingService : IUsageTrackingService
 {
     private readonly QMgrDbContext _dbContext;
     private readonly IDistributedCache _cache;
+    private readonly IModuleLimitResolver _limitResolver;
     private readonly ILogger<UsageTrackingService> _logger;
     private const string CachePrefix = "usage:";
     private const int CacheExpirationMinutes = 60;
@@ -23,10 +24,12 @@ public class UsageTrackingService : IUsageTrackingService
     public UsageTrackingService(
         QMgrDbContext dbContext,
         IDistributedCache cache,
+        IModuleLimitResolver limitResolver,
         ILogger<UsageTrackingService> logger)
     {
         _dbContext = dbContext;
         _cache = cache;
+        _limitResolver = limitResolver;
         _logger = logger;
     }
 
@@ -206,27 +209,19 @@ public class UsageTrackingService : IUsageTrackingService
             _ => 0
         };
 
-        // Get organization's subscription limits
-        var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
-                                      s.Status == Domain.Enums.SubscriptionStatus.Active);
+        // The ceiling comes from the modules the organization holds — highest value across them,
+        // with any per-tenant override winning. It used to come from the tier plan the
+        // subscription pointed at.
+        var effective = await _limitResolver.ResolveAsync(organizationId);
 
-        if (subscription == null)
-        {
-            // No subscription - use free tier defaults
-            return GetFreeTierLimitStatus(normalizedType, current);
-        }
-
-        var plan = subscription.Plan;
         var max = normalizedType switch
         {
-            "tokens" => subscription.MaxTokensOverride ?? plan.MaxTokensPerMonth,
-            "api_calls" => subscription.MaxApiCallsOverride ?? plan.MaxApiCallsPerMonth,
-            "storage" => subscription.MaxStorageOverride ?? plan.MaxStorageMb,
-            "users" => subscription.MaxUsersOverride ?? plan.MaxUsersPerBranch,
-            "branches" => subscription.MaxBranchesOverride ?? plan.MaxBranches,
-            "displays" => subscription.MaxDisplaysOverride ?? plan.MaxDisplays,
+            "tokens" => effective.MaxTokensPerMonth,
+            "api_calls" => effective.MaxApiCallsPerMonth,
+            "storage" => effective.MaxStorageMb,
+            "users" => effective.MaxUsersPerBranch,
+            "branches" => effective.MaxBranches,
+            "displays" => effective.MaxCountersPerBranch,
             _ => int.MaxValue
         };
 

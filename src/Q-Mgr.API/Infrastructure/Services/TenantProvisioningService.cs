@@ -151,7 +151,6 @@ public class TenantProvisioningService : ITenantProvisioningService
                     PreferredCurrency = request.PreferredCurrency,
                     IndustryType = industryType,
                     Status = TenantStatus.Pending,
-                    Tier = TenantTier.Free, // Start at free tier
                     TrialEndsAt = trialEndsAt,
                     OnboardingCompleted = false,
                     OnboardingStep = 0

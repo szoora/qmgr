@@ -121,17 +121,17 @@
                 </div>
             </QCard>
 
-            <!-- Tier Distribution -->
-            <QCard Class="tier-card" Title="Tier Distribution" Icon="diagram-3-fill">
+            <!-- Module adoption: how many organizations hold each module -->
+            <QCard Class="tier-card" Title="Module Adoption" Icon="grid-3x3-gap-fill">
                 <div class="tier-list">
-                    @foreach (var tierCount in stats.OrganizationsByTier.OrderByDescending(t => t.Count))
+                    @foreach (var tierCount in stats.OrganizationsByModule.OrderByDescending(t => t.Count))
                     {
                         var percentage = stats.TotalOrganizations > 0
                             ? (double)tierCount.Count / stats.TotalOrganizations * 100
                             : 0;
                         <div class="tier-item">
                             <div class="tier-info">
-                                <span class="tier-name">@tierCount.Tier</span>
+                                <span class="tier-name">@tierCount.Module</span>
                                 <span class="tier-count">@tierCount.Count orgs</span>
                             </div>
                             <div class="tier-bar">
@@ -691,7 +691,7 @@
         public int SuspendedOrganizations { get; init; }
         public int TotalUsers { get; init; }
         public int TotalBranches { get; init; }
-        public List<TierCount> OrganizationsByTier { get; init; } = new();
+        public List<ModuleCount> OrganizationsByModule { get; init; } = new();
         public int NewOrganizationsThisMonth { get; init; }
         public int NewOrganizationsLastMonth { get; init; }
         public int TotalTokensThisMonth { get; init; }
@@ -699,9 +699,9 @@
         public decimal MonthlyRecurringRevenue { get; init; }
     }
 
-    private record TierCount
+    private record ModuleCount
     {
-        public string Tier { get; init; } = "";
+        public string Module { get; init; } = "";
         public int Count { get; init; }
     }
 

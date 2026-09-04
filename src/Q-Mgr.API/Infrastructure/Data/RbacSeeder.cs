@@ -532,7 +532,6 @@ public class RbacSeeder
                 ContactEmail = "admin@qmgr.platform",
                 Slug = "platform",
                 Status = TenantStatus.Active,
-                Tier = TenantTier.Enterprise,
                 OnboardingCompleted = true,
                 VerifiedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow

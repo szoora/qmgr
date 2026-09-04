@@ -15,7 +15,7 @@ public class Organization : BaseAuditableEntity
     public string? Address { get; set; }
     public string? Settings { get; set; } // JSON
 
-    #region Whitelabel Branding (paid tiers only — see ShowAds/tier gating)
+    #region Whitelabel Branding (granted by module, see FeatureFlagService)
 
     /// <summary>
     /// Hex color (e.g. "#0058cc") applied as --qm-primary on this tenant's
@@ -94,12 +94,7 @@ public class Organization : BaseAuditableEntity
     public TenantStatus Status { get; set; } = TenantStatus.Pending;
 
     /// <summary>
-    /// Current tenant tier for feature gating
-    /// </summary>
-    public TenantTier Tier { get; set; } = TenantTier.Free;
-
-    /// <summary>
-    /// Database schema name for enterprise tenants (null = shared schema)
+    /// Database schema name for a dedicated-schema tenant (null = shared schema)
     /// </summary>
     public string? SchemaName { get; set; }
 
@@ -195,14 +190,9 @@ public class Organization : BaseAuditableEntity
     public new bool IsActive => Status == TenantStatus.Active || Status == TenantStatus.Trialing;
 
     /// <summary>
-    /// Check if organization uses dedicated schema (enterprise tier)
+    /// Check if organization uses a dedicated schema
     /// </summary>
     public bool UsesDedicatedSchema => !string.IsNullOrEmpty(SchemaName);
-
-    /// <summary>
-    /// Check if organization should show ads
-    /// </summary>
-    public bool ShowAds => Tier == TenantTier.Free;
 
     /// <summary>
     /// Get effective billing email

@@ -54,7 +54,6 @@ public class SuperAdminController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] TenantStatus? status = null,
-        [FromQuery] TenantTier? tier = null,
         [FromQuery] string? search = null)
     {
         var query = _dbContext.Organizations.AsQueryable();
@@ -62,8 +61,6 @@ public class SuperAdminController : ControllerBase
         if (status.HasValue)
             query = query.Where(o => o.Status == status.Value);
 
-        if (tier.HasValue)
-            query = query.Where(o => o.Tier == tier.Value);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(o =>
@@ -83,7 +80,6 @@ public class SuperAdminController : ControllerBase
                 Name = o.Name,
                 Slug = o.Slug,
                 Status = o.Status,
-                Tier = o.Tier,
                 ContactEmail = o.ContactEmail,
                 CreatedAt = o.CreatedAt,
                 TrialEndsAt = o.TrialEndsAt,
@@ -111,7 +107,6 @@ public class SuperAdminController : ControllerBase
     {
         var org = await _dbContext.Organizations
             .Include(o => o.Subscription)
-                .ThenInclude(s => s!.Plan)
             .Include(o => o.Branches)
             .FirstOrDefaultAsync(o => o.Id == id);
 
@@ -129,7 +124,6 @@ public class SuperAdminController : ControllerBase
             Slug = org.Slug,
             BrandName = org.BrandName,
             Status = org.Status,
-            Tier = org.Tier,
             ContactEmail = org.ContactEmail,
             ContactPhone = org.ContactPhone,
             BillingEmail = org.BillingEmail,
@@ -148,7 +142,7 @@ public class SuperAdminController : ControllerBase
             Subscription = org.Subscription != null ? new SubscriptionSummary
             {
                 Id = org.Subscription.Id,
-                PlanName = org.Subscription.Plan?.Name ?? "Unknown",
+                PlanName = string.Join(", ", await _dbContext.OrganizationModules.Where(om => om.OrganizationId == org.Id && om.Status == OrganizationModuleStatus.Active).Select(om => om.Module!.Name).ToListAsync()),
                 Status = org.Subscription.Status,
                 BillingCycle = org.Subscription.BillingCycle,
                 CurrentPeriodEnd = org.Subscription.CurrentPeriodEnd
@@ -208,31 +202,6 @@ public class SuperAdminController : ControllerBase
         _logger.LogInformation("Super admin reactivated tenant {TenantId}", id);
 
         return Ok(new { message = "Tenant reactivated successfully" });
-    }
-
-    /// <summary>
-    /// Update tenant tier (upgrade/downgrade)
-    /// </summary>
-    [HttpPatch("tenants/{id:guid}/tier")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateTenantTier(Guid id, [FromBody] UpdateTierRequest request)
-    {
-        var org = await _dbContext.Organizations.FindAsync(id);
-        if (org == null)
-            return NotFound(new { error = "TENANT_NOT_FOUND", message = "Tenant not found" });
-
-        var previousTier = org.Tier;
-        org.Tier = request.Tier;
-
-        _dbContext.Organizations.Update(org);
-        await _dbContext.SaveChangesAsync();
-
-        _logger.LogInformation(
-            "Super admin changed tenant {TenantId} tier from {OldTier} to {NewTier}",
-            id, previousTier, request.Tier);
-
-        return Ok(new { message = "Tenant tier updated successfully", previousTier, newTier = request.Tier });
     }
 
     /// <summary>
@@ -433,12 +402,11 @@ public class SuperAdminController : ControllerBase
 
         // Calculate MRR (Monthly Recurring Revenue) first
         var activeSubscriptions = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
             .Where(s => s.Status == SubscriptionStatus.Active)
             .ToListAsync();
 
-        // Agreed prices win over list prices here — see Subscription.GetMonthlyRecurringRevenueUsd.
-        var mrr = activeSubscriptions.Sum(s => s.GetMonthlyRecurringRevenueUsd());
+        // Summed from the modules organizations hold, at the price each of them agreed to.
+        var mrr = await _billingService.GetPlatformMonthlyRecurringRevenueUsdAsync();
 
         var stats = new PlatformStats
         {
@@ -453,9 +421,10 @@ public class SuperAdminController : ControllerBase
             TotalUsers = await _dbContext.Users.CountAsync(),
             TotalBranches = await _dbContext.Branches.CountAsync(),
 
-            OrganizationsByTier = await _dbContext.Organizations
-                .GroupBy(o => o.Tier)
-                .Select(g => new TierCount { Tier = g.Key, Count = g.Count() })
+            OrganizationsByModule = await _dbContext.OrganizationModules
+                .Where(om => om.Status == OrganizationModuleStatus.Active)
+                .GroupBy(om => om.Module!.Name)
+                .Select(g => new ModuleCount { Module = g.Key, Count = g.Select(x => x.OrganizationId).Distinct().Count() })
                 .ToListAsync(),
 
             NewOrganizationsThisMonth = await _dbContext.Organizations
@@ -500,13 +469,12 @@ public class SuperAdminController : ControllerBase
 
         var recentSubscriptions = await _dbContext.Subscriptions
             .Include(s => s.Organization)
-            .Include(s => s.Plan)
             .OrderByDescending(s => s.CreatedAt)
             .Take(limit)
             .Select(s => new ActivityItem
             {
                 Type = "subscription_created",
-                Description = $"{s.Organization!.Name} subscribed to {s.Plan!.Name}",
+                Description = $"{s.Organization!.Name} opened a billing account",
                 EntityId = s.Id,
                 EntityName = s.Organization.Name,
                 Timestamp = s.CreatedAt
@@ -557,7 +525,7 @@ public class SuperAdminController : ControllerBase
                 MaxApiCallsPerMonth = p.MaxApiCallsPerMonth,
                 ShowAds = p.ShowAds,
                 IsPublic = p.IsPublic,
-                ActiveSubscriptions = p.Subscriptions.Count(s => s.Status == SubscriptionStatus.Active)
+                ActiveSubscriptions = _dbContext.OrganizationModules.Count(om => om.ModuleId == p.Id && om.Status == OrganizationModuleStatus.Active)
             })
             .ToListAsync();
 
@@ -584,7 +552,6 @@ public record TenantSummary
     public string Name { get; init; } = string.Empty;
     public string Slug { get; init; } = string.Empty;
     public TenantStatus Status { get; init; }
-    public TenantTier Tier { get; init; }
     public string? ContactEmail { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? TrialEndsAt { get; init; }
@@ -645,10 +612,6 @@ public record UpdateStorageQuotaRequest
     public int? MaxStorageMb { get; init; }
 }
 
-public record UpdateTierRequest
-{
-    public TenantTier Tier { get; init; }
-}
 
 public record ExtendTrialRequest
 {
@@ -663,7 +626,7 @@ public record PlatformStats
     public int SuspendedOrganizations { get; init; }
     public int TotalUsers { get; init; }
     public int TotalBranches { get; init; }
-    public List<TierCount> OrganizationsByTier { get; init; } = new();
+    public List<ModuleCount> OrganizationsByModule { get; init; } = new();
     public int NewOrganizationsThisMonth { get; init; }
     public int NewOrganizationsLastMonth { get; init; }
     public int TotalTokensThisMonth { get; init; }
@@ -671,9 +634,9 @@ public record PlatformStats
     public decimal MonthlyRecurringRevenue { get; init; }
 }
 
-public record TierCount
+public record ModuleCount
 {
-    public TenantTier Tier { get; init; }
+    public string Module { get; init; } = string.Empty;
     public int Count { get; init; }
 }
 

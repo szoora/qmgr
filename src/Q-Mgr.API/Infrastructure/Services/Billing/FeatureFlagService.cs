@@ -10,7 +10,7 @@ namespace QMgr.Infrastructure.Services.Billing;
 
 /// <summary>
 /// Service for checking feature availability. Resolves from two sources and ORs them together:
-/// the legacy tier/plan path (<c>Organization.Tier</c> + <c>Subscription.Plan.Features</c>) and
+/// the modules an organization holds, which since 2026-09-04 is the only source of entitlement, and
 /// the purchased-module path (<see cref="IModuleAccessService"/>). A module-only tenant (every
 /// new registration since the modular subscription system) has no tier subscription at all and
 /// used to fall through to free-tier flags — which permanently locked branding, exports, and API
@@ -63,31 +63,19 @@ public class FeatureFlagService : IFeatureFlagService
         }
 
         // Get from database
-        var organization = await _dbContext.Organizations
+        var organizationExists = await _dbContext.Organizations
             .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == organizationId);
+            .AnyAsync(o => o.Id == organizationId);
 
-        if (organization == null)
+        if (!organizationExists)
         {
-            return GetFreeTierFeatures(organizationId);
+            return NoEntitlements(organizationId);
         }
 
-        var subscription = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId &&
-                                      (s.Status == SubscriptionStatus.Active ||
-                                       s.Status == SubscriptionStatus.Trialing));
-
-        FeatureFlags features;
-        if (subscription?.Plan != null)
-        {
-            features = BuildFeaturesFromPlan(organizationId, organization.Tier, subscription.Plan);
-        }
-        else
-        {
-            features = GetFreeTierFeatures(organizationId);
-        }
+        // Everything an organization is entitled to comes from the modules it holds. Until
+        // 2026-09-04 a tier plan supplied a base set that module grants were OR'd on top of; the
+        // tier is gone, so the base is now "nothing" and every entitlement is earned by a purchase.
+        var features = NoEntitlements(organizationId);
 
         // OR-in whatever the org's purchased modules grant. Reads through IModuleAccessService's
         // own cache (invalidated on every grant/revoke/activate), so the only staleness window is
@@ -99,7 +87,7 @@ public class FeatureFlagService : IFeatureFlagService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to resolve active modules for organization {OrganizationId}; using tier/plan features only", organizationId);
+            _logger.LogWarning(ex, "Failed to resolve active modules for organization {OrganizationId}; leaving the organization with no entitlements", organizationId);
         }
 
         // Cache the result
@@ -127,26 +115,12 @@ public class FeatureFlagService : IFeatureFlagService
         return featureCodes.ToDictionary(code => code, code => GetFeatureValue(features, code));
     }
 
-    public async Task<bool> HasMinimumTierAsync(Guid organizationId, string requiredTier)
-    {
-        var organization = await _dbContext.Organizations
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == organizationId);
-
-        if (organization == null)
-            return false;
-
-        var currentTierOrder = GetTierOrder(organization.Tier);
-        var requiredTierOrder = GetTierOrder(ParseTier(requiredTier));
-
-        return currentTierOrder >= requiredTierOrder;
-    }
-
-    private static FeatureFlags GetFreeTierFeatures(Guid organizationId)
+    /// <summary>The starting point for every organization: nothing. Entitlements are added only by
+    /// the modules it holds — see <c>ApplyModuleGrants</c>.</summary>
+    private static FeatureFlags NoEntitlements(Guid organizationId)
     {
         return new FeatureFlags(
             OrganizationId: organizationId,
-            Tier: TenantTier.Free.ToString(),
             ApiAccess: false,
             SmsNotifications: false,
             EmailNotifications: false,
@@ -164,56 +138,6 @@ public class FeatureFlagService : IFeatureFlagService
             CustomFeatures: new Dictionary<string, bool>());
     }
 
-    private static FeatureFlags BuildFeaturesFromPlan(
-        Guid organizationId,
-        TenantTier tier,
-        Domain.Entities.Billing.SubscriptionPlan plan)
-    {
-        // Parse custom features from plan JSON
-        var customFeatures = new Dictionary<string, bool>();
-        if (!string.IsNullOrEmpty(plan.Features))
-        {
-            try
-            {
-                customFeatures = JsonSerializer.Deserialize<Dictionary<string, bool>>(plan.Features)
-                                 ?? new Dictionary<string, bool>();
-            }
-            catch
-            {
-                // Ignore parse errors
-            }
-        }
-
-        // Base features by tier
-        var (apiAccess, sms, email, push, branding, whiteLabel, analytics, export, displays, serviceTypes, support, dedicated, webhook) = tier switch
-        {
-            TenantTier.Free => (false, false, false, false, false, false, false, false, false, false, false, false, false),
-            TenantTier.Starter => (true, false, true, false, false, false, false, true, false, true, false, false, true),
-            TenantTier.Professional => (true, true, true, true, true, false, true, true, true, true, false, false, true),
-            TenantTier.Enterprise => (true, true, true, true, true, true, true, true, true, true, true, true, true),
-            _ => (false, false, false, false, false, false, false, false, false, false, false, false, false)
-        };
-
-        // Override with custom features from plan if specified
-        return new FeatureFlags(
-            OrganizationId: organizationId,
-            Tier: tier.ToString(),
-            ApiAccess: customFeatures.GetValueOrDefault(FeatureCodes.ApiAccess, apiAccess),
-            SmsNotifications: customFeatures.GetValueOrDefault(FeatureCodes.SmsNotifications, sms),
-            EmailNotifications: customFeatures.GetValueOrDefault(FeatureCodes.EmailNotifications, email),
-            PushNotifications: customFeatures.GetValueOrDefault(FeatureCodes.PushNotifications, push),
-            CustomBranding: customFeatures.GetValueOrDefault(FeatureCodes.CustomBranding, branding),
-            WhiteLabel: customFeatures.GetValueOrDefault(FeatureCodes.WhiteLabel, whiteLabel),
-            AdvancedAnalytics: customFeatures.GetValueOrDefault(FeatureCodes.AdvancedAnalytics, analytics),
-            ExportReports: customFeatures.GetValueOrDefault(FeatureCodes.ExportReports, export),
-            MultipleDisplays: customFeatures.GetValueOrDefault(FeatureCodes.MultipleDisplays, displays),
-            CustomServiceTypes: customFeatures.GetValueOrDefault(FeatureCodes.CustomServiceTypes, serviceTypes),
-            PrioritySupport: customFeatures.GetValueOrDefault(FeatureCodes.PrioritySupport, support),
-            DedicatedSchema: customFeatures.GetValueOrDefault(FeatureCodes.DedicatedSchema, dedicated) || plan.RequiresDedicatedSchema,
-            WebhookIntegration: customFeatures.GetValueOrDefault(FeatureCodes.WebhookIntegration, webhook),
-            ShowAds: plan.ShowAds,
-            CustomFeatures: customFeatures);
-    }
 
     /// <summary>
     /// Module → feature-flag mapping. Purely additive: a module can only turn a flag ON, never
@@ -286,27 +210,4 @@ public class FeatureFlagService : IFeatureFlagService
         };
     }
 
-    private static int GetTierOrder(TenantTier tier)
-    {
-        return tier switch
-        {
-            TenantTier.Free => 0,
-            TenantTier.Starter => 1,
-            TenantTier.Professional => 2,
-            TenantTier.Enterprise => 3,
-            _ => 0
-        };
-    }
-
-    private static TenantTier ParseTier(string tier)
-    {
-        return tier.ToLowerInvariant() switch
-        {
-            "free" => TenantTier.Free,
-            "starter" => TenantTier.Starter,
-            "professional" or "pro" => TenantTier.Professional,
-            "enterprise" => TenantTier.Enterprise,
-            _ => TenantTier.Free
-        };
-    }
 }

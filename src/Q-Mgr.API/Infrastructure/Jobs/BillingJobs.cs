@@ -362,38 +362,47 @@ public class BillingJobs
     }
 
     /// <summary>
-    /// Generate monthly invoices for all active subscriptions
-    /// Runs on the 1st of each month
+    /// Raises invoices for every organization with a module whose billing period has run out.
     /// </summary>
+    /// <remarks>
+    /// It used to walk subscriptions, which meant it billed a tier and never a module — so a
+    /// customer who bought modules was charged once at purchase and never invoiced again. It now
+    /// walks the module holdings themselves, and each organization gets one invoice covering
+    /// everything of theirs that fell due.
+    /// </remarks>
     [AutomaticRetry(Attempts = 3)]
     public async Task GenerateMonthlyInvoicesAsync()
     {
-        _logger.LogInformation("Starting monthly invoice generation");
+        _logger.LogInformation("Starting invoice generation");
 
-        var subscriptions = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .Include(s => s.Organization)
-            .Where(s => s.Status == SubscriptionStatus.Active &&
-                        s.CurrentPeriodEnd <= DateTime.UtcNow)
+        var asOf = DateTime.UtcNow;
+
+        var organizationIds = await _dbContext.OrganizationModules
+            .Where(om => om.Status == OrganizationModuleStatus.Active &&
+                         om.CurrentPeriodEnd != null &&
+                         om.CurrentPeriodEnd <= asOf)
+            .Select(om => om.OrganizationId)
+            .Distinct()
             .ToListAsync();
 
         var generated = 0;
-        foreach (var subscription in subscriptions)
+        foreach (var organizationId in organizationIds)
         {
             try
             {
-                await _billingService.GenerateInvoiceAsync(subscription.Id);
-                generated++;
+                var invoice = await _billingService.GenerateInvoiceForDueModulesAsync(organizationId, asOf);
+                if (invoice == null) continue;
 
+                generated++;
                 _logger.LogInformation(
-                    "Generated invoice for subscription {SubscriptionId}, organization {OrganizationId}",
-                    subscription.Id, subscription.OrganizationId);
+                    "Generated invoice {InvoiceNumber} for organization {OrganizationId}",
+                    invoice.InvoiceNumber, organizationId);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Failed to generate invoice for subscription {SubscriptionId}",
-                    subscription.Id);
+                    "Failed to generate an invoice for organization {OrganizationId}",
+                    organizationId);
             }
         }
 

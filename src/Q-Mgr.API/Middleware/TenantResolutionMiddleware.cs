@@ -39,10 +39,9 @@ public class TenantResolutionMiddleware
         if (tenantContext.IsResolved)
         {
             _logger.LogDebug(
-                "Tenant resolved: OrgId={OrganizationId}, Slug={Slug}, Tier={Tier}, Status={Status}",
+                "Tenant resolved: OrgId={OrganizationId}, Slug={Slug}, Status={Status}",
                 tenantContext.OrganizationId,
                 tenantContext.TenantSlug,
-                tenantContext.Tier,
                 tenantContext.Status);
         }
 
@@ -103,7 +102,6 @@ public class TenantResolutionMiddleware
                 return TenantContext.FromOrganization(
                     org.Id,
                     org.Slug,
-                    org.Tier,
                     effectiveStatus,
                     org.SchemaName,
                     branchId,
@@ -121,7 +119,7 @@ public class TenantResolutionMiddleware
                 var org = await FindOrganizationAsync(dbContext, tenantId);
                 if (org != null)
                 {
-                    return TenantContext.FromOrganization(org.Id, org.Slug, org.Tier, org.Status, org.SchemaName);
+                    return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
                 }
             }
         }
@@ -137,7 +135,7 @@ public class TenantResolutionMiddleware
 
             if (org != null)
             {
-                return TenantContext.FromOrganization(org.Id, org.Slug, org.Tier, org.Status, org.SchemaName);
+                return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
             }
 
             // Check custom domain
@@ -147,7 +145,7 @@ public class TenantResolutionMiddleware
 
             if (org != null)
             {
-                return TenantContext.FromOrganization(org.Id, org.Slug, org.Tier, org.Status, org.SchemaName);
+                return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
             }
         }
 
@@ -160,7 +158,7 @@ public class TenantResolutionMiddleware
                 var org = await FindOrganizationAsync(dbContext, tenantSlug);
                 if (org != null)
                 {
-                    return TenantContext.FromOrganization(org.Id, org.Slug, org.Tier, org.Status, org.SchemaName);
+                    return TenantContext.FromOrganization(org.Id, org.Slug, org.Status, org.SchemaName);
                 }
             }
         }

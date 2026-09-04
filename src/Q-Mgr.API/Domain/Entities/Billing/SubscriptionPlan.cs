@@ -4,21 +4,26 @@ using QMgr.Domain.Enums;
 namespace QMgr.Domain.Entities.Billing;
 
 /// <summary>
-/// Defines a subscription plan with pricing, limits, and features
+/// One purchasable module: what it is called, what it costs, and the limits holding it grants.
 /// </summary>
+/// <remarks>
+/// This table used to hold two unrelated things — the four pricing tiers and the module catalog —
+/// told apart only by whether <see cref="Code"/> appeared in <c>ModuleCodes</c>. The tier system was
+/// retired on 2026-09-04, so every row here is now a module and <c>Tier</c> is gone with it.
+/// An organization's holding of one of these is an
+/// <see cref="OrganizationModule"/>, and that is what an invoice line is generated from.
+/// </remarks>
 public class SubscriptionPlan : BaseEntity
 {
-    /// <summary>Display name (e.g., "Free", "Starter", "Professional", "Enterprise")</summary>
+    /// <summary>Display name, e.g. "Core Queue Management"</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Unique code for the plan (e.g., "free", "starter", "pro", "enterprise")</summary>
+    /// <summary>Module code, e.g. "core-queue". Immutable: route gating and middleware key off it.</summary>
     public string Code { get; set; } = string.Empty;
 
-    /// <summary>Plan description for marketing</summary>
+    /// <summary>Description shown on the marketplace card and in the sign-up wizard</summary>
     public string? Description { get; set; }
 
-    /// <summary>Tier level for feature gating</summary>
-    public TenantTier Tier { get; set; } = TenantTier.Free;
 
     #region Pricing (Dual Currency)
 
@@ -102,8 +107,6 @@ public class SubscriptionPlan : BaseEntity
 
     #region Navigation
 
-    /// <summary>Subscriptions using this plan</summary>
-    public virtual ICollection<Subscription> Subscriptions { get; set; } = new List<Subscription>();
 
     #endregion
 }

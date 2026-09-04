@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using QMgr.Application.Interfaces.Billing;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Authorization;
@@ -19,13 +20,16 @@ namespace QMgr.API.Controllers.v1;
 public class PlatformAnalyticsController : ControllerBase
 {
     private readonly QMgrDbContext _dbContext;
+    private readonly IBillingService _billingService;
     private readonly ILogger<PlatformAnalyticsController> _logger;
 
     public PlatformAnalyticsController(
         QMgrDbContext dbContext,
+        IBillingService billingService,
         ILogger<PlatformAnalyticsController> logger)
     {
         _dbContext = dbContext;
+        _billingService = billingService;
         _logger = logger;
     }
 
@@ -45,15 +49,9 @@ public class PlatformAnalyticsController : ControllerBase
         var activeOrgs = await _dbContext.Organizations
             .CountAsync(o => o.Status == TenantStatus.Active || o.Status == TenantStatus.Trialing);
 
-        var activeSubscriptions = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .Where(s => s.Status == SubscriptionStatus.Active)
-            .ToListAsync();
 
-        // Honours each subscription's agreed price where one was captured — reading the plan's
-        // list price here would misstate revenue by exactly the grandfathered difference.
-        var mrr = activeSubscriptions.Sum(s => s.GetMonthlyRecurringRevenueUsd());
-
+        // Summed from the modules organizations hold, at each organization's agreed price.
+        var mrr = await _billingService.GetPlatformMonthlyRecurringRevenueUsdAsync();
         var arr = mrr * 12;
 
         var totalUsage = await _dbContext.UsageRecords
@@ -178,26 +176,43 @@ public class PlatformAnalyticsController : ControllerBase
         var from = fromDate ?? DateTime.UtcNow.AddMonths(-12);
         var to = toDate ?? DateTime.UtcNow;
 
-        var subscriptions = await _dbContext.Subscriptions
-            .Include(s => s.Plan)
-            .Where(s => s.CreatedAt >= from && s.CreatedAt <= to)
+        // Grouped by when each module was activated, not by when a subscription row was created:
+        // the module purchase is the revenue event now.
+        var activations = await _dbContext.OrganizationModules
+            .Where(om => om.ActivatedAt >= from && om.ActivatedAt <= to &&
+                         om.Status != OrganizationModuleStatus.Cancelled &&
+                         !om.GrantedByPlatformAdmin)
+            .Select(om => new
+            {
+                om.ActivatedAt,
+                om.BillingCycle,
+                om.AgreedPriceUsd,
+                om.TrialEndsAt,
+                om.Status,
+                ListMonthly = om.Module!.MonthlyPriceUsd,
+                ListAnnual = om.Module.AnnualPriceUsd
+            })
             .ToListAsync();
 
-        var metrics = subscriptions
-            .GroupBy(s => new { s.CreatedAt.Year, s.CreatedAt.Month })
+        var metrics = activations
+            .GroupBy(a => new { a.ActivatedAt.Year, a.ActivatedAt.Month })
             .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
             .Select(g =>
             {
-                var monthlyRevenue = g.Sum(s => s.GetMonthlyRecurringRevenueUsd());
+                decimal PeriodPrice(dynamic a) =>
+                    a.AgreedPriceUsd ?? (a.BillingCycle == BillingCycle.Annual ? a.ListAnnual : a.ListMonthly);
+
+                var monthlyRevenue = g.Sum(a =>
+                    a.BillingCycle == BillingCycle.Annual ? PeriodPrice(a) / 12 : PeriodPrice(a));
 
                 return new RevenueMetricsDto
                 {
-                    Period = new DateTime(g.Key.Year, g.Key.Month, 1),
+                    Period = new DateTime(g.Key.Year, g.Key.Month, 1, 0, 0, 0, DateTimeKind.Utc),
                     MRR = monthlyRevenue,
                     ARR = monthlyRevenue * 12,
-                    TotalRevenue = g.Sum(s => s.GetPeriodPriceUsd()),
+                    TotalRevenue = g.Sum(a => PeriodPrice(a)),
                     NewSubscriptions = g.Count(),
-                    TrialConversions = g.Count(s => s.TrialEnd.HasValue && s.Status == SubscriptionStatus.Active)
+                    TrialConversions = g.Count(a => a.TrialEndsAt.HasValue && a.Status == OrganizationModuleStatus.Active)
                 };
             })
             .ToList();
@@ -234,28 +249,32 @@ public class PlatformAnalyticsController : ControllerBase
 
         return Ok(usage);
     }
-
     /// <summary>
-    /// Get subscription tier distribution
+    /// How many organizations hold each module. Replaced tier distribution, which counted a
+    /// concept the platform no longer has.
     /// </summary>
-    [HttpGet("tier-distribution")]
-    [ProducesResponseType(typeof(List<TierDistributionDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetTierDistribution()
+    [HttpGet("module-distribution")]
+    [ProducesResponseType(typeof(List<ModuleDistributionDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetModuleDistribution()
     {
-        var distribution = await _dbContext.Organizations
-            .GroupBy(o => o.Tier)
-            .Select(g => new TierDistributionDto
+        var distribution = await _dbContext.OrganizationModules
+            .Where(om => om.Status == OrganizationModuleStatus.Active ||
+                         om.Status == OrganizationModuleStatus.Trialing)
+            .GroupBy(om => om.Module!.Name)
+            .Select(g => new ModuleDistributionDto
             {
-                Tier = g.Key.ToString(),
-                Count = g.Count(),
-                Percentage = 0 // Will calculate after getting total
+                Module = g.Key,
+                Count = g.Select(x => x.OrganizationId).Distinct().Count(),
+                Percentage = 0
             })
             .ToListAsync();
 
-        var total = distribution.Sum(d => d.Count);
+        var totalOrganizations = await _dbContext.Organizations
+            .CountAsync(o => o.Status != TenantStatus.Deleted);
+
         foreach (var item in distribution)
         {
-            item.Percentage = total > 0 ? (decimal)item.Count / total * 100 : 0;
+            item.Percentage = totalOrganizations > 0 ? (decimal)item.Count / totalOrganizations * 100 : 0;
         }
 
         return Ok(distribution);
@@ -288,7 +307,6 @@ public class PlatformAnalyticsController : ControllerBase
         {
             OrganizationId = x.Organization.Id,
             OrganizationName = x.Organization.Name,
-            Tier = x.Organization.Tier.ToString(),
             TokensThisMonth = x.Usage?.TokensCreated ?? 0,
             ApiCallsThisMonth = x.Usage?.ApiCalls ?? 0,
             ActiveUsers = x.Usage?.ActiveUsers ?? 0
@@ -340,9 +358,9 @@ public class UsageTrendDto
     public long StorageUsedMb { get; set; }
 }
 
-public class TierDistributionDto
+public class ModuleDistributionDto
 {
-    public string Tier { get; set; } = string.Empty;
+    public string Module { get; set; } = string.Empty;
     public int Count { get; set; }
     public decimal Percentage { get; set; }
 }
@@ -351,7 +369,7 @@ public class TopOrganizationDto
 {
     public Guid OrganizationId { get; set; }
     public string OrganizationName { get; set; } = string.Empty;
-    public string Tier { get; set; } = string.Empty;
+    public string Module { get; set; } = string.Empty;
     public int TokensThisMonth { get; set; }
     public int ApiCallsThisMonth { get; set; }
     public int ActiveUsers { get; set; }

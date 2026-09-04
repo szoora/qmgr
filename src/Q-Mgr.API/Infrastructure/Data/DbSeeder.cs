@@ -28,26 +28,10 @@ public class DbSeeder
             // Always seed RBAC data (permissions and system roles)
             await SeedRbacDataAsync();
 
-            // Always ensure every non-Free-tier organization has a real active Subscription
-            // backing its displayed Tier — otherwise FeatureFlagService silently treats it as
-            // Free-tier (zero entitlements) regardless of what Tier the admin UI shows.
-            await SeedSubscriptionsAsync();
-
-            // The modular subscription system's catalog — 4 purchasable SubscriptionPlan rows
-            // keyed by ModuleCodes instead of a TenantTier. See ModuleAccessService.
+            // The module catalog — the purchasable SubscriptionPlan rows.
+            // See ModuleAccessService.
             await SeedModulesAsync();
 
-            // One-time grandfathering for any org still carrying a pre-modules paid Tier (only
-            // ever true for seed/demo rows created before the module system existed — every
-            // registration since then creates orgs at Tier=Free and goes straight through
-            // OrganizationModule, so this can never fire for a newly-registered org). Runs
-            // automatically and idempotently on every boot rather than needing a platform admin
-            // to trigger it — there's no "real customer" risk to gate behind manual review here,
-            // just pre-existing fixture data that would otherwise silently lose module access the
-            // moment FeatureFlagService's old Tier-based fallback is fully retired.
-            await SeedLegacyTenantModuleGrantsAsync();
-
-            // Must run after the module catalog is seeded, so both successor plans exist to grant.
             await SeedVisitorSafeguardingSplitAsync();
 
             // Check if demo data already exists (exclude platform org)
@@ -70,7 +54,6 @@ public class DbSeeder
                 ContactEmail = "admin@qmgr.demo",
                 Slug = "demo",
                 Status = TenantStatus.Active,
-                Tier = TenantTier.Professional,
                 OnboardingCompleted = true,
                 VerifiedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
@@ -278,7 +261,6 @@ public class DbSeeder
 
             // Covers the freshly-created Demo Organization above (the earlier call in SeedAsync
             // only saw orgs that existed before this method ran).
-            await SeedSubscriptionsAsync();
 
             _logger.LogInformation("Database seeded successfully");
         }
@@ -289,226 +271,10 @@ public class DbSeeder
         }
     }
 
-    /// <summary>
-    /// Ensures every organization on a paid Tier (Starter/Professional/Enterprise) has a real,
-    /// active Subscription linked to a matching SubscriptionPlan. Idempotent — safe to call on
-    /// every startup. Free-tier organizations are intentionally left without a subscription
-    /// (FeatureFlagService's no-subscription fallback IS the free tier).
-    /// </summary>
-    private async Task SeedSubscriptionsAsync()
-    {
-        var tierPlans = new Dictionary<TenantTier, TierPlanDefaults>
-        {
-            [TenantTier.Free] = new(
-                Name: "Free", Code: "free", ShowAds: true, DedicatedSchema: false,
-                MaxBranches: 1, MaxDisplays: 1, MaxUsersPerBranch: 3, MaxCountersPerBranch: 2,
-                MaxTokensPerMonth: 500, MaxApiCallsPerMonth: 1_000, MaxStorageMb: 100,
-                MonthlyPriceUsd: 0, AnnualPriceUsd: 0, MonthlyPriceUgx: 0, AnnualPriceUgx: 0,
-                Description: "For trying Q-Mgr out with a single branch.", Badge: null, SortOrder: 0),
-            [TenantTier.Starter] = new(
-                Name: "Starter", Code: "starter", ShowAds: true, DedicatedSchema: false,
-                MaxBranches: 3, MaxDisplays: 2, MaxUsersPerBranch: 5, MaxCountersPerBranch: 5,
-                MaxTokensPerMonth: 5_000, MaxApiCallsPerMonth: 10_000, MaxStorageMb: 1_000,
-                MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 110_000m, AnnualPriceUgx: 1_100_000m,
-                Description: "For a single growing business with a few branches.", Badge: null, SortOrder: 1),
-            [TenantTier.Professional] = new(
-                Name: "Professional", Code: "professional", ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 10, MaxDisplays: 5, MaxUsersPerBranch: 15, MaxCountersPerBranch: 15,
-                MaxTokensPerMonth: 50_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 10_000,
-                MonthlyPriceUsd: 79m, AnnualPriceUsd: 790m, MonthlyPriceUgx: 300_000m, AnnualPriceUgx: 3_000_000m,
-                Description: "For multi-branch operations that need analytics and SMS.", Badge: "Most Popular", SortOrder: 2),
-            [TenantTier.Enterprise] = new(
-                Name: "Enterprise", Code: "enterprise", ShowAds: false, DedicatedSchema: true,
-                MaxBranches: 50, MaxDisplays: 25, MaxUsersPerBranch: 100, MaxCountersPerBranch: 100,
-                MaxTokensPerMonth: 500_000, MaxApiCallsPerMonth: 1_000_000, MaxStorageMb: 100_000,
-                MonthlyPriceUsd: 199m, AnnualPriceUsd: 1_990m, MonthlyPriceUgx: 750_000m, AnnualPriceUgx: 7_500_000m,
-                Description: "For large, multi-region deployments needing a dedicated schema.", Badge: null, SortOrder: 3),
-        };
-
-        var changed = false;
-
-        // Ensure the full plan catalog (Free/Starter/Professional/Enterprise) always exists, (Free/Starter/Professional/Enterprise) always exists,
-        // independent of whether any organization currently sits on that tier. Previously the
-        // only place a SubscriptionPlan row was created was inside the per-org loop below, which
-        // only runs for orgs already on a paid tier — so a plan a customer had never been put on
-        // (e.g. Starter, if every seeded org happened to be Free or Enterprise) would never exist
-        // at all, and GET api/v1/billing/plans (the public "Available Plans" list every trialing
-        // customer sees to pick a plan) silently showed only whichever plans happened to have
-        // been created as that side effect. Caught live: a fresh trial org saw exactly one
-        // plan card ("Enterprise") on the upgrade page.
-        foreach (var (tier, defaults) in tierPlans)
-        {
-            var existing = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == defaults.Code);
-            if (existing == null)
-            {
-                _context.SubscriptionPlans.Add(new SubscriptionPlan
-                {
-                    Id = Guid.NewGuid(),
-                    Name = defaults.Name,
-                    Code = defaults.Code,
-                    Description = defaults.Description,
-                    Tier = tier,
-                    ShowAds = defaults.ShowAds,
-                    RequiresDedicatedSchema = defaults.DedicatedSchema,
-                    IsPublic = true,
-                    SortOrder = defaults.SortOrder,
-                    Badge = defaults.Badge,
-                    MonthlyPriceUsd = defaults.MonthlyPriceUsd,
-                    AnnualPriceUsd = defaults.AnnualPriceUsd,
-                    MonthlyPriceUgx = defaults.MonthlyPriceUgx,
-                    AnnualPriceUgx = defaults.AnnualPriceUgx,
-                    MaxBranches = defaults.MaxBranches,
-                    MaxDisplays = defaults.MaxDisplays,
-                    MaxUsersPerBranch = defaults.MaxUsersPerBranch,
-                    MaxCountersPerBranch = defaults.MaxCountersPerBranch,
-                    MaxTokensPerMonth = defaults.MaxTokensPerMonth,
-                    MaxApiCallsPerMonth = defaults.MaxApiCallsPerMonth,
-                    MaxStorageMb = defaults.MaxStorageMb,
-                    Features = BuildFeaturesJson(tier),
-                    CreatedAt = DateTime.UtcNow
-                });
-                changed = true;
-                _logger.LogInformation("Seeded {Tier} subscription plan into the public catalog", tier);
-            }
-            else if (existing.MonthlyPriceUsd == 0 && defaults.MonthlyPriceUsd > 0)
-            {
-                // Backfills pricing on a plan row that was created before this method set prices
-                // (e.g. the Enterprise row auto-created by the per-org loop below, pre-fix).
-                existing.Description ??= defaults.Description;
-                existing.Badge ??= defaults.Badge;
-                existing.SortOrder = defaults.SortOrder;
-                existing.MonthlyPriceUsd = defaults.MonthlyPriceUsd;
-                existing.AnnualPriceUsd = defaults.AnnualPriceUsd;
-                existing.MonthlyPriceUgx = defaults.MonthlyPriceUgx;
-                existing.AnnualPriceUgx = defaults.AnnualPriceUgx;
-                changed = true;
-                _logger.LogInformation("Backfilled pricing on the existing {Tier} subscription plan", tier);
-            }
-        }
-
-        // Flush now — the sync/per-org queries below hit the database directly (FirstOrDefaultAsync
-        // over a DbSet issues real SQL), so a plan added above but not yet saved would be invisible
-        // to them and get re-created as a duplicate row with the same Code.
-        if (changed)
-        {
-            await _context.SaveChangesAsync();
-        }
-
-        // Sync numeric limits + Features on every plan this method manages (matched by Code) to
-        // the tier-appropriate values above — independent of the per-org loop below, since that
-        // loop skips orgs that already have a subscription and would otherwise never revisit an
-        // already-linked plan. Safe to run unconditionally every startup because this seeder is
-        // the sole owner of the four TIER plans it manages, and nothing else writes them.
-        //
-        // Note the scope: knownCodes below comes from tierPlans, so this loop never touches the
-        // module rows. That matters now that Platform Admin's Module Catalog page
-        // (ModuleCatalogController) does edit module rows, and an administrator's prices and limits
-        // survive a restart precisely because they are not in this list. Do not widen it to cover
-        // module codes without first deciding what should happen when the seeder's hard-coded
-        // values and an administrator's edits disagree; as written, the administrator wins.
-        //
-        // This exists because the first version of this method only set Tier/ShowAds/
-        // RequiresDedicatedSchema/Features on creation, leaving every numeric limit (MaxBranches,
-        // MaxTokensPerMonth, etc.) at SubscriptionPlan's raw field defaults — Free-tier-level
-        // values — regardless of the plan's real tier. Caught live: "Platform Administration"
-        // (Enterprise) was capped at 1 branch, the same limit as the Free tier, via Tenant
-        // Management's own usage-stats display.
-        var knownCodes = tierPlans.Values.Select(p => p.Code).ToList();
-        var managedPlans = await _context.SubscriptionPlans
-            .Where(p => knownCodes.Contains(p.Code))
-            .ToListAsync();
-        foreach (var managedPlan in managedPlans)
-        {
-            var defaults = tierPlans.Values.First(p => p.Code == managedPlan.Code);
-            if (managedPlan.Features == null)
-            {
-                managedPlan.Features = BuildFeaturesJson(managedPlan.Tier);
-                changed = true;
-            }
-            if (managedPlan.MaxBranches != defaults.MaxBranches ||
-                managedPlan.MaxDisplays != defaults.MaxDisplays ||
-                managedPlan.MaxUsersPerBranch != defaults.MaxUsersPerBranch ||
-                managedPlan.MaxCountersPerBranch != defaults.MaxCountersPerBranch ||
-                managedPlan.MaxTokensPerMonth != defaults.MaxTokensPerMonth ||
-                managedPlan.MaxApiCallsPerMonth != defaults.MaxApiCallsPerMonth ||
-                managedPlan.MaxStorageMb != defaults.MaxStorageMb)
-            {
-                managedPlan.MaxBranches = defaults.MaxBranches;
-                managedPlan.MaxDisplays = defaults.MaxDisplays;
-                managedPlan.MaxUsersPerBranch = defaults.MaxUsersPerBranch;
-                managedPlan.MaxCountersPerBranch = defaults.MaxCountersPerBranch;
-                managedPlan.MaxTokensPerMonth = defaults.MaxTokensPerMonth;
-                managedPlan.MaxApiCallsPerMonth = defaults.MaxApiCallsPerMonth;
-                managedPlan.MaxStorageMb = defaults.MaxStorageMb;
-                changed = true;
-                _logger.LogInformation("Corrected usage limits on {PlanName} plan to match its {Tier} tier", managedPlan.Name, managedPlan.Tier);
-            }
-        }
-
-        var orgsOnPaidTiers = await _context.Organizations
-            .Where(o => o.Tier != TenantTier.Free)
-            .ToListAsync();
-
-        foreach (var org in orgsOnPaidTiers)
-        {
-            if (!tierPlans.TryGetValue(org.Tier, out var planInfo))
-                continue;
-
-            // Deliberately "any subscription row at all", NOT "any Active/Trialing row" — this
-            // loop's job is to backfill a subscription for an org that has never had one (e.g.
-            // legacy/migrated data), not to paper over one that's PastDue/Suspended/Cancelled/
-            // Expired for a real reason. The previous, narrower check re-created a brand new
-            // decade-long Active subscription for ANY paid-tier org lacking an Active/Trialing
-            // row, on every single API restart — including one that had just been correctly
-            // suspended for a failed payment, silently undoing the suspension and reactivating
-            // the org for free the next time the process restarted. Found live: suspended a test
-            // org to simulate a failed payment, restarted the API for an unrelated fix, and found
-            // a second brand-new Active Subscription row had appeared for it.
-            var hasAnySubscription = await _context.Subscriptions.AnyAsync(s => s.OrganizationId == org.Id);
-            if (hasAnySubscription)
-                continue;
-
-            // The plan-catalog step above guarantees a row for every tier in tierPlans already
-            // exists (and is saved) by this point.
-            var plan = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == planInfo.Code);
-            if (plan == null)
-            {
-                _logger.LogWarning("No SubscriptionPlan found for code {Code} — skipping subscription seed for {OrgName}", planInfo.Code, org.Name);
-                continue;
-            }
-
-            _context.Subscriptions.Add(new Subscription
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = org.Id,
-                PlanId = plan.Id,
-                Status = SubscriptionStatus.Active,
-                BillingCycle = BillingCycle.Monthly,
-                StartDate = DateTime.UtcNow,
-                CurrentPeriodStart = DateTime.UtcNow,
-                CurrentPeriodEnd = DateTime.UtcNow.AddYears(10),
-                CreatedAt = DateTime.UtcNow
-            });
-            changed = true;
-            _logger.LogInformation("Seeded {Tier} subscription for organization {OrgName} ({OrgId})", org.Tier, org.Name, org.Id);
-        }
-
-        if (changed)
-            await _context.SaveChangesAsync();
-    }
-
-    /// <summary>
-    /// Idempotently seeds the 4-module catalog that replaces TenantTier for anything built through
-    /// the new modular subscription system (registration's module picker, the self-service
-    /// Modules marketplace, platform admin's Manage Modules panel). Reuses SubscriptionPlan's
-    /// existing shape — see the modular subscription plan for why: it's already exactly right for
-    /// "one purchasable, priced thing," it just meant a tier before and means a module now. `Tier`
-    /// is left at its default (unused by module rows, distinguished by `Code` being a ModuleCodes
-    /// value instead).
     /// </summary>
     private async Task SeedModulesAsync()
     {
-        var modules = new Dictionary<string, TierPlanDefaults>
+        var modules = new Dictionary<string, ModuleDefaults>
         {
             [ModuleCodes.CoreQueue] = new(
                 Name: "Core Queue Management", Code: ModuleCodes.CoreQueue, ShowAds: false, DedicatedSchema: false,
@@ -594,53 +360,6 @@ public class DbSeeder
     }
 
     /// <summary>
-    /// See the call site's comment in SeedAsync — grandfathers any pre-existing paid-tier org
-    /// (Starter/Professional/Enterprise) with no OrganizationModule rows yet onto all 4 modules,
-    /// Active, no charge. Idempotent: an org that already has any OrganizationModule row (already
-    /// migrated, or has genuinely self-served/been-granted a module) is skipped every time.
-    /// </summary>
-    private async Task SeedLegacyTenantModuleGrantsAsync()
-    {
-        var paidOrgIds = await _context.Organizations
-            .Where(o => o.Tier != TenantTier.Free && o.Status != TenantStatus.Deleted)
-            .Select(o => o.Id)
-            .ToListAsync();
-        if (paidOrgIds.Count == 0) return;
-
-        var orgIdsWithModules = (await _context.OrganizationModules
-            .Select(om => om.OrganizationId)
-            .Distinct()
-            .ToListAsync())
-            .ToHashSet();
-
-        var toMigrate = paidOrgIds.Where(id => !orgIdsWithModules.Contains(id)).ToList();
-        if (toMigrate.Count == 0) return;
-
-        var modules = await _context.SubscriptionPlans
-            .Where(m => ModuleCodes.All.Contains(m.Code))
-            .ToListAsync();
-
-        foreach (var orgId in toMigrate)
-        {
-            foreach (var module in modules)
-            {
-                _context.OrganizationModules.Add(new OrganizationModule
-                {
-                    OrganizationId = orgId,
-                    ModuleId = module.Id,
-                    Status = OrganizationModuleStatus.Active,
-                    ActivatedAt = DateTime.UtcNow,
-                    GrantedByPlatformAdmin = true,
-                    AdminNote = "Grandfathered from legacy tier billing (automatic, pre-existing tenant)"
-                });
-            }
-        }
-
-        await _context.SaveChangesAsync();
-        _logger.LogInformation("Grandfathered {Count} legacy-tier organization(s) onto all modules", toMigrate.Count);
-    }
-
-    /// <summary>
     /// Moves anyone holding the retired "Visitor &amp; Safeguarding" module onto both of its
     /// successors, Visitor Management and Student Welfare, so the split costs nobody access to
     /// something they already paid for.
@@ -722,43 +441,6 @@ public class DbSeeder
             "Split the retired visitor-safeguarding module into its two successors for {Count} organization grant(s)",
             added);
     }
-
-    /// <summary>
-    /// Mirrors FeatureFlagService.BuildFeaturesFromPlan's tier switch exactly, so a seeded
-    /// plan's Features JSON (which BillingService/UsageLimitMiddleware read) agrees with what
-    /// FeatureFlagService itself would compute for the same tier.
-    /// </summary>
-    private static string BuildFeaturesJson(TenantTier tier)
-    {
-        var (apiAccess, sms, email, push, branding, whiteLabel, analytics, export, displays, serviceTypes, support, dedicated, webhook) = tier switch
-        {
-            TenantTier.Free => (false, false, false, false, false, false, false, false, false, false, false, false, false),
-            TenantTier.Starter => (true, false, true, false, false, false, false, true, false, true, false, false, true),
-            TenantTier.Professional => (true, true, true, true, true, false, true, true, true, true, false, false, true),
-            TenantTier.Enterprise => (true, true, true, true, true, true, true, true, true, true, true, true, true),
-            _ => (false, false, false, false, false, false, false, false, false, false, false, false, false)
-        };
-
-        var features = new Dictionary<string, bool>
-        {
-            [FeatureCodes.ApiAccess] = apiAccess,
-            [FeatureCodes.SmsNotifications] = sms,
-            [FeatureCodes.EmailNotifications] = email,
-            [FeatureCodes.PushNotifications] = push,
-            [FeatureCodes.CustomBranding] = branding,
-            [FeatureCodes.WhiteLabel] = whiteLabel,
-            [FeatureCodes.AdvancedAnalytics] = analytics,
-            [FeatureCodes.ExportReports] = export,
-            [FeatureCodes.MultipleDisplays] = displays,
-            [FeatureCodes.CustomServiceTypes] = serviceTypes,
-            [FeatureCodes.PrioritySupport] = support,
-            [FeatureCodes.DedicatedSchema] = dedicated,
-            [FeatureCodes.WebhookIntegration] = webhook
-        };
-
-        return System.Text.Json.JsonSerializer.Serialize(features);
-    }
-
     /// <summary>
     /// Seeds permissions and system roles. This is idempotent and can be run multiple times.
     /// </summary>
@@ -897,7 +579,6 @@ public class DbSeeder
                         ContactEmail = "admin@qmgr.platform",
                         Slug = "platform",
                         Status = TenantStatus.Active,
-                        Tier = TenantTier.Enterprise,
                         OnboardingCompleted = true,
                         VerifiedAt = DateTime.UtcNow,
                         CreatedAt = DateTime.UtcNow
@@ -927,7 +608,9 @@ public class DbSeeder
         }
     }
 
-    private record TierPlanDefaults(
+    /// <summary>The shape of one module's seeded defaults. Named for the tiers it once described;
+    /// every row it seeds is now a module.</summary>
+    private record ModuleDefaults(
         string Name, string Code, bool ShowAds, bool DedicatedSchema,
         int MaxBranches, int MaxDisplays, int MaxUsersPerBranch, int MaxCountersPerBranch,
         int MaxTokensPerMonth, int MaxApiCallsPerMonth, int MaxStorageMb,

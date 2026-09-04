@@ -11,14 +11,12 @@ public class TenantContext : ITenantContext
     public Guid? BranchId { get; set; }
     public string? TenantSlug { get; set; }
     public string? SchemaName { get; set; }
-    public TenantTier Tier { get; set; } = TenantTier.Free;
     public TenantStatus Status { get; set; } = TenantStatus.Pending;
     public bool IsResolved { get; set; }
     public Guid? UserId { get; set; }
     public string? UserRole { get; set; }
 
     public bool UsesDedicatedSchema => !string.IsNullOrEmpty(SchemaName);
-    public bool ShowAds => Tier == TenantTier.Free;
     public bool IsActive => Status == TenantStatus.Active || Status == TenantStatus.Trialing;
 
     /// <summary>
@@ -32,7 +30,6 @@ public class TenantContext : ITenantContext
     public static TenantContext FromOrganization(
         Guid organizationId,
         string? slug,
-        TenantTier tier,
         TenantStatus status,
         string? schemaName = null,
         Guid? branchId = null,
@@ -43,7 +40,6 @@ public class TenantContext : ITenantContext
         {
             OrganizationId = organizationId,
             TenantSlug = slug,
-            Tier = tier,
             Status = status,
             SchemaName = schemaName,
             BranchId = branchId,

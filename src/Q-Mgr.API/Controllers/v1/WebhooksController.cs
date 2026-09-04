@@ -305,7 +305,7 @@ public class WebhooksController : ControllerBase
             return;
 
         _tenantContextAccessor.TenantContext = TenantContext.FromOrganization(
-            org.Id, org.Slug, org.Tier, org.Status, org.SchemaName);
+            org.Id, org.Slug, org.Status, org.SchemaName);
     }
 
     // ---------------------------------------------------------------------------------------

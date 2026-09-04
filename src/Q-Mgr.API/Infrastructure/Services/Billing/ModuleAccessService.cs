@@ -19,16 +19,18 @@ public class ModuleAccessService : IModuleAccessService
     private readonly QMgrDbContext _dbContext;
     private readonly IDistributedCache _cache;
     private readonly IStripeService _stripeService;
+    private readonly IBillingAccountProvider _accountProvider;
     private readonly ILogger<ModuleAccessService> _logger;
     private const string CachePrefix = "org-modules:";
     private const int CacheExpirationMinutes = 5;
     private const string ModuleBillingSettingsKey = "ModuleBilling";
 
-    public ModuleAccessService(QMgrDbContext dbContext, IDistributedCache cache, IStripeService stripeService, ILogger<ModuleAccessService> logger)
+    public ModuleAccessService(QMgrDbContext dbContext, IDistributedCache cache, IStripeService stripeService, IBillingAccountProvider accountProvider, ILogger<ModuleAccessService> logger)
     {
         _dbContext = dbContext;
         _cache = cache;
         _stripeService = stripeService;
+        _accountProvider = accountProvider;
         _logger = logger;
     }
 
@@ -201,6 +203,10 @@ public class ModuleAccessService : IModuleAccessService
                 StripeSubscriptionItemId = stripeSubscriptionItemId
             });
         }
+
+        // A purchase is where billing starts, so make sure the organization has an account
+        // from its first module rather than only once the first invoice runs.
+        await _accountProvider.GetOrOpenAsync(organizationId, DateTime.UtcNow);
 
         await _dbContext.SaveChangesAsync();
         await InvalidateCacheAsync(organizationId);
