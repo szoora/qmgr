@@ -456,19 +456,28 @@ public class UsageTrackingService : IUsageTrackingService
 
     /// <summary>
     /// Returns this month's usage row for the organization, creating it if it doesn't exist yet.
-    /// <para>
-    /// Two failure modes this has to survive, both seen live in the daily usage-limits job:
-    /// a concurrent writer (a web request tracking usage while the Hangfire job runs) can insert
-    /// the same (OrganizationId, Year, Month) between our read and our write, which the unique
-    /// index rejects; and — worse — a failed insert leaves the entity tracked as Added, so every
-    /// later <c>SaveChangesAsync</c> on the same shared scoped context re-attempts it and throws
-    /// again. Since <c>BillingJobs.CheckUsageLimitsAsync</c> loops over every organization on one
-    /// context and swallows per-organization exceptions, a single collision silently poisoned the
-    /// rest of the run: the job reported success having done nothing for any subsequent tenant.
-    /// So: check the change tracker first, and on a unique violation detach the doomed entity and
-    /// re-read the row the other writer committed.
-    /// </para>
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two writers racing for the same (OrganizationId, Year, Month) is routine, not exceptional:
+    /// the hourly aggregation job and the daily limits job start in the same second, on separate
+    /// scopes and therefore separate contexts, while a web request may be tracking usage at the
+    /// same moment. The insert is written so that losing that race is a no-op.
+    /// </para>
+    /// <para>
+    /// It used to add the entity, save, catch the unique violation, detach the doomed entity and
+    /// re-read. That recovered correctly, but only after Postgres had rejected an INSERT and EF had
+    /// logged the failure at Error level with a full stack trace — an entry indistinguishable, at a
+    /// glance, from something actually going wrong. <c>ON CONFLICT DO NOTHING</c> removes the
+    /// exception rather than handling it.
+    /// </para>
+    /// <para>
+    /// Two things about this statement are load-bearing. The table is schema-qualified because raw
+    /// SQL does not inherit the model's default schema and this connection's search_path has no
+    /// <c>qmgr</c> in it. And every column is listed: all twenty-one are NOT NULL with no database
+    /// default, so a shorter insert fails outright rather than defaulting the counters to zero.
+    /// </para>
+    /// </remarks>
     private async Task<UsageRecord> GetOrCreateCurrentRecordAsync(Guid organizationId)
     {
         var now = DateTime.UtcNow;
@@ -494,48 +503,29 @@ public class UsageTrackingService : IUsageTrackingService
             return record;
         }
 
-        record = new UsageRecord
-        {
-            OrganizationId = organizationId,
-            Year = year,
-            Month = month,
-            LastUpdatedAt = now,
-            CreatedAt = now
-        };
-        _dbContext.UsageRecords.Add(record);
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($@"
+            INSERT INTO qmgr.usage_records (
+                ""Id"", ""OrganizationId"", ""Year"", ""Month"",
+                ""TokensCreated"", ""TokensServed"", ""TokensCancelled"", ""ApiCalls"",
+                ""WebhookDeliveries"", ""ActiveUsers"", ""ActiveBranches"", ""ActiveCounters"",
+                ""StorageUsedBytes"", ""SmsMessagesSent"", ""EmailsSent"", ""PushNotificationsSent"",
+                ""DisplayViews"", ""AdImpressions"", ""LastUpdatedAt"", ""CreatedAt"", ""IsActive"")
+            VALUES (
+                {Guid.NewGuid()}, {organizationId}, {year}, {month},
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, {now}, {now}, true)
+            ON CONFLICT (""OrganizationId"", ""Year"", ""Month"") DO NOTHING");
 
-        try
-        {
-            await _dbContext.SaveChangesAsync();
-            return record;
-        }
-        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
-        {
-            _dbContext.Entry(record).State = EntityState.Detached;
-
-            var existing = await _dbContext.UsageRecords
-                .FirstOrDefaultAsync(r =>
-                    r.OrganizationId == organizationId &&
-                    r.Year == year &&
-                    r.Month == month);
-
-            if (existing == null)
-            {
-                // The index rejected the insert but nothing is there to read back — a different
-                // constraint than the one we're handling for. Don't paper over it.
-                throw;
-            }
-
-            _logger.LogDebug(
-                "Usage record for organization {OrganizationId} {Year}-{Month} was created concurrently; using the committed row",
-                organizationId, year, month);
-
-            return existing;
-        }
+        // Ours or the other writer's — either way the row is committed and this reads it back
+        // tracked, so the caller can mutate and save it as before.
+        return await _dbContext.UsageRecords
+            .FirstAsync(r =>
+                r.OrganizationId == organizationId &&
+                r.Year == year &&
+                r.Month == month);
     }
-
-    private static bool IsUniqueViolation(DbUpdateException ex) =>
-        ex.InnerException is Npgsql.PostgresException { SqlState: "23505" };
 
     private async Task IncrementCounterAsync(Guid organizationId, string counterName, int count)
     {
