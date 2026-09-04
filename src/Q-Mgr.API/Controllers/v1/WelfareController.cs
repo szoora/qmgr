@@ -401,6 +401,37 @@ public class WelfareController : ControllerBase
         var pointsError = ValidatePointsSign(request.CaseType, request.Points);
         if (pointsError != null) return pointsError;
 
+        // --- The graduated response ---
+        if (request.ResponseStage is { } stage && !Enum.IsDefined(stage))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised response stage", Status = StatusCodes.Status400BadRequest });
+        if (request.PerceivedFunction is { } fn && !Enum.IsDefined(fn))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised perceived function", Status = StatusCodes.Status400BadRequest });
+
+        // An achievement is not a response to anything, so a stage on one is meaningless and
+        // would pollute the very reports the stage exists to make possible.
+        if (request.ResponseStage.HasValue && request.CaseType == WelfareCaseType.Achievement)
+            return BadRequest(new ProblemDetails { Title = "An achievement has no response stage", Status = StatusCodes.Status400BadRequest });
+
+        // A support plan IS the corrective rung — it needs an owner and a review date, because a
+        // plan with neither is a sentence in a text box that nobody will ever come back to.
+        if (request.CaseType == WelfareCaseType.SupportPlan)
+        {
+            if (request.AssignedToUserId is null || request.AssignedToUserId == Guid.Empty)
+                return BadRequest(new ProblemDetails { Title = "A support plan needs an owner", Detail = "Assign the plan to the member of staff responsible for it.", Status = StatusCodes.Status400BadRequest });
+            if (request.ActionDueDate is null)
+                return BadRequest(new ProblemDetails { Title = "A support plan needs a review date", Detail = "Set the date the plan will be reviewed — assess, plan, do, review.", Status = StatusCodes.Status400BadRequest });
+        }
+
+        if (request.ActionDueDate is { } due && due.Date < DateTime.UtcNow.Date.AddDays(-1))
+            return BadRequest(new ProblemDetails { Title = "A review date in the past would be overdue immediately", Status = StatusCodes.Status400BadRequest });
+
+        if (request.AssignedToUserId is { } assignee && assignee != Guid.Empty)
+        {
+            var assigneeExists = await _context.Users.AnyAsync(u => u.Id == assignee && u.OrganizationId == organizationId && u.IsActive);
+            if (!assigneeExists)
+                return BadRequest(new ProblemDetails { Title = "The assigned member of staff was not found", Status = StatusCodes.Status400BadRequest });
+        }
+
         // --- Confidentiality: server wins, never trusted from the client ---
         var confidential = request.CaseType == WelfareCaseType.Welfare;
 
@@ -422,7 +453,14 @@ public class WelfareController : ControllerBase
             Confidential = confidential,
             AdditionalStudentIds = additionalStudentIds.Count > 0 ? additionalStudentIds.ToArray() : null,
             ReportedByUserId = CurrentUserId(),
-            CreatedBy = CurrentUserId()
+            CreatedBy = CurrentUserId(),
+
+            ResponseStage = request.CaseType == WelfareCaseType.Achievement ? null : request.ResponseStage,
+            Antecedent = string.IsNullOrWhiteSpace(request.Antecedent) ? null : request.Antecedent.Trim(),
+            PerceivedFunction = request.PerceivedFunction,
+            ActionTaken = string.IsNullOrWhiteSpace(request.ActionTaken) ? null : request.ActionTaken.Trim(),
+            AssignedToUserId = request.AssignedToUserId == Guid.Empty ? null : request.AssignedToUserId,
+            ActionDueDate = request.ActionDueDate
         };
         _context.WelfareRecords.Add(record);
         await _context.SaveChangesAsync();
@@ -1057,6 +1095,9 @@ public class WelfareController : ControllerBase
         AssignedToUserId = r.AssignedToUserId,
         AssignedToName = r.AssignedToUserId.HasValue ? userNames.GetValueOrDefault(r.AssignedToUserId.Value, "Unknown") : null,
         ActionDueDate = r.ActionDueDate,
+        ResponseStage = r.ResponseStage,
+        Antecedent = r.Antecedent,
+        PerceivedFunction = r.PerceivedFunction,
         AdditionalStudentIds = (r.AdditionalStudentIds ?? Array.Empty<Guid>()).ToList(),
         AdditionalStudentNames = (r.AdditionalStudentIds ?? Array.Empty<Guid>()).Select(id => studentNames.GetValueOrDefault(id, "Unknown")).ToList(),
         Attachments = r.Attachments.OrderBy(a => a.CreatedAt).Select(a => new WelfareAttachmentDto
@@ -1089,4 +1130,293 @@ public class WelfareController : ControllerBase
             CreatedAt = n.CreatedAt
         }).ToList()
     };
+
+    // =========================================================================================
+    // The graduated response: prevention reporting and the escalation check.
+    // =========================================================================================
+
+    /// <summary>
+    /// Answers "what was tried before this?" for one student over a rolling window, so the form
+    /// can ask before a punitive response is filed against a child nothing has been tried for.
+    ///
+    /// GUIDANCE, NEVER A BARRIER. It returns a flag and a sentence; the client shows a
+    /// confirmation the user can accept. A member of staff dealing with a real emergency must not
+    /// be argued with by a form, so nothing here blocks a save and no permission is required
+    /// beyond the one needed to create the record in the first place.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/escalation-check")]
+    [RequirePermission(Permissions.WelfareCreate)]
+    [ProducesResponseType(typeof(EscalationCheckDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetEscalationCheck(Guid branchId, Guid studentId, [FromQuery] int windowDays = 120)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        // A term, roughly. Long enough that last month's restorative conversation still counts,
+        // short enough that something from two years ago does not excuse escalating today.
+        var since = DateTime.UtcNow.AddDays(-Math.Clamp(windowDays, 7, 365));
+
+        var stages = await _context.WelfareRecords
+            .Where(r => r.StudentId == studentId && r.BranchId == branchId
+                        && r.Status != WelfareStatus.Draft && r.OccurredAt >= since
+                        && r.ResponseStage != null)
+            .GroupBy(r => r.ResponseStage!.Value)
+            .Select(g => new { Stage = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        int CountOf(WelfareResponseStage s) => stages.FirstOrDefault(x => x.Stage == s)?.Count ?? 0;
+
+        var openPlans = await _context.WelfareRecords.CountAsync(r =>
+            r.StudentId == studentId && r.BranchId == branchId &&
+            r.CaseType == WelfareCaseType.SupportPlan &&
+            r.Status != WelfareStatus.Resolved && r.Status != WelfareStatus.Draft);
+
+        var preventive = CountOf(WelfareResponseStage.Preventive);
+        var restorative = CountOf(WelfareResponseStage.Restorative);
+        var corrective = CountOf(WelfareResponseStage.Corrective);
+        var punitive = CountOf(WelfareResponseStage.Punitive);
+
+        // Prompt only when nothing softer has been tried and no plan is running. A school that
+        // has already tried the earlier rungs is not second-guessed.
+        var nothingTried = restorative == 0 && corrective == 0 && preventive == 0 && openPlans == 0;
+
+        var message = nothingTried
+            ? $"Nothing softer has been recorded for {student.FullName} in the last {Math.Clamp(windowDays, 7, 365)} days — no restorative conversation, no support plan, no preventive action. A punitive response may still be right; the record will show it was the first thing tried."
+            : $"Already tried for {student.FullName}: {restorative} restorative, {corrective} corrective, {preventive} preventive, {openPlans} open plan(s).";
+
+        return Ok(new EscalationCheckDto
+        {
+            WouldPrompt = nothingTried,
+            PreventiveCount = preventive,
+            RestorativeCount = restorative,
+            CorrectiveCount = corrective,
+            PunitiveCount = punitive,
+            OpenSupportPlans = openPlans,
+            Message = message
+        });
+    }
+
+    /// <summary>
+    /// Cohort and disproportionality reporting. The uncomfortable one is deliberate: if boarders,
+    /// or one sex, or one house are escalated to a punitive response faster for comparable
+    /// incidents, only a report will ever show it.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/welfare/cohorts")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(WelfareCohortReportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCohortReport(Guid branchId, [FromQuery] int days = 90)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var since = DateTime.UtcNow.AddDays(-Math.Clamp(days, 7, 730));
+
+        var q = _context.WelfareRecords
+            .Include(r => r.Student)
+            .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft && r.OccurredAt >= since);
+
+        // The confidentiality gate applies to reports exactly as it does to the timeline —
+        // aggregate counts of safeguarding concerns are still safeguarding information.
+        if (!await CanViewConfidentialAsync())
+            q = q.Where(r => !r.Confidential);
+
+        var rows = await q.Select(r => new
+        {
+            r.Student!.House,
+            r.Student.Residency,
+            r.Student.Sex,
+            r.Student.FeesStatus,
+            r.ResponseStage,
+            r.CaseType
+        }).ToListAsync();
+
+        static List<CohortSliceDto> Slice<TKey>(IEnumerable<dynamic> src, Func<dynamic, TKey> key, Func<TKey, string> label)
+        {
+            return src.GroupBy(r => key(r))
+                .Select(g =>
+                {
+                    var total = g.Count();
+                    var punitive = g.Count(r => r.ResponseStage == WelfareResponseStage.Punitive);
+                    return new CohortSliceDto
+                    {
+                        Label = label(g.Key),
+                        TotalRecords = total,
+                        PunitiveCount = punitive,
+                        PunitiveShare = total == 0 ? 0 : Math.Round(punitive * 100.0 / total, 1)
+                    };
+                })
+                .OrderByDescending(s => s.TotalRecords)
+                .ToList();
+        }
+
+        var report = new WelfareCohortReportDto
+        {
+            WindowDays = Math.Clamp(days, 7, 730),
+            TotalRecords = rows.Count,
+            ByHouse = Slice(rows, r => (string?)r.House, k => string.IsNullOrWhiteSpace(k) ? "No house set" : k!),
+            ByResidency = Slice(rows, r => (StudentResidency?)r.Residency, k => k?.ToString() ?? "Not recorded"),
+            BySex = Slice(rows, r => (StudentSex?)r.Sex, k => k?.ToString() ?? "Not recorded"),
+            ByFeesStatus = Slice(rows, r => (StudentFeesStatus?)r.FeesStatus, k => k?.ToString() ?? "Not recorded")
+        };
+
+        return Ok(report);
+    }
+
+    /// <summary>
+    /// The one-page student picture: flags, context, open plans, a twelve-month trend and the
+    /// plain-language patterns a GROUP BY can see. What a house parent reads in ninety seconds
+    /// before a difficult conversation.
+    ///
+    /// Assembled server-side in one call rather than leaving the page to fan out to five
+    /// endpoints and stitch the answer together — and, more importantly, so the confidentiality
+    /// gate is applied once, here, instead of five times in a Razor file.
+    ///
+    /// Reuses StudentsController's mapper rather than writing a second one, the same reasoning
+    /// that already makes its RosterImportJob mapper internal: two mappers for one shape is how a
+    /// field gets added to one and forgotten on the other.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/picture")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(StudentPictureDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetStudentPicture(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students
+            .Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
+            .Include(s => s.Flags).ThenInclude(f => f.Category)
+            .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        var confidential = await CanViewConfidentialAsync();
+
+        var query = _context.WelfareRecords
+            .Include(r => r.Category)
+            .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft
+                        && (r.StudentId == studentId || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Contains(studentId))));
+
+        if (!confidential) query = query.Where(r => !r.Confidential);
+
+        var records = await query.OrderByDescending(r => r.OccurredAt).ToListAsync();
+
+        var now = DateTime.UtcNow;
+        var openStatuses = new[] { WelfareStatus.Open, WelfareStatus.UnderReview, WelfareStatus.ActionTaken };
+
+        // --- Twelve monthly buckets, oldest first. Built from a fixed calendar walk rather than
+        // from whatever months happen to have records, so a quiet month renders as a gap in the
+        // sparkline instead of silently collapsing the axis.
+        var trend = new List<StudentTrendPointDto>();
+        for (var i = 11; i >= 0; i--)
+        {
+            var month = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-i);
+            var next = month.AddMonths(1);
+            var inMonth = records.Where(r => r.OccurredAt >= month && r.OccurredAt < next).ToList();
+            trend.Add(new StudentTrendPointDto
+            {
+                Year = month.Year,
+                Month = month.Month,
+                Label = month.ToString("MMM"),
+                Achievements = inMonth.Count(r => r.CaseType == WelfareCaseType.Achievement),
+                Behaviors = inMonth.Count(r => r.CaseType == WelfareCaseType.Behavior),
+                Concerns = inMonth.Count(r => r.CaseType == WelfareCaseType.Welfare)
+            });
+        }
+
+        var byStage = records.Where(r => r.ResponseStage.HasValue)
+            .GroupBy(r => r.ResponseStage!.Value)
+            .ToDictionary(g => g.Key.ToString(), g => g.Count());
+
+        var userNames = await ResolveUserNamesAsync(records.Take(10));
+        var studentNames = await ResolveStudentNamesAsync(records.Take(10));
+
+        var dto = new StudentPictureDto
+        {
+            Student = StudentsController.MapToDto(student, pastoral: true, confidential: confidential),
+            TotalRecords = records.Count,
+            OpenActions = records.Count(r => openStatuses.Contains(r.Status) && r.AssignedToUserId.HasValue),
+            OverdueActions = records.Count(r => openStatuses.Contains(r.Status) && r.ActionDueDate.HasValue && r.ActionDueDate.Value < now),
+            OpenSupportPlans = records.Count(r => r.CaseType == WelfareCaseType.SupportPlan && openStatuses.Contains(r.Status)),
+            AchievementCount = records.Count(r => r.CaseType == WelfareCaseType.Achievement),
+            BehaviorCount = records.Count(r => r.CaseType == WelfareCaseType.Behavior),
+            WelfareConcernCount = records.Count(r => r.CaseType == WelfareCaseType.Welfare),
+            NetPoints = records.Sum(r => r.Points ?? 0),
+            LastRecordAt = records.FirstOrDefault()?.OccurredAt,
+            Trend = trend,
+            ByResponseStage = byStage,
+            Patterns = DetectPatterns(records),
+            RecentRecords = records.Take(10).Select(r => MapToDto(r, userNames, new Dictionary<Guid, string>(), studentNames)).ToList()
+        };
+
+        return Ok(dto);
+    }
+
+    /// <summary>
+    /// Plain observations from a GROUP BY — never a prediction, never a score, and deliberately
+    /// phrased as counts a human can check rather than a judgement they have to trust. Three or
+    /// more in one bucket is the threshold: two of anything is a coincidence.
+    /// </summary>
+    private static List<string> DetectPatterns(List<WelfareRecord> records)
+    {
+        var patterns = new List<string>();
+
+        // Only behaviour and concerns — an achievement clustering on Fridays is not a problem to
+        // surface to a house parent.
+        var relevant = records
+            .Where(r => r.CaseType == WelfareCaseType.Behavior || r.CaseType == WelfareCaseType.Welfare)
+            .ToList();
+
+        if (relevant.Count < 3) return patterns;
+
+        var byLocation = relevant.Where(r => !string.IsNullOrWhiteSpace(r.Location))
+            .GroupBy(r => r.Location!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() >= 3)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+        if (byLocation != null)
+            patterns.Add($"{byLocation.Count()} of {relevant.Count} records are in the same place: {byLocation.Key}.");
+
+        var byDay = relevant.GroupBy(r => r.OccurredAt.DayOfWeek)
+            .Where(g => g.Count() >= 3)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+        if (byDay != null && byDay.Count() >= Math.Max(3, relevant.Count / 3))
+            patterns.Add($"{byDay.Count()} fall on a {byDay.Key}.");
+
+        var byHour = relevant.GroupBy(r => r.OccurredAt.Hour / 2)
+            .Where(g => g.Count() >= 3)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+        if (byHour != null)
+            patterns.Add($"{byHour.Count()} happen between {byHour.Key * 2:00}:00 and {byHour.Key * 2 + 2:00}:00.");
+
+        var byAntecedent = relevant.Where(r => !string.IsNullOrWhiteSpace(r.Antecedent))
+            .GroupBy(r => r.Antecedent!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() >= 2)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+        if (byAntecedent != null)
+            patterns.Add($"{byAntecedent.Count()} share the same trigger: {byAntecedent.Key}.");
+
+        var byFunction = relevant.Where(r => r.PerceivedFunction.HasValue && r.PerceivedFunction != WelfarePerceivedFunction.Unclear)
+            .GroupBy(r => r.PerceivedFunction!.Value)
+            .Where(g => g.Count() >= 3)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+        if (byFunction != null)
+            patterns.Add($"Staff read {byFunction.Count()} of these as {byFunction.Key.ToString().ToLowerInvariant()}.");
+
+        // The one that matters most for the user's actual question: escalation with nothing tried.
+        var punitive = relevant.Count(r => r.ResponseStage == WelfareResponseStage.Punitive);
+        var softer = relevant.Count(r => r.ResponseStage == WelfareResponseStage.Restorative
+                                      || r.ResponseStage == WelfareResponseStage.Corrective
+                                      || r.ResponseStage == WelfareResponseStage.Preventive);
+        if (punitive >= 3 && softer == 0)
+            patterns.Add($"All {punitive} recorded responses have been punitive — nothing restorative, corrective or preventive is on file.");
+
+        return patterns;
+    }
 }

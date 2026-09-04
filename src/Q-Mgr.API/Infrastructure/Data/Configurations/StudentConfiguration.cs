@@ -28,6 +28,12 @@ public class StudentConfiguration : IEntityTypeConfiguration<Student>
         builder.HasIndex(s => new { s.BranchId, s.IsActive })
             .HasDatabaseName("idx_students_branch_active");
 
+        // Cohort reporting groups by house constantly — "records per student by house" is how a
+        // school notices one dormitory producing four times its neighbours' incidents — and house
+        // is also the pastoral unit a matron filters the roster down to.
+        builder.HasIndex(s => new { s.BranchId, s.House })
+            .HasDatabaseName("idx_students_branch_house");
+
         builder.HasOne(s => s.Organization)
             .WithMany()
             .HasForeignKey(s => s.OrganizationId)

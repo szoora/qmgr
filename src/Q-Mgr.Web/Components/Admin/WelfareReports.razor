@@ -38,6 +38,7 @@
     <div class="tab-strip">
         <button type="button" class="tab-btn @(activeTab == "dashboard" ? "active" : "")" @onclick="@(() => SwitchTab("dashboard"))">Dashboard</button>
         <button type="button" class="tab-btn @(activeTab == "search" ? "active" : "")" @onclick="@(() => SwitchTab("search"))">Search &amp; Export</button>
+        <button type="button" class="tab-btn @(activeTab == "cohorts" ? "active" : "")" @onclick="@(() => SwitchTab("cohorts"))">Cohorts</button>
     </div>
 
     @if (activeTab == "dashboard")
@@ -105,7 +106,7 @@
             </div>
         }
     }
-    else
+    else if (activeTab == "search")
     {
         <div class="filter-bar filter-bar--wrap">
             <input class="search-input" value="@searchKeyword" @oninput="@(e => searchKeyword = e.Value?.ToString() ?? "")" placeholder="Search description or action taken..." />
@@ -155,6 +156,56 @@
             </div>
         }
     }
+
+
+@* ---------------- Cohorts & disproportionality ---------------- *@
+@if (activeTab == "cohorts")
+{
+    <div class="filter-bar">
+        <QSelect TValue="int" TItem="WindowOption" @bind-Value="cohortDays" Items="@windowOptions"
+                 TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Window" />
+        <QButton Text="Run" Icon="arrow-repeat" Variant="primary" OnClick="@LoadCohorts" Loading="@isLoadingCohorts" />
+    </div>
+
+    <div class="cohort-note">
+        <QIcon Name="info-circle-fill" Size="15" />
+        <span>
+            Counts alone only say which group has the most records. The share that reached a
+            <strong>punitive</strong> response is the number that says something about the school
+            rather than about the children.
+        </span>
+    </div>
+
+    @if (isLoadingCohorts)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Running...</span></div>
+    }
+    else if (cohorts == null)
+    {
+        <div class="empty-state">
+            <QIcon Name="bar-chart-steps" Size="xl" />
+            <h3>Nothing run yet</h3>
+            <p>Choose a window and press Run.</p>
+        </div>
+    }
+    else if (cohorts.TotalRecords == 0)
+    {
+        <div class="empty-state">
+            <QIcon Name="bar-chart-steps" Size="xl" />
+            <h3>No records in that window</h3>
+            <p>Nothing was logged in the last @cohorts.WindowDays days.</p>
+        </div>
+    }
+    else
+    {
+        <div class="cohort-grid">
+            @RenderCohort("By house", cohorts.ByHouse)
+            @RenderCohort("By residency", cohorts.ByResidency)
+            @RenderCohort("By sex", cohorts.BySex)
+            @RenderCohort("By fees status", cohorts.ByFeesStatus)
+        </div>
+    }
+}
 </div>
 
 @* ---------------- Import Historical Records ---------------- *@
@@ -302,6 +353,62 @@
 </QModal>
 
 <style>
+    /* ---------------- Cohorts ---------------- */
+
+    .cohort-note {
+        display: flex; align-items: flex-start; gap: 9px;
+        padding: 11px 14px; margin-bottom: 16px;
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 12.5px; line-height: 1.55;
+    }
+
+    .cohort-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 16px;
+    }
+
+    .cohort-panel {
+        padding: 16px 18px;
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        animation: cohortIn .3s ease both;
+    }
+
+    .cohort-grid > .cohort-panel:nth-child(2) { animation-delay: .05s; }
+    .cohort-grid > .cohort-panel:nth-child(3) { animation-delay: .10s; }
+    .cohort-grid > .cohort-panel:nth-child(4) { animation-delay: .15s; }
+
+    .cohort-panel h3 { margin: 0 0 12px; font-size: 14px; }
+
+    .cohort-row { grid-template-columns: 1fr 2fr auto auto; gap: 10px; }
+
+    .cohort-share {
+        font-size: 11.5px;
+        color: var(--qm-text-muted);
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* The only conditional colour on this screen. It marks a slice worth looking at, and it is
+       deliberately not red — the report raises a question about practice, it does not accuse. */
+    .cohort-share.high {
+        color: var(--qm-accent-orange);
+        font-weight: 600;
+    }
+
+    @@keyframes cohortIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .cohort-panel { animation: none !important; }
+    }
+
     .admin-page { padding: 0; }
     .page-header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
     .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -415,6 +522,108 @@
     private DateTime? dashboardFrom;
     private DateTime? dashboardTo;
     private WelfareSummaryDto? summary;
+
+    // ---------------- Cohorts ----------------
+    private bool isLoadingCohorts;
+    private int cohortDays = 90;
+    private WelfareCohortReportDto? cohorts;
+
+    private sealed record WindowOption(int Value, string Label);
+
+    private readonly List<WindowOption> windowOptions = new()
+    {
+        new(30, "Last 30 days"),
+        new(90, "Last term (90 days)"),
+        new(180, "Last 180 days"),
+        new(365, "Last year")
+    };
+
+    private async Task LoadCohorts()
+    {
+        isLoadingCohorts = true;
+        try
+        {
+            cohorts = await Http.GetFromJsonAsync<WelfareCohortReportDto>(
+                $"api/v1/branches/{branchId}/welfare/cohorts?days={cohortDays}", JsonOptions);
+        }
+        catch (Exception)
+        {
+            cohorts = null;
+            NotificationService.Notify(ToastSeverity.Error, "Could not run", "The cohort report failed to load.");
+        }
+        finally
+        {
+            isLoadingCohorts = false;
+        }
+    }
+
+    /// <summary>
+    /// One slice table. The bar length is the record count; the punitive share sits beside it as a
+    /// number rather than a second bar, because two bars invite reading them as a ratio to each
+    /// other when only one of them is a rate.
+    /// </summary>
+    private RenderFragment RenderCohort(string title, List<CohortSliceDto> slices) => builder =>
+    {
+        var seq = 0;
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", "cohort-panel");
+
+        builder.OpenElement(seq++, "h3");
+        builder.AddContent(seq++, title);
+        builder.CloseElement();
+
+        if (slices.Count == 0)
+        {
+            builder.OpenElement(seq++, "p");
+            builder.AddAttribute(seq++, "class", "form-hint");
+            builder.AddContent(seq++, "Nothing to group.");
+            builder.CloseElement();
+        }
+        else
+        {
+            var peak = Math.Max(1, slices.Max(s => s.TotalRecords));
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "bar-list");
+
+            foreach (var s in slices)
+            {
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "bar-row cohort-row");
+
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "bar-label");
+                builder.AddContent(seq++, s.Label);
+                builder.CloseElement();
+
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "bar-track");
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "bar-fill");
+                builder.AddAttribute(seq++, "style", $"width: {Math.Round(s.TotalRecords * 100.0 / peak)}%");
+                builder.CloseElement();
+                builder.CloseElement();
+
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "bar-count");
+                builder.AddContent(seq++, s.TotalRecords);
+                builder.CloseElement();
+
+                builder.OpenElement(seq++, "span");
+                // Above a third of a group's records ending in punishment is worth a second look;
+                // it is a threshold for attention, never a verdict.
+                builder.AddAttribute(seq++, "class", $"cohort-share{(s.PunitiveShare >= 33 ? " high" : "")}");
+                builder.AddAttribute(seq++, "title", $"{s.PunitiveCount} of {s.TotalRecords} records reached a punitive response");
+                builder.AddContent(seq++, $"{s.PunitiveShare:0.#}% punitive");
+                builder.CloseElement();
+
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
 
     // ---------------- Search ----------------
     private bool isLoadingSearch;

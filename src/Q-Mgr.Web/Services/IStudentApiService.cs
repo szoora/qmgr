@@ -18,6 +18,17 @@ public interface IStudentApiService
     Task<StudentGuardianDto> AddGuardianAsync(Guid branchId, Guid studentId, AddGuardianRequest request);
     Task<bool> RemoveGuardianAsync(Guid branchId, Guid studentId, Guid guardianLinkId);
 
+    /// <summary>Relationship, contact ordering, custody and the per-child contact restriction.</summary>
+    Task<StudentGuardianDto?> UpdateGuardianLinkAsync(Guid branchId, Guid studentId, Guid guardianLinkId, UpdateGuardianLinkRequest request);
+
+    Task<List<StudentFlagDto>> GetFlagsAsync(Guid branchId, Guid studentId, bool includeEnded = false);
+    Task<StudentFlagDto> RaiseFlagAsync(Guid branchId, Guid studentId, CreateStudentFlagRequest request);
+    Task UpdateFlagAsync(Guid branchId, Guid studentId, Guid flagId, UpdateStudentFlagRequest request);
+    Task EndFlagAsync(Guid branchId, Guid studentId, Guid flagId, EndStudentFlagRequest request);
+
+    /// <summary>The one-page picture — assembled server-side in a single call.</summary>
+    Task<StudentPictureDto?> GetStudentPictureAsync(Guid branchId, Guid studentId);
+
     /// <summary>Records (given=true) or withdraws (given=false) a student's data-processing consent — see Student.DataConsentGivenAt.</summary>
     Task<StudentDto?> UpdateConsentAsync(Guid branchId, Guid studentId, UpdateStudentConsentRequest request);
 
@@ -92,17 +103,76 @@ public class StudentApiService : IStudentApiService
         return (await response.Content.ReadFromJsonAsync<StudentDto>(_jsonOptions))!;
     }
 
+    /// <summary>
+    /// Throws with the server's own message rather than returning null on failure, matching
+    /// CreateStudentAsync. It previously swallowed everything into a null, which meant the
+    /// server's validation messages — "Date of birth cannot be in the future", "A student with
+    /// code X already exists" — reached the user as a generic failure with no way to tell what
+    /// was actually wrong. Server-side validation nobody can read is not validation.
+    /// </summary>
     public async Task<StudentDto?> UpdateStudentAsync(Guid branchId, Guid studentId, UpdateStudentRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<StudentDto>(_jsonOptions);
+    }
+
+    public async Task<StudentGuardianDto?> UpdateGuardianLinkAsync(Guid branchId, Guid studentId, Guid guardianLinkId, UpdateGuardianLinkRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/guardians/{guardianLinkId}", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<StudentGuardianDto>(_jsonOptions);
+    }
+
+    public async Task<List<StudentFlagDto>> GetFlagsAsync(Guid branchId, Guid studentId, bool includeEnded = false)
     {
         try
         {
-            var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}", request, _jsonOptions);
-            if (!response.IsSuccessStatusCode) return null;
-            return await response.Content.ReadFromJsonAsync<StudentDto>(_jsonOptions);
+            var result = await _httpClient.GetFromJsonAsync<List<StudentFlagDto>>(
+                $"api/v1/branches/{branchId}/students/{studentId}/flags?includeEnded={includeEnded}", _jsonOptions);
+            return result ?? new();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update student {StudentId}", studentId);
+            _logger.LogError(ex, "Failed to load flags for student {StudentId}", studentId);
+            return new();
+        }
+    }
+
+    public async Task<StudentFlagDto> RaiseFlagAsync(Guid branchId, Guid studentId, CreateStudentFlagRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/flags", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<StudentFlagDto>(_jsonOptions))!;
+    }
+
+    public async Task UpdateFlagAsync(Guid branchId, Guid studentId, Guid flagId, UpdateStudentFlagRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/flags/{flagId}", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
+
+    public async Task EndFlagAsync(Guid branchId, Guid studentId, Guid flagId, EndStudentFlagRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/flags/{flagId}/end", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
+
+    public async Task<StudentPictureDto?> GetStudentPictureAsync(Guid branchId, Guid studentId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<StudentPictureDto>(
+                $"api/v1/branches/{branchId}/students/{studentId}/picture", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load the student picture for {StudentId}", studentId);
             return null;
         }
     }

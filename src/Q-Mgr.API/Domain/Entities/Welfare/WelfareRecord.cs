@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
@@ -44,6 +45,25 @@ public class WelfareRecord : BaseAuditableEntity
     public Guid? AssignedToUserId { get; set; }
 
     public DateTime? ActionDueDate { get; set; }
+
+    /// <summary>
+    /// Where this response sits on the graduated ladder. Alongside <c>ActionTaken</c>, never
+    /// instead of it: the free text keeps the detail a school wants to read back, this makes it
+    /// something a report can group by — which is the only way to answer "are we escalating to
+    /// punishment too early, and on whom".
+    /// </summary>
+    public WelfareResponseStage? ResponseStage { get; set; }
+
+    /// <summary>
+    /// What immediately preceded it. With the existing <c>Location</c> and <c>OccurredAt</c> this
+    /// is enough to surface "six of nine incidents are in the dining hall after games" from a
+    /// plain GROUP BY — no model, no inference.
+    /// </summary>
+    [MaxLength(500)]
+    public string? Antecedent { get; set; }
+
+    /// <summary>Staff-perceived, never authoritative and never displayed as a diagnosis.</summary>
+    public WelfarePerceivedFunction? PerceivedFunction { get; set; }
 
     /// <summary>
     /// When the overdue-action reminder job last notified AssignedToUserId that this record is

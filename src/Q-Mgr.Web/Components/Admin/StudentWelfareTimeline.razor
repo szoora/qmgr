@@ -260,6 +260,68 @@
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@createModel.Location" Label="Location" Placeholder="Optional, e.g., Classroom P.6, Playground" />
         </div>
+
+        @* ---- The graduated response. Hidden for an achievement, which is not a response to
+               anything, and where a stage would only pollute the reports it exists to enable. ---- *@
+        @if (createModel.CaseType != WelfareCaseType.Achievement)
+        {
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@createModel.Antecedent" Label="What happened just before"
+                        Placeholder="Optional — sent out of maths, told he could not go home for visiting day"
+                        MaxLength="500"
+                        HelperText="With the location and time, this is what later shows a pattern you can get ahead of." />
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <QSelect TValue="WelfarePerceivedFunction?" TItem="FunctionOption" @bind-Value="@createModel.PerceivedFunction"
+                             Items="@functionOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                             Label="What did it get them" Placeholder="Unclear" AllowClear="true"
+                             HelperText="Your read, not a diagnosis." />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@createModel.ResponseStage"
+                             ValueChanged="@OnResponseStageChanged"
+                             Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                             Label="Response" Placeholder="Not decided yet" AllowClear="true" />
+                </div>
+            </div>
+
+            @* The escalation prompt. Guidance, never a barrier — it explains and asks, and the
+               save proceeds either way once acknowledged. A member of staff dealing with a real
+               emergency must not be argued with by a form. *@
+            @if (escalationCheck?.WouldPrompt == true && createModel.ResponseStage == WelfareResponseStage.Punitive)
+            {
+                <div class="escalation-prompt" role="alert">
+                    <div class="ep-head">
+                        <QIcon Name="signpost-split-fill" Size="17" />
+                        <strong>Nothing softer has been tried</strong>
+                    </div>
+                    <p>@escalationCheck.Message</p>
+                    <QCheckbox @bind-Value="@createModel.EscalationAcknowledged"
+                               Label="I have considered a restorative or corrective response and a punishment is still right" />
+                </div>
+            }
+        }
+
+        @if (createModel.CaseType == WelfareCaseType.SupportPlan)
+        {
+            <div class="plan-note">
+                <QIcon Name="info-circle-fill" Size="15" />
+                <span>A plan needs an owner and a review date. Reviews are added as notes on the plan.</span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <QSelect TValue="Guid?" TItem="StaffOption" @bind-Value="@createModel.AssignedToUserId"
+                             Items="@staffOptions" TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)"
+                             Label="Owner" Required="true" Placeholder="Who is responsible"
+                             HasError="@planOwnerError" ErrorMessage="A support plan needs an owner" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@createModel.ActionDueDate" Label="Review on" Required="true"
+                                 HasError="@planDateError" ErrorMessage="A support plan needs a review date" />
+                </div>
+            </div>
+        }
         @if (otherStudents.Any())
         {
             <div class="form-group">
@@ -402,6 +464,60 @@
 </QModal>
 
 <style>
+    /* ---------------- The graduated response ---------------- */
+
+    /* Deliberately not styled as an error. It is a question, and dressing a question as a failure
+       teaches staff to click past it. Amber, a signpost icon, and a checkbox that reads like a
+       sentence somebody would actually say. */
+    .escalation-prompt {
+        margin: 4px 0 16px;
+        padding: 13px 15px;
+        border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-warning-rgb), .1);
+        border: 1px solid rgba(var(--qm-warning-rgb), .32);
+        animation: epIn .28s ease both;
+    }
+
+    .escalation-prompt .ep-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--qm-accent-orange);
+        margin-bottom: 6px;
+        font-size: 14px;
+    }
+
+    .escalation-prompt p {
+        margin: 0 0 10px;
+        font-size: 13px;
+        line-height: 1.55;
+        color: var(--qm-text-secondary);
+    }
+
+    /* Slides down as it fades in: it appears in response to choosing "Punitive", and a thing that
+       arrives because of what you just did should look like it arrived. */
+    @@keyframes epIn {
+        from { opacity: 0; transform: translateY(-6px); max-height: 0; }
+        to   { opacity: 1; transform: translateY(0); max-height: 320px; }
+    }
+
+    .plan-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 0 14px;
+        padding: 9px 12px;
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 12.5px;
+        animation: epIn .24s ease both;
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .escalation-prompt, .plan-note { animation: none !important; }
+    }
+
     .admin-page { padding: 0; }
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
@@ -521,11 +637,62 @@
     private int BehaviorPoints => FinalizedRecords.Where(r => r.Points < 0).Sum(r => r.Points ?? 0);
     private int NetPoints => AchievementPoints + BehaviorPoints;
 
+    private readonly List<StageOption> stageOptions = new()
+    {
+        new(WelfareResponseStage.Preventive, "Preventive — acted before it happened"),
+        new(WelfareResponseStage.Restorative, "Restorative — a conversation, an apology"),
+        new(WelfareResponseStage.Corrective, "Corrective — a plan with an owner"),
+        new(WelfareResponseStage.Punitive, "Punitive — a sanction"),
+        new(WelfareResponseStage.Referral, "Referral — passed outside the school")
+    };
+
+    private readonly List<FunctionOption> functionOptions = new()
+    {
+        new(WelfarePerceivedFunction.Escape, "Getting out of something"),
+        new(WelfarePerceivedFunction.Attention, "Attention"),
+        new(WelfarePerceivedFunction.Tangible, "Access to a thing"),
+        new(WelfarePerceivedFunction.Sensory, "Sensory — noise, hunger, exhaustion"),
+        new(WelfarePerceivedFunction.Unclear, "Unclear")
+    };
+
+    private EscalationCheckDto? escalationCheck;
+    private bool planOwnerError;
+    private bool planDateError;
+
+    /// <summary>
+    /// Loads "what was tried before this?" the moment somebody selects a punitive response, so the
+    /// prompt is there before they finish rather than after they press Save. Failure is silent on
+    /// purpose: the check is guidance, and a page that refuses to save a record because an advisory
+    /// lookup failed would be worse than no prompt at all.
+    /// </summary>
+    private async Task OnResponseStageChanged(WelfareResponseStage? stage)
+    {
+        createModel.ResponseStage = stage;
+        createModel.EscalationAcknowledged = false;
+
+        if (stage != WelfareResponseStage.Punitive)
+        {
+            escalationCheck = null;
+            return;
+        }
+
+        try
+        {
+            escalationCheck = await Http.GetFromJsonAsync<EscalationCheckDto>(
+                $"api/v1/branches/{branchId}/students/{StudentId}/escalation-check", JsonOptions);
+        }
+        catch
+        {
+            escalationCheck = null;
+        }
+    }
+
     private readonly List<CaseTypeOption> caseTypeOptions = new()
     {
         new(WelfareCaseType.Achievement, "Achievement"),
         new(WelfareCaseType.Behavior, "Behavior"),
-        new(WelfareCaseType.Welfare, "Welfare / Safeguarding")
+        new(WelfareCaseType.Welfare, "Welfare / Safeguarding"),
+        new(WelfareCaseType.SupportPlan, "Support plan")
     };
 
     private readonly List<TierOption> tierOptions = new()
@@ -695,9 +862,27 @@
         var occurredAt = (occurredDateValue ?? DateTime.Today).Date.Add((occurredTimeValue ?? DateTime.Now).TimeOfDay);
         lateEntryWarning = !asDraft && occurredAt < DateTime.Now.AddDays(-14) && !acknowledgeLateEntry;
 
-        if (categoryError || descriptionError || pointsError || lateEntryWarning)
+        // A support plan is the corrective rung, and a plan with no owner and no review date is a
+        // sentence in a text box nobody comes back to. Mirrors the server's own two checks.
+        planOwnerError = !asDraft && createModel.CaseType == WelfareCaseType.SupportPlan
+                         && (createModel.AssignedToUserId is null || createModel.AssignedToUserId == Guid.Empty);
+        planDateError = !asDraft && createModel.CaseType == WelfareCaseType.SupportPlan
+                        && createModel.ActionDueDate is null;
+
+        if (categoryError || descriptionError || pointsError || lateEntryWarning || planOwnerError || planDateError)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please fix the highlighted fields");
+            return;
+        }
+
+        // The escalation prompt asks, it never blocks — so this is the one check that stops at a
+        // reminder rather than a refusal, and a second press with the box ticked always goes
+        // through. Staff dealing with a real emergency must not be argued with by a form.
+        if (!asDraft && createModel.ResponseStage == WelfareResponseStage.Punitive
+            && escalationCheck?.WouldPrompt == true && !createModel.EscalationAcknowledged)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Nothing softer has been tried",
+                "Tick the box to confirm a punishment is still the right response.");
             return;
         }
 
@@ -1053,6 +1238,8 @@
     private record CaseTypeOption(WelfareCaseType Value, string Label);
     private record TierOption(WelfareTier Value, string Label);
     private record StatusOption(WelfareStatus Value, string Label);
+    private record StageOption(WelfareResponseStage? Value, string Label);
+    private record FunctionOption(WelfarePerceivedFunction? Value, string Label);
     private record StaffOption(Guid Id, string Name);
 
     /// <summary>

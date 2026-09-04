@@ -1,0 +1,881 @@
+@page "/admin/students/{StudentId:guid}/picture"
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IStudentApiService StudentApi
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Student Picture - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>@(picture?.Student.FullName ?? "Student")</h1>
+            <p class="subtitle">Everything on file, read in ninety seconds.</p>
+        </div>
+        @if (picture != null)
+        {
+            <div class="sp-header-actions">
+                <QButton Text="Timeline" Icon="list-ul" Variant="secondary"
+                         OnClick="@(() => Navigation.NavigateTo($"/admin/students/{StudentId}/welfare"))" />
+                <QButton Text="Roster" Icon="arrow-left" Variant="ghost"
+                         OnClick="@(() => Navigation.NavigateTo("/admin/students/roster"))" />
+            </div>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-overlay" style="position: relative; min-height: 320px; background: transparent;">
+            <div class="webster-spinner"></div>
+            <span class="loading-text">Loading the picture...</span>
+        </div>
+    }
+    else if (picture == null)
+    {
+        <div class="sp-empty">
+            <QIcon Name="person-x" Size="40" />
+            <h2>Nothing to show</h2>
+            <p>This student could not be loaded for the current branch.</p>
+            <QButton Text="Back to roster" Icon="arrow-left" Variant="primary"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/students/roster"))" />
+        </div>
+    }
+    else
+    {
+        var s = picture.Student;
+
+        @* ---- Flags first. They are the lens everything below is read through, so they go above
+              the numbers rather than in a sidebar somebody scrolls past. ---- *@
+        @if (s.Flags.Any() || s.HasGuardianRestriction)
+        {
+            <div class="sp-flags">
+                @if (s.HasGuardianRestriction)
+                {
+                    <span class="sp-flag restriction" title="A guardian on this child has a contact restriction">
+                        <QIcon Name="shield-exclamation" Size="14" />
+                        Contact restriction
+                    </span>
+                }
+                @foreach (var f in s.Flags)
+                {
+                    <span class="sp-flag tier-@f.Tier.ToString().ToLowerInvariant() @(f.IsReviewOverdue ? "overdue" : "")"
+                          title="@FlagTitle(f)">
+                        <QIcon Name="@(f.IsReviewOverdue ? "exclamation-circle-fill" : "flag-fill")" Size="13" />
+                        @f.CategoryName
+                        @if (f.IsReviewOverdue)
+                        {
+                            <span class="sp-flag-note">review overdue</span>
+                        }
+                    </span>
+                }
+            </div>
+        }
+
+        @* ---- The numbers. ---- *@
+        <div class="sp-stats">
+            <div class="sp-stat">
+                <span class="sp-stat-n">@picture.TotalRecords</span>
+                <span class="sp-stat-l">Records</span>
+            </div>
+            <div class="sp-stat @(picture.OpenActions > 0 ? "warn" : "")">
+                <span class="sp-stat-n">@picture.OpenActions</span>
+                <span class="sp-stat-l">Open actions</span>
+            </div>
+            <div class="sp-stat @(picture.OverdueActions > 0 ? "bad" : "")">
+                <span class="sp-stat-n">@picture.OverdueActions</span>
+                <span class="sp-stat-l">Overdue</span>
+            </div>
+            <div class="sp-stat @(picture.OpenSupportPlans > 0 ? "good" : "")">
+                <span class="sp-stat-n">@picture.OpenSupportPlans</span>
+                <span class="sp-stat-l">Support plans</span>
+            </div>
+            <div class="sp-stat">
+                <span class="sp-stat-n">@(picture.NetPoints > 0 ? "+" : "")@picture.NetPoints</span>
+                <span class="sp-stat-l">Net points</span>
+            </div>
+        </div>
+
+        <div class="sp-columns">
+            <div class="sp-col">
+
+                @* ---- Twelve-month trend. Hand-drawn bars: three series, one row per month, and
+                      no charting library for a graphic this small. ---- *@
+                <QCard Title="Twelve months" Icon="bar-chart-line">
+                    <ChildContent>
+                        @if (picture.Trend.All(t => t.Achievements + t.Behaviors + t.Concerns == 0))
+                        {
+                            <p class="sp-muted">Nothing recorded in the last twelve months.</p>
+                        }
+                        else
+                        {
+                            var peak = Math.Max(1, picture.Trend.Max(t => t.Achievements + t.Behaviors + t.Concerns));
+                            <div class="sp-trend">
+                                @foreach (var t in picture.Trend)
+                                {
+                                    var total = t.Achievements + t.Behaviors + t.Concerns;
+                                    <div class="sp-trend-col" title="@($"{t.Label} {t.Year}: {t.Achievements} achievement(s), {t.Behaviors} behaviour, {t.Concerns} concern(s)")">
+                                        <div class="sp-trend-stack" style="height: @(Math.Round(total * 100.0 / peak))%;">
+                                            @if (t.Concerns > 0)
+                                            {
+                                                <div class="sp-bar concern" style="flex: @t.Concerns;"></div>
+                                            }
+                                            @if (t.Behaviors > 0)
+                                            {
+                                                <div class="sp-bar behavior" style="flex: @t.Behaviors;"></div>
+                                            }
+                                            @if (t.Achievements > 0)
+                                            {
+                                                <div class="sp-bar achievement" style="flex: @t.Achievements;"></div>
+                                            }
+                                        </div>
+                                        <span class="sp-trend-label">@t.Label</span>
+                                    </div>
+                                }
+                            </div>
+                            <div class="sp-legend">
+                                <span><i class="dot achievement"></i>Achievement</span>
+                                <span><i class="dot behavior"></i>Behaviour</span>
+                                <span><i class="dot concern"></i>Concern</span>
+                            </div>
+                        }
+                    </ChildContent>
+                </QCard>
+
+                @* ---- What has actually been tried. The user's whole question, answerable. ---- *@
+                <QCard Title="What has been tried" Icon="diagram-3">
+                    <ChildContent>
+                        @if (!picture.ByResponseStage.Any())
+                        {
+                            <p class="sp-muted">No response has been graded yet. Recording the stage on a record is what makes this answerable.</p>
+                        }
+                        else
+                        {
+                            <div class="sp-ladder">
+                                @foreach (var stage in LadderOrder)
+                                {
+                                    var count = picture.ByResponseStage.GetValueOrDefault(stage.ToString(), 0);
+                                    <div class="sp-rung @stage.ToString().ToLowerInvariant() @(count == 0 ? "empty" : "")">
+                                        <span class="sp-rung-name">@StageLabel(stage)</span>
+                                        <span class="sp-rung-bar">
+                                            <span class="sp-rung-fill" style="width: @(LadderWidth(count))%;"></span>
+                                        </span>
+                                        <span class="sp-rung-n">@count</span>
+                                    </div>
+                                }
+                            </div>
+                            @if (picture.ByResponseStage.GetValueOrDefault("Punitive", 0) > 0 &&
+                                 picture.ByResponseStage.GetValueOrDefault("Restorative", 0) == 0 &&
+                                 picture.ByResponseStage.GetValueOrDefault("Corrective", 0) == 0)
+                            {
+                                <div class="sp-warn">
+                                    <QIcon Name="exclamation-triangle-fill" Size="15" />
+                                    <span>Punishment has been used without anything softer on file.</span>
+                                </div>
+                            }
+                        }
+                    </ChildContent>
+                </QCard>
+
+                @if (picture.Patterns.Any())
+                {
+                    <QCard Title="Patterns" Icon="search">
+                        <ChildContent>
+                            <p class="sp-muted sp-tight">Counts, not predictions. Check them against what you know.</p>
+                            <ul class="sp-patterns">
+                                @foreach (var p in picture.Patterns)
+                                {
+                                    <li>
+                                        <QIcon Name="dot" Size="14" />
+                                        <span>@p</span>
+                                    </li>
+                                }
+                            </ul>
+                        </ChildContent>
+                    </QCard>
+                }
+            </div>
+
+            <div class="sp-col">
+                @* ---- Background. Fields the caller cannot see come back null and are simply
+                      absent — never rendered as an empty row implying nothing is on file. ---- *@
+                <QCard Title="Background" Icon="person-vcard">
+                    <ChildContent>
+                        <dl class="sp-facts">
+                            @RenderFact("Class", s.ClassName)
+                            @RenderFact("Age", s.AgeYears.HasValue ? $"{s.AgeYears}" : null)
+                            @RenderFact("Sex", s.Sex?.ToString())
+                            @RenderFact("Residency", s.Residency?.ToString())
+                            @RenderFact("House", s.House)
+                            @RenderFact("Dormitory", s.DormitoryOrStream)
+                            @RenderFact("Admitted", s.AdmissionDate?.ToString("d MMM yyyy"))
+                            @RenderFact("Lives with", HumaniseLivesWith(s.LivesWith))
+                            @RenderFact("Home district", s.HomeDistrict)
+                            @RenderFact("Language", s.HomeLanguage)
+                            @RenderFact("Transport", s.TransportMode?.ToString())
+                            @RenderFact("Fees", HumaniseFees(s.FeesStatus))
+                            @RenderFact("Sponsor", s.SponsorName)
+                            @RenderFact("Previous school", s.PreviousSchool)
+                        </dl>
+                        @if (!HasAnyBackground(s))
+                        {
+                            <p class="sp-muted">No background recorded yet. Edit the student on the roster to add it.</p>
+                        }
+                    </ChildContent>
+                </QCard>
+
+                @if (HasAnyHealth(s))
+                {
+                    <QCard Title="Health" Icon="heart-pulse">
+                        <ChildContent>
+                            <dl class="sp-facts">
+                                @RenderFact("Conditions", s.MedicalConditions)
+                                @RenderFact("Allergies", s.Allergies)
+                                @RenderFact("Medication", s.RegularMedication)
+                                @RenderFact("Learning need", s.DisabilityOrLearningNeed)
+                            </dl>
+                        </ChildContent>
+                    </QCard>
+                }
+
+                <QCard Title="Guardians" Icon="people">
+                    <ChildContent>
+                        @if (!s.Guardians.Any())
+                        {
+                            <p class="sp-muted">No guardians linked.</p>
+                        }
+                        else
+                        {
+                            <ul class="sp-guardians">
+                                @foreach (var g in s.Guardians)
+                                {
+                                    <li class="@(g.ContactRestriction != GuardianContactRestriction.None ? "restricted" : "")">
+                                        <div class="sp-g-top">
+                                            <strong>@g.FullName</strong>
+                                            @if (g.IsPrimaryContact)
+                                            {
+                                                <span class="sp-g-tag primary">Ring first</span>
+                                            }
+                                            @if (g.ContactRestriction != GuardianContactRestriction.None)
+                                            {
+                                                <span class="sp-g-tag danger">@RestrictionLabel(g.ContactRestriction)</span>
+                                            }
+                                        </div>
+                                        <div class="sp-g-sub">
+                                            @g.Relationship
+                                            @if (!string.IsNullOrWhiteSpace(g.Phone))
+                                            {
+                                                <span> &middot; @g.Phone</span>
+                                            }
+                                            @if (g.HasLegalCustody == true)
+                                            {
+                                                <span> &middot; has legal custody</span>
+                                            }
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(g.RestrictionReason))
+                                        {
+                                            <div class="sp-g-reason">@g.RestrictionReason</div>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </ChildContent>
+                </QCard>
+
+                @if (canManage)
+                {
+                    <QCard Title="Flags" Icon="flag">
+                        <HeaderActions>
+                            <QButton Text="Raise" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@OpenRaiseFlag" />
+                        </HeaderActions>
+                        <ChildContent>
+                            @if (!flags.Any())
+                            {
+                                <p class="sp-muted">No flags on this student.</p>
+                            }
+                            else
+                            {
+                                <ul class="sp-flag-list">
+                                    @foreach (var f in flags)
+                                    {
+                                        <li class="@(f.IsActive ? "" : "ended")">
+                                            <div class="sp-fl-top">
+                                                <span class="sp-flag tier-@f.Tier.ToString().ToLowerInvariant()">@f.CategoryName</span>
+                                                @if (!f.IsActive)
+                                                {
+                                                    <span class="sp-g-tag">Ended</span>
+                                                }
+                                                else if (f.IsReviewOverdue)
+                                                {
+                                                    <span class="sp-g-tag danger">Review overdue</span>
+                                                }
+                                            </div>
+                                            <div class="sp-g-sub">
+                                                Raised by @f.RaisedByName, @f.RaisedAt.ToLocalTime().ToString("d MMM yyyy")
+                                                @if (f.ReviewDueDate.HasValue && f.IsActive)
+                                                {
+                                                    <span> &middot; review @f.ReviewDueDate.Value.ToLocalTime().ToString("d MMM yyyy")</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(f.Notes))
+                                            {
+                                                <div class="sp-fl-notes">@f.Notes</div>
+                                            }
+                                            @if (f.IsActive)
+                                            {
+                                                <div class="sp-fl-actions">
+                                                    <QButton Text="Review" Icon="arrow-repeat" Variant="ghost" Size="sm" OnClick="@(() => OpenReviewFlag(f))" />
+                                                    <QButton Text="End" Icon="x-lg" Variant="ghost" Size="sm" OnClick="@(() => OpenEndFlag(f))" />
+                                                </div>
+                                            }
+                                            else if (!string.IsNullOrWhiteSpace(f.EndReason))
+                                            {
+                                                <div class="sp-g-sub">Ended: @f.EndReason</div>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </ChildContent>
+                    </QCard>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@* ---------------- Raise / review a flag ---------------- *@
+<QModal @bind-Visible="showFlagModal" Title="@(editingFlagId.HasValue ? "Review flag" : "Raise a flag")" Size="md">
+    <ChildContent>
+        @if (!string.IsNullOrEmpty(flagError))
+        {
+            <div class="stu-form-error" role="alert">
+                <QIcon Name="exclamation-triangle-fill" Size="16" />
+                <span>@flagError</span>
+            </div>
+        }
+        <div class="sp-form">
+            @if (!editingFlagId.HasValue)
+            {
+                <QSelect TValue="Guid" TItem="WelfareCategoryDto" @bind-Value="flagModel.CategoryId"
+                         Label="What is the flag" Required="true" Placeholder="Choose a category"
+                         Items="@categories" ValueSelector="@(c => c.Id)" TextSelector="@(c => c.Name)"
+                         HasError="@(flagError != null && flagModel.CategoryId == Guid.Empty)"
+                         ErrorMessage="Choose what the flag is" />
+            }
+            <QSelect TValue="WelfareTier" TItem="TierOption" @bind-Value="flagModel.Tier"
+                     Label="Who may see it" Required="true"
+                     Items="@TierOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)"
+                     HelperText="A high-tier flag is safeguarding data and needs the confidential permission." />
+            <QInput TValue="string" @bind-Value="flagModel.Notes" Label="Notes" Type="textarea" Rows="3" MaxLength="2000" />
+            <QDatePicker @bind-Value="flagModel.ReviewDueDate" Label="Review on"
+                         HasError="@reviewDateError" ErrorMessage="A review date in the past would be overdue immediately" />
+            <p class="sp-hint">
+                <QIcon Name="info-circle" Size="13" />
+                A flag nobody revisits reads as current knowledge. Set a date.
+            </p>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showFlagModal = false)" />
+        <QButton Text="@(editingFlagId.HasValue ? "Save review" : "Raise flag")" Icon="check-lg" Variant="primary"
+                 Loading="@isSavingFlag" Disabled="@isSavingFlag" OnClick="@SaveFlag" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- End a flag ---------------- *@
+<QModal @bind-Visible="showEndModal" Title="End this flag" Size="sm">
+    <ChildContent>
+        <p class="sp-muted sp-tight">
+            The flag stays on file with the reason and date. Ending it never deletes it — how long a child
+            carried a flag is itself welfare information.
+        </p>
+        <QInput TValue="string" @bind-Value="endModel.EndReason" Label="Why is it ending" Required="true"
+                Type="textarea" Rows="3" MaxLength="500"
+                HasError="@(endAttempted && string.IsNullOrWhiteSpace(endModel.EndReason))"
+                ErrorMessage="Say why the flag is being ended" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showEndModal = false)" />
+        <QButton Text="End flag" Icon="check-lg" Variant="danger" Loading="@isSavingFlag" Disabled="@isSavingFlag" OnClick="@EndFlag" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .sp-header-actions { display: flex; gap: 8px; }
+
+    .sp-empty {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 12px; padding: 64px 24px; text-align: center; color: var(--qm-text-secondary);
+    }
+    .sp-empty h2 { margin: 0; font-size: 19px; color: var(--qm-text-primary); }
+    .sp-empty p { margin: 0 0 8px; font-size: 14px; }
+
+    /* ---- flags ---- */
+    .sp-flags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+
+    .sp-flag {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 5px 11px; border-radius: 999px;
+        font-size: 12px; font-weight: 600;
+        background: var(--qm-bg-elevated); color: var(--qm-text-secondary);
+        border: 1px solid var(--qm-border);
+        animation: spChipIn .3s ease both;
+    }
+    .sp-flag.tier-medium { background: rgba(var(--qm-warning-rgb), .12); color: var(--qm-accent-orange); border-color: rgba(var(--qm-warning-rgb), .3); }
+    .sp-flag.tier-high   { background: rgba(var(--qm-danger-rgb), .12);  color: var(--qm-danger);       border-color: rgba(var(--qm-danger-rgb), .3); }
+    .sp-flag.restriction { background: rgba(var(--qm-danger-rgb), .14);  color: var(--qm-danger);       border-color: rgba(var(--qm-danger-rgb), .35); }
+
+    /* An overdue review pulses slowly — slow enough to read as "still waiting" rather than an
+       alarm, because the flag itself is not the emergency, the neglect of it is. */
+    .sp-flag.overdue { animation: spChipIn .3s ease both, spPulse 2.4s ease-in-out 1s infinite; }
+    .sp-flag-note { font-weight: 500; opacity: .85; }
+
+    @@keyframes spChipIn {
+        from { opacity: 0; transform: scale(.94); }
+        to   { opacity: 1; transform: scale(1); }
+    }
+    @@keyframes spPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(var(--qm-danger-rgb), 0); }
+        50%      { box-shadow: 0 0 0 4px rgba(var(--qm-danger-rgb), .13); }
+    }
+
+    /* ---- stats ---- */
+    .sp-stats {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px; margin-bottom: 18px;
+    }
+    .sp-stat {
+        display: flex; flex-direction: column; gap: 2px;
+        padding: 14px 16px; border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card); border: 1px solid var(--qm-border);
+        animation: spRise .3s ease both;
+    }
+    .sp-stats > .sp-stat:nth-child(2) { animation-delay: .04s; }
+    .sp-stats > .sp-stat:nth-child(3) { animation-delay: .08s; }
+    .sp-stats > .sp-stat:nth-child(4) { animation-delay: .12s; }
+    .sp-stats > .sp-stat:nth-child(5) { animation-delay: .16s; }
+
+    .sp-stat-n { font-family: var(--qm-font-display); font-size: 26px; font-weight: 700; line-height: 1.1; }
+    .sp-stat-l { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--qm-text-muted); }
+    .sp-stat.warn .sp-stat-n { color: var(--qm-accent-orange); }
+    .sp-stat.bad  .sp-stat-n { color: var(--qm-danger); }
+    .sp-stat.good .sp-stat-n { color: var(--qm-success); }
+
+    @@keyframes spRise {
+        from { opacity: 0; transform: translateY(7px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ---- layout ---- */
+    .sp-columns { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; align-items: start; }
+    .sp-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+    .sp-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; }
+    .sp-tight { margin-bottom: 10px; }
+
+    /* ---- trend ---- */
+    .sp-trend { display: flex; align-items: flex-end; gap: 6px; height: 130px; }
+    .sp-trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+    .sp-trend-stack {
+        width: 100%; max-width: 26px; display: flex; flex-direction: column;
+        border-radius: 3px 3px 0 0; overflow: hidden; min-height: 3px;
+        transform-origin: bottom;
+        animation: spGrow .45s cubic-bezier(.2, .8, .3, 1) both;
+    }
+    .sp-bar { width: 100%; min-height: 3px; }
+    .sp-bar.achievement { background: var(--qm-success); }
+    .sp-bar.behavior    { background: var(--qm-accent-orange); }
+    .sp-bar.concern     { background: var(--qm-danger); }
+    .sp-trend-label { font-size: 10px; color: var(--qm-text-muted); margin-top: 5px; }
+
+    /* Bars grow from the baseline in sequence, left to right — the axis is time, so the motion
+       follows it rather than everything appearing at once. */
+    @@keyframes spGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    .sp-trend-col:nth-child(1)  .sp-trend-stack { animation-delay: .02s; }
+    .sp-trend-col:nth-child(2)  .sp-trend-stack { animation-delay: .05s; }
+    .sp-trend-col:nth-child(3)  .sp-trend-stack { animation-delay: .08s; }
+    .sp-trend-col:nth-child(4)  .sp-trend-stack { animation-delay: .11s; }
+    .sp-trend-col:nth-child(5)  .sp-trend-stack { animation-delay: .14s; }
+    .sp-trend-col:nth-child(6)  .sp-trend-stack { animation-delay: .17s; }
+    .sp-trend-col:nth-child(7)  .sp-trend-stack { animation-delay: .20s; }
+    .sp-trend-col:nth-child(8)  .sp-trend-stack { animation-delay: .23s; }
+    .sp-trend-col:nth-child(9)  .sp-trend-stack { animation-delay: .26s; }
+    .sp-trend-col:nth-child(10) .sp-trend-stack { animation-delay: .29s; }
+    .sp-trend-col:nth-child(11) .sp-trend-stack { animation-delay: .32s; }
+    .sp-trend-col:nth-child(12) .sp-trend-stack { animation-delay: .35s; }
+
+    .sp-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--qm-text-muted); }
+    .sp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .sp-legend .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+    .sp-legend .dot.achievement { background: var(--qm-success); }
+    .sp-legend .dot.behavior    { background: var(--qm-accent-orange); }
+    .sp-legend .dot.concern     { background: var(--qm-danger); }
+
+    /* ---- ladder ---- */
+    .sp-ladder { display: flex; flex-direction: column; gap: 9px; }
+    .sp-rung { display: grid; grid-template-columns: 92px 1fr 26px; align-items: center; gap: 10px; font-size: 12.5px; }
+    .sp-rung-name { color: var(--qm-text-secondary); }
+    .sp-rung-bar { height: 7px; border-radius: 4px; background: var(--qm-bg-elevated); overflow: hidden; }
+    .sp-rung-fill {
+        display: block; height: 100%; border-radius: 4px; background: var(--qm-primary);
+        transform-origin: left;
+        animation: spFill .5s cubic-bezier(.2, .8, .3, 1) both;
+    }
+    .sp-rung.preventive  .sp-rung-fill { background: var(--qm-success); }
+    .sp-rung.restorative .sp-rung-fill { background: var(--qm-info, #3a8fb7); }
+    .sp-rung.corrective  .sp-rung-fill { background: var(--qm-accent-orange); }
+    .sp-rung.punitive    .sp-rung-fill { background: var(--qm-danger); }
+    .sp-rung.referral    .sp-rung-fill { background: var(--qm-secondary); }
+    .sp-rung.empty .sp-rung-name { color: var(--qm-text-muted); }
+    .sp-rung-n { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    @@keyframes spFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+    .sp-warn, .sp-hint {
+        display: flex; align-items: center; gap: 8px; margin-top: 12px;
+        padding: 9px 12px; border-radius: var(--qm-radius-sm); font-size: 12.5px;
+    }
+    .sp-warn { background: rgba(var(--qm-danger-rgb), .1); color: var(--qm-danger); }
+    .sp-hint { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); margin-top: 4px; }
+
+    .sp-patterns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+    .sp-patterns li { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; color: var(--qm-text-secondary); }
+
+    /* ---- facts ---- */
+    .sp-facts { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0; font-size: 13px; }
+    .sp-facts dt { color: var(--qm-text-muted); white-space: nowrap; }
+    .sp-facts dd { margin: 0; color: var(--qm-text-primary); word-break: break-word; }
+
+    /* ---- guardians & flags list ---- */
+    .sp-guardians, .sp-flag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+    .sp-guardians li, .sp-flag-list li { padding-bottom: 11px; border-bottom: 1px solid var(--qm-border); }
+    .sp-guardians li:last-child, .sp-flag-list li:last-child { border-bottom: none; padding-bottom: 0; }
+    .sp-guardians li.restricted { border-left: 3px solid var(--qm-danger); padding-left: 10px; }
+    .sp-flag-list li.ended { opacity: .6; }
+
+    .sp-g-top, .sp-fl-top { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .sp-g-sub { font-size: 12px; color: var(--qm-text-muted); margin-top: 3px; }
+    .sp-g-reason, .sp-fl-notes { font-size: 12.5px; color: var(--qm-text-secondary); margin-top: 5px; }
+    .sp-g-reason { padding: 6px 9px; border-radius: var(--qm-radius-sm); background: rgba(var(--qm-danger-rgb), .08); }
+    .sp-fl-actions { display: flex; gap: 6px; margin-top: 7px; }
+
+    .sp-g-tag {
+        font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+        padding: 2px 7px; border-radius: 3px;
+        background: var(--qm-bg-elevated); color: var(--qm-text-muted);
+    }
+    .sp-g-tag.primary { background: var(--qm-primary-light); color: var(--qm-primary); }
+    .sp-g-tag.danger  { background: rgba(var(--qm-danger-rgb), .13); color: var(--qm-danger); }
+
+    .sp-form { display: flex; flex-direction: column; gap: 14px; }
+
+    @@media (max-width: 980px) {
+        .sp-columns { grid-template-columns: 1fr; }
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .sp-flag, .sp-stat, .sp-trend-stack, .sp-rung-fill { animation: none !important; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid StudentId { get; set; }
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private bool canManage;
+    private StudentPictureDto? picture;
+    private List<StudentFlagDto> flags = new();
+    private List<WelfareCategoryDto> categories = new();
+
+    private bool showFlagModal;
+    private bool showEndModal;
+    private bool isSavingFlag;
+    private bool endAttempted;
+    private bool reviewDateError;
+    private string? flagError;
+    private Guid? editingFlagId;
+    private Guid? endingFlagId;
+
+    private FlagFormModel flagModel = new();
+    private EndStudentFlagRequest endModel = new();
+
+    private sealed class FlagFormModel
+    {
+        public Guid CategoryId { get; set; }
+        public WelfareTier Tier { get; set; } = WelfareTier.Low;
+        public string? Notes { get; set; }
+        public DateTime? ReviewDueDate { get; set; }
+    }
+
+    private sealed record TierOption(WelfareTier Value, string Label);
+
+    private static readonly TierOption[] TierOptions =
+    {
+        new(WelfareTier.Low, "Low — any pastoral staff"),
+        new(WelfareTier.Medium, "Medium — pastoral staff"),
+        new(WelfareTier.High, "High — safeguarding lead only")
+    };
+
+    private static readonly WelfareResponseStage[] LadderOrder =
+    {
+        WelfareResponseStage.Preventive,
+        WelfareResponseStage.Restorative,
+        WelfareResponseStage.Corrective,
+        WelfareResponseStage.Punitive,
+        WelfareResponseStage.Referral
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        canManage = await PermissionService.HasPermissionAsync(Permissions.StudentsManage);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        StateHasChanged();
+        try
+        {
+            picture = await StudentApi.GetStudentPictureAsync(branchId, StudentId);
+            if (picture != null)
+            {
+                flags = await StudentApi.GetFlagsAsync(branchId, StudentId, includeEnded: true);
+                if (canManage) await LoadCategoriesAsync();
+            }
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadCategoriesAsync()
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
+            if (!response.IsSuccessStatusCode) return;
+            var all = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+            categories = all.Where(c => c.IsActive).OrderBy(c => c.SortOrder).ThenBy(c => c.Name).ToList();
+        }
+        catch
+        {
+            // A missing category list only disables raising a new flag; everything else on the
+            // page still reads, so this must not blank the picture.
+        }
+    }
+
+    private void OpenRaiseFlag()
+    {
+        editingFlagId = null;
+        flagModel = new FlagFormModel();
+        flagError = null;
+        reviewDateError = false;
+        showFlagModal = true;
+    }
+
+    private void OpenReviewFlag(StudentFlagDto f)
+    {
+        editingFlagId = f.Id;
+        flagModel = new FlagFormModel { CategoryId = f.CategoryId, Tier = f.Tier, Notes = f.Notes, ReviewDueDate = f.ReviewDueDate?.ToLocalTime() };
+        flagError = null;
+        reviewDateError = false;
+        showFlagModal = true;
+    }
+
+    private void OpenEndFlag(StudentFlagDto f)
+    {
+        endingFlagId = f.Id;
+        endModel = new EndStudentFlagRequest();
+        endAttempted = false;
+        showEndModal = true;
+    }
+
+    private async Task SaveFlag()
+    {
+        flagError = null;
+        reviewDateError = false;
+
+        // Client-side first so the message can point at the field; the server enforces all of it
+        // again regardless.
+        if (!editingFlagId.HasValue && flagModel.CategoryId == Guid.Empty)
+        {
+            flagError = "Choose what the flag is";
+            return;
+        }
+        if (flagModel.ReviewDueDate is { } due && due.Date < DateTime.Now.Date)
+        {
+            reviewDateError = true;
+            flagError = "A review date in the past would be overdue immediately";
+            return;
+        }
+
+        isSavingFlag = true;
+        try
+        {
+            if (editingFlagId.HasValue)
+            {
+                await StudentApi.UpdateFlagAsync(branchId, StudentId, editingFlagId.Value, new UpdateStudentFlagRequest
+                {
+                    Tier = flagModel.Tier,
+                    Notes = flagModel.Notes,
+                    ReviewDueDate = flagModel.ReviewDueDate?.ToUniversalTime()
+                });
+                NotificationService.Notify(ToastSeverity.Success, "Reviewed", "The flag has been reviewed.");
+            }
+            else
+            {
+                await StudentApi.RaiseFlagAsync(branchId, StudentId, new CreateStudentFlagRequest
+                {
+                    CategoryId = flagModel.CategoryId,
+                    Tier = flagModel.Tier,
+                    Notes = flagModel.Notes,
+                    ReviewDueDate = flagModel.ReviewDueDate?.ToUniversalTime()
+                });
+                NotificationService.Notify(ToastSeverity.Success, "Flag raised", "The flag is now on this student.");
+            }
+            showFlagModal = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            flagError = ex.Message;
+        }
+        finally
+        {
+            isSavingFlag = false;
+        }
+    }
+
+    private async Task EndFlag()
+    {
+        endAttempted = true;
+        if (string.IsNullOrWhiteSpace(endModel.EndReason)) return;
+
+        isSavingFlag = true;
+        try
+        {
+            await StudentApi.EndFlagAsync(branchId, StudentId, endingFlagId!.Value, endModel);
+            NotificationService.Notify(ToastSeverity.Success, "Flag ended", "It stays on file with the reason.");
+            showEndModal = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not end the flag", ex.Message);
+        }
+        finally
+        {
+            isSavingFlag = false;
+        }
+    }
+
+    private RenderFragment RenderFact(string label, string? value) => builder =>
+    {
+        // A field the caller may not see comes back null and is simply absent. Rendering an empty
+        // row would say "nothing on file", which is a different and misleading claim.
+        if (string.IsNullOrWhiteSpace(value)) return;
+        builder.OpenElement(0, "dt");
+        builder.AddContent(1, label);
+        builder.CloseElement();
+        builder.OpenElement(2, "dd");
+        builder.AddContent(3, value);
+        builder.CloseElement();
+    };
+
+    private static bool HasAnyBackground(StudentDto s) =>
+        !string.IsNullOrWhiteSpace(s.ClassName) || s.AgeYears.HasValue || s.Sex.HasValue || s.Residency.HasValue
+        || !string.IsNullOrWhiteSpace(s.House) || !string.IsNullOrWhiteSpace(s.DormitoryOrStream)
+        || s.AdmissionDate.HasValue || s.LivesWith.HasValue || !string.IsNullOrWhiteSpace(s.HomeDistrict)
+        || !string.IsNullOrWhiteSpace(s.HomeLanguage) || s.TransportMode.HasValue || s.FeesStatus.HasValue
+        || !string.IsNullOrWhiteSpace(s.SponsorName) || !string.IsNullOrWhiteSpace(s.PreviousSchool);
+
+    private static bool HasAnyHealth(StudentDto s) =>
+        !string.IsNullOrWhiteSpace(s.MedicalConditions) || !string.IsNullOrWhiteSpace(s.Allergies)
+        || !string.IsNullOrWhiteSpace(s.RegularMedication) || !string.IsNullOrWhiteSpace(s.DisabilityOrLearningNeed);
+
+    private int LadderWidth(int count)
+    {
+        var peak = Math.Max(1, picture?.ByResponseStage.Values.DefaultIfEmpty(0).Max() ?? 1);
+        return count == 0 ? 0 : Math.Max(6, (int)Math.Round(count * 100.0 / peak));
+    }
+
+    private static string StageLabel(WelfareResponseStage s) => s switch
+    {
+        WelfareResponseStage.Preventive => "Preventive",
+        WelfareResponseStage.Restorative => "Restorative",
+        WelfareResponseStage.Corrective => "Corrective",
+        WelfareResponseStage.Punitive => "Punitive",
+        WelfareResponseStage.Referral => "Referral",
+        _ => s.ToString()
+    };
+
+    private static string RestrictionLabel(GuardianContactRestriction r) => r switch
+    {
+        GuardianContactRestriction.SupervisedOnly => "Supervised only",
+        GuardianContactRestriction.MustNotCollect => "Must not collect",
+        GuardianContactRestriction.NoContact => "No contact",
+        _ => ""
+    };
+
+    private static string? HumaniseLivesWith(StudentLivesWith? v) => v switch
+    {
+        StudentLivesWith.BothParents => "Both parents",
+        StudentLivesWith.OneParent => "One parent",
+        StudentLivesWith.Grandparent => "Grandparent",
+        StudentLivesWith.OtherRelative => "Other relative",
+        StudentLivesWith.Guardian => "Guardian",
+        StudentLivesWith.Independent => "Independent",
+        _ => null
+    };
+
+    private static string? HumaniseFees(StudentFeesStatus? v) => v switch
+    {
+        StudentFeesStatus.Clear => "Clear",
+        StudentFeesStatus.Partial => "Partly paid",
+        StudentFeesStatus.InArrears => "In arrears",
+        StudentFeesStatus.Sponsored => "Sponsored",
+        StudentFeesStatus.Bursary => "Bursary",
+        _ => null
+    };
+
+    private static string FlagTitle(StudentFlagDto f)
+    {
+        var title = $"{f.CategoryName} — raised by {f.RaisedByName} on {f.RaisedAt.ToLocalTime():d MMM yyyy}";
+        if (f.ReviewDueDate.HasValue) title += $", review {f.ReviewDueDate.Value.ToLocalTime():d MMM yyyy}";
+        return title;
+    }
+}

@@ -174,11 +174,15 @@ public class StudentsController : ControllerBase
         if (branchError != null) return branchError;
 
         var query = _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
+            .Include(s => s.Flags).ThenInclude(f => f.Category)
             .Where(s => s.BranchId == branchId);
         if (!includeInactive) query = query.Where(s => s.IsActive);
 
         var students = await query.OrderBy(s => s.FullName).Take(Math.Clamp(limit, 1, 500)).ToListAsync();
-        return Ok(students.Select(MapToDto).ToList());
+
+        var pastoral = await CanViewPastoralAsync();
+        var confidential = await CanViewConfidentialAsync();
+        return Ok(students.Select(s => MapToDto(s, pastoral, confidential)).ToList());
     }
 
     /// <summary>
@@ -259,6 +263,13 @@ public class StudentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FullName))
             return BadRequest(new ProblemDetails { Title = "Full name is required", Status = StatusCodes.Status400BadRequest });
 
+        // The MaxLength/Range attributes on the request are already enforced by ModelState; these
+        // are the rules attributes cannot express, and they run server-side regardless of what
+        // the browser did.
+        var profileError = ValidateProfile(request);
+        if (profileError != null)
+            return BadRequest(new ProblemDetails { Title = profileError, Status = StatusCodes.Status400BadRequest });
+
         var organizationId = await ResolveOrganizationIdAsync(branchId);
         var code = string.IsNullOrWhiteSpace(request.StudentCode) ? null : request.StudentCode.Trim();
 
@@ -273,6 +284,8 @@ public class StudentsController : ControllerBase
             StudentCode = code,
             ClassName = string.IsNullOrWhiteSpace(request.ClassName) ? null : request.ClassName.Trim()
         };
+        ApplyProfile(student, request);
+
         _context.Students.Add(student);
         await _context.SaveChangesAsync();
 
@@ -288,17 +301,39 @@ public class StudentsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            return BadRequest(new ProblemDetails { Title = "Full name is required", Status = StatusCodes.Status400BadRequest });
+
+        var profileError = ValidateProfile(request);
+        if (profileError != null)
+            return BadRequest(new ProblemDetails { Title = profileError, Status = StatusCodes.Status400BadRequest });
+
         var student = await _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
+            .Include(s => s.Flags).ThenInclude(f => f.Category)
             .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
         if (student == null) return NotFound();
 
+        var newCode = string.IsNullOrWhiteSpace(request.StudentCode) ? null : request.StudentCode.Trim();
+        if (newCode != null && newCode != student.StudentCode &&
+            await _context.Students.AnyAsync(s => s.OrganizationId == student.OrganizationId && s.StudentCode == newCode && s.IsActive && s.Id != studentId))
+        {
+            return Conflict(new ProblemDetails { Title = $"A student with code '{newCode}' already exists", Status = StatusCodes.Status409Conflict });
+        }
+
         student.FullName = request.FullName.Trim();
-        student.StudentCode = string.IsNullOrWhiteSpace(request.StudentCode) ? null : request.StudentCode.Trim();
+        student.StudentCode = newCode;
         student.ClassName = string.IsNullOrWhiteSpace(request.ClassName) ? null : request.ClassName.Trim();
         student.IsActive = request.IsActive;
+
+        // A caller who cannot see the pastoral tier receives null for those fields, so writing
+        // the request back wholesale would let a Reception user silently erase a child's medical
+        // summary just by saving the name. Only a caller who can SEE a tier may write it.
+        var pastoral = await CanViewPastoralAsync();
+        ApplyProfile(student, request, includePastoral: pastoral);
+
         await _context.SaveChangesAsync();
 
-        return Ok(MapToDto(student));
+        return Ok(MapToDto(student, pastoral, await CanViewConfidentialAsync()));
     }
 
     [HttpDelete("branches/{branchId:guid}/students/{studentId:guid}")]
@@ -391,6 +426,13 @@ public class StudentsController : ControllerBase
         var canViewConfidential = await CanViewConfidentialAsync();
         var callerId = CurrentUserId();
 
+        // Live and ended alike — see the note on the flags block below.
+        var studentFlags = await _context.StudentFlags
+            .Include(f => f.Category)
+            .Where(f => f.StudentId == studentId)
+            .OrderByDescending(f => f.RaisedAt)
+            .ToListAsync();
+
         // --- Guardians (active links only — a removed guardian is no longer "held about" this student) ---
         var guardianLinks = student.Guardians.Where(g => g.IsActive && g.VisitorProfile != null).ToList();
         var guardianProfileIds = guardianLinks.Select(g => g.VisitorProfileId).Distinct().ToList();
@@ -462,6 +504,38 @@ public class StudentsController : ControllerBase
                 student.IsActive,
                 student.CreatedAt,
                 student.UpdatedAt,
+
+                // Every background field is exported, deliberately without the visibility tiers
+                // the read endpoints apply. A subject access request is the data subject asking
+                // what is held about them, not a member of staff browsing — returning a redacted
+                // answer here is the worst possible failure, because it is the one that gets
+                // discovered by a parent's lawyer. The [RequirePermission] pair on this endpoint
+                // is what governs who may run it at all.
+                background = new
+                {
+                    student.DateOfBirth,
+                    age = AgeFrom(student.DateOfBirth),
+                    sex = student.Sex?.ToString(),
+                    student.AdmissionDate,
+                    residency = student.Residency?.ToString(),
+                    student.House,
+                    student.DormitoryOrStream,
+                    student.PhotoUrl,
+                    student.HomeDistrict,
+                    student.HomeAddress,
+                    livesWith = student.LivesWith?.ToString(),
+                    student.HomeLanguage,
+                    student.Religion,
+                    student.MedicalConditions,
+                    student.Allergies,
+                    student.RegularMedication,
+                    student.DisabilityOrLearningNeed,
+                    feesStatus = student.FeesStatus?.ToString(),
+                    student.SponsorName,
+                    transportMode = student.TransportMode?.ToString(),
+                    student.PreviousSchool
+                },
+
                 dataConsent = new
                 {
                     given = student.DataConsentGivenAt.HasValue,
@@ -470,6 +544,23 @@ public class StudentsController : ControllerBase
                     notes = student.DataConsentNotes
                 }
             },
+
+            // Flags, live AND ended: "we flagged this child as a young carer for two years and
+            // then stopped" is squarely within what is held about them.
+            flags = studentFlags.Select(f => new
+            {
+                f.Id,
+                category = f.Category?.Name,
+                tier = f.Tier.ToString(),
+                f.Notes,
+                raisedBy = NameOf(f.RaisedByUserId),
+                f.RaisedAt,
+                f.ReviewDueDate,
+                f.EndedAt,
+                endedBy = f.EndedByUserId.HasValue ? NameOf(f.EndedByUserId.Value) : null,
+                f.EndReason
+            }).ToList(),
+
             guardians = guardianLinks.Select(g => new
             {
                 linkId = g.Id,
@@ -478,6 +569,12 @@ public class StudentsController : ControllerBase
                 phone = g.VisitorProfile.Phone,
                 email = g.VisitorProfile.Email,
                 relationship = g.Relationship,
+                contactRestriction = g.ContactRestriction.ToString(),
+                g.RestrictionReason,
+                g.HasLegalCustody,
+                g.IsPrimaryContact,
+                g.ContactPriority,
+                g.LivesWithStudent,
                 linkedAt = g.CreatedAt
             }).ToList(),
             visits = visits.Select(v => new
@@ -566,7 +663,18 @@ public class StudentsController : ControllerBase
     // Copied from WelfareController.CanViewConfidentialAsync (same role-lookup shape as
     // PermissionAuthorizationHandler) — the SAR export has to apply the same confidentiality
     // gate as the timeline, and reaching into another controller's private helper isn't an option.
-    private async Task<bool> CanViewConfidentialAsync()
+    private async Task<bool> CanViewConfidentialAsync() => await HasPermissionAsync(Permissions.WelfareConfidentialView);
+
+    /// <summary>
+    /// The pastoral tier — health summary, family context and flags. Built on the existing
+    /// <c>welfare.view</c> permission rather than a new one: anyone trusted to read a child's
+    /// welfare chronology is by definition trusted with the background that chronology is read
+    /// against, and inventing a fourth permission for the same audience only creates a role
+    /// matrix an administrator will eventually get wrong.
+    /// </summary>
+    private async Task<bool> CanViewPastoralAsync() => await HasPermissionAsync(Permissions.WelfareView);
+
+    private async Task<bool> HasPermissionAsync(string permissionCode)
     {
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
 
@@ -576,7 +684,7 @@ public class StudentsController : ControllerBase
         return await _context.Users
             .Where(u => u.Id == userId.Value && u.IsActive)
             .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == Permissions.WelfareConfidentialView);
+            .AnyAsync(rp => rp.Permission.Code == permissionCode);
     }
 
     [HttpPost("branches/{branchId:guid}/students/{studentId:guid}/guardians")]
@@ -642,6 +750,94 @@ public class StudentsController : ControllerBase
             Phone = profile.Phone,
             Email = profile.Email,
             Relationship = link.Relationship
+        });
+    }
+
+    /// <summary>
+    /// Everything about the LINK between one guardian and one child — relationship, contact
+    /// ordering, custody, and the per-child contact restriction.
+    ///
+    /// The restriction has to live here and nowhere else: <c>VisitorProfile.IsWatchlisted</c> is
+    /// organization-scoped, so it can bar a person from the site but cannot express the ordinary
+    /// shape of a custody order, where a parent may visit one child and must not have contact
+    /// with a sibling. Before this endpoint that situation was unrepresentable, and a school
+    /// would have discovered the gap at the gate on visiting day with the child present.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/students/{studentId:guid}/guardians/{guardianLinkId:guid}")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(StudentGuardianDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateGuardianLink(Guid branchId, Guid studentId, Guid guardianLinkId, [FromBody] UpdateGuardianLinkRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (string.IsNullOrWhiteSpace(request.Relationship))
+            return BadRequest(new ProblemDetails { Title = "Relationship is required", Status = StatusCodes.Status400BadRequest });
+
+        if (!Enum.IsDefined(request.ContactRestriction))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised contact restriction", Status = StatusCodes.Status400BadRequest });
+
+        // A restriction with no reason is a note nobody can act on: the member of staff refusing
+        // a parent at the gate has to be able to say why, and "the system says no" is not a
+        // defensible answer to a person being turned away from their own child.
+        if (request.ContactRestriction != GuardianContactRestriction.None && string.IsNullOrWhiteSpace(request.RestrictionReason))
+            return BadRequest(new ProblemDetails { Title = "A contact restriction needs a reason", Status = StatusCodes.Status400BadRequest });
+
+        if (request.ContactPriority is { } prio && (prio < 1 || prio > 99))
+            return BadRequest(new ProblemDetails { Title = "Contact priority must be between 1 and 99", Status = StatusCodes.Status400BadRequest });
+
+        var link = await _context.StudentGuardians
+            .Include(g => g.VisitorProfile)
+            .Include(g => g.Student)
+            .FirstOrDefaultAsync(g => g.Id == guardianLinkId && g.StudentId == studentId && g.Student!.BranchId == branchId);
+        if (link == null) return NotFound();
+
+        // Setting a restriction is a safeguarding act, and its reason is confidential-tier data.
+        // Someone who cannot read the existing reason must not be able to overwrite it either.
+        if (request.ContactRestriction != link.ContactRestriction || request.RestrictionReason != link.RestrictionReason)
+        {
+            if (!await CanViewConfidentialAsync())
+                return Forbid();
+        }
+
+        link.Relationship = request.Relationship.Trim();
+        link.ContactRestriction = request.ContactRestriction;
+        link.RestrictionReason = request.ContactRestriction == GuardianContactRestriction.None
+            ? null
+            : Clean(request.RestrictionReason);
+        link.HasLegalCustody = request.HasLegalCustody;
+        link.ContactPriority = request.ContactPriority;
+        link.LivesWithStudent = request.LivesWithStudent;
+
+        // Exactly one primary contact per child — promoting this one demotes the rest, rather
+        // than leaving two rows both claiming to be who you ring first.
+        if (request.IsPrimaryContact && !link.IsPrimaryContact)
+        {
+            var siblings = await _context.StudentGuardians
+                .Where(g => g.StudentId == studentId && g.Id != guardianLinkId && g.IsPrimaryContact)
+                .ToListAsync();
+            foreach (var s in siblings) s.IsPrimaryContact = false;
+        }
+        link.IsPrimaryContact = request.IsPrimaryContact;
+
+        await _context.SaveChangesAsync();
+
+        var confidential = await CanViewConfidentialAsync();
+        return Ok(new StudentGuardianDto
+        {
+            Id = link.Id,
+            VisitorProfileId = link.VisitorProfileId,
+            FullName = link.VisitorProfile?.FullName ?? "",
+            Phone = link.VisitorProfile?.Phone,
+            Email = link.VisitorProfile?.Email,
+            Relationship = link.Relationship,
+            ContactRestriction = link.ContactRestriction,
+            RestrictionReason = confidential ? link.RestrictionReason : null,
+            HasLegalCustody = link.HasLegalCustody,
+            IsPrimaryContact = link.IsPrimaryContact,
+            ContactPriority = link.ContactPriority,
+            LivesWithStudent = link.LivesWithStudent
         });
     }
 
@@ -774,7 +970,21 @@ public class StudentsController : ControllerBase
         }).ToList());
     }
 
-    private static StudentDto MapToDto(Student s) => new()
+    /// <summary>
+    /// The ONE place that decides who sees what on a student. Three tiers, built on permissions
+    /// that already exist rather than three new ones:
+    ///
+    ///   Open         (students.view)            name, class, house, residency, guardians, and
+    ///                                           the FACT of a contact restriction.
+    ///   Pastoral     (welfare.view)             health summary, family context, flags and their
+    ///                                           notes. House parents, matrons, class teachers.
+    ///   Confidential (welfare.confidential.view) restriction reasons and High-tier flag notes.
+    ///
+    /// Fields above a caller's tier are BLANKED rather than the type being different per audience
+    /// — one DTO shape, one decision point. A second mapper that "forgets" a field is precisely
+    /// the drift this codebase keeps rediscovering.
+    /// </summary>
+    internal static StudentDto MapToDto(Student s, bool pastoral = true, bool confidential = true) => new()
     {
         Id = s.Id,
         BranchId = s.BranchId,
@@ -785,17 +995,170 @@ public class StudentsController : ControllerBase
         DataConsentGivenAt = s.DataConsentGivenAt,
         DataConsentRecordedByUserId = s.DataConsentRecordedByUserId,
         DataConsentNotes = s.DataConsentNotes,
+
+        // --- Open tier: placement. Everyone who can see the roster needs these to do their job.
+        DateOfBirth = s.DateOfBirth,
+        AgeYears = AgeFrom(s.DateOfBirth),
+        Sex = s.Sex,
+        AdmissionDate = s.AdmissionDate,
+        Residency = s.Residency,
+        House = s.House,
+        DormitoryOrStream = s.DormitoryOrStream,
+        PhotoUrl = s.PhotoUrl,
+
+        // --- Pastoral tier: context and health.
+        HomeDistrict = pastoral ? s.HomeDistrict : null,
+        HomeAddress = pastoral ? s.HomeAddress : null,
+        LivesWith = pastoral ? s.LivesWith : null,
+        HomeLanguage = pastoral ? s.HomeLanguage : null,
+        Religion = pastoral ? s.Religion : null,
+        MedicalConditions = pastoral ? s.MedicalConditions : null,
+        Allergies = pastoral ? s.Allergies : null,
+        RegularMedication = pastoral ? s.RegularMedication : null,
+        DisabilityOrLearningNeed = pastoral ? s.DisabilityOrLearningNeed : null,
+        FeesStatus = pastoral ? s.FeesStatus : null,
+        SponsorName = pastoral ? s.SponsorName : null,
+        TransportMode = pastoral ? s.TransportMode : null,
+        PreviousSchool = pastoral ? s.PreviousSchool : null,
+
+        Flags = MapFlags(s.Flags, pastoral, confidential),
+
+        HasGuardianRestriction = s.Guardians?.Any(g => g.IsActive && g.ContactRestriction != GuardianContactRestriction.None) ?? false,
+
         GuardianCount = s.Guardians?.Count(g => g.IsActive) ?? 0,
-        Guardians = s.Guardians?.Where(g => g.IsActive).Select(g => new StudentGuardianDto
-        {
-            Id = g.Id,
-            VisitorProfileId = g.VisitorProfileId,
-            FullName = g.VisitorProfile?.FullName ?? "",
-            Phone = g.VisitorProfile?.Phone,
-            Email = g.VisitorProfile?.Email,
-            Relationship = g.Relationship
-        }).ToList() ?? new()
+        Guardians = s.Guardians?.Where(g => g.IsActive)
+            .OrderByDescending(g => g.IsPrimaryContact)
+            .ThenBy(g => g.ContactPriority ?? int.MaxValue)
+            .Select(g => new StudentGuardianDto
+            {
+                Id = g.Id,
+                VisitorProfileId = g.VisitorProfileId,
+                FullName = g.VisitorProfile?.FullName ?? "",
+                Phone = g.VisitorProfile?.Phone,
+                Email = g.VisitorProfile?.Email,
+                Relationship = g.Relationship,
+
+                // The restriction itself is Open tier on purpose: gate staff cannot enforce what
+                // they cannot see. Only the REASON — which names a third party and a legal
+                // circumstance — is held back.
+                ContactRestriction = g.ContactRestriction,
+                RestrictionReason = confidential ? g.RestrictionReason : null,
+                HasLegalCustody = g.HasLegalCustody,
+                IsPrimaryContact = g.IsPrimaryContact,
+                ContactPriority = g.ContactPriority,
+                LivesWithStudent = pastoral ? g.LivesWithStudent : null
+            }).ToList() ?? new()
     };
+
+    /// <summary>Live flags only, most severe first. A High-tier flag's notes need the confidential tier; the chip itself does not, because staff need to know a flag exists to behave differently.</summary>
+    internal static List<StudentFlagDto> MapFlags(IEnumerable<StudentFlag>? flags, bool pastoral, bool confidential)
+    {
+        if (flags == null || !pastoral) return new();
+        var now = DateTime.UtcNow;
+
+        return flags.Where(f => f.EndedAt == null)
+            .OrderByDescending(f => f.Tier)
+            .ThenByDescending(f => f.RaisedAt)
+            .Select(f => new StudentFlagDto
+            {
+                Id = f.Id,
+                StudentId = f.StudentId,
+                CategoryId = f.CategoryId,
+                CategoryName = f.Category?.Name ?? "",
+                CategoryColor = f.Category?.Color,
+                Tier = f.Tier,
+                Notes = (f.Tier == WelfareTier.High && !confidential) ? null : f.Notes,
+                RaisedByUserId = f.RaisedByUserId,
+                RaisedAt = f.RaisedAt,
+                ReviewDueDate = f.ReviewDueDate,
+                EndedAt = f.EndedAt,
+                EndReason = f.EndReason,
+                IsActive = true,
+                IsReviewOverdue = f.ReviewDueDate.HasValue && f.ReviewDueDate.Value < now
+            }).ToList();
+    }
+
+    /// <summary>
+    /// The rules a <c>[MaxLength]</c> attribute cannot express. Runs on create AND update, and
+    /// runs regardless of what the browser validated — the Blazor form shares these same limits,
+    /// but a form is a courtesy to the user and this is the actual boundary.
+    /// </summary>
+    private static string? ValidateProfile(StudentProfileFields p)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        if (p.DateOfBirth is { } dob)
+        {
+            if (dob > today)
+                return "Date of birth cannot be in the future";
+            if (dob < today.AddYears(-130))
+                return "Date of birth is not a plausible date";
+        }
+
+        if (p.AdmissionDate is { } adm)
+        {
+            // A year's grace: schools legitimately pre-register a cohort for next term.
+            if (adm > today.AddYears(1))
+                return "Admission date cannot be more than a year in the future";
+            if (p.DateOfBirth is { } d && adm < d)
+                return "Admission date cannot be before the date of birth";
+        }
+
+        // Guard the enums explicitly. A JSON body can carry any integer, and an out-of-range one
+        // would otherwise be stored and then render as a blank chip forever.
+        if (p.Sex is { } sex && !Enum.IsDefined(sex)) return "Unrecognised value for sex";
+        if (p.Residency is { } res && !Enum.IsDefined(res)) return "Unrecognised value for residency";
+        if (p.LivesWith is { } lw && !Enum.IsDefined(lw)) return "Unrecognised value for lives-with";
+        if (p.FeesStatus is { } fs && !Enum.IsDefined(fs)) return "Unrecognised value for fees status";
+        if (p.TransportMode is { } tm && !Enum.IsDefined(tm)) return "Unrecognised value for transport mode";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Copies the background fields onto the entity, trimming and collapsing blank strings to
+    /// null so "" and null never both mean "unset" in the database.
+    /// <paramref name="includePastoral"/> false leaves the pastoral-tier fields untouched — see
+    /// the call in UpdateStudent for why writing them back would be destructive.
+    /// </summary>
+    private static void ApplyProfile(Student s, StudentProfileFields p, bool includePastoral = true)
+    {
+        s.DateOfBirth = p.DateOfBirth;
+        s.Sex = p.Sex;
+        s.AdmissionDate = p.AdmissionDate;
+        s.Residency = p.Residency;
+        s.House = Clean(p.House);
+        s.DormitoryOrStream = Clean(p.DormitoryOrStream);
+        s.PhotoUrl = Clean(p.PhotoUrl);
+
+        if (!includePastoral) return;
+
+        s.HomeDistrict = Clean(p.HomeDistrict);
+        s.HomeAddress = Clean(p.HomeAddress);
+        s.LivesWith = p.LivesWith;
+        s.HomeLanguage = Clean(p.HomeLanguage);
+        s.Religion = Clean(p.Religion);
+        s.MedicalConditions = Clean(p.MedicalConditions);
+        s.Allergies = Clean(p.Allergies);
+        s.RegularMedication = Clean(p.RegularMedication);
+        s.DisabilityOrLearningNeed = Clean(p.DisabilityOrLearningNeed);
+        s.FeesStatus = p.FeesStatus;
+        s.SponsorName = Clean(p.SponsorName);
+        s.TransportMode = p.TransportMode;
+        s.PreviousSchool = Clean(p.PreviousSchool);
+    }
+
+    private static string? Clean(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+
+    /// <summary>Derived once, server-side, so no two screens can disagree about a child's age.</summary>
+    internal static int? AgeFrom(DateOnly? dob)
+    {
+        if (dob is not { } d) return null;
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var age = today.Year - d.Year;
+        if (d > today.AddYears(-age)) age--;
+        return age < 0 || age > 130 ? null : age;
+    }
 
     // Internal so WelfareController's historical-import endpoint returns the identical DTO shape
     // for the job it creates in this same table, rather than a second mapper to keep in sync.
@@ -818,4 +1181,217 @@ public class StudentsController : ControllerBase
         FailureReason = j.FailureReason,
         CreatedAt = j.CreatedAt
     };
+
+    // =========================================================================================
+    // Student flags — standing vulnerability markers. The lens a chronology entry is read
+    // through: a late arrival from a child with no flags is a late arrival; the same lateness
+    // from a child flagged as a young carer is a signal.
+    //
+    // Zero new permissions: raising and ending a flag is students.manage (the same right that
+    // edits the child's record), reading one is the pastoral tier, and a High-tier flag's notes
+    // need welfare.confidential.view exactly as a safeguarding record does.
+    // =========================================================================================
+
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/flags")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(List<StudentFlagDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetStudentFlags(Guid branchId, Guid studentId, [FromQuery] bool includeEnded = false)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var exists = await _context.Students.AnyAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (!exists) return NotFound();
+
+        var query = _context.StudentFlags
+            .Include(f => f.Category)
+            .Where(f => f.StudentId == studentId && f.BranchId == branchId);
+        if (!includeEnded) query = query.Where(f => f.EndedAt == null);
+
+        var flags = await query.OrderByDescending(f => f.EndedAt == null)
+            .ThenByDescending(f => f.Tier)
+            .ThenByDescending(f => f.RaisedAt)
+            .ToListAsync();
+
+        var confidential = await CanViewConfidentialAsync();
+        var names = await ResolveUserNamesAsync(
+            flags.Select(f => f.RaisedByUserId)
+                 .Concat(flags.Where(f => f.EndedByUserId.HasValue).Select(f => f.EndedByUserId!.Value)));
+
+        var now = DateTime.UtcNow;
+        return Ok(flags.Select(f => new StudentFlagDto
+        {
+            Id = f.Id,
+            StudentId = f.StudentId,
+            CategoryId = f.CategoryId,
+            CategoryName = f.Category?.Name ?? "",
+            CategoryColor = f.Category?.Color,
+            Tier = f.Tier,
+            Notes = (f.Tier == WelfareTier.High && !confidential) ? null : f.Notes,
+            RaisedByUserId = f.RaisedByUserId,
+            RaisedByName = names.GetValueOrDefault(f.RaisedByUserId, "Unknown"),
+            RaisedAt = f.RaisedAt,
+            ReviewDueDate = f.ReviewDueDate,
+            EndedAt = f.EndedAt,
+            EndedByName = f.EndedByUserId.HasValue ? names.GetValueOrDefault(f.EndedByUserId.Value, "Unknown") : null,
+            EndReason = f.EndReason,
+            IsActive = f.EndedAt == null,
+            IsReviewOverdue = f.EndedAt == null && f.ReviewDueDate.HasValue && f.ReviewDueDate.Value < now
+        }).ToList());
+    }
+
+    [HttpPost("branches/{branchId:guid}/students/{studentId:guid}/flags")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(StudentFlagDto), StatusCodes.Status201Created)]
+    public async Task<IActionResult> RaiseStudentFlag(Guid branchId, Guid studentId, [FromBody] CreateStudentFlagRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        if (request.CategoryId == Guid.Empty)
+            return BadRequest(new ProblemDetails { Title = "Choose what the flag is", Status = StatusCodes.Status400BadRequest });
+
+        if (!Enum.IsDefined(request.Tier))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised tier", Status = StatusCodes.Status400BadRequest });
+
+        // Raising a High-tier flag is a safeguarding act with the same audience as a confidential
+        // record — someone who could not then read it back must not be able to create it.
+        if (request.Tier == WelfareTier.High && !await CanViewConfidentialAsync())
+            return Forbid();
+
+        var category = await _context.WelfareCategories
+            .FirstOrDefaultAsync(c => c.Id == request.CategoryId && c.OrganizationId == student.OrganizationId && c.IsActive);
+        if (category == null)
+            return BadRequest(new ProblemDetails { Title = "That category does not exist on this organization", Status = StatusCodes.Status400BadRequest });
+
+        if (request.ReviewDueDate is { } due && due.Date < DateTime.UtcNow.Date)
+            return BadRequest(new ProblemDetails { Title = "A review date in the past would be overdue the moment it is set", Status = StatusCodes.Status400BadRequest });
+
+        // One live flag per category per student. A second "young carer" flag adds no
+        // information, it just splits the review history across two rows.
+        var duplicate = await _context.StudentFlags
+            .AnyAsync(f => f.StudentId == studentId && f.CategoryId == request.CategoryId && f.EndedAt == null);
+        if (duplicate)
+            return Conflict(new ProblemDetails { Title = category.Name + " is already raised for this student", Status = StatusCodes.Status409Conflict });
+
+        var userId = CurrentUserId() ?? Guid.Empty;
+        var flag = new StudentFlag
+        {
+            OrganizationId = student.OrganizationId,
+            BranchId = branchId,
+            StudentId = studentId,
+            CategoryId = request.CategoryId,
+            Tier = request.Tier,
+            Notes = Clean(request.Notes),
+            RaisedByUserId = userId,
+            RaisedAt = DateTime.UtcNow,
+            ReviewDueDate = request.ReviewDueDate
+        };
+        _context.StudentFlags.Add(flag);
+        await _context.SaveChangesAsync();
+
+        var names = await ResolveUserNamesAsync(new[] { userId });
+        return CreatedAtAction(nameof(GetStudentFlags), new { branchId, studentId }, new StudentFlagDto
+        {
+            Id = flag.Id,
+            StudentId = studentId,
+            CategoryId = category.Id,
+            CategoryName = category.Name,
+            CategoryColor = category.Color,
+            Tier = flag.Tier,
+            Notes = flag.Notes,
+            RaisedByUserId = userId,
+            RaisedByName = names.GetValueOrDefault(userId, "Unknown"),
+            RaisedAt = flag.RaisedAt,
+            ReviewDueDate = flag.ReviewDueDate,
+            IsActive = true,
+            IsReviewOverdue = false
+        });
+    }
+
+    /// <summary>
+    /// Reviewing a flag IS this endpoint — the "review" half of assess-plan-do-review for the
+    /// flag itself. Clearing ReminderSentAt is the point: a reviewed flag starts its nagging
+    /// cycle afresh from the new date rather than staying silent because it was chased once.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/students/{studentId:guid}/flags/{flagId:guid}")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> UpdateStudentFlag(Guid branchId, Guid studentId, Guid flagId, [FromBody] UpdateStudentFlagRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (!Enum.IsDefined(request.Tier))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised tier", Status = StatusCodes.Status400BadRequest });
+
+        var flag = await _context.StudentFlags
+            .FirstOrDefaultAsync(f => f.Id == flagId && f.StudentId == studentId && f.BranchId == branchId);
+        if (flag == null) return NotFound();
+
+        if (flag.EndedAt != null)
+            return BadRequest(new ProblemDetails { Title = "That flag has already been ended", Status = StatusCodes.Status400BadRequest });
+
+        if ((flag.Tier == WelfareTier.High || request.Tier == WelfareTier.High) && !await CanViewConfidentialAsync())
+            return Forbid();
+
+        if (request.ReviewDueDate is { } due && due.Date < DateTime.UtcNow.Date)
+            return BadRequest(new ProblemDetails { Title = "A review date in the past would be overdue the moment it is set", Status = StatusCodes.Status400BadRequest });
+
+        flag.Tier = request.Tier;
+        flag.Notes = Clean(request.Notes);
+        flag.ReviewDueDate = request.ReviewDueDate;
+        flag.ReminderSentAt = null;
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Ends a flag. Deliberately never deletes it: the fact of having been flagged, and for how
+    /// long, is itself welfare information — and a flag that can be made to disappear is a flag
+    /// nobody can rely on in a review.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/students/{studentId:guid}/flags/{flagId:guid}/end")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> EndStudentFlag(Guid branchId, Guid studentId, Guid flagId, [FromBody] EndStudentFlagRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (string.IsNullOrWhiteSpace(request.EndReason))
+            return BadRequest(new ProblemDetails { Title = "Say why the flag is being ended", Status = StatusCodes.Status400BadRequest });
+
+        var flag = await _context.StudentFlags
+            .FirstOrDefaultAsync(f => f.Id == flagId && f.StudentId == studentId && f.BranchId == branchId);
+        if (flag == null) return NotFound();
+
+        if (flag.EndedAt != null)
+            return BadRequest(new ProblemDetails { Title = "That flag has already been ended", Status = StatusCodes.Status400BadRequest });
+
+        if (flag.Tier == WelfareTier.High && !await CanViewConfidentialAsync())
+            return Forbid();
+
+        flag.EndedAt = DateTime.UtcNow;
+        flag.EndedByUserId = CurrentUserId();
+        flag.EndReason = request.EndReason.Trim();
+
+        await _context.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private async Task<Dictionary<Guid, string>> ResolveUserNamesAsync(IEnumerable<Guid> userIds)
+    {
+        var ids = userIds.Where(i => i != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0) return new();
+
+        return await _context.Users
+            .Where(u => ids.Contains(u.Id))
+            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
+    }
 }

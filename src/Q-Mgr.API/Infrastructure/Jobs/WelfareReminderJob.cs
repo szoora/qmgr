@@ -85,6 +85,73 @@ public class WelfareReminderJob
 
         _logger.LogInformation("Welfare overdue-action reminder sweep: {Sent} reminder(s) sent out of {Total} overdue record(s)", sent, overdue.Count);
     }
+
+    /// <summary>
+    /// The same sweep, for standing flags rather than one-off actions. A flag nobody has revisited
+    /// is worse than no flag at all, because it reads as current knowledge — "child protection
+    /// plan" raised two years ago and never reviewed will still be shaping how staff treat a child
+    /// long after the situation changed.
+    ///
+    /// Deliberately part of this job rather than a new one: it is the identical "somebody must
+    /// look at this again" mechanic, down to the 24-hour re-notification gate, and a second
+    /// Hangfire job doing the same thing to a different table is two schedules to keep in step.
+    ///
+    /// The reminder goes to whoever raised the flag, since there is no assignee on a flag — the
+    /// person who knew enough to raise it is the person who can judge whether it still applies.
+    /// </summary>
+    [AutomaticRetry(Attempts = 3)]
+    public async Task SendOverdueFlagReviewRemindersAsync()
+    {
+        var now = DateTime.UtcNow;
+        var renotifyBefore = now.AddDays(-1);
+
+        var overdue = await _context.StudentFlags
+            .Include(f => f.Student)
+            .Include(f => f.Category)
+            .Where(f => f.EndedAt == null
+                        && f.ReviewDueDate != null
+                        && f.ReviewDueDate < now
+                        && f.RaisedByUserId != Guid.Empty
+                        && (f.ReminderSentAt == null || f.ReminderSentAt < renotifyBefore))
+            .ToListAsync();
+
+        var sent = 0;
+        foreach (var flag in overdue)
+        {
+            try
+            {
+                var studentName = flag.Student?.FullName ?? "a student";
+                var flagName = flag.Category?.Name ?? "a flag";
+                var daysOverdue = (int)Math.Ceiling((now - flag.ReviewDueDate!.Value).TotalDays);
+
+                await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                {
+                    UserId = flag.RaisedByUserId,
+                    OrganizationId = flag.OrganizationId,
+                    BranchId = flag.BranchId,
+                    Title = "Flag review overdue",
+                    Message = $"The \"{flagName}\" flag on {studentName} was due for review {daysOverdue} day{(daysOverdue == 1 ? "" : "s")} ago. Confirm it still applies, or end it.",
+                    Type = NotificationType.SystemAlert,
+                    Priority = NotificationPriority.High,
+                    Channels = NotificationChannel.InApp,
+                    ActionUrl = $"/admin/students/{flag.StudentId}/picture",
+                    IconClass = "flag"
+                });
+
+                flag.ReminderSentAt = now;
+                sent++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send flag-review reminder for student flag {FlagId}", flag.Id);
+            }
+        }
+
+        if (sent > 0)
+            await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Student-flag review reminder sweep: {Sent} reminder(s) sent out of {Total} overdue flag(s)", sent, overdue.Count);
+    }
 }
 
 public static class WelfareReminderJobRegistration
@@ -98,5 +165,12 @@ public static class WelfareReminderJobRegistration
             "welfare-overdue-action-reminders",
             job => job.SendOverdueActionRemindersAsync(),
             Cron.Hourly);
+
+        // Daily, not hourly: a flag review is due on a DATE, not at a moment, and chasing it
+        // within the hour would wake somebody at 01:00 about a review that is one minute late.
+        RecurringJob.AddOrUpdate<WelfareReminderJob>(
+            "welfare-overdue-flag-reviews",
+            job => job.SendOverdueFlagReviewRemindersAsync(),
+            Cron.Daily(7));
     }
 }

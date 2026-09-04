@@ -55,6 +55,7 @@ public class QMgrDbContext : DbContext
     public DbSet<VisitorPass> VisitorPasses => Set<VisitorPass>();
     public DbSet<Student> Students => Set<Student>();
     public DbSet<StudentGuardian> StudentGuardians => Set<StudentGuardian>();
+    public DbSet<StudentFlag> StudentFlags => Set<StudentFlag>();
     public DbSet<RosterImportJob> RosterImportJobs => Set<RosterImportJob>();
     public DbSet<RosterImportJobEntry> RosterImportJobEntries => Set<RosterImportJobEntry>();
 

@@ -84,11 +84,35 @@
                         <input type="checkbox" checked="@selectedStudentIds.Contains(s.Id)" @onchange="@(e => ToggleStudentSelection(s.Id, (bool)(e.Value ?? false)))" />
                     </span>
                     <span class="roster-name">
-                        @s.FullName
+                        <span class="roster-name-text">@s.FullName</span>
                         <span class="consent-icon @(s.DataConsentGivenAt.HasValue ? "consent-icon--given" : "")"
                               title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {s.DataConsentGivenAt.Value.ToLocalTime():MMM d, yyyy}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
                             <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "shield-check" : "shield")" Size="sm" />
                         </span>
+
+                        @* A restriction is the one thing on this row somebody has to act on at the
+                           gate, so it is loud and it comes first. The reason behind it stays on the
+                           picture page, where the confidential tier governs it. *@
+                        @if (s.HasGuardianRestriction)
+                        {
+                            <span class="roster-chip restriction" title="A guardian on this child has a contact restriction — open the picture for the detail">
+                                <QIcon Name="shield-exclamation" Size="12" />
+                                Restricted
+                            </span>
+                        }
+                        @foreach (var f in s.Flags.Take(3))
+                        {
+                            <span class="roster-chip tier-@f.Tier.ToString().ToLowerInvariant() @(f.IsReviewOverdue ? "overdue" : "")"
+                                  title="@($"{f.CategoryName}{(f.IsReviewOverdue ? " — review overdue" : "")}")">
+                                @f.CategoryName
+                            </span>
+                        }
+                        @if (s.Flags.Count > 3)
+                        {
+                            <span class="roster-chip more" title="@string.Join(", ", s.Flags.Skip(3).Select(f => f.CategoryName))">
+                                +@(s.Flags.Count - 3)
+                            </span>
+                        }
                     </span>
                     <span class="roster-code">@(s.StudentCode ?? "—")</span>
                     <span>
@@ -125,6 +149,7 @@
                         }
                         @if (canViewWelfare)
                         {
+                            <QButton Icon="person-vcard" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/picture"))" Title="Open the student picture" />
                             <QButton Icon="clipboard2-pulse" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))" Title="View welfare timeline" />
                             <QButton Icon="file-earmark-arrow-down" Size="sm" Variant="ghost" OnClick="@(() => ExportStudentData(s))" Title="Export data (SAR) — everything held about this student as one JSON file" />
                         }
@@ -144,24 +169,143 @@
 </div>
 
 @* ---------------- Add / Edit Student ---------------- *@
-<QModal @bind-Visible="showStudentModal" Title="@(editingStudentId.HasValue ? "Edit Student" : "Add Student")" Size="md">
+<QModal @bind-Visible="showStudentModal" Title="@(editingStudentId.HasValue ? "Edit Student" : "Add Student")" Size="lg">
     <ChildContent>
-        <div class="form-grid">
-            <label class="full-width">Full Name *<input @bind="studentModel.FullName" placeholder="Jane Student" /></label>
-            <label>Student / Admission Code<input @bind="studentModel.StudentCode" placeholder="S001" /></label>
-            <label>Class<input @bind="studentModel.ClassName" placeholder="P.6" /></label>
-            @if (editingStudentId.HasValue)
+        @* Four tabs, not one long scroll. The roster form was four fields; it is now twenty-three,
+           and a wall of inputs is how a matron ends up filling in nothing. Identity is what the
+           gate needs, so it stays first and is the only tab that can be required. *@
+        <div class="stu-tabs" role="tablist">
+            @foreach (var tab in ProfileTabs)
             {
-                <label class="checkbox-label full-width">
-                    <input type="checkbox" @bind="studentModel.IsActive" />
-                    <span>Active (on the current roster)</span>
-                </label>
+                <button type="button"
+                        role="tab"
+                        aria-selected="@(activeTab == tab.Key ? "true" : "false")"
+                        class="stu-tab @(activeTab == tab.Key ? "active" : "")"
+                        @onclick="@(() => activeTab = tab.Key)">
+                    <QIcon Name="@tab.Icon" Size="15" />
+                    <span>@tab.Label</span>
+                    @if (TabFilledCount(tab.Key) > 0)
+                    {
+                        <span class="stu-tab-count">@TabFilledCount(tab.Key)</span>
+                    }
+                </button>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(studentFormError))
+        {
+            <div class="stu-form-error" role="alert">
+                <QIcon Name="exclamation-triangle-fill" Size="16" />
+                <span>@studentFormError</span>
+            </div>
+        }
+
+        <div class="stu-tab-panel" @key="activeTab">
+            @if (activeTab == "identity")
+            {
+                <div class="stu-grid">
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.FullName" Label="Full name" Required="true"
+                                Placeholder="Jane Student" MaxLength="255"
+                                HasError="@fieldErrors.ContainsKey(nameof(studentModel.FullName))"
+                                ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.FullName))" />
+                    </div>
+                    <QInput TValue="string" @bind-Value="studentModel.StudentCode" Label="Student / admission code"
+                            Placeholder="S001" MaxLength="100" HelperText="The school's own roll number — what a bulk import matches on." />
+                    <QInput TValue="string" @bind-Value="studentModel.ClassName" Label="Class" Placeholder="S.4" MaxLength="100" />
+
+                    <QDatePicker @bind-Value="dateOfBirthValue" Label="Date of birth"
+                                 HasError="@fieldErrors.ContainsKey(nameof(studentModel.DateOfBirth))"
+                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.DateOfBirth))" />
+                    <QSelect TValue="StudentSex?" TItem="EnumOption<StudentSex>" @bind-Value="studentModel.Sex"
+                             Label="Sex" Placeholder="Not recorded" AllowClear="true"
+                             Items="@SexOptions" ValueSelector="@(o => (StudentSex?)o.Value)" TextSelector="@(o => o.Label)" />
+
+                    <QDatePicker @bind-Value="admissionDateValue" Label="Admission date"
+                                 HasError="@fieldErrors.ContainsKey(nameof(studentModel.AdmissionDate))"
+                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.AdmissionDate))" />
+                    <QSelect TValue="StudentResidency?" TItem="EnumOption<StudentResidency>" @bind-Value="studentModel.Residency"
+                             Label="Residency" Placeholder="Not recorded" AllowClear="true"
+                             HelperText="Decides who is responsible overnight."
+                             Items="@ResidencyOptions" ValueSelector="@(o => (StudentResidency?)o.Value)" TextSelector="@(o => o.Label)" />
+
+                    <QInput TValue="string" @bind-Value="studentModel.House" Label="House" Placeholder="Kabalega" MaxLength="100"
+                            HelperText="The pastoral unit — the first responder and the grouping every report uses." />
+                    <QInput TValue="string" @bind-Value="studentModel.DormitoryOrStream" Label="Dormitory or stream" Placeholder="Block C" MaxLength="100" />
+
+                    @if (editingStudentId.HasValue)
+                    {
+                        <div class="span-2">
+                            <QCheckbox @bind-Value="studentModel.IsActive" Label="Active (on the current roster)" />
+                        </div>
+                    }
+                </div>
+            }
+            else if (activeTab == "home")
+            {
+                <div class="stu-grid">
+                    <QInput TValue="string" @bind-Value="studentModel.HomeDistrict" Label="Home district" Placeholder="Mbarara" MaxLength="120"
+                            HelperText="How quickly a guardian can actually arrive." />
+                    <QSelect TValue="StudentLivesWith?" TItem="EnumOption<StudentLivesWith>" @bind-Value="studentModel.LivesWith"
+                             Label="Lives with" Placeholder="Not recorded" AllowClear="true"
+                             Items="@LivesWithOptions" ValueSelector="@(o => (StudentLivesWith?)o.Value)" TextSelector="@(o => o.Label)" />
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.HomeAddress" Label="Home address" Type="textarea" Rows="2" MaxLength="500" />
+                    </div>
+                    <QInput TValue="string" @bind-Value="studentModel.HomeLanguage" Label="Home language" Placeholder="Runyankole" MaxLength="80"
+                            HelperText="Which language to hold a difficult conversation in." />
+                    <QInput TValue="string" @bind-Value="studentModel.Religion" Label="Religion" MaxLength="80" />
+                </div>
+            }
+            else if (activeTab == "health")
+            {
+                <div class="stu-note-inline">
+                    <QIcon Name="shield-lock" Size="15" />
+                    <span>A welfare summary for staff, not a medical record. Visible to pastoral staff only.</span>
+                </div>
+                <div class="stu-grid">
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.MedicalConditions" Label="Medical conditions" Type="textarea" Rows="2" MaxLength="1000"
+                                Placeholder="Epilepsy — carries medication, matron holds a spare"
+                                HelperText="Turns a collapse in assembly from a mystery into a known event with a known response." />
+                    </div>
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.Allergies" Label="Allergies" Type="textarea" Rows="2" MaxLength="1000"
+                                Placeholder="Peanuts — kitchen notified" />
+                    </div>
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.RegularMedication" Label="Regular medication" Type="textarea" Rows="2" MaxLength="1000"
+                                HelperText="Who administers it and when." />
+                    </div>
+                    <div class="span-2">
+                        <QInput TValue="string" @bind-Value="studentModel.DisabilityOrLearningNeed" Label="Disability or learning need" Type="textarea" Rows="2" MaxLength="1000"
+                                HelperText="Often the field that turns a punishment into a support." />
+                    </div>
+                </div>
+            }
+            else if (activeTab == "continuity")
+            {
+                <div class="stu-grid">
+                    <QSelect TValue="StudentFeesStatus?" TItem="EnumOption<StudentFeesStatus>" @bind-Value="studentModel.FeesStatus"
+                             Label="Fees status" Placeholder="Not recorded" AllowClear="true"
+                             HelperText="A welfare field, not a finance one — arrears predict absence."
+                             Items="@FeesOptions" ValueSelector="@(o => (StudentFeesStatus?)o.Value)" TextSelector="@(o => o.Label)" />
+                    <QInput TValue="string" @bind-Value="studentModel.SponsorName" Label="Sponsor" MaxLength="200"
+                            HelperText="Who to notify, alongside a parent." />
+                    <QSelect TValue="StudentTransportMode?" TItem="EnumOption<StudentTransportMode>" @bind-Value="studentModel.TransportMode"
+                             Label="Transport" Placeholder="Not recorded" AllowClear="true"
+                             Items="@TransportOptions" ValueSelector="@(o => (StudentTransportMode?)o.Value)" TextSelector="@(o => o.Label)" />
+                    <QInput TValue="string" @bind-Value="studentModel.PreviousSchool" Label="Previous school" MaxLength="200"
+                            HelperText="Repeated moves are a documented vulnerability marker." />
+                </div>
             }
         </div>
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showStudentModal = false)" />
-        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveStudent" Disabled="@string.IsNullOrWhiteSpace(studentModel.FullName)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveStudent"
+                 Loading="@isSavingStudent"
+                 Disabled="@(isSavingStudent || string.IsNullOrWhiteSpace(studentModel.FullName))" />
     </FooterContent>
 </QModal>
 
@@ -435,18 +579,211 @@
 </div>
 
 <style>
+    /* ---------------- Roster chips ---------------- */
+
+    .roster-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 600;
+        vertical-align: middle;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        border: 1px solid var(--qm-border);
+        animation: rosterChipIn .28s ease both;
+    }
+
+    .roster-chip.tier-medium { background: rgba(var(--qm-warning-rgb), .12); color: var(--qm-accent-orange); border-color: rgba(var(--qm-warning-rgb), .28); }
+    .roster-chip.tier-high   { background: rgba(var(--qm-danger-rgb), .12);  color: var(--qm-danger);       border-color: rgba(var(--qm-danger-rgb), .28); }
+    .roster-chip.restriction { background: rgba(var(--qm-danger-rgb), .15);  color: var(--qm-danger);       border-color: rgba(var(--qm-danger-rgb), .35); font-weight: 700; }
+    .roster-chip.more        { color: var(--qm-text-muted); cursor: default; }
+    .roster-chip.overdue     { border-style: dashed; }
+
+    @@keyframes rosterChipIn {
+        from { opacity: 0; transform: translateX(-3px); }
+        to   { opacity: 1; transform: translateX(0); }
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .roster-chip { animation: none !important; }
+    }
+
+    /* ---------------- Tabbed student profile ---------------- */
+
+    .stu-tabs {
+        display: flex;
+        gap: 2px;
+        border-bottom: 1px solid var(--qm-border);
+        margin: -4px 0 18px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .stu-tabs::-webkit-scrollbar { display: none; }
+
+    .stu-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 14px;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--qm-text-secondary);
+        font-family: var(--qm-font-primary);
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        cursor: pointer;
+        /* The underline slides between tabs rather than blinking on and off — the cheapest way to
+           make four panels read as one form with four views instead of four separate screens. */
+        transition: color .18s ease, border-color .18s ease;
+    }
+
+    .stu-tab:hover { color: var(--qm-text-primary); }
+
+    .stu-tab.active {
+        color: var(--qm-primary);
+        border-bottom-color: var(--qm-primary);
+        font-weight: 600;
+    }
+
+    .stu-tab:focus-visible {
+        outline: 2px solid var(--qm-primary);
+        outline-offset: -2px;
+        border-radius: 3px 3px 0 0;
+    }
+
+    /* How many fields on that tab are already filled. Deliberately quiet — it is an orientation
+       aid for someone part-way through a long form, not a score. */
+    .stu-tab-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 17px;
+        height: 17px;
+        padding: 0 4px;
+        border-radius: 9px;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-muted);
+        font-size: 10px;
+        font-weight: 700;
+    }
+
+    .stu-tab.active .stu-tab-count {
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+    }
+
+    /* @@key on the panel forces a fresh element per tab, so this replays on every switch. A 6px
+       rise, not a slide across — a horizontal slide implies the tabs are a sequence you move
+       through, and these are four views of one thing. */
+    .stu-tab-panel {
+        animation: stuPanelIn .22s ease both;
+    }
+
+    @@keyframes stuPanelIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .stu-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 16px;
+    }
+
+    .stu-grid > .span-2 { grid-column: 1 / -1; }
+
+    /* Fields fade in a beat behind the panel, in reading order. Six steps only — past that the
+       last field waits long enough to feel like the form is still loading. */
+    .stu-grid > * {
+        animation: stuFieldIn .26s ease both;
+    }
+
+    .stu-grid > *:nth-child(1) { animation-delay: .02s; }
+    .stu-grid > *:nth-child(2) { animation-delay: .05s; }
+    .stu-grid > *:nth-child(3) { animation-delay: .08s; }
+    .stu-grid > *:nth-child(4) { animation-delay: .11s; }
+    .stu-grid > *:nth-child(5) { animation-delay: .14s; }
+    .stu-grid > *:nth-child(n+6) { animation-delay: .16s; }
+
+    @@keyframes stuFieldIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .stu-form-error {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 11px 13px;
+        margin-bottom: 16px;
+        border-radius: var(--qm-radius-sm);
+        background: rgba(var(--qm-danger-rgb), .1);
+        border: 1px solid rgba(var(--qm-danger-rgb), .3);
+        color: var(--qm-danger);
+        font-size: 13px;
+        animation: stuShake .3s ease;
+    }
+
+    /* Two small nudges, not a wobble. Enough to catch the eye of someone who pressed Save and is
+       already looking at the button rather than the top of the dialog. */
+    @@keyframes stuShake {
+        0%, 100% { transform: translateX(0); }
+        25%      { transform: translateX(-4px); }
+        75%      { transform: translateX(4px); }
+    }
+
+    .stu-note-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 12px;
+        margin-bottom: 16px;
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 12.5px;
+    }
+
+    @@media (max-width: 640px) {
+        .stu-grid { grid-template-columns: 1fr; }
+        .stu-grid > .span-2 { grid-column: 1; }
+    }
+
+    /* Every animation above is decoration over content that is already correct and already in the
+       DOM — so honouring the preference costs nothing and skipping it would be an accessibility
+       bug, not a style choice. */
+    @@media (prefers-reduced-motion: reduce) {
+        .stu-tab-panel,
+        .stu-grid > *,
+        .stu-form-error {
+            animation: none !important;
+        }
+        .stu-tab { transition: none; }
+    }
     .roster-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
     .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
     .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
 
     .roster-table { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; }
-    .roster-row { display: grid; grid-template-columns: auto 1.5fr 1fr 1fr 2.5fr auto; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 14px; }
+    .roster-row { display: grid; grid-template-columns: auto 2.4fr 0.8fr 0.8fr 1.9fr auto; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 14px; }
     .roster-select { display: flex; align-items: center; }
     .roster-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
     .roster-row:last-child { border-bottom: none; }
     .roster-header { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .roster-row.inactive { opacity: 0.5; }
-    .roster-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    /* Flex-wrap, not inline-flex: a student can carry a restriction warning plus several flag
+       chips, and letting them wrap onto a second line keeps the NAME on one line — the name is
+       what somebody is scanning the column for. */
+    .roster-name { font-weight: 600; color: var(--qm-text-primary); display: flex; flex-wrap: wrap; align-items: center; gap: 5px; row-gap: 4px; }
+    .roster-name > .roster-chip { margin-left: 0; }
+    .roster-name-text { white-space: nowrap; }
     .consent-icon { display: inline-flex; color: var(--qm-text-muted); opacity: 0.55; cursor: help; }
     .consent-icon--given { color: var(--qm-success, #3f7d58); opacity: 1; }
     .consent-status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; color: var(--qm-text-muted); }
@@ -927,6 +1264,112 @@
     private bool showStudentModal;
     private Guid? editingStudentId;
     private UpdateStudentRequest studentModel = new();
+    private bool isSavingStudent;
+    private string? studentFormError;
+    private string activeTab = "identity";
+    private readonly Dictionary<string, string> fieldErrors = new();
+
+    private sealed record ProfileTab(string Key, string Label, string Icon);
+
+    private static readonly ProfileTab[] ProfileTabs =
+    {
+        new("identity",   "Identity",     "person-vcard"),
+        new("home",       "Home",         "house-heart"),
+        new("health",     "Health",       "heart-pulse"),
+        new("continuity", "Continuity",   "life-preserver")
+    };
+
+    /// <summary>
+    /// How many fields on a tab are filled. Shown as a small count on the tab itself so somebody
+    /// filling a long form can see at a glance what they have already done and what is still
+    /// empty — the alternative is opening all four tabs to find out.
+    /// </summary>
+    private int TabFilledCount(string tab)
+    {
+        var m = studentModel;
+        bool Has(string? v) => !string.IsNullOrWhiteSpace(v);
+
+        return tab switch
+        {
+            "identity" => new[]
+            {
+                Has(m.StudentCode), Has(m.ClassName), m.DateOfBirth.HasValue, m.Sex.HasValue,
+                m.AdmissionDate.HasValue, m.Residency.HasValue, Has(m.House), Has(m.DormitoryOrStream)
+            }.Count(x => x),
+            "home" => new[]
+            {
+                Has(m.HomeDistrict), Has(m.HomeAddress), m.LivesWith.HasValue, Has(m.HomeLanguage), Has(m.Religion)
+            }.Count(x => x),
+            "health" => new[]
+            {
+                Has(m.MedicalConditions), Has(m.Allergies), Has(m.RegularMedication), Has(m.DisabilityOrLearningNeed)
+            }.Count(x => x),
+            "continuity" => new[]
+            {
+                m.FeesStatus.HasValue, Has(m.SponsorName), m.TransportMode.HasValue, Has(m.PreviousSchool)
+            }.Count(x => x),
+            _ => 0
+        };
+    }
+
+    // QDatePicker binds DateTime?; the entity and DTO use DateOnly because a birthday has no time
+    // of day and storing one invites a timezone bug that silently shifts a child's date of birth
+    // across midnight. These two properties are the bridge, and they are the only place the
+    // conversion happens.
+    private DateTime? dateOfBirthValue
+    {
+        get => studentModel.DateOfBirth?.ToDateTime(TimeOnly.MinValue);
+        set => studentModel.DateOfBirth = value.HasValue ? DateOnly.FromDateTime(value.Value) : null;
+    }
+
+    private DateTime? admissionDateValue
+    {
+        get => studentModel.AdmissionDate?.ToDateTime(TimeOnly.MinValue);
+        set => studentModel.AdmissionDate = value.HasValue ? DateOnly.FromDateTime(value.Value) : null;
+    }
+
+    private sealed record EnumOption<T>(T Value, string Label) where T : struct, Enum;
+
+    // Written out rather than reflected off the enum: "SchoolBus" and "InArrears" are not what a
+    // person should read on a form, and a humanising regex over enum names is a worse version of
+    // just saying what you mean.
+    private static readonly EnumOption<StudentSex>[] SexOptions =
+    {
+        new(StudentSex.Female, "Female"), new(StudentSex.Male, "Male"), new(StudentSex.Other, "Other")
+    };
+
+    private static readonly EnumOption<StudentResidency>[] ResidencyOptions =
+    {
+        new(StudentResidency.Day, "Day"), new(StudentResidency.Boarder, "Boarder"), new(StudentResidency.Weekly, "Weekly boarder")
+    };
+
+    private static readonly EnumOption<StudentLivesWith>[] LivesWithOptions =
+    {
+        new(StudentLivesWith.BothParents, "Both parents"),
+        new(StudentLivesWith.OneParent, "One parent"),
+        new(StudentLivesWith.Grandparent, "Grandparent"),
+        new(StudentLivesWith.OtherRelative, "Other relative"),
+        new(StudentLivesWith.Guardian, "Guardian"),
+        new(StudentLivesWith.Independent, "Independent")
+    };
+
+    private static readonly EnumOption<StudentFeesStatus>[] FeesOptions =
+    {
+        new(StudentFeesStatus.Clear, "Clear"),
+        new(StudentFeesStatus.Partial, "Partly paid"),
+        new(StudentFeesStatus.InArrears, "In arrears"),
+        new(StudentFeesStatus.Sponsored, "Sponsored"),
+        new(StudentFeesStatus.Bursary, "Bursary")
+    };
+
+    private static readonly EnumOption<StudentTransportMode>[] TransportOptions =
+    {
+        new(StudentTransportMode.Walks, "Walks"),
+        new(StudentTransportMode.Boda, "Boda"),
+        new(StudentTransportMode.SchoolBus, "School bus"),
+        new(StudentTransportMode.PublicTransport, "Public transport"),
+        new(StudentTransportMode.PrivateVehicle, "Private vehicle")
+    };
 
     // Add Guardian
     private bool showGuardianModal;
@@ -993,18 +1436,67 @@
     {
         editingStudentId = null;
         studentModel = new UpdateStudentRequest { IsActive = true };
+        ResetStudentForm();
         showStudentModal = true;
     }
 
+    /// <summary>
+    /// Every field round-trips. A tabbed form that loaded only the four original fields would
+    /// blank a child's whole background the first time anybody corrected a spelling — the pastoral
+    /// tier is protected server-side, but the fields the caller CAN see must come back exactly as
+    /// they went in.
+    /// </summary>
     private void OpenEditStudentModal(StudentDto s)
     {
         editingStudentId = s.Id;
-        studentModel = new UpdateStudentRequest { FullName = s.FullName, StudentCode = s.StudentCode, ClassName = s.ClassName, IsActive = s.IsActive };
+        studentModel = new UpdateStudentRequest
+        {
+            FullName = s.FullName,
+            StudentCode = s.StudentCode,
+            ClassName = s.ClassName,
+            IsActive = s.IsActive,
+            DateOfBirth = s.DateOfBirth,
+            Sex = s.Sex,
+            AdmissionDate = s.AdmissionDate,
+            Residency = s.Residency,
+            House = s.House,
+            DormitoryOrStream = s.DormitoryOrStream,
+            PhotoUrl = s.PhotoUrl,
+            HomeDistrict = s.HomeDistrict,
+            HomeAddress = s.HomeAddress,
+            LivesWith = s.LivesWith,
+            HomeLanguage = s.HomeLanguage,
+            Religion = s.Religion,
+            MedicalConditions = s.MedicalConditions,
+            Allergies = s.Allergies,
+            RegularMedication = s.RegularMedication,
+            DisabilityOrLearningNeed = s.DisabilityOrLearningNeed,
+            FeesStatus = s.FeesStatus,
+            SponsorName = s.SponsorName,
+            TransportMode = s.TransportMode,
+            PreviousSchool = s.PreviousSchool
+        };
+        ResetStudentForm();
         showStudentModal = true;
+    }
+
+    private void ResetStudentForm()
+    {
+        activeTab = "identity";
+        studentFormError = null;
+        fieldErrors.Clear();
+        isSavingStudent = false;
     }
 
     private async Task SaveStudent()
     {
+        // Client-side first: it costs no round trip and it can point at the exact field. The
+        // server re-runs every one of these regardless — the form is a courtesy, the API is the
+        // boundary, and a rule that only exists in Razor is not enforced at all.
+        if (!ValidateStudentForm()) return;
+
+        isSavingStudent = true;
+        studentFormError = null;
         try
         {
             if (editingStudentId.HasValue)
@@ -1013,12 +1505,10 @@
             }
             else
             {
-                await StudentApi.CreateStudentAsync(branchId, new CreateStudentRequest
-                {
-                    FullName = studentModel.FullName,
-                    StudentCode = studentModel.StudentCode,
-                    ClassName = studentModel.ClassName
-                });
+                // Copy every background field across, not just the three the roster used to
+                // collect — a create that silently dropped the tabs the user just filled in is
+                // the obvious trap here.
+                await StudentApi.CreateStudentAsync(branchId, ToCreateRequest(studentModel));
             }
             NotificationService.Notify(ToastSeverity.Success, "Saved", $"{studentModel.FullName} saved.");
             showStudentModal = false;
@@ -1026,8 +1516,83 @@
         }
         catch (InvalidOperationException ex)
         {
+            // Shown inside the dialog as well as toasted: the dialog stays open on failure, and a
+            // toast that has already faded is no help to someone re-reading the form.
+            studentFormError = ex.Message;
             NotificationService.Notify(ToastSeverity.Error, "Could not save", ex.Message);
         }
+        finally
+        {
+            isSavingStudent = false;
+        }
+    }
+
+    private static CreateStudentRequest ToCreateRequest(UpdateStudentRequest m) => new()
+    {
+        FullName = m.FullName,
+        StudentCode = m.StudentCode,
+        ClassName = m.ClassName,
+        DateOfBirth = m.DateOfBirth,
+        Sex = m.Sex,
+        AdmissionDate = m.AdmissionDate,
+        Residency = m.Residency,
+        House = m.House,
+        DormitoryOrStream = m.DormitoryOrStream,
+        PhotoUrl = m.PhotoUrl,
+        HomeDistrict = m.HomeDistrict,
+        HomeAddress = m.HomeAddress,
+        LivesWith = m.LivesWith,
+        HomeLanguage = m.HomeLanguage,
+        Religion = m.Religion,
+        MedicalConditions = m.MedicalConditions,
+        Allergies = m.Allergies,
+        RegularMedication = m.RegularMedication,
+        DisabilityOrLearningNeed = m.DisabilityOrLearningNeed,
+        FeesStatus = m.FeesStatus,
+        SponsorName = m.SponsorName,
+        TransportMode = m.TransportMode,
+        PreviousSchool = m.PreviousSchool
+    };
+
+    /// <summary>
+    /// Mirrors StudentsController.ValidateProfile field for field. When a rule fails the tab
+    /// holding the offending field is opened, because an error message about a field on a hidden
+    /// tab is indistinguishable from nothing happening.
+    /// </summary>
+    private bool ValidateStudentForm()
+    {
+        fieldErrors.Clear();
+        studentFormError = null;
+        var today = DateOnly.FromDateTime(DateTime.Now);
+
+        if (string.IsNullOrWhiteSpace(studentModel.FullName))
+            fieldErrors[nameof(studentModel.FullName)] = "Full name is required";
+        else if (studentModel.FullName.Trim().Length > 255)
+            fieldErrors[nameof(studentModel.FullName)] = "Full name cannot exceed 255 characters";
+
+        if (studentModel.DateOfBirth is { } dob)
+        {
+            if (dob > today)
+                fieldErrors[nameof(studentModel.DateOfBirth)] = "Date of birth cannot be in the future";
+            else if (dob < today.AddYears(-130))
+                fieldErrors[nameof(studentModel.DateOfBirth)] = "That is not a plausible date of birth";
+        }
+
+        if (studentModel.AdmissionDate is { } adm)
+        {
+            if (adm > today.AddYears(1))
+                fieldErrors[nameof(studentModel.AdmissionDate)] = "Admission cannot be more than a year ahead";
+            else if (studentModel.DateOfBirth is { } d && adm < d)
+                fieldErrors[nameof(studentModel.AdmissionDate)] = "Admission cannot precede the date of birth";
+        }
+
+        if (fieldErrors.Count == 0) return true;
+
+        // Every field validated above lives on the Identity tab today; keep the jump keyed off
+        // the field so it still lands correctly if one of them later moves.
+        activeTab = "identity";
+        studentFormError = fieldErrors.Values.First();
+        return false;
     }
 
     private void OpenAddGuardianModal(StudentDto s)

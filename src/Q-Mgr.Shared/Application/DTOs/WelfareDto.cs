@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Enums;
 
 namespace QMgr.Application.DTOs;
@@ -94,6 +95,12 @@ public record WelfareRecordDto
     public Guid? AssignedToUserId { get; init; }
     public string? AssignedToName { get; init; }
     public DateTime? ActionDueDate { get; init; }
+
+    /// <summary>Where the response sits on the graduated ladder — what makes "what did we try first" answerable.</summary>
+    public WelfareResponseStage? ResponseStage { get; init; }
+
+    public string? Antecedent { get; init; }
+    public WelfarePerceivedFunction? PerceivedFunction { get; init; }
     public List<Guid> AdditionalStudentIds { get; init; } = new();
     public List<string> AdditionalStudentNames { get; init; } = new();
     public List<WelfareAttachmentDto> Attachments { get; init; } = new();
@@ -118,6 +125,47 @@ public record CreateWelfareRecordRequest
 
     /// <summary>When true, skips the description-length/late-entry validation and saves as WelfareStatus.Draft instead of Resolved — for a mobile quick-log left unfinished. FinalizeRecord re-runs full validation when the author comes back to it.</summary>
     public bool SaveAsDraft { get; set; }
+
+    // --- The graduated response ---
+
+    public WelfareResponseStage? ResponseStage { get; set; }
+
+    [MaxLength(500, ErrorMessage = "Antecedent cannot exceed 500 characters")]
+    public string? Antecedent { get; set; }
+
+    public WelfarePerceivedFunction? PerceivedFunction { get; set; }
+
+    [MaxLength(1000, ErrorMessage = "Action taken cannot exceed 1000 characters")]
+    public string? ActionTaken { get; set; }
+
+    public Guid? AssignedToUserId { get; set; }
+    public DateTime? ActionDueDate { get; set; }
+
+    /// <summary>
+    /// Set by the client only after the user has answered the escalation prompt. The server
+    /// re-derives whether the prompt was warranted rather than trusting this — it governs a
+    /// confirmation, never an authorization, so a stale or absent value can only ever cost an
+    /// extra prompt, never let something through that should have been questioned.
+    /// </summary>
+    public bool EscalationAcknowledged { get; set; }
+}
+
+/// <summary>
+/// The answer to "what was tried before this?", computed for one student in the current term.
+/// Drives the escalation prompt — guidance, never a barrier, because a member of staff dealing
+/// with a real emergency must not be argued with by a form.
+/// </summary>
+public record EscalationCheckDto
+{
+    public bool WouldPrompt { get; init; }
+    public int PreventiveCount { get; init; }
+    public int RestorativeCount { get; init; }
+    public int CorrectiveCount { get; init; }
+    public int PunitiveCount { get; init; }
+    public int OpenSupportPlans { get; init; }
+
+    /// <summary>Plain sentence for the dialog — written server-side so every client says the same thing.</summary>
+    public string Message { get; init; } = string.Empty;
 }
 
 public record AddWelfareNoteRequest
@@ -209,4 +257,29 @@ public record StartWelfareImportRequest
 {
     public string? SourceFileName { get; init; }
     public List<WelfareImportRow> Rows { get; init; } = new();
+}
+
+/// <summary>
+/// Cohort and disproportionality reporting. Counts alone would only say which group misbehaves
+/// most; the share of records that reached a punitive response is the number that says something
+/// about the school rather than about the children.
+/// </summary>
+public record WelfareCohortReportDto
+{
+    public int WindowDays { get; init; }
+    public int TotalRecords { get; init; }
+    public List<CohortSliceDto> ByHouse { get; init; } = new();
+    public List<CohortSliceDto> ByResidency { get; init; } = new();
+    public List<CohortSliceDto> BySex { get; init; } = new();
+    public List<CohortSliceDto> ByFeesStatus { get; init; } = new();
+}
+
+public record CohortSliceDto
+{
+    public string Label { get; init; } = string.Empty;
+    public int TotalRecords { get; init; }
+    public int PunitiveCount { get; init; }
+
+    /// <summary>Percentage of this slice's records that reached a punitive response.</summary>
+    public double PunitiveShare { get; init; }
 }
