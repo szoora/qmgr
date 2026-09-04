@@ -244,7 +244,7 @@ else if (hasCoreQueue && queueStatus != null)
                 <RadzenDataGrid Data="@queueStatus.ServiceTypes" TItem="ServiceTypeQueueDto"
                                 AllowSorting="true" class="service-types-grid">
                     <Columns>
-                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="Name" Title="Service" Width="auto">
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="Name" Title="Service" Width="180px">
                             <Template Context="item">
                                 <div class="service-cell">
                                     <span class="service-code" style="background: @GetServiceColor(item.Code)">@item.Code</span>
@@ -252,17 +252,17 @@ else if (hasCoreQueue && queueStatus != null)
                                 </div>
                             </Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="WaitingCount" Title="Queue" Width="80px" TextAlign="TextAlign.Center">
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="WaitingCount" Title="Queue" Width="90px" TextAlign="TextAlign.Center">
                             <Template Context="item">
                                 <span class="queue-badge">@item.WaitingCount</span>
                             </Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="EstimatedWaitMinutes" Title="Wait" Width="80px" TextAlign="TextAlign.Center">
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="EstimatedWaitMinutes" Title="Wait" Width="90px" TextAlign="TextAlign.Center">
                             <Template Context="item">
                                 <span class="wait-time">@item.EstimatedWaitMinutes min</span>
                             </Template>
                         </RadzenDataGridColumn>
-                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="CountersActive" Title="Counters" Width="100px" TextAlign="TextAlign.Center">
+                        <RadzenDataGridColumn TItem="ServiceTypeQueueDto" Property="CountersActive" Title="Counters" Width="120px" TextAlign="TextAlign.Center">
                             <Template Context="item">
                                 <span class="counter-count">@item.CountersActive active</span>
                             </Template>
@@ -977,6 +977,23 @@ else if (hasCoreQueue && queueStatus != null)
         font-size: 12px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+    }
+
+    /* qm-theme.css puts `padding: 16px !important` on every Radzen header cell. In this
+       card's narrow numeric columns that leaves barely 30px of usable width, so the
+       uppercase titles were clipped mid-glyph — "Queue" and "Wait" showed a single
+       sliver each and "Counters" rendered as "C…". The labels were in the DOM and read
+       correctly to a screen reader; they were simply invisible. Tighter horizontal
+       padding here, and the title kept on one line. */
+    .service-types-grid .rz-datatable-thead th {
+        padding: 12px 10px !important;
+    }
+
+    .service-types-grid .rz-column-title,
+    .service-types-grid .rz-column-title-content {
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
     }
 
     .service-types-grid .rz-datatable-tbody tr {

@@ -736,6 +736,19 @@ html, body {
     border-bottom: 1px solid var(--qm-border);
 }
 
+/* `.header-left` belongs to the app topbar (layout.css), where it is a horizontal
+   flex row sitting opposite `.header-right`. Nine page headers reuse the same class
+   name for a stacked title block — h1, breadcrumb, subtitle, and sometimes a notice —
+   and inherited that row, which laid those four out side by side across the full
+   width. Worst on Billing/Modules, where the trial notice broke into columns with the
+   sentence split across them. Scoped to `.page-header` so the topbar is untouched. */
+.page-header .header-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
 .page-header h1 {
     font-size: 28px;
     font-weight: 700;
