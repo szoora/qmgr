@@ -1,3 +1,4 @@
+using QMgr.Domain.Entities.Welfare;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using QMgr.Domain.Entities.Visitor;

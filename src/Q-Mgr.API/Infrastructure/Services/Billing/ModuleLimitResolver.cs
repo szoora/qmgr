@@ -64,9 +64,6 @@ public class ModuleLimitResolver : IModuleLimitResolver
             return NoModulesHeld with
             {
                 HasApiAccess = features.ApiAccess,
-                HasSmsNotifications = features.SmsNotifications,
-                HasCustomBranding = features.CustomBranding,
-                HasAdvancedAnalytics = features.AdvancedAnalytics,
                 ShowAds = features.ShowAds
             };
         }
@@ -93,9 +90,6 @@ public class ModuleLimitResolver : IModuleLimitResolver
             MaxApiCallsPerMonth: account?.MaxApiCallsOverride ?? apiCalls,
             MaxStorageMb: account?.MaxStorageOverride ?? storage,
             HasApiAccess: features.ApiAccess,
-            HasSmsNotifications: features.SmsNotifications,
-            HasCustomBranding: features.CustomBranding,
-            HasAdvancedAnalytics: features.AdvancedAnalytics,
             ShowAds: features.ShowAds);
     }
 
@@ -108,8 +102,5 @@ public class ModuleLimitResolver : IModuleLimitResolver
         MaxApiCallsPerMonth: 0,
         MaxStorageMb: 100,
         HasApiAccess: false,
-        HasSmsNotifications: false,
-        HasCustomBranding: false,
-        HasAdvancedAnalytics: false,
         ShowAds: true);
 }

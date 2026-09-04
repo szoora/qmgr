@@ -1,3 +1,4 @@
+using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
 

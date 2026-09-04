@@ -267,9 +267,6 @@ public record EffectiveLimits(
     int MaxApiCallsPerMonth,
     int MaxStorageMb,
     bool HasApiAccess,
-    bool HasSmsNotifications,
-    bool HasCustomBranding,
-    bool HasAdvancedAnalytics,
     bool ShowAds);
 
 /// <summary>

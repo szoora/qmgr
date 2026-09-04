@@ -157,7 +157,13 @@ public class BranchesController : ControllerBase
                 Id = b.Id,
                 Name = b.Name,
                 OrganizationName = b.Organization != null ? b.Organization.Name : string.Empty,
-                IsActive = b.IsActive
+                IsActive = b.IsActive,
+                // Lets an unauthenticated display skip the advertising zone and banner rather than
+                // asking Engagement-gated endpoints it will always be refused.
+                HasEngagementContent = _dbContext.OrganizationModules.Any(om =>
+                    om.OrganizationId == b.OrganizationId &&
+                    om.Module!.Code == ModuleCodes.EngagementCommunications &&
+                    (om.Status == OrganizationModuleStatus.Active || om.Status == OrganizationModuleStatus.Trialing))
             })
             .FirstOrDefaultAsync();
 

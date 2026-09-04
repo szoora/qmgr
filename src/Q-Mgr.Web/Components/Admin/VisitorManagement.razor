@@ -562,6 +562,10 @@
     private VisitorProfileSearchResultDto? preRegisterSelectedProfile;
     private StudentGuardianSearchResultDto? checkInSelectedRoster;
     private StudentGuardianSearchResultDto? preRegisterSelectedRoster;
+    /// <summary>Whether the organization also holds Student Welfare, which owns the roster this
+    /// module searches for visiting-day check-ins.</summary>
+    private bool hasStudentWelfare;
+
     private List<StudentGuardianSearchResultDto> rosterSearchResults = new();
 
     private bool showCheckInExistingModal;
@@ -621,6 +625,10 @@
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
+
+        // Visiting-day check-in matches an arriving guardian against the student roster, which is a
+        // Student Welfare feature this module borrows. Without it the search simply has no roster half.
+        hasStudentWelfare = ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
@@ -771,7 +779,12 @@
             // Roster matches first (they're the more specific, higher-value result for a
             // visiting-day search), then plain returning-visitor matches — run together, not
             // sequentially, so one slow query doesn't hold up the other.
-            var rosterTask = StudentApi.SearchAsync(branchId, searchQuery);
+            // The roster belongs to Student Welfare. A visitor-only organization was searching it
+            // on every keystroke and being refused every time — the service swallowed the 403 and
+            // returned an empty list, so nothing looked broken while the request went out anyway.
+            var rosterTask = hasStudentWelfare
+                ? StudentApi.SearchAsync(branchId, searchQuery)
+                : Task.FromResult(new List<StudentGuardianSearchResultDto>());
             var visitorTask = VisitorApi.SearchVisitorProfilesAsync(branchId, searchQuery);
             await Task.WhenAll(rosterTask, visitorTask);
             cts.Token.ThrowIfCancellationRequested();

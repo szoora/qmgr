@@ -1,7 +1,7 @@
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
 
-namespace QMgr.Domain.Entities.Visitor;
+namespace QMgr.Domain.Entities.Welfare;
 
 /// <summary>
 /// One bulk roster upload (admin UI file import, or an external School Management Information

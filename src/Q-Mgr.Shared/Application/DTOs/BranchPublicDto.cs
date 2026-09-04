@@ -17,4 +17,18 @@ public record BranchPublicDto
     public string Name { get; init; } = string.Empty;
     public string OrganizationName { get; init; } = string.Empty;
     public bool IsActive { get; init; }
+
+    /// <summary>
+    /// Whether this organization holds Engagement &amp; Communications, so an unauthenticated
+    /// display knows to render the advertising zone and the banner at all.
+    /// </summary>
+    /// <remarks>
+    /// The customer display belongs to Core Queue Management, but the content inside it — playlists,
+    /// campaigns, the banner — belongs to Engagement. Without this the display asked for that
+    /// content unconditionally and a queue-only organization made four refused requests on every
+    /// screen load, forever. A display screen is not signed in, so it cannot ask
+    /// <c>modules/mine</c>; it already fetches this record, and "does this organization run
+    /// signage" is not sensitive.
+    /// </remarks>
+    public bool HasEngagementContent { get; init; }
 }

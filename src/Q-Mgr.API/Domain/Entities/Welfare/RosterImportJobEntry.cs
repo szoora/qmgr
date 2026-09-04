@@ -1,7 +1,7 @@
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
 
-namespace QMgr.Domain.Entities.Visitor;
+namespace QMgr.Domain.Entities.Welfare;
 
 /// <summary>
 /// The outcome of processing exactly one row of a RosterImportJob — one row in, one entry out,

@@ -1,3 +1,4 @@
+using QMgr.Domain.Entities.Welfare;
 using System.Text.Json;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;

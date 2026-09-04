@@ -1,3 +1,4 @@
+using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Common;
 using QMgr.Domain.Enums;
 
@@ -76,7 +77,7 @@ public class WelfareRecord : BaseAuditableEntity
 
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }
-    public virtual Visitor.Student? Student { get; set; }
+    public virtual Student? Student { get; set; }
     public virtual WelfareCategory? Category { get; set; }
     public virtual ICollection<WelfareAttachment> Attachments { get; set; } = new List<WelfareAttachment>();
     public virtual ICollection<WelfareNote> Notes { get; set; } = new List<WelfareNote>();

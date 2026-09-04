@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Common;
 
-namespace QMgr.Domain.Entities.Visitor;
+namespace QMgr.Domain.Entities.Welfare;
 
 /// <summary>
 /// A student on the visiting-day roster — the person being visited. Branch-scoped like Visitor

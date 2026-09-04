@@ -104,8 +104,13 @@ else
                 }
             </div>
 
-            <!-- Advertising / Content Zone -->
-            <AdSignagePlayer BranchId="@branchId" CssClass="ad-content-section" />
+            @* Advertising and signage content belong to Engagement & Communications. A queue-only
+               organization has none, and rendering this anyway meant three refused requests on
+               every screen load. *@
+            @if (hasEngagementContent)
+            {
+                <AdSignagePlayer BranchId="@branchId" CssClass="ad-content-section" />
+            }
         </div>
 
         <!-- Waiting Section -->
@@ -134,7 +139,10 @@ else
         </div>
     </div>
 
-    <DisplayBanner BranchId="@branchId" />
+    @if (hasEngagementContent)
+    {
+        <DisplayBanner BranchId="@branchId" />
+    }
     <AdBanner BranchId="@branchId" />
     <!-- Audio Alert (hidden) -->
     <audio id="callAlert" preload="auto">
@@ -580,6 +588,10 @@ else
     private DateTime currentTime = DateTime.Now;
     private Guid branchId;
     private BranchPublicDto? branchInfo;
+
+    /// <summary>Whether this organization holds Engagement & Communications. A display screen is not
+    /// signed in, so it learns this from the public branch record rather than from modules/mine.</summary>
+    private bool hasEngagementContent;
     private System.Threading.Timer? clockTimer;
 
     private enum BranchResolveState { Resolving, NoBranch, InvalidBranch, Ready }
@@ -624,6 +636,7 @@ else
 
         branchId = resolved.Value;
         branchInfo = await OrganizationApi.GetBranchPublicAsync(branchId);
+        hasEngagementContent = branchInfo?.HasEngagementContent ?? false;
         if (branchInfo == null)
         {
             branchState = BranchResolveState.InvalidBranch;

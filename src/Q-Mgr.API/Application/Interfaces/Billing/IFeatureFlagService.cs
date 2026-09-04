@@ -28,18 +28,8 @@ public interface IFeatureFlagService
 public record FeatureFlags(
     Guid OrganizationId,
     bool ApiAccess,
-    bool SmsNotifications,
-    bool EmailNotifications,
-    bool PushNotifications,
-    bool CustomBranding,
     bool WhiteLabel,
-    bool AdvancedAnalytics,
     bool ExportReports,
-    bool MultipleDisplays,
-    bool CustomServiceTypes,
-    bool PrioritySupport,
-    bool DedicatedSchema,
-    bool WebhookIntegration,
     bool ShowAds,
     Dictionary<string, bool> CustomFeatures);
 
@@ -49,16 +39,6 @@ public record FeatureFlags(
 public static class FeatureCodes
 {
     public const string ApiAccess = "api_access";
-    public const string SmsNotifications = "sms_notifications";
-    public const string EmailNotifications = "email_notifications";
-    public const string PushNotifications = "push_notifications";
-    public const string CustomBranding = "custom_branding";
     public const string WhiteLabel = "white_label";
-    public const string AdvancedAnalytics = "advanced_analytics";
     public const string ExportReports = "export_reports";
-    public const string MultipleDisplays = "multiple_displays";
-    public const string CustomServiceTypes = "custom_service_types";
-    public const string PrioritySupport = "priority_support";
-    public const string DedicatedSchema = "dedicated_schema";
-    public const string WebhookIntegration = "webhook_integration";
 }

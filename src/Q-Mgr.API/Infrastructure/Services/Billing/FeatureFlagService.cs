@@ -122,18 +122,8 @@ public class FeatureFlagService : IFeatureFlagService
         return new FeatureFlags(
             OrganizationId: organizationId,
             ApiAccess: false,
-            SmsNotifications: false,
-            EmailNotifications: false,
-            PushNotifications: false,
-            CustomBranding: false,
             WhiteLabel: false,
-            AdvancedAnalytics: false,
             ExportReports: false,
-            MultipleDisplays: false,
-            CustomServiceTypes: false,
-            PrioritySupport: false,
-            DedicatedSchema: false,
-            WebhookIntegration: false,
             ShowAds: true,
             CustomFeatures: new Dictionary<string, bool>());
     }
@@ -175,15 +165,7 @@ public class FeatureFlagService : IFeatureFlagService
         return features with
         {
             ApiAccess = features.ApiAccess || integrations,
-            WebhookIntegration = features.WebhookIntegration || integrations,
-            SmsNotifications = features.SmsNotifications || engagement,
-            EmailNotifications = features.EmailNotifications || engagement,
-            PushNotifications = features.PushNotifications || engagement,
-            CustomBranding = features.CustomBranding || engagement,
             WhiteLabel = features.WhiteLabel || engagement,
-            AdvancedAnalytics = features.AdvancedAnalytics || engagement,
-            MultipleDisplays = features.MultipleDisplays || engagement || coreQueue,
-            CustomServiceTypes = features.CustomServiceTypes || coreQueue,
             ExportReports = features.ExportReports || anyModule,
             ShowAds = features.ShowAds && !anyModule
         };
@@ -194,18 +176,8 @@ public class FeatureFlagService : IFeatureFlagService
         return featureCode.ToLowerInvariant() switch
         {
             "api_access" => features.ApiAccess,
-            "sms_notifications" => features.SmsNotifications,
-            "email_notifications" => features.EmailNotifications,
-            "push_notifications" => features.PushNotifications,
-            "custom_branding" => features.CustomBranding,
             "white_label" => features.WhiteLabel,
-            "advanced_analytics" => features.AdvancedAnalytics,
             "export_reports" => features.ExportReports,
-            "multiple_displays" => features.MultipleDisplays,
-            "custom_service_types" => features.CustomServiceTypes,
-            "priority_support" => features.PrioritySupport,
-            "dedicated_schema" => features.DedicatedSchema,
-            "webhook_integration" => features.WebhookIntegration,
             _ => features.CustomFeatures.GetValueOrDefault(featureCode, false)
         };
     }

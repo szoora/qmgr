@@ -1,6 +1,7 @@
+using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Common;
 
-namespace QMgr.Domain.Entities.Visitor;
+namespace QMgr.Domain.Entities.Welfare;
 
 /// <summary>
 /// Links a Student to a person authorized to visit them — that person IS a VisitorProfile, not a
