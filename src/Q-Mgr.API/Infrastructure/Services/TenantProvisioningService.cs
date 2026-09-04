@@ -80,6 +80,23 @@ public class TenantProvisioningService : ITenantProvisioningService
             return TenantProvisioningResult.Failed("An account with this email address already exists.");
         }
 
+        // Organization.Name carries a unique index (OrganizationConfiguration), so a collision
+        // used to fail the INSERT deep inside the transaction below: the applicant was told
+        // "An error occurred while creating your organization. Please try again." — advice that
+        // could never work — and the log took a full DbUpdateException stack for something that is
+        // ordinary user input. Checked here, beside the email check, so the answer names the
+        // actual problem. Found by the 2026-09-04 e2e pass.
+        var requestedName = request.OrganizationName.Trim();
+        var nameTaken = await _dbContext.Organizations
+            .IgnoreQueryFilters()
+            .AnyAsync(o => o.Name == requestedName, cancellationToken);
+
+        if (nameTaken)
+        {
+            return TenantProvisioningResult.Failed(
+                $"An organization is already registered as '{requestedName}'. If that is your business, sign in instead, or ask whoever set it up to invite you.");
+        }
+
         // Generate or validate slug
         var slug = request.Slug;
         if (string.IsNullOrEmpty(slug))

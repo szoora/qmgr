@@ -502,6 +502,57 @@ public class BranchesController : ControllerBase
     }
 
     /// <summary>
+    /// Re-reads one counter in exactly the shape <see cref="GetCounters"/> serves, so a create or
+    /// an update answers with what was actually stored.
+    /// </summary>
+    /// <remarks>
+    /// Both of those used to build a <see cref="CounterDto"/> inline from the tracked entity, which
+    /// left <c>ServiceTypes</c> permanently empty in the response — the bindings live in
+    /// <c>CounterServiceTypes</c>, a table the entity never carries — so a client rendering what it
+    /// had just saved watched the bindings vanish. Found live by the 2026-09-04 e2e pass.
+    /// </remarks>
+    private async Task<CounterDto?> LoadCounterDtoAsync(Guid counterId)
+    {
+        return await _dbContext.Counters
+            .AsNoTracking()
+            .Where(c => c.Id == counterId)
+            .Select(c => new CounterDto
+            {
+                Id = c.Id,
+                CounterNumber = c.CounterNumber,
+                DisplayName = c.DisplayName ?? $"Counter {c.CounterNumber}",
+                Status = c.Status,
+                IsActive = c.IsActive,
+                CurrentToken = c.CurrentToken != null ? new TokenDto
+                {
+                    Id = c.CurrentToken.Id,
+                    TokenNumber = c.CurrentToken.TokenNumber,
+                    DisplayNumber = c.CurrentToken.DisplayNumber,
+                    Status = c.CurrentToken.Status,
+                    Priority = c.CurrentToken.Priority,
+                    Source = c.CurrentToken.Source,
+                    BranchId = c.CurrentToken.BranchId,
+                    ServiceTypeId = c.CurrentToken.ServiceTypeId,
+                    CounterId = c.CurrentToken.CounterId,
+                    CreatedAt = c.CurrentToken.CreatedAt,
+                    CalledAt = c.CurrentToken.CalledAt
+                } : null,
+                ServiceTypes = _dbContext.CounterServiceTypes
+                    .Where(cst => cst.CounterId == c.Id && cst.IsActive && cst.ServiceType != null)
+                    .Select(cst => new ServiceTypeDto
+                    {
+                        Id = cst.ServiceType!.Id,
+                        Name = cst.ServiceType.Name,
+                        Code = cst.ServiceType.Code,
+                        Prefix = cst.ServiceType.Prefix,
+                        Color = cst.ServiceType.Color
+                    })
+                    .ToList()
+            })
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>
     /// Creates a new counter for a branch
     /// </summary>
     [HttpPost("{branchId:guid}/counters")]
@@ -582,14 +633,7 @@ public class BranchesController : ControllerBase
 
         _logger.LogInformation("Created counter: {CounterId} - {CounterNumber} in branch {BranchId}", counter.Id, counter.CounterNumber, branchId);
 
-        return CreatedAtAction(nameof(GetCounters), new { branchId }, new CounterDto
-        {
-            Id = counter.Id,
-            CounterNumber = counter.CounterNumber,
-            DisplayName = counter.DisplayName,
-            Status = counter.Status,
-            IsActive = counter.IsActive
-        });
+        return CreatedAtAction(nameof(GetCounters), new { branchId }, await LoadCounterDtoAsync(counter.Id));
     }
 
     /// <summary>
@@ -658,14 +702,7 @@ public class BranchesController : ControllerBase
 
         _logger.LogInformation("Updated counter: {CounterId}", counterId);
 
-        return Ok(new CounterDto
-        {
-            Id = counter.Id,
-            CounterNumber = counter.CounterNumber,
-            DisplayName = counter.DisplayName,
-            Status = counter.Status,
-            IsActive = counter.IsActive
-        });
+        return Ok(await LoadCounterDtoAsync(counter.Id));
     }
 
     /// <summary>
@@ -715,14 +752,7 @@ public class BranchesController : ControllerBase
 
         _logger.LogInformation("Toggled counter {CounterId} active status to {IsActive}", counterId, counter.IsActive);
 
-        return Ok(new CounterDto
-        {
-            Id = counter.Id,
-            CounterNumber = counter.CounterNumber,
-            DisplayName = counter.DisplayName,
-            Status = counter.Status,
-            IsActive = counter.IsActive
-        });
+        return Ok(await LoadCounterDtoAsync(counter.Id));
     }
 
     /// <summary>
