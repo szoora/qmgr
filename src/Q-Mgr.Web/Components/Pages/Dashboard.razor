@@ -108,7 +108,7 @@ else if (noBranchSelected)
         </div>
     </div>
 }
-else if (!hasCoreQueue && !hasStudentWelfare)
+else if (!hasCoreQueue && !hasStudentWelfare && !hasVisitorManagement && !hasEngagement)
 {
     @* Only when the organization holds nothing this dashboard can report on. It used to be shown
        to anyone without Core Queue Management, so a school that had bought Student Welfare opened
@@ -406,6 +406,106 @@ else if (hasCoreQueue && queueStatus != null)
     </div>
 }
 
+@if (branchReady && hasVisitorManagement)
+{
+    <div class="module-section">
+        <div class="module-section-head">
+            <h2><QIcon Name="person-badge-fill" /> Visitor Management</h2>
+            <QButton Text="Open desk" Icon="arrow-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
+        </div>
+
+        @if (visitorSummary == null)
+        {
+            <div class="module-section-loading"><QSpinner Size="sm" /></div>
+        }
+        else
+        {
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon visitor-onsite"><QIcon Name="person-check-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@visitorSummary.CurrentlyOnSite</div>
+                        <div class="stat-label">On site now</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon visitor-expected"><QIcon Name="calendar-check-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@visitorSummary.ExpectedToday</div>
+                        <div class="stat-label">Still expected</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon visitor-today"><QIcon Name="door-open-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@visitorSummary.TotalToday</div>
+                        <div class="stat-label">Today</div>
+                    </div>
+                </div>
+                @* A watchlisted person on site is the one number here that asks somebody to act,
+                   so it is marked rather than left to look like the others. *@
+                <div class="stat-card @(visitorSummary.WatchlistedOnSite > 0 ? "needs-attention" : "")">
+                    <div class="stat-icon visitor-watchlist"><QIcon Name="shield-exclamation" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@visitorSummary.WatchlistedOnSite</div>
+                        <div class="stat-label">Watchlisted on site</div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (branchReady && hasEngagement)
+{
+    <div class="module-section">
+        <div class="module-section-head">
+            <h2><QIcon Name="broadcast" /> Engagement &amp; Communications</h2>
+            <QButton Text="Open campaigns" Icon="arrow-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo("/content/campaigns"))" />
+        </div>
+
+        @if (feedbackSummary == null)
+        {
+            <div class="module-section-loading"><QSpinner Size="sm" /></div>
+        }
+        else
+        {
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon engage-campaigns"><QIcon Name="megaphone-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@activeCampaignCount</div>
+                        <div class="stat-label">Live campaigns</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon engage-rating"><QIcon Name="star-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))</div>
+                        <div class="stat-label">Average rating</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon engage-feedback"><QIcon Name="chat-square-text-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@feedbackSummary.TotalFeedbacks</div>
+                        <div class="stat-label">Responses</div>
+                    </div>
+                </div>
+                <div class="stat-card @(feedbackSummary.PendingResponseCount > 0 ? "needs-attention" : "")">
+                    <div class="stat-icon engage-pending"><QIcon Name="reply-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@feedbackSummary.PendingResponseCount</div>
+                        <div class="stat-label">Awaiting reply</div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
 <style>
     .module-section { margin-top: 28px; }
 
@@ -442,6 +542,16 @@ else if (hasCoreQueue && queueStatus != null)
     .stat-icon.welfare-overdue { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
     .stat-icon.welfare-records { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
     .stat-icon.welfare-students { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+
+    .stat-icon.visitor-onsite { background: var(--qm-primary-light); color: var(--qm-primary); }
+    .stat-icon.visitor-expected,
+    .stat-icon.visitor-today { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+    .stat-icon.visitor-watchlist { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
+
+    .stat-icon.engage-campaigns { background: var(--qm-primary-light); color: var(--qm-primary); }
+    .stat-icon.engage-rating,
+    .stat-icon.engage-feedback { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+    .stat-icon.engage-pending { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
 
     .welfare-category-list { display: flex; flex-direction: column; }
 
@@ -1048,8 +1158,10 @@ else if (hasCoreQueue && queueStatus != null)
 
     private bool hasCoreQueue = true;
 
-    /// <summary>Whether to render the Student Welfare section of the dashboard.</summary>
+    /// <summary>Which module sections to render. Each is resolved once, from the same catalog call.</summary>
     private bool hasStudentWelfare;
+    private bool hasVisitorManagement;
+    private bool hasEngagement;
 
     /// <summary>True once a real branch is resolved — module sections are branch-scoped, so they
     /// wait for the same thing the queue panels do rather than querying with an empty id.</summary>
@@ -1057,6 +1169,9 @@ else if (hasCoreQueue && queueStatus != null)
 
     private WelfareSummaryDto? welfareSummary;
     private int studentCount;
+    private VisitorSummaryDto? visitorSummary;
+    private FeedbackSummaryDto? feedbackSummary;
+    private int activeCampaignCount;
 
     /// <summary>The header promised "your queue overview" to every organization, including those
     /// holding no queue module at all.</summary>
@@ -1075,6 +1190,8 @@ else if (hasCoreQueue && queueStatus != null)
         {
             hasCoreQueue = true;
             hasStudentWelfare = true;
+            hasVisitorManagement = true;
+            hasEngagement = true;
             return;
         }
 
@@ -1083,6 +1200,8 @@ else if (hasCoreQueue && queueStatus != null)
             var catalog = await ModuleApi.GetMineAsync();
             hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
             hasStudentWelfare = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StudentWelfare);
+            hasVisitorManagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.VisitorManagement);
+            hasEngagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.EngagementCommunications);
             activeModuleNames = catalog
                 .Where(m => m.Purchased && m.ModuleCode != ModuleCodes.CoreQueue)
                 .Select(m => m.ModuleName)
@@ -1094,6 +1213,8 @@ else if (hasCoreQueue && queueStatus != null)
             // customer they don't own Core Queue Management. Its data calls are gated server-side.
             hasCoreQueue = true;
             hasStudentWelfare = false;
+            hasVisitorManagement = false;
+            hasEngagement = false;
             activeModuleNames = new();
         }
     }
@@ -1139,6 +1260,8 @@ else if (hasCoreQueue && queueStatus != null)
 
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
+            await LoadVisitorSummaryAsync();
+            await LoadEngagementSummaryAsync();
 
             // The queue hub pushes token and counter events, which mean nothing without Core
             // Queue Management — joining it just opens a connection to receive silence.
@@ -1182,6 +1305,8 @@ else if (hasCoreQueue && queueStatus != null)
             noBranchSelected = false;
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
+            await LoadVisitorSummaryAsync();
+            await LoadEngagementSummaryAsync();
             try
             {
                 if (hasCoreQueue) await SignalR.ConnectAsync(BranchId);
@@ -1213,6 +1338,52 @@ else if (hasCoreQueue && queueStatus != null)
             // An empty panel is better than a red banner over a working dashboard — the same
             // judgement the queue panels make.
             welfareSummary ??= new WelfareSummaryDto();
+        }
+    }
+
+
+    /// <summary>
+    /// Loads the Visitor Management panel. Its own method for the same reason as welfare: a module
+    /// whose data fails should leave the other sections standing.
+    /// </summary>
+    private async Task LoadVisitorSummaryAsync()
+    {
+        if (!hasVisitorManagement || !branchReady) return;
+
+        try
+        {
+            visitorSummary = await Http.GetFromJsonAsync<VisitorSummaryDto>(
+                $"api/v1/branches/{BranchId}/visitors/summary", JsonOptions) ?? new VisitorSummaryDto();
+        }
+        catch
+        {
+            visitorSummary ??= new VisitorSummaryDto();
+        }
+    }
+
+    /// <summary>
+    /// Loads the Engagement panel: how many campaigns are running, and what customers are saying.
+    /// </summary>
+    private async Task LoadEngagementSummaryAsync()
+    {
+        if (!hasEngagement || !branchReady) return;
+
+        try
+        {
+            feedbackSummary = await Http.GetFromJsonAsync<FeedbackSummaryDto>(
+                $"api/v1/branches/{BranchId}/feedbacks/summary", JsonOptions) ?? new FeedbackSummaryDto();
+
+            var campaigns = await Http.GetFromJsonAsync<List<CampaignDto>>(
+                $"api/v1/branches/{BranchId}/campaigns", JsonOptions);
+
+            // "Live" means running today, not merely enabled — a campaign whose window has closed
+            // is not something the dashboard should still be counting.
+            var today = DateTime.UtcNow;
+            activeCampaignCount = campaigns?.Count(c => c.IsActive && c.StartDate <= today && c.EndDate >= today) ?? 0;
+        }
+        catch
+        {
+            feedbackSummary ??= new FeedbackSummaryDto();
         }
     }
 
@@ -1275,7 +1446,9 @@ else if (hasCoreQueue && queueStatus != null)
     private async Task RefreshData()
     {
         await LoadQueueStatus();
-            await LoadWelfareSummaryAsync();
+        await LoadWelfareSummaryAsync();
+        await LoadVisitorSummaryAsync();
+        await LoadEngagementSummaryAsync();
     }
 
     private void HandleQueueUpdated(QueueStatusDto status)
