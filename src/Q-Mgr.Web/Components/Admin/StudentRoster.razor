@@ -233,7 +233,7 @@
                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.FullName))" />
                     </div>
                     <QInput TValue="string" @bind-Value="studentModel.StudentCode" Label="Student / admission code"
-                            Placeholder="S001" MaxLength="100" HelperText="The school's own roll number — what a bulk import matches on." />
+                            Placeholder="S001" MaxLength="100" HelperText="Roll number. Bulk import matches on this." />
                     @* A picker once the branch has any classes configured, a text box while it has
                        none — a school that has not set its list up yet must still be able to
                        record a student. Same fallback on House and Dormitory below. *@
@@ -246,7 +246,7 @@
                     else
                     {
                         <QInput TValue="string" @bind-Value="studentModel.ClassName" Label="Class" Placeholder="S.4" MaxLength="100"
-                                HelperText="Configure the class list to turn this into a picker." />
+                                HelperText="Add classes under Lists to get a picker." />
                     }
 
                     <QDatePicker @bind-Value="dateOfBirthValue" Label="Date of birth"
@@ -269,12 +269,12 @@
                         <QSelect TValue="string" TItem="string" @bind-Value="studentModel.House"
                                  Label="House" Placeholder="Not set" AllowClear="true"
                                  Items="@HouseOptions" ValueSelector="@(h => h)" TextSelector="@(h => h)"
-                                 HelperText="The pastoral unit — the first responder and the grouping every report uses." />
+                                 HelperText="First responder, and how reports group." />
                     }
                     else
                     {
                         <QInput TValue="string" @bind-Value="studentModel.House" Label="House" Placeholder="Kabalega" MaxLength="100"
-                                HelperText="The pastoral unit — the first responder and the grouping every report uses." />
+                                HelperText="First responder, and how reports group." />
                     }
 
                     @if (DormitoryOptions.Any())
@@ -327,7 +327,7 @@
                                 Placeholder="@(string.IsNullOrWhiteSpace(studentModel.HomeCountry) ? "Choose a country first" : "Type the area")"
                                 MaxLength="120"
                                 Disabled="@string.IsNullOrWhiteSpace(studentModel.HomeCountry)"
-                                HelperText="@(string.IsNullOrWhiteSpace(studentModel.HomeCountry) ? "A district on its own is ambiguous across borders." : "No list for this country — type it.")"
+                                HelperText="@(string.IsNullOrWhiteSpace(studentModel.HomeCountry) ? "Pick a country first." : "No list for this country — type it.")"
                                 HasError="@fieldErrors.ContainsKey(nameof(studentModel.HomeDistrict))"
                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.HomeDistrict))" />
                     }
@@ -342,7 +342,7 @@
                        list here would only push real answers into "Other". *@
                     <QInput TValue="string" @bind-Value="studentModel.HomeLanguage" Label="Home language" Placeholder="Runyankole" MaxLength="80"
                             List="vocab-languages"
-                            HelperText="Which language to hold a difficult conversation in." />
+                            HelperText="For difficult conversations." />
                     <QInput TValue="string" @bind-Value="studentModel.Religion" Label="Religion" MaxLength="80" List="vocab-religions" />
                 </div>
             }
@@ -350,13 +350,13 @@
             {
                 <div class="stu-note-inline">
                     <QIcon Name="shield-lock" Size="15" />
-                    <span>A welfare summary for staff, not a medical record. Visible to pastoral staff only.</span>
+                    <span>Staff summary, not a medical record. Pastoral staff only.</span>
                 </div>
                 <div class="stu-grid">
                     <div class="span-2">
                         <QInput TValue="string" @bind-Value="studentModel.MedicalConditions" Label="Medical conditions" Type="textarea" Rows="2" MaxLength="1000"
                                 Placeholder="Epilepsy — carries medication, matron holds a spare"
-                                HelperText="Turns a collapse in assembly from a mystery into a known event with a known response." />
+                                HelperText="So staff know what to do." />
                     </div>
                     <div class="span-2">
                         <QInput TValue="string" @bind-Value="studentModel.Allergies" Label="Allergies" Type="textarea" Rows="2" MaxLength="1000"
@@ -368,7 +368,7 @@
                     </div>
                     <div class="span-2">
                         <QInput TValue="string" @bind-Value="studentModel.DisabilityOrLearningNeed" Label="Disability or learning need" Type="textarea" Rows="2" MaxLength="1000"
-                                HelperText="Often the field that turns a punishment into a support." />
+                                HelperText="Often changes the right response." />
                     </div>
                 </div>
             }
@@ -377,7 +377,7 @@
                 <div class="stu-grid">
                     <QSelect TValue="StudentFeesStatus?" TItem="EnumOption<StudentFeesStatus>" @bind-Value="studentModel.FeesStatus"
                              Label="Fees status" Placeholder="Not recorded" AllowClear="true"
-                             HelperText="A welfare field, not a finance one — arrears predict absence."
+                             HelperText="Arrears predict absence."
                              Items="@FeesOptions" ValueSelector="@(o => (StudentFeesStatus?)o.Value)" TextSelector="@(o => o.Label)" />
                     <QInput TValue="string" @bind-Value="studentModel.SponsorName" Label="Sponsor" MaxLength="200"
                             HelperText="Who to notify, alongside a parent." />
@@ -385,7 +385,7 @@
                              Label="Transport" Placeholder="Not recorded" AllowClear="true"
                              Items="@TransportOptions" ValueSelector="@(o => (StudentTransportMode?)o.Value)" TextSelector="@(o => o.Label)" />
                     <QInput TValue="string" @bind-Value="studentModel.PreviousSchool" Label="Previous school" MaxLength="200"
-                            HelperText="Repeated moves are a documented vulnerability marker." />
+                            HelperText="Repeated moves are a risk marker." />
                 </div>
             }
         </div>
@@ -474,11 +474,11 @@
                 <p class="vocab-note">
                     @if (withColor)
                     {
-                        <span>Renaming a class here renames it on every student in it. Removing one is refused while anybody is still in it — retire it instead.</span>
+                        <span>Renaming updates every student in it. In-use entries cannot be removed — retire them.</span>
                     }
                     else
                     {
-                        <span>Renaming here renames it on every student. Removing is refused while anybody still holds it.</span>
+                        <span>Renaming updates every student. In-use entries cannot be removed.</span>
                     }
                 </p>
 
@@ -538,8 +538,7 @@
             else
             {
                 <p class="vocab-note">
-                    Suggestions, not a fixed list — these are offered as you type and anything else is still accepted.
-                    A closed list here would only push real answers into "Other".
+                    Offered as you type. Anything else is still accepted.
                 </p>
 
                 <div class="vocab-list">
@@ -1817,9 +1816,9 @@
     private static readonly ProfileTab[] ProfileTabs =
     {
         new("identity",   "Identity",     "person-vcard"),
-        new("home",       "Home",         "house-heart"),
+        new("home",       "Home",         "house"),
         new("health",     "Health",       "heart-pulse"),
-        new("continuity", "Continuity",   "life-preserver")
+        new("continuity", "Continuity",   "cash-coin")
     };
 
     /// <summary>

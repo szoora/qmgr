@@ -267,9 +267,9 @@
         {
             <div class="form-group">
                 <QInput TValue="string" @bind-Value="@createModel.Antecedent" Label="What happened just before"
-                        Placeholder="Optional — sent out of maths, told he could not go home for visiting day"
+                        Placeholder="Sent out of maths"
                         MaxLength="500"
-                        HelperText="With the location and time, this is what later shows a pattern you can get ahead of." />
+                        HelperText="Helps spot patterns later." />
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -292,13 +292,10 @@
             @if (escalationCheck?.WouldPrompt == true && createModel.ResponseStage == WelfareResponseStage.Punitive)
             {
                 <div class="escalation-prompt" role="alert">
-                    <div class="ep-head">
-                        <QIcon Name="signpost-split-fill" Size="17" />
-                        <strong>Nothing softer has been tried</strong>
-                    </div>
+                    <div class="ep-head"><strong>Nothing softer tried yet</strong></div>
                     <p>@escalationCheck.Message</p>
                     <QCheckbox @bind-Value="@createModel.EscalationAcknowledged"
-                               Label="I have considered a restorative or corrective response and a punishment is still right" />
+                               Label="A sanction is still the right response" />
                 </div>
             }
         }
@@ -306,8 +303,7 @@
         @if (createModel.CaseType == WelfareCaseType.SupportPlan)
         {
             <div class="plan-note">
-                <QIcon Name="info-circle-fill" Size="15" />
-                <span>A plan needs an owner and a review date. Reviews are added as notes on the plan.</span>
+                <span>Needs an owner and a review date. Reviews go on as notes.</span>
             </div>
             <div class="form-row">
                 <div class="form-group">

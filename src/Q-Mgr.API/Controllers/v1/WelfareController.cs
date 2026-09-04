@@ -1183,9 +1183,12 @@ public class WelfareController : ControllerBase
         // has already tried the earlier rungs is not second-guessed.
         var nothingTried = restorative == 0 && corrective == 0 && preventive == 0 && openPlans == 0;
 
+        // Short on purpose. A paragraph in a prompt is a paragraph nobody reads, and this one has
+        // to be read in the second before somebody presses Save.
+        var days = Math.Clamp(windowDays, 7, 365);
         var message = nothingTried
-            ? $"Nothing softer has been recorded for {student.FullName} in the last {Math.Clamp(windowDays, 7, 365)} days — no restorative conversation, no support plan, no preventive action. A punitive response may still be right; the record will show it was the first thing tried."
-            : $"Already tried for {student.FullName}: {restorative} restorative, {corrective} corrective, {preventive} preventive, {openPlans} open plan(s).";
+            ? $"No restorative, corrective or preventive response for {student.FullName} in {days} days."
+            : $"Already tried: {restorative} restorative, {corrective} corrective, {preventive} preventive, {openPlans} open plan(s).";
 
         return Ok(new EscalationCheckDto
         {

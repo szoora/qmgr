@@ -22,7 +22,7 @@
     <div class="page-header">
         <div class="header-content">
             <h1>@(picture?.Student.FullName ?? "Student")</h1>
-            <p class="subtitle">Everything on file, read in ninety seconds.</p>
+            <p class="subtitle">Everything on file.</p>
         </div>
         @if (picture != null)
         {
@@ -154,11 +154,11 @@
                 </QCard>
 
                 @* ---- What has actually been tried. The user's whole question, answerable. ---- *@
-                <QCard Title="What has been tried" Icon="diagram-3">
+                <QCard Title="What has been tried" Icon="list-ol">
                     <ChildContent>
                         @if (!picture.ByResponseStage.Any())
                         {
-                            <p class="sp-muted">No response has been graded yet. Recording the stage on a record is what makes this answerable.</p>
+                            <p class="sp-muted">No responses graded yet.</p>
                         }
                         else
                         {
@@ -181,7 +181,7 @@
                             {
                                 <div class="sp-warn">
                                     <QIcon Name="exclamation-triangle-fill" Size="15" />
-                                    <span>Punishment has been used without anything softer on file.</span>
+                                    <span>Punishment used with nothing softer on file.</span>
                                 </div>
                             }
                         }
@@ -192,14 +192,11 @@
                 {
                     <QCard Title="Patterns" Icon="search">
                         <ChildContent>
-                            <p class="sp-muted sp-tight">Counts, not predictions. Check them against what you know.</p>
+                            <p class="sp-muted sp-tight">Counts, not predictions.</p>
                             <ul class="sp-patterns">
                                 @foreach (var p in picture.Patterns)
                                 {
-                                    <li>
-                                        <QIcon Name="dot" Size="14" />
-                                        <span>@p</span>
-                                    </li>
+                                    <li><span>@p</span></li>
                                 }
                             </ul>
                         </ChildContent>
@@ -231,7 +228,7 @@
                         </dl>
                         @if (!HasAnyBackground(s))
                         {
-                            <p class="sp-muted">No background recorded yet. Edit the student on the roster to add it.</p>
+                            <p class="sp-muted">No background recorded yet.</p>
                         }
                     </ChildContent>
                 </QCard>
@@ -379,14 +376,11 @@
             <QSelect TValue="WelfareTier" TItem="TierOption" @bind-Value="flagModel.Tier"
                      Label="Who may see it" Required="true"
                      Items="@TierOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)"
-                     HelperText="A high-tier flag is safeguarding data and needs the confidential permission." />
+                     HelperText="High tier needs the confidential permission." />
             <QInput TValue="string" @bind-Value="flagModel.Notes" Label="Notes" Type="textarea" Rows="3" MaxLength="2000" />
             <QDatePicker @bind-Value="flagModel.ReviewDueDate" Label="Review on"
                          HasError="@reviewDateError" ErrorMessage="A review date in the past would be overdue immediately" />
-            <p class="sp-hint">
-                <QIcon Name="info-circle" Size="13" />
-                A flag nobody revisits reads as current knowledge. Set a date.
-            </p>
+            <p class="sp-hint">A stale flag still reads as current. Set a date.</p>
         </div>
     </ChildContent>
     <FooterContent>
@@ -399,10 +393,7 @@
 @* ---------------- End a flag ---------------- *@
 <QModal @bind-Visible="showEndModal" Title="End this flag" Size="sm">
     <ChildContent>
-        <p class="sp-muted sp-tight">
-            The flag stays on file with the reason and date. Ending it never deletes it — how long a child
-            carried a flag is itself welfare information.
-        </p>
+        <p class="sp-muted sp-tight">Stays on file with the reason. Ending never deletes.</p>
         <QInput TValue="string" @bind-Value="endModel.EndReason" Label="Why is it ending" Required="true"
                 Type="textarea" Rows="3" MaxLength="500"
                 HasError="@(endAttempted && string.IsNullOrWhiteSpace(endModel.EndReason))"
@@ -553,7 +544,9 @@
     .sp-hint { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); margin-top: 4px; }
 
     .sp-patterns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
-    .sp-patterns li { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; color: var(--qm-text-secondary); }
+    .sp-patterns li { position: relative; padding-left: 14px; font-size: 13px; color: var(--qm-text-secondary); }
+    /* A CSS marker rather than an icon component: a bullet is punctuation, not iconography. */
+    .sp-patterns li::before { content: ""; position: absolute; left: 0; top: 8px; width: 4px; height: 4px; border-radius: 50%; background: var(--qm-text-muted); }
 
     /* ---- facts ---- */
     .sp-facts { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0; font-size: 13px; }
