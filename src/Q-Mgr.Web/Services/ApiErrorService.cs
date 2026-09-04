@@ -18,9 +18,16 @@ public static class ApiErrorService
     /// "Title: Detail" when both are present and distinct, falls back to whichever exists, then to
     /// a per-field validation breakdown, then to the raw body, then to a generic fallback.
     /// </summary>
-    public static async Task<string> GetErrorMessageAsync(HttpResponseMessage response, string defaultMessage = "An error occurred")
+    public static async Task<string> GetErrorMessageAsync(HttpResponseMessage response, string? defaultMessage = null)
     {
         var body = await response.Content.ReadAsStringAsync();
+
+        // A 401, a 403 and a 404 all come back with an empty body, so the old blanket
+        // "An error occurred" told the user nothing and told whoever was debugging even less —
+        // it looks identical to a validation failure. Naming the status is the difference between
+        // a dead end and a lead.
+        defaultMessage ??= $"Request failed — {(int)response.StatusCode} {response.StatusCode}";
+
         return FromBody(body, defaultMessage);
     }
 

@@ -450,3 +450,89 @@ public record StudentTrendPointDto
     public int Behaviors { get; init; }
     public int Concerns { get; init; }
 }
+
+// ============================================================================================
+// Branch vocabularies — small, user-configurable master data.
+//
+// Stored as a keyed section of Branch.Settings (a JSON column) rather than as tables. The rule
+// this follows, so the next list added lands in the right place:
+//
+//   JSON here          small bounded list, no per-item lifecycle, nothing references it by ID,
+//                      the value is COPIED onto the row as a plain label.
+//   A real table       something foreign-keys to it, it carries its own dates/state/audit, the
+//                      database has to protect it on delete, or it is reported on directly.
+//
+// Welfare categories stay a table by that rule and should not be moved here: WelfareRecord and
+// StudentFlag both hold a real CategoryId with Restrict-on-delete.
+// ============================================================================================
+
+/// <summary>
+/// One entry in a closed list. Closed means the field that uses it is a picker and a typo is not
+/// possible — Class, House, Dormitory.
+/// </summary>
+public record VocabularyItemDto
+{
+    [Required(ErrorMessage = "Name is required")]
+    [MaxLength(100, ErrorMessage = "Name cannot exceed 100 characters")]
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Hex colour, used by the roster pill and the printed visiting-day pass. Only Class uses it today.</summary>
+    [MaxLength(9)]
+    public string? Color { get; set; }
+
+    /// <summary>
+    /// Explicit order, because the natural one is wrong: S.1 … S.10 sorts as S.1, S.10, S.2
+    /// alphabetically. A JSON array gives ordering for free, which is one place this beats a table.
+    /// </summary>
+    public int SortOrder { get; set; }
+
+    /// <summary>Retired entries stop being offered on new records but stay readable on old ones.</summary>
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// Every configurable list for one branch. Closed lists are pickers; suggested lists offer known
+/// values and still accept anything typed, because a closed list for these would only push real
+/// answers into "Other" — the reasoning already recorded on StudentGuardian.Relationship.
+/// </summary>
+public record BranchVocabulariesDto
+{
+    public List<VocabularyItemDto> Classes { get; set; } = new();
+    public List<VocabularyItemDto> Houses { get; set; } = new();
+    public List<VocabularyItemDto> Dormitories { get; set; } = new();
+
+    public List<string> HomeLanguages { get; set; } = new();
+    public List<string> Religions { get; set; } = new();
+    public List<string> GuardianRelationships { get; set; } = new();
+    public List<string> ActionsTaken { get; set; } = new();
+}
+
+/// <summary>
+/// Saving the lists. Renames are explicit rather than inferred from a diff: a diff cannot tell a
+/// rename apart from a delete plus an add, and getting that wrong either orphans every student's
+/// class or silently rewrites the wrong one.
+/// </summary>
+public record UpdateBranchVocabulariesRequest
+{
+    public BranchVocabulariesDto Vocabularies { get; set; } = new();
+
+    /// <summary>Old name to new name, applied to every student holding the old value in this branch.</summary>
+    public Dictionary<string, string> ClassRenames { get; set; } = new();
+    public Dictionary<string, string> HouseRenames { get; set; } = new();
+    public Dictionary<string, string> DormitoryRenames { get; set; } = new();
+}
+
+/// <summary>What the save actually did, so the UI can report it rather than claim a silent success.</summary>
+public record UpdateBranchVocabulariesResultDto
+{
+    public BranchVocabulariesDto Vocabularies { get; init; } = new();
+    public int StudentsRenamed { get; init; }
+    public List<string> Warnings { get; init; } = new();
+}
+
+/// <summary>How many students hold a value — what the delete guard reports before anything is removed.</summary>
+public record VocabularyUsageDto
+{
+    public string Name { get; init; } = string.Empty;
+    public int StudentCount { get; init; }
+}

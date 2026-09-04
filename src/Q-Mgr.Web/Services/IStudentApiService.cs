@@ -46,6 +46,13 @@ public interface IStudentApiService
     Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId);
     Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId);
 
+    /// <summary>The branch's configurable lists. Seeded from what students already hold on a branch that has never opened the editor.</summary>
+    Task<BranchVocabulariesDto> GetVocabulariesAsync(Guid branchId);
+
+    Task<UpdateBranchVocabulariesResultDto> UpdateVocabulariesAsync(Guid branchId, UpdateBranchVocabulariesRequest request);
+
+    Task<Dictionary<string, List<VocabularyUsageDto>>> GetVocabularyUsageAsync(Guid branchId);
+
     Task<ClassColorSettingsDto> GetClassColorsAsync(Guid branchId);
     Task<ClassColorSettingsDto?> UpdateClassColorsAsync(Guid branchId, ClassColorSettingsDto request);
 
@@ -161,6 +168,46 @@ public class StudentApiService : IStudentApiService
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/students/{studentId}/flags/{flagId}/end", request, _jsonOptions);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
+
+    public async Task<BranchVocabulariesDto> GetVocabulariesAsync(Guid branchId)
+    {
+        try
+        {
+            var result = await _httpClient.GetFromJsonAsync<BranchVocabulariesDto>(
+                $"api/v1/branches/{branchId}/students/vocabularies", _jsonOptions);
+            return result ?? new BranchVocabulariesDto();
+        }
+        catch (Exception ex)
+        {
+            // An empty vocabulary degrades a picker to a free-text box rather than blocking the
+            // form — losing the list is annoying, refusing to let anyone record a student is worse.
+            _logger.LogError(ex, "Failed to load vocabularies for branch {BranchId}", branchId);
+            return new BranchVocabulariesDto();
+        }
+    }
+
+    public async Task<UpdateBranchVocabulariesResultDto> UpdateVocabulariesAsync(Guid branchId, UpdateBranchVocabulariesRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/students/vocabularies", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<UpdateBranchVocabulariesResultDto>(_jsonOptions))!;
+    }
+
+    public async Task<Dictionary<string, List<VocabularyUsageDto>>> GetVocabularyUsageAsync(Guid branchId)
+    {
+        try
+        {
+            var result = await _httpClient.GetFromJsonAsync<Dictionary<string, List<VocabularyUsageDto>>>(
+                $"api/v1/branches/{branchId}/students/vocabularies/usage", _jsonOptions);
+            return result ?? new();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load vocabulary usage for branch {BranchId}", branchId);
+            return new();
+        }
     }
 
     public async Task<StudentPictureDto?> GetStudentPictureAsync(Guid branchId, Guid studentId)

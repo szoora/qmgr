@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using QMgr.Domain.Entities.Welfare;
 using System.Text.Json;
 using Hangfire;
@@ -38,10 +39,13 @@ public class StudentsController : ControllerBase
 
     private const int SearchResultLimit = 10;
 
-    public StudentsController(QMgrDbContext context, ITenantContextAccessor tenantAccessor)
+    private readonly ILogger<StudentsController> _logger;
+
+    public StudentsController(QMgrDbContext context, ITenantContextAccessor tenantAccessor, ILogger<StudentsController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
+        _logger = logger;
     }
 
     private async Task<IActionResult?> VerifyBranchOwnership(Guid branchId)
@@ -1412,4 +1416,329 @@ public class StudentsController : ControllerBase
             .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
             .ToDictionaryAsync(u => u.Id, u => string.IsNullOrWhiteSpace(u.Name) ? "Unknown" : u.Name);
     }
+
+    // =========================================================================================
+    // Branch vocabularies — the small, user-configurable master data lists.
+    //
+    // Stored in Branch.Settings under one key rather than in tables, per the rule written on
+    // BranchVocabulariesDto. Two things this has to get right that a table would have handled for
+    // free, and both are handled explicitly below: a rename has to be propagated to the students
+    // holding the old string, and a delete has to be refused while anyone still holds the value.
+    // =========================================================================================
+
+    private const string VocabularySettingsKey = "Vocabularies";
+
+    private static BranchVocabulariesDto ReadVocabularies(string? branchSettingsJson)
+    {
+        if (string.IsNullOrEmpty(branchSettingsJson)) return new BranchVocabulariesDto();
+        try
+        {
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(branchSettingsJson);
+            if (root != null && root.TryGetValue(VocabularySettingsKey, out var element))
+                return JsonSerializer.Deserialize<BranchVocabulariesDto>(element.GetRawText()) ?? new BranchVocabulariesDto();
+        }
+        catch (JsonException) { /* malformed settings blob — treat as not configured */ }
+        return new BranchVocabulariesDto();
+    }
+
+    private static string WriteVocabularies(string? branchSettingsJson, BranchVocabulariesDto vocab)
+    {
+        var merged = string.IsNullOrEmpty(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(branchSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+
+        merged[VocabularySettingsKey] = vocab;
+
+        // The legacy ClassColors map is now derived from the class list on every write, so the two
+        // can never disagree. It is kept rather than dropped because the printed visiting-day pass
+        // and any older client still read it — this is the compatibility shim, not a second store.
+        merged[ClassColorSettingsKey] = new ClassColorSettingsDto
+        {
+            Colors = vocab.Classes
+                .Where(c => !string.IsNullOrWhiteSpace(c.Color))
+                .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Color!)
+        };
+
+        return JsonSerializer.Serialize(merged);
+    }
+
+    /// <summary>
+    /// The configured lists for a branch.
+    ///
+    /// On a branch that has never opened the editor, the class list is SEEDED from what is already
+    /// in use — the class names students actually hold, plus any name the old colour map knew
+    /// about. Starting empty would be worse than useless: it would present a school with hundreds
+    /// of students as having no classes, and invite them to retype a list the system can already
+    /// see. Nothing is persisted by this read; the seed is only offered until somebody saves.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/vocabularies")]
+    [RequirePermission(Permissions.StudentsView)]
+    [ProducesResponseType(typeof(BranchVocabulariesDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVocabularies(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var settingsJson = await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        var vocab = ReadVocabularies(settingsJson);
+
+        if (vocab.Classes.Count == 0)
+        {
+            var legacyColors = ReadClassColorSettings(settingsJson).Colors;
+
+            var inUse = await _context.Students
+                .Where(s => s.BranchId == branchId && s.IsActive && s.ClassName != null && s.ClassName != "")
+                .Select(s => s.ClassName!)
+                .Distinct()
+                .ToListAsync();
+
+            vocab.Classes = inUse
+                .Concat(legacyColors.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, NaturalOrder)
+                .Select((name, i) => new VocabularyItemDto
+                {
+                    Name = name,
+                    Color = legacyColors.TryGetValue(name, out var c) ? c : null,
+                    SortOrder = i,
+                    IsActive = true
+                })
+                .ToList();
+        }
+
+        if (vocab.Houses.Count == 0)
+        {
+            vocab.Houses = await SeedFromStudentsAsync(branchId, s => s.House);
+        }
+
+        if (vocab.Dormitories.Count == 0)
+        {
+            vocab.Dormitories = await SeedFromStudentsAsync(branchId, s => s.DormitoryOrStream);
+        }
+
+        return Ok(vocab);
+    }
+
+    private async Task<List<VocabularyItemDto>> SeedFromStudentsAsync(Guid branchId, Expression<Func<Student, string?>> selector)
+    {
+        var values = await _context.Students
+            .Where(s => s.BranchId == branchId && s.IsActive)
+            .Select(selector)
+            .Where(v => v != null && v != "")
+            .Distinct()
+            .ToListAsync();
+
+        return values
+            .Select(v => v!)
+            .OrderBy(v => v, NaturalOrder)
+            .Select((name, i) => new VocabularyItemDto { Name = name, SortOrder = i, IsActive = true })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Saves the lists, and propagates renames to the students holding the old value.
+    ///
+    /// Renames arrive as an explicit old→new map rather than being inferred by diffing the list
+    /// against what was stored. A diff genuinely cannot tell a rename from a delete plus an add,
+    /// and guessing wrong either strands every student on a class that no longer exists or
+    /// rewrites the wrong one — the class name on a student is a copied string, which is the one
+    /// real cost of storing this vocabulary outside a table.
+    ///
+    /// Deleting a value that students still hold is REFUSED rather than silently orphaning them,
+    /// the same discipline the welfare-category editor already applies.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/students/vocabularies")]
+    [RequirePermission(Permissions.StudentsManage)]
+    [ProducesResponseType(typeof(UpdateBranchVocabulariesResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateVocabularies(Guid branchId, [FromBody] UpdateBranchVocabulariesRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch == null) return NotFound();
+
+        var vocab = request.Vocabularies ?? new BranchVocabulariesDto();
+
+        var listError = ValidateList(vocab.Classes, "class")
+                        ?? ValidateList(vocab.Houses, "house")
+                        ?? ValidateList(vocab.Dormitories, "dormitory");
+        if (listError != null)
+            return BadRequest(new ProblemDetails { Title = listError, Status = StatusCodes.Status400BadRequest });
+
+        var students = await _context.Students.Where(s => s.BranchId == branchId).ToListAsync();
+
+        var renamed = 0;
+        renamed += ApplyRenames(students, request.ClassRenames, s => s.ClassName, (s, v) => s.ClassName = v);
+        renamed += ApplyRenames(students, request.HouseRenames, s => s.House, (s, v) => s.House = v);
+        renamed += ApplyRenames(students, request.DormitoryRenames, s => s.DormitoryOrStream, (s, v) => s.DormitoryOrStream = v);
+
+        // Guard AFTER renames: a value that was renamed is no longer held by anybody, so checking
+        // first would refuse a perfectly ordinary rename-and-tidy in one save.
+        var orphanError = FindOrphaned(students, s => s.ClassName, vocab.Classes, "class")
+                          ?? FindOrphaned(students, s => s.House, vocab.Houses, "house")
+                          ?? FindOrphaned(students, s => s.DormitoryOrStream, vocab.Dormitories, "dormitory");
+        if (orphanError != null)
+            return BadRequest(new ProblemDetails { Title = orphanError, Status = StatusCodes.Status400BadRequest });
+
+        vocab.HomeLanguages = CleanSuggestions(vocab.HomeLanguages);
+        vocab.Religions = CleanSuggestions(vocab.Religions);
+        vocab.GuardianRelationships = CleanSuggestions(vocab.GuardianRelationships);
+        vocab.ActionsTaken = CleanSuggestions(vocab.ActionsTaken);
+
+        branch.Settings = WriteVocabularies(branch.Settings, vocab);
+        branch.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        if (renamed > 0)
+            _logger.LogInformation("Branch {BranchId} vocabulary rename touched {Count} student row(s)", branchId, renamed);
+
+        return Ok(new UpdateBranchVocabulariesResultDto
+        {
+            Vocabularies = vocab,
+            StudentsRenamed = renamed
+        });
+    }
+
+    /// <summary>How many students hold each value — what the editor asks before offering to delete one.</summary>
+    [HttpGet("branches/{branchId:guid}/students/vocabularies/usage")]
+    [RequirePermission(Permissions.StudentsView)]
+    [ProducesResponseType(typeof(Dictionary<string, List<VocabularyUsageDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVocabularyUsage(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var rows = await _context.Students
+            .Where(s => s.BranchId == branchId && s.IsActive)
+            .Select(s => new { s.ClassName, s.House, s.DormitoryOrStream })
+            .ToListAsync();
+
+        static List<VocabularyUsageDto> Count(IEnumerable<string?> values) =>
+            values.Where(v => !string.IsNullOrWhiteSpace(v))
+                  .GroupBy(v => v!, StringComparer.OrdinalIgnoreCase)
+                  .Select(g => new VocabularyUsageDto { Name = g.Key, StudentCount = g.Count() })
+                  .OrderByDescending(u => u.StudentCount)
+                  .ToList();
+
+        return Ok(new Dictionary<string, List<VocabularyUsageDto>>
+        {
+            ["classes"] = Count(rows.Select(r => r.ClassName)),
+            ["houses"] = Count(rows.Select(r => r.House)),
+            ["dormitories"] = Count(rows.Select(r => r.DormitoryOrStream))
+        });
+    }
+
+    private static string? ValidateList(List<VocabularyItemDto> items, string label)
+    {
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item.Name))
+                return $"A {label} needs a name";
+            if (item.Name.Trim().Length > 100)
+                return $"A {label} name cannot exceed 100 characters";
+            if (!string.IsNullOrWhiteSpace(item.Color) && !IsHexColor(item.Color))
+                return $"'{item.Color}' is not a valid colour";
+            item.Name = item.Name.Trim();
+        }
+
+        var duplicate = items.GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
+        return duplicate != null ? $"'{duplicate.Key}' is listed twice" : null;
+    }
+
+    private static bool IsHexColor(string value) =>
+        System.Text.RegularExpressions.Regex.IsMatch(value, "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$");
+
+    private static int ApplyRenames(
+        List<Student> students,
+        Dictionary<string, string>? renames,
+        Func<Student, string?> read,
+        Action<Student, string> write)
+    {
+        if (renames == null || renames.Count == 0) return 0;
+
+        var touched = 0;
+        foreach (var (oldName, newName) in renames)
+        {
+            if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName)) continue;
+            if (string.Equals(oldName, newName, StringComparison.Ordinal)) continue;
+
+            foreach (var student in students.Where(s => string.Equals(read(s), oldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                write(student, newName.Trim());
+                touched++;
+            }
+        }
+        return touched;
+    }
+
+    /// <summary>
+    /// A value a student still holds that is no longer on the list. Inactive entries still count as
+    /// present: retiring a class is how you stop it being offered on new records WITHOUT stranding
+    /// the students already in it, which is the whole reason IsActive exists separately from delete.
+    /// </summary>
+    private static string? FindOrphaned(
+        List<Student> students,
+        Func<Student, string?> read,
+        List<VocabularyItemDto> items,
+        string label)
+    {
+        var known = items.Select(i => i.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var orphan = students
+            .Where(s => s.IsActive && !string.IsNullOrWhiteSpace(read(s)) && !known.Contains(read(s)!))
+            .GroupBy(s => read(s)!, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .FirstOrDefault();
+
+        if (orphan == null) return null;
+
+        var n = orphan.Count();
+        return n == 1
+            ? $"1 student is still in {label} '{orphan.Key}'. Rename it instead of removing it, or move that student first."
+            : $"{n} students are still in {label} '{orphan.Key}'. Rename it instead of removing it, or move them first.";
+    }
+
+    private static List<string> CleanSuggestions(List<string>? values) =>
+        (values ?? new())
+            .Select(v => v?.Trim() ?? "")
+            .Where(v => v.Length > 0 && v.Length <= 100)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(v => v, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// Sorts "S.1, S.2, S.10" rather than "S.1, S.10, S.2". Class names are almost always a prefix
+    /// plus a number, and plain alphabetical ordering of them is wrong in the one way a school
+    /// notices immediately.
+    /// </summary>
+    private static readonly IComparer<string> NaturalOrder = Comparer<string>.Create((a, b) =>
+    {
+        int i = 0, j = 0;
+        while (i < a.Length && j < b.Length)
+        {
+            if (char.IsDigit(a[i]) && char.IsDigit(b[j]))
+            {
+                var si = i;
+                var sj = j;
+                while (i < a.Length && char.IsDigit(a[i])) i++;
+                while (j < b.Length && char.IsDigit(b[j])) j++;
+
+                var na = long.Parse(a[si..i]);
+                var nb = long.Parse(b[sj..j]);
+                if (na != nb) return na.CompareTo(nb);
+            }
+            else
+            {
+                var c = char.ToUpperInvariant(a[i]).CompareTo(char.ToUpperInvariant(b[j]));
+                if (c != 0) return c;
+                i++;
+                j++;
+            }
+        }
+        return (a.Length - i).CompareTo(b.Length - j);
+    });
 }

@@ -45,6 +45,7 @@
                    min="@Min"
                    max="@Max"
                    step="@Step"
+                   list="@List"
                    @onfocus="HandleFocus"
                    @onblur="HandleBlur"
                    @oninput="HandleInput"
@@ -146,6 +147,14 @@
     /// Step value for number input
     /// </summary>
     [Parameter] public string? Step { get; set; }
+
+    /// <summary>
+    /// Links this input to a native &lt;datalist&gt; by id, turning it into a SUGGESTED field: the
+    /// known values are offered, and anything else typed is still accepted. Use it where a closed
+    /// picker would be wrong — guardian relationship, home language, religion — because forcing a
+    /// fixed list there only pushes real answers into "Other".
+    /// </summary>
+    [Parameter] public string? List { get; set; }
 
     /// <summary>
     /// Number of rows for textarea

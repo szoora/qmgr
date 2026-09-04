@@ -33,7 +33,7 @@
         <div class="header-actions">
             <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
             <PermissionGuard Permission="students.manage">
-                <QButton Text="Class Colors" Icon="palette-fill" Variant="secondary" OnClick="@OpenClassColorsModal" />
+                <QButton Text="Lists" Icon="list-check" Variant="secondary" OnClick="@OpenVocabModal" Title="Classes, houses, dormitories and the suggestion lists" />
                 <QButton Text="Bulk Import" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal" />
                 <QButton Text="Add Student" Icon="person-plus-fill" Variant="primary" OnClick="@OpenAddStudentModal" />
             </PermissionGuard>
@@ -168,6 +168,28 @@
     }
 </div>
 
+@* Suggestion sources for the fields that stay free text. A datalist offers the known values and
+   accepts anything else, which is the right shape for a vocabulary a school will always have an
+   outlier for. Rendered once here rather than inside the dialog so they survive its open/close. *@
+<datalist id="vocab-languages">
+    @foreach (var v in vocabularies.HomeLanguages)
+    {
+        <option value="@v"></option>
+    }
+</datalist>
+<datalist id="vocab-religions">
+    @foreach (var v in vocabularies.Religions)
+    {
+        <option value="@v"></option>
+    }
+</datalist>
+<datalist id="vocab-relationships">
+    @foreach (var v in vocabularies.GuardianRelationships)
+    {
+        <option value="@v"></option>
+    }
+</datalist>
+
 @* ---------------- Add / Edit Student ---------------- *@
 <QModal @bind-Visible="showStudentModal" Title="@(editingStudentId.HasValue ? "Edit Student" : "Add Student")" Size="lg">
     <ChildContent>
@@ -212,7 +234,20 @@
                     </div>
                     <QInput TValue="string" @bind-Value="studentModel.StudentCode" Label="Student / admission code"
                             Placeholder="S001" MaxLength="100" HelperText="The school's own roll number — what a bulk import matches on." />
-                    <QInput TValue="string" @bind-Value="studentModel.ClassName" Label="Class" Placeholder="S.4" MaxLength="100" />
+                    @* A picker once the branch has any classes configured, a text box while it has
+                       none — a school that has not set its list up yet must still be able to
+                       record a student. Same fallback on House and Dormitory below. *@
+                    @if (ClassOptions.Any())
+                    {
+                        <QSelect TValue="string" TItem="string" @bind-Value="studentModel.ClassName"
+                                 Label="Class" Placeholder="Not set" AllowClear="true"
+                                 Items="@ClassOptions" ValueSelector="@(c => c)" TextSelector="@(c => c)" />
+                    }
+                    else
+                    {
+                        <QInput TValue="string" @bind-Value="studentModel.ClassName" Label="Class" Placeholder="S.4" MaxLength="100"
+                                HelperText="Configure the class list to turn this into a picker." />
+                    }
 
                     <QDatePicker @bind-Value="dateOfBirthValue" Label="Date of birth"
                                  HasError="@fieldErrors.ContainsKey(nameof(studentModel.DateOfBirth))"
@@ -229,9 +264,29 @@
                              HelperText="Decides who is responsible overnight."
                              Items="@ResidencyOptions" ValueSelector="@(o => (StudentResidency?)o.Value)" TextSelector="@(o => o.Label)" />
 
-                    <QInput TValue="string" @bind-Value="studentModel.House" Label="House" Placeholder="Kabalega" MaxLength="100"
-                            HelperText="The pastoral unit — the first responder and the grouping every report uses." />
-                    <QInput TValue="string" @bind-Value="studentModel.DormitoryOrStream" Label="Dormitory or stream" Placeholder="Block C" MaxLength="100" />
+                    @if (HouseOptions.Any())
+                    {
+                        <QSelect TValue="string" TItem="string" @bind-Value="studentModel.House"
+                                 Label="House" Placeholder="Not set" AllowClear="true"
+                                 Items="@HouseOptions" ValueSelector="@(h => h)" TextSelector="@(h => h)"
+                                 HelperText="The pastoral unit — the first responder and the grouping every report uses." />
+                    }
+                    else
+                    {
+                        <QInput TValue="string" @bind-Value="studentModel.House" Label="House" Placeholder="Kabalega" MaxLength="100"
+                                HelperText="The pastoral unit — the first responder and the grouping every report uses." />
+                    }
+
+                    @if (DormitoryOptions.Any())
+                    {
+                        <QSelect TValue="string" TItem="string" @bind-Value="studentModel.DormitoryOrStream"
+                                 Label="Dormitory or stream" Placeholder="Not set" AllowClear="true"
+                                 Items="@DormitoryOptions" ValueSelector="@(d => d)" TextSelector="@(d => d)" />
+                    }
+                    else
+                    {
+                        <QInput TValue="string" @bind-Value="studentModel.DormitoryOrStream" Label="Dormitory or stream" Placeholder="Block C" MaxLength="100" />
+                    }
 
                     @if (editingStudentId.HasValue)
                     {
@@ -283,9 +338,12 @@
                     <div class="span-2">
                         <QInput TValue="string" @bind-Value="studentModel.HomeAddress" Label="Home address" Type="textarea" Rows="2" MaxLength="500" />
                     </div>
+                    @* Suggested, not closed: a school will always have an outlier, and a closed
+                       list here would only push real answers into "Other". *@
                     <QInput TValue="string" @bind-Value="studentModel.HomeLanguage" Label="Home language" Placeholder="Runyankole" MaxLength="80"
+                            List="vocab-languages"
                             HelperText="Which language to hold a difficult conversation in." />
-                    <QInput TValue="string" @bind-Value="studentModel.Religion" Label="Religion" MaxLength="80" />
+                    <QInput TValue="string" @bind-Value="studentModel.Religion" Label="Religion" MaxLength="80" List="vocab-religions" />
                 </div>
             }
             else if (activeTab == "health")
@@ -379,35 +437,136 @@
     </FooterContent>
 </QModal>
 
-@* ---------------- Class Colors ---------------- *@
-<QModal @bind-Visible="showClassColorsModal" Title="Class Colors" Size="md">
+@* ---------------- Classes, houses & lists ----------------
+   Replaces the old colour-only dialog. Colour now lives ON the class entry rather than in a
+   parallel map keyed by class name, which is what made a rename orphan its colour: the old key
+   kept a colour nobody used and the new name had none. *@
+<QModal @bind-Visible="showVocabModal" Title="Classes, houses & lists" Size="lg">
     <ChildContent>
-        <p class="form-hint">
-            Pick a color for each class — used on the roster list and on printed visiting-day
-            passes so staff can tell classes apart at a glance. Classes with no color yet show grey.
-        </p>
-        @if (!DistinctClassNames.Any())
+        <div class="stu-tabs" role="tablist">
+            @foreach (var tab in VocabTabs)
+            {
+                <button type="button" role="tab"
+                        aria-selected="@(vocabTab == tab.Key ? "true" : "false")"
+                        class="stu-tab @(vocabTab == tab.Key ? "active" : "")"
+                        @onclick="@(() => vocabTab = tab.Key)">
+                    <QIcon Name="@tab.Icon" Size="15" />
+                    <span>@tab.Label</span>
+                    <span class="stu-tab-count">@VocabCount(tab.Key)</span>
+                </button>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(vocabError))
         {
-            <p class="form-hint">No classes on the roster yet — add a student with a class first.</p>
-        }
-        else
-        {
-            <div class="class-color-list">
-                @foreach (var className in DistinctClassNames)
-                {
-                    var currentColor = classColorEdits.TryGetValue(className, out var edited) ? edited : UnassignedClassColor;
-                    <div class="class-color-row">
-                        <span class="class-pill" style="@($"background:{currentColor}")">@className</span>
-                        <input type="color" value="@currentColor"
-                               @onchange="@(e => classColorEdits[className] = e.Value?.ToString() ?? UnassignedClassColor)" />
-                    </div>
-                }
+            <div class="stu-form-error" role="alert">
+                <QIcon Name="exclamation-triangle-fill" Size="16" />
+                <span>@vocabError</span>
             </div>
         }
+
+        <div class="stu-tab-panel" @key="vocabTab">
+            @if (vocabTab is "classes" or "houses" or "dormitories")
+            {
+                var items = ItemsFor(vocabTab);
+                var withColor = vocabTab == "classes";
+
+                <p class="vocab-note">
+                    @if (withColor)
+                    {
+                        <span>Renaming a class here renames it on every student in it. Removing one is refused while anybody is still in it — retire it instead.</span>
+                    }
+                    else
+                    {
+                        <span>Renaming here renames it on every student. Removing is refused while anybody still holds it.</span>
+                    }
+                </p>
+
+                @if (!items.Any())
+                {
+                    <p class="form-hint">Nothing here yet. Add the first one below.</p>
+                }
+                else
+                {
+                    <div class="vocab-list">
+                        @foreach (var item in items.OrderBy(i => i.SortOrder).ToList())
+                        {
+                            var usage = UsageFor(vocabTab, OriginalNameOf(item));
+                            <div class="vocab-row @(item.IsActive ? "" : "retired")">
+                                @if (withColor)
+                                {
+                                    <input class="vocab-color" type="color" value="@(item.Color ?? UnassignedClassColor)"
+                                           title="Colour on the roster and the printed pass"
+                                           @onchange="@(e => item.Color = e.Value?.ToString())" />
+                                }
+                                <input class="vocab-name" value="@item.Name"
+                                       maxlength="100"
+                                       @onchange="@(e => RenameItem(vocabTab, item, e.Value?.ToString() ?? ""))" />
+
+                                <span class="vocab-usage" title="Students currently holding this value">
+                                    @(usage == 0 ? "unused" : $"{usage} student{(usage == 1 ? "" : "s")}")
+                                </span>
+
+                                <button type="button" class="vocab-btn" title="Move up" @onclick="@(() => MoveItem(vocabTab, item, -1))">
+                                    <QIcon Name="chevron-up" Size="13" />
+                                </button>
+                                <button type="button" class="vocab-btn" title="Move down" @onclick="@(() => MoveItem(vocabTab, item, 1))">
+                                    <QIcon Name="chevron-down" Size="13" />
+                                </button>
+                                <button type="button" class="vocab-btn @(item.IsActive ? "" : "on")"
+                                        title="@(item.IsActive ? "Retire — stops being offered on new records, students already in it keep it" : "Bring back")"
+                                        @onclick="@(() => item.IsActive = !item.IsActive)">
+                                    <QIcon Name="@(item.IsActive ? "eye" : "eye-slash")" Size="13" />
+                                </button>
+                                <button type="button" class="vocab-btn danger" title="@(usage > 0 ? "In use — retire it instead" : "Remove")"
+                                        disabled="@(usage > 0)"
+                                        @onclick="@(() => RemoveItem(vocabTab, item))">
+                                    <QIcon Name="trash" Size="13" />
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="vocab-add">
+                    <input class="vocab-name" placeholder="@AddPlaceholder(vocabTab)" value="@newItemName"
+                           maxlength="100"
+                           @onchange="@(e => newItemName = e.Value?.ToString() ?? "")" />
+                    <QButton Text="Add" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => AddItem(vocabTab))" />
+                </div>
+            }
+            else
+            {
+                <p class="vocab-note">
+                    Suggestions, not a fixed list — these are offered as you type and anything else is still accepted.
+                    A closed list here would only push real answers into "Other".
+                </p>
+
+                <div class="vocab-list">
+                    @foreach (var value in SuggestionsFor(vocabTab).ToList())
+                    {
+                        <div class="vocab-row">
+                            <span class="vocab-name-static">@value</span>
+                            <button type="button" class="vocab-btn danger" title="Remove suggestion"
+                                    @onclick="@(() => SuggestionsFor(vocabTab).Remove(value))">
+                                <QIcon Name="trash" Size="13" />
+                            </button>
+                        </div>
+                    }
+                </div>
+
+                <div class="vocab-add">
+                    <input class="vocab-name" placeholder="@AddPlaceholder(vocabTab)" value="@newItemName"
+                           maxlength="100"
+                           @onchange="@(e => newItemName = e.Value?.ToString() ?? "")" />
+                    <QButton Text="Add" Icon="plus-lg" Variant="secondary" Size="sm" OnClick="@(() => AddSuggestion(vocabTab))" />
+                </div>
+            }
+        </div>
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showClassColorsModal = false)" />
-        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveClassColors" />
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showVocabModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" Loading="@isSavingVocab" Disabled="@isSavingVocab" OnClick="@SaveVocabularies" />
     </FooterContent>
 </QModal>
 
@@ -610,6 +769,89 @@
 </div>
 
 <style>
+    /* ---------------- Vocabulary editor ---------------- */
+
+    .vocab-note {
+        margin: 0 0 14px;
+        padding: 9px 12px;
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-secondary);
+        font-size: 12.5px;
+        line-height: 1.5;
+    }
+
+    .vocab-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+
+    .vocab-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-card);
+    }
+
+    /* A retired entry is still readable — students already in it keep it — so it dims rather than
+       disappears. Hiding it would make "why can nobody pick S.6 any more" unanswerable. */
+    .vocab-row.retired { opacity: .55; }
+    .vocab-row.retired .vocab-name { text-decoration: line-through; }
+
+    .vocab-color {
+        width: 30px; height: 30px; padding: 0;
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
+        background: none; cursor: pointer; flex-shrink: 0;
+    }
+
+    .vocab-name {
+        flex: 1 1 auto; min-width: 0;
+        padding: 6px 9px;
+        border: 1px solid transparent;
+        border-radius: var(--qm-radius-sm);
+        background: transparent;
+        color: var(--qm-text-primary);
+        font-family: var(--qm-font-primary);
+        font-size: 13.5px;
+    }
+
+    .vocab-name:hover { border-color: var(--qm-border); }
+    .vocab-name:focus { outline: none; border-color: var(--qm-primary); background: var(--qm-bg-elevated); }
+
+    .vocab-name-static { flex: 1 1 auto; font-size: 13.5px; padding: 6px 9px; }
+
+    .vocab-usage {
+        font-size: 11px;
+        color: var(--qm-text-muted);
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .vocab-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 26px; height: 26px; flex-shrink: 0;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-card);
+        color: var(--qm-text-secondary);
+        cursor: pointer;
+        transition: color .15s ease, border-color .15s ease;
+    }
+
+    .vocab-btn:hover:not(:disabled) { color: var(--qm-primary); border-color: var(--qm-primary); }
+    .vocab-btn.on { color: var(--qm-primary); border-color: var(--qm-primary); }
+    .vocab-btn.danger:hover:not(:disabled) { color: var(--qm-danger); border-color: var(--qm-danger); }
+    .vocab-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .vocab-btn:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
+
+    .vocab-add {
+        display: flex; align-items: center; gap: 8px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--qm-border);
+    }
+
+    .vocab-add .vocab-name { border-color: var(--qm-border); }
+
     /* ---------------- Roster chips ---------------- */
 
     .roster-chip {
@@ -1016,36 +1258,6 @@
     private string GetClassColor(string? className) =>
         !string.IsNullOrWhiteSpace(className) && classColors.TryGetValue(className, out var color) ? color : UnassignedClassColor;
 
-    // Class Colors modal
-    private bool showClassColorsModal;
-    private Dictionary<string, string> classColorEdits = new();
-
-    private IEnumerable<string> DistinctClassNames => students
-        .Select(s => s.ClassName)
-        .Where(c => !string.IsNullOrWhiteSpace(c))
-        .Select(c => c!)
-        .Distinct()
-        .OrderBy(c => c);
-
-    private void OpenClassColorsModal()
-    {
-        classColorEdits = new Dictionary<string, string>(classColors);
-        showClassColorsModal = true;
-    }
-
-    private async Task SaveClassColors()
-    {
-        var result = await StudentApi.UpdateClassColorsAsync(branchId, new ClassColorSettingsDto { Colors = classColorEdits });
-        if (result == null)
-        {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't save class colors");
-            return;
-        }
-
-        classColors = result.Colors;
-        showClassColorsModal = false;
-        NotificationService.Notify(ToastSeverity.Success, "Success", "Class colors saved");
-    }
 
     /// <summary>
     /// Pre-print a "Visiting Day Pass" for one guardian ahead of the actual visit — distinct from
@@ -1328,6 +1540,278 @@
     private string activeTab = "identity";
     private readonly Dictionary<string, string> fieldErrors = new();
 
+    // ---- Branch vocabularies: the configurable master-data lists ----
+    private BranchVocabulariesDto vocabularies = new();
+
+    /// <summary>Active entries only, in the order the admin set. A retired class stays readable on the students already in it but is not offered on new ones.</summary>
+    private List<string> ClassOptions => vocabularies.Classes.Where(c => c.IsActive).OrderBy(c => c.SortOrder).Select(c => c.Name).ToList();
+    private List<string> HouseOptions => vocabularies.Houses.Where(h => h.IsActive).OrderBy(h => h.SortOrder).Select(h => h.Name).ToList();
+    private List<string> DormitoryOptions => vocabularies.Dormitories.Where(d => d.IsActive).OrderBy(d => d.SortOrder).Select(d => d.Name).ToList();
+
+
+    // ---- Vocabulary editor ----
+    private bool showVocabModal;
+    private bool isSavingVocab;
+    private string vocabTab = "classes";
+    private string? vocabError;
+    private string newItemName = "";
+
+    /// <summary>The editable copy. Cancel throws it away, so the roster never shows half-made edits.</summary>
+    private BranchVocabulariesDto vocabEdit = new();
+
+    /// <summary>
+    /// Item identity → the name it had when the dialog opened. This is what makes a rename a
+    /// rename: the server is told old→new explicitly, because a diff of two lists genuinely cannot
+    /// tell "S.4 was renamed to Senior 4" apart from "S.4 was deleted and Senior 4 was added", and
+    /// guessing wrong either strands every student in that class or rewrites the wrong one.
+    /// </summary>
+    private readonly Dictionary<VocabularyItemDto, string> vocabOriginalNames = new();
+
+    private Dictionary<string, List<VocabularyUsageDto>> vocabUsage = new();
+
+    private sealed record VocabTab(string Key, string Label, string Icon);
+
+    private static readonly VocabTab[] VocabTabs =
+    {
+        new("classes",       "Classes",       "mortarboard"),
+        new("houses",        "Houses",        "house"),
+        new("dormitories",   "Dormitories",   "door-closed"),
+        new("languages",     "Languages",     "translate"),
+        new("religions",     "Religions",     "book"),
+        new("relationships", "Relationships", "people"),
+        new("actions",       "Actions",       "clipboard-check")
+    };
+
+    private async Task OpenVocabModal()
+    {
+        vocabError = null;
+        newItemName = "";
+        vocabTab = "classes";
+        isSavingVocab = false;
+
+        await LoadVocabulariesAsync();
+        vocabUsage = await StudentApi.GetVocabularyUsageAsync(branchId);
+
+        // Deep copy — editing the live object would leave the roster's own pickers showing edits
+        // that were never saved, including ones the user then cancelled.
+        vocabEdit = new BranchVocabulariesDto
+        {
+            Classes = vocabularies.Classes.Select(Clone).ToList(),
+            Houses = vocabularies.Houses.Select(Clone).ToList(),
+            Dormitories = vocabularies.Dormitories.Select(Clone).ToList(),
+            HomeLanguages = new List<string>(vocabularies.HomeLanguages),
+            Religions = new List<string>(vocabularies.Religions),
+            GuardianRelationships = new List<string>(vocabularies.GuardianRelationships),
+            ActionsTaken = new List<string>(vocabularies.ActionsTaken)
+        };
+
+        vocabOriginalNames.Clear();
+        foreach (var item in vocabEdit.Classes.Concat(vocabEdit.Houses).Concat(vocabEdit.Dormitories))
+            vocabOriginalNames[item] = item.Name;
+
+        showVocabModal = true;
+    }
+
+    private static VocabularyItemDto Clone(VocabularyItemDto i) =>
+        new() { Name = i.Name, Color = i.Color, SortOrder = i.SortOrder, IsActive = i.IsActive };
+
+    private List<VocabularyItemDto> ItemsFor(string tab) => tab switch
+    {
+        "classes" => vocabEdit.Classes,
+        "houses" => vocabEdit.Houses,
+        "dormitories" => vocabEdit.Dormitories,
+        _ => new()
+    };
+
+    private List<string> SuggestionsFor(string tab) => tab switch
+    {
+        "languages" => vocabEdit.HomeLanguages,
+        "religions" => vocabEdit.Religions,
+        "relationships" => vocabEdit.GuardianRelationships,
+        "actions" => vocabEdit.ActionsTaken,
+        _ => new()
+    };
+
+    private int VocabCount(string tab) => tab switch
+    {
+        "classes" or "houses" or "dormitories" => ItemsFor(tab).Count,
+        _ => SuggestionsFor(tab).Count
+    };
+
+    private static string AddPlaceholder(string tab) => tab switch
+    {
+        "classes" => "S.1",
+        "houses" => "Kabalega",
+        "dormitories" => "Block C",
+        "languages" => "Runyankole",
+        "religions" => "Anglican",
+        "relationships" => "Auntie",
+        "actions" => "Restorative conversation",
+        _ => "New entry"
+    };
+
+    private string OriginalNameOf(VocabularyItemDto item) =>
+        vocabOriginalNames.TryGetValue(item, out var original) ? original : item.Name;
+
+    /// <summary>
+    /// How many students hold this value. Keyed on the ORIGINAL name, because the count came from
+    /// the database and the database still has the old string until the save propagates the rename.
+    /// </summary>
+    private int UsageFor(string tab, string name)
+    {
+        var key = tab switch { "classes" => "classes", "houses" => "houses", "dormitories" => "dormitories", _ => "" };
+        if (key.Length == 0 || !vocabUsage.TryGetValue(key, out var list)) return 0;
+        return list.FirstOrDefault(u => string.Equals(u.Name, name, StringComparison.OrdinalIgnoreCase))?.StudentCount ?? 0;
+    }
+
+    private void RenameItem(string tab, VocabularyItemDto item, string newName)
+    {
+        vocabError = null;
+        newName = newName.Trim();
+        if (newName.Length == 0)
+        {
+            vocabError = "A name cannot be blank";
+            return;
+        }
+
+        var clash = ItemsFor(tab).Any(i => !ReferenceEquals(i, item) && string.Equals(i.Name, newName, StringComparison.OrdinalIgnoreCase));
+        if (clash)
+        {
+            vocabError = $"'{newName}' is already on this list";
+            return;
+        }
+
+        item.Name = newName;
+    }
+
+    private void AddItem(string tab)
+    {
+        vocabError = null;
+        var name = newItemName.Trim();
+        if (name.Length == 0) return;
+
+        var items = ItemsFor(tab);
+        if (items.Any(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            vocabError = $"'{name}' is already on this list";
+            return;
+        }
+
+        items.Add(new VocabularyItemDto
+        {
+            Name = name,
+            SortOrder = items.Count == 0 ? 0 : items.Max(i => i.SortOrder) + 1,
+            IsActive = true
+        });
+        newItemName = "";
+    }
+
+    private void AddSuggestion(string tab)
+    {
+        vocabError = null;
+        var value = newItemName.Trim();
+        if (value.Length == 0) return;
+
+        var list = SuggestionsFor(tab);
+        if (list.Any(v => string.Equals(v, value, StringComparison.OrdinalIgnoreCase)))
+        {
+            vocabError = $"'{value}' is already suggested";
+            return;
+        }
+
+        list.Add(value);
+        newItemName = "";
+    }
+
+    /// <summary>
+    /// Removing is only reachable when nothing holds the value — the button is disabled otherwise
+    /// and the server refuses it regardless. Retiring is the answer for a class that still has
+    /// students in it.
+    /// </summary>
+    private void RemoveItem(string tab, VocabularyItemDto item)
+    {
+        vocabError = null;
+        if (UsageFor(tab, OriginalNameOf(item)) > 0)
+        {
+            vocabError = $"'{item.Name}' is still in use — retire it instead of removing it";
+            return;
+        }
+        ItemsFor(tab).Remove(item);
+        vocabOriginalNames.Remove(item);
+    }
+
+    /// <summary>
+    /// Order is explicit because the natural one is wrong: S.1 … S.10 sorts alphabetically as
+    /// S.1, S.10, S.2, which is the first thing a school notices.
+    /// </summary>
+    private void MoveItem(string tab, VocabularyItemDto item, int direction)
+    {
+        var ordered = ItemsFor(tab).OrderBy(i => i.SortOrder).ToList();
+        var index = ordered.IndexOf(item);
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= ordered.Count) return;
+
+        (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
+        for (var i = 0; i < ordered.Count; i++) ordered[i].SortOrder = i;
+    }
+
+    private async Task SaveVocabularies()
+    {
+        vocabError = null;
+        isSavingVocab = true;
+        try
+        {
+            var request = new UpdateBranchVocabulariesRequest
+            {
+                Vocabularies = vocabEdit,
+                ClassRenames = RenamesFor(vocabEdit.Classes),
+                HouseRenames = RenamesFor(vocabEdit.Houses),
+                DormitoryRenames = RenamesFor(vocabEdit.Dormitories)
+            };
+
+            var result = await StudentApi.UpdateVocabulariesAsync(branchId, request);
+            vocabularies = result.Vocabularies;
+
+            // Colour lives on the class entry now; keep the roster's own colour lookup in step so
+            // the pills update without a reload.
+            classColors = vocabularies.Classes
+                .Where(c => !string.IsNullOrWhiteSpace(c.Color))
+                .ToDictionary(c => c.Name, c => c.Color!, StringComparer.OrdinalIgnoreCase);
+
+            NotificationService.Notify(ToastSeverity.Success, "Saved",
+                result.StudentsRenamed > 0
+                    ? $"Lists saved. {result.StudentsRenamed} student record{(result.StudentsRenamed == 1 ? "" : "s")} updated by the rename."
+                    : "Lists saved.");
+
+            showVocabModal = false;
+            await LoadStudents();
+        }
+        catch (InvalidOperationException ex)
+        {
+            vocabError = ex.Message;
+        }
+        finally
+        {
+            isSavingVocab = false;
+        }
+    }
+
+    private Dictionary<string, string> RenamesFor(List<VocabularyItemDto> items)
+    {
+        var renames = new Dictionary<string, string>();
+        foreach (var item in items)
+        {
+            if (!vocabOriginalNames.TryGetValue(item, out var original)) continue;
+            if (!string.Equals(original, item.Name, StringComparison.Ordinal))
+                renames[original] = item.Name;
+        }
+        return renames;
+    }
+    private async Task LoadVocabulariesAsync()
+    {
+        vocabularies = await StudentApi.GetVocabulariesAsync(branchId);
+    }
+
     private sealed record ProfileTab(string Key, string Label, string Icon);
 
     private static readonly ProfileTab[] ProfileTabs =
@@ -1499,6 +1983,7 @@
         classColors = colorSettings.Colors;
         printLetterhead = await StudentApi.GetPrintLetterheadAsync(branchId);
 
+        await LoadVocabulariesAsync();
         await LoadStudents();
     }
 
