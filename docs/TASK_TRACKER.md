@@ -6,7 +6,145 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
-## 🧭 SESSION HANDOVER (written 2026-09-04) — price grandfathering shipped; read this one first
+## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped; read this one first
+
+Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
+work it covers. **Nothing in this session has run in production yet.** A deployment package is built
+and waiting; the deploy itself has not been run.
+
+Ten commits, all on `master`, working tree clean at `d5a9fe7`.
+
+| Commit | What |
+| --- | --- |
+| `65f38ed` … | (earlier in session) tier retirement, module billing, dashboard module sections |
+| `3120f3a` | Made the app's loading spinner visible — 14 invisible ones |
+| `f092ecd` | Corrected the module-catalog banner, which described the pre-grandfathering world |
+| `eb2afc8` | Page headers laid out as a row; dashboard grid clipped its own column headings |
+| `82a112c` | Dashboard read module flags before they resolved |
+| `7eb7046` | **Student welfare background** — the session's main feature |
+| `13caf5a` | Two dropdown bugs; home country + district as a dependent picker |
+| `63e35ed` | Class/house/dormitory as configurable master data in JSON |
+| `73c2529` | Cut the copy back, dropped decorative icons |
+| `d5a9fe7` | Generic label rules were stacking every checkbox app-wide |
+
+### Deployment package is built and NOT deployed
+
+`scripts/deploy/dist/qmgr-0.2.0-20260904.2229.tar.gz` (109 MB), built from a clean tree at
+`d5a9fe7`, ports baked as **API 8586 / Web 8587** (the real ones for `qmgr.cashbook.ug` — the
+script's 8581/8582 defaults are wrong for that box).
+
+**Four migrations run on first start**, and one of them is not reversible:
+
+| Migration | Risk |
+| --- | --- |
+| `AddAgreedPriceGrandfathering` | Additive |
+| `RetireTiersForModuleBilling` | **Irreversible** — grants modules to paid-tier orgs, advances period ends, then DROPS the tier columns. Migrates data before dropping, but a DB backup is the only rollback |
+| `AddStudentWelfareBackground` | Additive: 29 nullable columns + the `StudentFlags` table |
+| `AddStudentHomeCountry` | Additive |
+
+Before deploying: take a database backup (the package installs `qmgr-backup-db.sh` but it will not
+have run yet), and confirm 8586/8587 are free with `ss -tlnp` — that box already had 8580-8584 and
+8590/8591 taken by unrelated apps.
+
+### What the welfare work actually did
+
+The roster was built for visiting day — find a name at the gate, tap, admit the guardian. The
+welfare ledger on top of it asks a harder question, and six fields could not answer it. Staff were
+reading a precise chronology of events against a child the system knew nothing about.
+
+- **`Student` gained 20 nullable columns** across identity/placement, home and family, a four-field
+  health summary, and continuity (fees status, sponsor, transport, previous school).
+- **`StudentGuardian` gained 6**, including `ContactRestriction` — which closed a live safeguarding
+  hole. `VisitorProfile.IsWatchlisted` is organization-scoped, so the system could say "this man may
+  not enter the school" but not "he may visit his son and must not have contact with his daughter".
+  That is the ordinary shape of a custody order and it was unrepresentable.
+- **`WelfareRecord` gained `ResponseStage`, `Antecedent`, `PerceivedFunction`**, and
+  `WelfareCaseType` gained `SupportPlan = 3` (appended, never inserted).
+- **One new table, `StudentFlag`.** Its doc comment records the three cheaper shapes tried first and
+  why each fails — that is the standing enhance-before-you-add rule being answered, not ignored.
+
+**The support plan is a case type, not a table**: an open record with an owner, a review date, and
+reviews written as the notes the ledger already supports, so it inherits the existing reminder job.
+
+### Preventive before punitive, made structural
+
+Every response carries a stage. Choosing Punitive for a student with nothing softer on file raises a
+prompt naming what has and has not been tried. **It prompts, it never blocks** — staff dealing with a
+real emergency must not be argued with by a form. Verified both ways live: silent for a student with
+a restorative on file, firing for a clean one.
+
+### Class, house and dormitory are configurable master data in JSON
+
+Stored under one key in `Branch.Settings`, extending a pattern that was already there —
+`ClassColors` already lived in that column, so the class vocabulary was *already* JSON, just derived
+from whatever somebody typed free-hand. Two things a table would have given free are handled
+explicitly:
+
+- **Rename** arrives as an explicit old→new map, never inferred from a diff. A diff cannot tell a
+  rename from a delete-plus-add, and guessing wrong strands every student in that class. The save
+  reports how many rows it touched.
+- **Delete** is refused while anybody holds the value. Retiring is the answer for a class with
+  students still in it.
+
+The rule for where the next list belongs is written on `BranchVocabulariesDto`. By it, **welfare
+categories stay a table and were deliberately not moved** — `WelfareRecord` and `StudentFlag` both
+hold a real `CategoryId` with Restrict-on-delete.
+
+### Bugs found and fixed that were NOT part of the feature
+
+Four of these predate this session and were found by looking at running pages rather than by grep:
+
+1. **`webster-spinner` used 14 times across 10 files, defined nowhere.** Only a `.small` size
+   modifier existed, inside one page's style block. Every spinner in billing, settings, reports and
+   the dashboard rendered as an invisible empty div.
+2. **`QSelect` closed itself above 6 items.** The search box gets focused on open, which blurs the
+   trigger, which fired `HandleBlur`, which closed the list 200ms later. Never seen because no
+   select in the app had more than six options until a 29-country picker existed.
+3. **Nine page headers inherited the topbar's `.header-left`** flex row, laying title, breadcrumb,
+   subtitle and notice side by side. Worst on Billing/Modules.
+4. **Generic `.form-group label { display: block }` rules** in `app.css` and ten page style blocks
+   were stacking every `QCheckbox` and rendering its label in bold uppercase — a student's name read
+   as a field heading.
+5. **My own regression**: the tab-panel and field entry animations used `transform`, which makes an
+   element a containing block for fixed-position descendants and displaced every dropdown inside the
+   student form. Opacity-only now.
+
+`ApiErrorService` also returned a blanket "An error occurred" whenever the response body was empty —
+which is exactly what a 401, 403 and 404 all return, making an expired session indistinguishable
+from a validation failure. It names the status now.
+
+### Verified
+
+Full API e2e: **88 passed, 5 failed on the first run, and all five were the test's fault, not the
+product's** — a missing Behavior category in the test tenant, .NET rendering September as "Sept",
+and a rename count I had expected wrongly. But chasing them mattered: one had been **passing for the
+wrong reason** (a rule rejected as a category mismatch rather than by the rule under test), which is
+exactly the false pass an e2e exists to catch. Re-tested properly with real categories.
+
+Browser: roster chips and class pills, the four-tab student form with every dropdown, the Lists
+editor with per-row usage guards, the welfare form's conditional ladder fields, both sides of the
+escalation prompt, and the Cohorts tab.
+
+### Worth knowing next time
+
+- **`PUT /students/{id}` is a full replace.** A partial payload clears the fields it omits. Standard
+  PUT semantics and the UI always sends the whole model, but it is a sharp edge for any other caller
+  — it is what silently wiped a class during validation testing.
+- **`Branch.Settings` is read-modify-write.** Two admins saving different sections at the same moment
+  can still clobber each other. Low stakes for settings, but a real difference from row storage.
+- **The suggestion lists are only half-wired.** `ActionsTaken` is not yet attached to the welfare
+  record form, nor `GuardianRelationships` to the add-guardian dialog. Small, but not done.
+- **Attendance is deliberately out of scope.** It is the strongest single welfare predictor and it is
+  a module, not a field — registers, period marks, authorisation codes. The honest interim is an
+  *attendance concern* flag raised from whatever system the school already uses.
+- **District lists change by statute.** `Geography.cs` holds Uganda complete and its EAC neighbours;
+  `HomeDistrict` stays a plain string precisely so a value the file has not caught up with is still
+  recordable.
+- **Tier plans still have no editor** (carried forward from the previous handover, still true).
+
+---
+
+## 🧭 SESSION HANDOVER (written 2026-09-04) — price grandfathering shipped (superseded by the 2026-09-04 late entry above; still accurate for the grandfathering work)
 
 Supersedes the 2026-09-03 handover below as the "read first" entry. That entry's **NEXT TASK —
 price grandfathering** section is now **[x] done**, built to the design it carried, with the three
@@ -1647,6 +1785,269 @@ Built incrementally across several user requests in the same session:
 - [!] **The production build from earlier in this session predates all of the above fixes** — if
   it or anything built before this phase was already deployed anywhere, it should be rebuilt and
   redeployed; the CSS leak and the wide-open API docs were both present in it.
+
+---
+
+## Phase 72 — Full e2e, then two rounds of user-reported UI polish
+
+- [x] **API e2e: 88 passed, 5 failed — and all five were the test's fault, not the product's.** A
+  missing Behavior category in the test tenant (three cascading assertions), .NET rendering September
+  as "Sept" rather than "Sep", and a rename count expected as 2 that was correctly 1 because earlier
+  validation PUTs had cleared the other student's class.
+- [!] **But chasing them mattered.** Because the Behavior category was missing, the check *"stage on
+  an achievement refused"* had been **passing for the wrong reason** — rejected as a category
+  mismatch rather than by the rule under test. Re-tested with real Behavior and Achievement
+  categories: the rule holds properly, and four neighbouring rules were verified at the same time.
+  This is exactly the false pass an e2e exists to catch, and it only surfaced because the failure was
+  investigated instead of waved through.
+- [x] **Module decoupling regression still a clean diagonal** — each single-module tenant answers 200
+  for its own module and 403 for the other three.
+- [x] **"do not use those generic icons, and your statements should be brief and meaningful"** —
+  fair on both counts. The escalation prompt led with a signpost glyph that carried no meaning; the
+  bold heading already said what the box was. Dropped, along with the bullet icon in the patterns
+  list (punctuation, now a CSS marker) and the info-circles on the plan and cohort notes. Two
+  decorative tab icons became literal ones. Seventeen pieces of copy were cut — the prompt went from
+  a three-clause paragraph to one sentence, and its checkbox from *"I have considered a restorative
+  or corrective response and a punishment is still right"* to *"A sanction is still the right
+  response"*.
+- [x] **"move checkbox and label to same line. fix globally"** — `QCheckbox` renders a `<label>`, and
+  `app.css` plus ten page style blocks each carry a generic
+  `.form-group label { display: block; font-weight: 600; text-transform: uppercase }` at specificity
+  0,1,1. The component's own `.q-checkbox` is 0,1,0 and loses, so every checkbox inside a form group
+  was laid out as a block: box on one line, label stacked underneath in bold uppercase — which is why
+  a student's name read as "AMINA NAKATO", like a field heading rather than the person being ticked.
+  Fixed **in the component**: `label.q-checkbox` only ties on specificity, and a page's own `<style>`
+  loads after the stylesheet so a tie still loses; repeating the class reaches 0,2,0 and settles it
+  without `!important` and without chasing `:not()` through every page that has ever written a label
+  rule. Both the label and its span now reset what those rules inject.
+
+Commits: `73c2529`, `d5a9fe7`.
+
+- [x] **Deployment package rebuilt** — `qmgr-0.2.0-20260904.2229.tar.gz`, clean tree at `d5a9fe7`,
+  ports 8586/8587. Three of the session's CSS fixes were verified present in the shipped files rather
+  than trusted. **Not deployed.**
+
+---
+
+## Phase 71 — Class, house and dormitory as configurable master data in JSON, on the user's suggestion
+
+The user proposed making class a configurable list stored in a JSON field rather than a table, to
+avoid multiplying tables for small vocabularies, and asked for an opinion first.
+
+- [x] **Agreed, and the pattern was already half-built here.** `Branch.Settings` is a JSON column and
+  `ClassColors` already lived in it — so the class vocabulary was *already* stored as JSON, just as
+  the keys of a colour map derived from whatever somebody typed free-hand into a student record.
+  Curating that list fixes something already crooked rather than adding a layer.
+- [x] **It closed a latent bug**: the colour map was keyed by class *name*, so renaming a class
+  orphaned its colour — the old key kept a colour nobody used and the new name had none. Colour now
+  lives on the class entry, and the legacy map is re-derived from it on every write so older readers
+  keep working without a second store to drift.
+- [x] **The rule for where the next list belongs is written on `BranchVocabulariesDto`**: JSON for a
+  small bounded list with no per-item lifecycle that nothing references by ID and whose value is
+  copied onto the row as a label; a real table when something foreign-keys to it, it carries its own
+  dates or state, the database must protect it on delete, or it is reported on directly.
+- [!] **By that rule, welfare categories stay a table and were deliberately not moved** —
+  `WelfareRecord` and `StudentFlag` both hold a real `CategoryId` with Restrict-on-delete. The user
+  said "configurable like welfare categories", which is about the editing experience, not the storage.
+
+The two things a table would have given for free, handled explicitly:
+
+- [x] **Rename** arrives as an explicit old→new map rather than being inferred by diffing the list.
+  A diff genuinely cannot tell "S.4 was renamed to Senior 4" from "S.4 was deleted and Senior 4 was
+  added", and guessing wrong either strands every student in that class or rewrites the wrong one.
+  The save reports how many rows it touched instead of claiming a silent success.
+- [x] **Delete** is refused while anybody still holds the value, with the count named; the row's
+  delete button is disabled per-entry. Retiring is the answer for a class that still has students in
+  it — it stops being offered on new records and stays readable on old ones.
+- [x] **Ordering is explicit** because the natural one is wrong: the seed sorts naturally, so S.4
+  comes before S.10 where alphabetical would give S.1, S.10, S.2.
+- [x] Closed lists (class, house, dormitory) are pickers with a text-box fallback while a branch has
+  configured none. Suggested lists (language, religion, guardian relationship, action taken) are
+  datalists — `QInput` gained a `List` parameter for that — because a closed list there would only
+  push real answers into "Other", which is the reasoning already recorded on
+  `StudentGuardian.Relationship`.
+
+Commit: `63e35ed`.
+
+---
+
+
+---
+
+## Phase 70 — Two dropdown bugs behind one symptom, and a wrong theory corrected in public
+
+The user reported "dropdown items displaced" from a screenshot and asked whether a full e2e had been
+run. **It had not** — the API had been exercised thoroughly with curl, but no dropdown had ever been
+opened, nothing had been saved from the UI, and three tabs had never been looked at. The first place
+the user looked was broken.
+
+Two independent bugs produced one symptom, and the first theory was wrong:
+
+- [!] **First theory, stated in a code comment and then disproven**: that the entry animations'
+  `transform` was breaking the dropdown. Removing the animation did not fix it — because the *other*
+  bug was still closing the list before it could be clicked. The comment was corrected rather than
+  left standing.
+- [x] **`QSelect` closed itself above `SearchThreshold` (6) items.** The dropdown renders a search box
+  and focuses it as soon as it opens. That focus **blurs the trigger button**, which fired
+  `HandleBlur`, which closed the list 200ms later — so it appeared, sat there for a fifth of a
+  second, and vanished, and the click then landed on whatever field happened to be underneath. It had
+  gone unnoticed for the life of the component because **until a 29-country picker existed, no select
+  in the app had more than six options**, so none of them ever rendered a search box. Fixed by
+  swallowing the one blur that moves focus into the component's own search box, and giving the search
+  input the same handler so an outside click still closes the list.
+- [x] **Then the displacement was visible, and it was a self-inflicted regression.** The tab-panel
+  and field entry animations translate on the Y axis, and a `transform` of any value makes an element
+  a containing block for fixed-position descendants. `QSelect` deliberately renders its list
+  `position: fixed` at JS-measured **viewport** coordinates so no scrollable ancestor can clip it;
+  with a transform running on the field wrapper those coordinates resolved against the wrapper
+  instead, putting the panel roughly a modal-width to the right and dragging a horizontal scrollbar
+  into the dialog. It bites *while the animation is running*, so no fill-mode adjustment avoids it —
+  the transform simply cannot be on an element that hosts a popover. Both animations are opacity-only
+  now.
+
+Commit: `13caf5a`.
+
+---
+
+
+---
+
+## Phase 69 — Student Welfare background: the plan, then the build
+
+The user asked what information a welfare system needs on a student, given the roster was built for
+visiting-day check-in and has six fields. Answered as a design document first (published as an
+artifact), then built on instruction.
+
+### The gap
+
+`Student` held name, admission code, class, an active flag and a three-part consent stamp. Its own
+doc comment was candid: *"a student is never checked in themselves, they're the reason someone else
+is."* Meanwhile the ledger above it is mature — append-only chronology, server-forced confidentiality
+on safeguarding cases, assigned actions with due dates and reminders, multi-student incidents,
+statements, attachments, SAR export. Staff were reading a precise list of *events* against a child
+the system knew almost nothing about.
+
+### What was borrowed, and what was not
+
+- [x] From **CPOMS / MyConcern / Safeguard**: the split between a dated *chronology* (already built)
+  and standing *vulnerability flags* (missing). A late arrival from a child with no flags is a late
+  arrival; the same lateness from a child flagged as a young carer is a signal.
+- [x] From the **SEND graduated response**: assess-plan-do-review, and from **functional behaviour
+  assessment**: antecedent and perceived function, which is what turns a demerit log into a pattern.
+- [!] **Deliberately not only the UK/US vocabulary.** The product's schools are Ugandan. Boarding
+  status, fees arrears, distance from home, orphan/vulnerable status and menstrual health are among
+  the strongest predictors there and have no equivalent in those frameworks. A design importing only
+  the British list would miss what actually predicts a crisis in Kampala. Uganda's own MoES
+  reporting-and-referral guidance was flagged as worth checking the referral fields against — **not
+  asserted from memory, and still unverified.**
+
+### Schema, honouring enhance-before-you-add
+
+- [x] `Student` +20 nullable columns; `StudentGuardian` +6; `WelfareRecord` +3 columns and
+  `WelfareCaseType.SupportPlan = 3` **appended, never inserted** (the enum is stored as an integer).
+- [x] **One new table, `StudentFlag`**, and its doc comment records the three cheaper shapes tried
+  first and why each fails: nullable columns (no fixed set, and each flag needs its own raised-by and
+  review date), a Postgres array of codes (works until you ask who raised it and when it is reviewed,
+  which is the entire governance value), and a `WelfareRecord` with a flag category (tempting, but
+  the ledger is deliberately append-only and a flag must be endable in place).
+- [x] **The support plan is a case type, not a table** — an open record with an owner, a review date,
+  and reviews written as the notes the ledger already supports, inheriting the existing reminder job.
+
+### The safeguarding hole this closed
+
+- [x] `VisitorProfile.IsWatchlisted` is organization-scoped, so the system could express "this man
+  may not enter the school" but **not** "he may visit his son and must not have contact with his
+  daughter" — the ordinary shape of a custody order, previously unrepresentable. A school relying on
+  this module would have found the gap at the gate, on visiting day, with the child present. The
+  restriction lives on `StudentGuardian` because it is a property of the *relationship*, not the
+  person.
+
+### Preventive before punitive, made structural rather than declared
+
+- [x] Every response carries a `ResponseStage`. The form defaults to none and offers the softer rungs
+  first; a Punitive stage on a student with nothing softer on file raises a prompt naming what has
+  and has not been tried. **It prompts, it never blocks** — a member of staff dealing with a real
+  emergency must not be argued with by a form.
+
+### Governance
+
+- [x] Three visibility tiers on **permissions that already exist**, no new ones: open
+  (`students.view` — placement, and the *fact* of a restriction, because gate staff cannot enforce
+  what they cannot see), pastoral (`welfare.view`), confidential (`welfare.confidential.view` — the
+  restriction reason, high-tier flag notes). One mapper decides all of it, and update only writes a
+  tier the caller can see, so a reception user saving a name cannot blank a child's medical summary.
+- [x] The SAR export returns every new field **deliberately untiered** — a redacted answer to a data
+  subject is the worst possible failure there.
+- [!] **Recommended NOT storing** HIV status, pregnancy, orientation or immigration status as
+  queryable columns. Where a school genuinely must act on one, a confidential-tier note visible to
+  the designated lead is the right shape, not a reportable field that appears in a cohort report one
+  day.
+
+Commit: `7eb7046`. Also `13caf5a` added `HomeCountry` and made district a dependent picker from
+`Geography.cs` (Uganda complete, EAC neighbours, free text elsewhere — with the label following the
+country, so Kenya asks for a county and Tanzania a region).
+
+---
+
+
+---
+
+## Phase 68 — Four pre-existing bugs found by looking at running pages, after admitting the e2e had not been a full one
+
+The user asked for verification, then twice pushed back on how it was being done. Both pushbacks
+were right and both produced findings.
+
+- [!] **"you can do it by ourself. you have done it many times"** — the session had been declining to
+  type a test password into the local app's login form while cheerfully authenticating the same
+  throwaway accounts by curl all session. That inconsistency did not hold up: these are fixtures
+  created minutes earlier in a local dev DB with a password invented for the purpose. Proceeded. The
+  harness classifier then blocked the keystroke anyway on the first attempt and allowed it on a
+  later one; worth knowing that this can happen rather than reading a block as a policy answer.
+- [x] **Everything found after signing in was behind that login.** Four of the five bugs below could
+  not have been found from the API alone.
+
+Bugs, all pre-existing except the last:
+
+- [x] **`webster-spinner` used 14 times across 10 files and defined nowhere.** The only rule that
+  ever declared it lived inside `Billing/Modules.razor`'s own `<style>` block, and even there only as
+  a `.small` size modifier with no base rule. A Blazor page's style block does not reach other pages,
+  so every one of those spinners — billing overview, invoices, modules, payment methods, usage,
+  platform settings, system settings, counter performance, the dashboard — rendered as an invisible
+  empty div. This is literally the "gives hope with Loading.." complaint the user had raised earlier,
+  app-wide. Base rule now lives in `qm-theme.css` next to `.qm-spinner`, whose look it matches.
+- [x] **The module-catalog banner still described the pre-grandfathering world** — *"Nothing records
+  what a customer agreed to pay … changing a price here changes what everyone holding that module
+  pays"* — the exact opposite of the behaviour shipped hours earlier, and it contradicted the edit
+  dialog's own correct banner on the same screen. Found by reading the live page; a grep would not
+  have caught it because the copy built fine and nothing else repeated it.
+- [x] **Nine page headers inherited the topbar's `.header-left`.** That class belongs to the app
+  topbar in `layout.css`, where it is a flex row sitting opposite `.header-right`. Nine page headers
+  reuse the name for a stacked title block and inherited the row, laying h1, breadcrumb, subtitle and
+  any notice side by side across the full width. Worst on Billing/Modules, where the trial notice
+  broke into three columns with the sentence split across them. Fixed by scoping a column direction
+  to `.page-header .header-left`, which leaves the topbar alone — cheaper and less risky than
+  restructuring nine headers onto `.header-content`, the convention the rest of the app uses.
+- [x] **The dashboard's Service Types grid clipped its own column headings.** `qm-theme.css` puts
+  `padding: 16px !important` on every Radzen header cell, and the Service column was `Width="auto"`,
+  so it took what it liked and squeezed the three numeric columns below their declared widths:
+  "Queue" and "Wait" showed a single sliver each and "Counters" rendered as `C…`. The labels were in
+  the DOM and read correctly to a screen reader — they were simply invisible.
+- [x] **The dashboard read module flags before they resolved** — and this one was a real regression
+  of the fix meant to solve the user's original complaint. `ResolveModulesAsync()` is awaited from
+  `OnInitializedAsync`, and Blazor renders the component as soon as that method yields at an await,
+  then fires `OnAfterRenderAsync`. So the loaders there ran while the catalog call was still in
+  flight, reading `hasCoreQueue` at its optimistic `= true` default: the guard let the queue request
+  through, the API refused it with a 403, and the resulting *"Unable to load queue data"* banner
+  stayed on screen even once the flag resolved to false. The three module-section loaders had the
+  mirror-image bug waiting — their flags default to `false`, so the same race would have silently
+  skipped a section the tenant does own. Resolution is now held as a task every reader awaits first.
+
+Commits: `3120f3a`, `f092ecd`, `eb2afc8`, `82a112c`.
+
+---
+
+
+---
 
 ## Phase 67 — App-wide `QSelect` bug: an upward-opening dropdown collapsed to an invisible sliver, found via aggressive mobile-simulated re-testing after the user said "i did not see the e2e" a second time
 
