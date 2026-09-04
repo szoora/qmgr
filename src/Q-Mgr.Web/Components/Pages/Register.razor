@@ -97,7 +97,7 @@
             <div class="step-indicator">
                 <div class="step @(currentStep >= 1 ? "active" : "") @(currentStep > 1 ? "completed" : "")">
                     <span class="step-number">1</span>
-                    <span class="step-label">Organization</span>
+                    <span class="step-label">Account</span>
                 </div>
                 <div class="step-line @(currentStep > 1 ? "completed" : "")"></div>
                 <div class="step @(currentStep >= 2 ? "active" : "") @(currentStep > 2 ? "completed" : "")">
@@ -105,42 +105,13 @@
                     <span class="step-label">Modules</span>
                 </div>
                 <div class="step-line @(currentStep > 2 ? "completed" : "")"></div>
-                <div class="step @(currentStep >= 3 ? "active" : "") @(currentStep > 3 ? "completed" : "")">
+                <div class="step @(currentStep >= 3 ? "active" : "")">
                     <span class="step-number">3</span>
-                    <span class="step-label">Admin Account</span>
-                </div>
-                <div class="step-line @(currentStep > 3 ? "completed" : "")"></div>
-                <div class="step @(currentStep >= 4 ? "active" : "")">
-                    <span class="step-number">4</span>
                     <span class="step-label">Confirm</span>
                 </div>
             </div>
-
             <EditForm Model="formData" OnValidSubmit="HandleSubmit">
                 <DataAnnotationsValidator />
-
-                @if (currentStep == 1)
-                {
-                    <div class="form-step">
-                        <div class="form-group">
-                            <label for="orgName"><QIcon Name="building" Size="16" /><span>Organization Name *</span></label>
-                            <div class="input-wrapper">
-                                <input type="text" id="orgName" @bind="formData.OrganizationName"
-                                       placeholder="e.g., SACC Software Limited" class="form-control" />
-                            </div>
-                            <ValidationMessage For="@(() => formData.OrganizationName)" class="validation-message" />
-                        </div>
-
-                        <div class="form-actions">
-                            <button type="button" class="btn-login" @onclick="NextStep"
-                                    disabled="@(!CanProceedStep1())">
-                                <span>Next Step</span>
-                                <QIcon Name="arrow-right" Size="18" />
-                            </button>
-                        </div>
-                    </div>
-                }
-
                 @if (currentStep == 2)
                 {
                     <div class="form-step">
@@ -188,9 +159,18 @@
                     </div>
                 }
 
-                @if (currentStep == 3)
+                @if (currentStep == 1)
                 {
                     <div class="form-step">
+                        <div class="form-group">
+                            <label for="orgName"><QIcon Name="building" Size="16" /><span>Organization Name *</span></label>
+                            <div class="input-wrapper">
+                                <input type="text" id="orgName" @bind="formData.OrganizationName"
+                                       placeholder="e.g., SACC Software Limited" class="form-control" />
+                            </div>
+                            <ValidationMessage For="@(() => formData.OrganizationName)" class="validation-message" />
+                        </div>
+
                         <div class="form-row">
                             <div class="form-group half">
                                 <label for="firstName"><QIcon Name="person-fill" Size="16" /><span>First Name *</span></label>
@@ -302,12 +282,8 @@
                         </div>
 
                         <div class="form-actions">
-                            <button type="button" class="btn-secondary" @onclick="PreviousStep">
-                                <QIcon Name="arrow-left" Size="18" />
-                                <span>Back</span>
-                            </button>
                             <button type="button" class="btn-login" @onclick="NextStep"
-                                    disabled="@(!CanProceedStep3())">
+                                    disabled="@(!CanProceedAccountStep())">
                                 <span>Next Step</span>
                                 <QIcon Name="arrow-right" Size="18" />
                             </button>
@@ -315,7 +291,7 @@
                     </div>
                 }
 
-                @if (currentStep == 4)
+                @if (currentStep == 3)
                 {
                     <div class="form-step">
                         <div class="summary-section">
@@ -879,14 +855,15 @@
         showPassword = !showPassword;
     }
 
-    private bool CanProceedStep1()
+    /// <summary>
+    /// Everything the first step now asks for. The organization name used to live on a step of its
+    /// own with two optional fields for company; with those removed a single-field step was padding
+    /// rather than simplicity, so it moved here and sign-up went from four steps to three.
+    /// </summary>
+    private bool CanProceedAccountStep()
     {
-        return !string.IsNullOrWhiteSpace(formData.OrganizationName);
-    }
-
-    private bool CanProceedStep3()
-    {
-        return !string.IsNullOrWhiteSpace(formData.FirstName) &&
+        return !string.IsNullOrWhiteSpace(formData.OrganizationName) &&
+               !string.IsNullOrWhiteSpace(formData.FirstName) &&
                !string.IsNullOrWhiteSpace(formData.LastName) &&
                !string.IsNullOrWhiteSpace(formData.Email) &&
                !string.IsNullOrWhiteSpace(formData.Password) &&
@@ -896,7 +873,7 @@
 
     private void NextStep()
     {
-        if (currentStep < 4)
+        if (currentStep < 3)
         {
             currentStep++;
         }
