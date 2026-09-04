@@ -1,3 +1,7 @@
+@page "/admin/students/roster"
+@* The old route is kept so bookmarks and any link already sent to a school still work. The roster
+   lived under /admin/visitors when the welfare features were part of the visitor module; they are
+   separate modules now and a welfare-only subscriber should not see "visitors" in their URL. *@
 @page "/admin/visitors/roster"
 @implements IAsyncDisposable
 @inject IStudentApiService StudentApi
@@ -33,7 +37,6 @@
                 <QButton Text="Bulk Import" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal" />
                 <QButton Text="Add Student" Icon="person-plus-fill" Variant="primary" OnClick="@OpenAddStudentModal" />
             </PermissionGuard>
-            <QButton Text="Back to Visitors" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
         </div>
     </div>
 

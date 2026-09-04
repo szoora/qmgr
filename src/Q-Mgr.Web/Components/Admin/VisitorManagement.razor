@@ -29,7 +29,6 @@
             <QButton Text="Scan Badge" Icon="qr-code-scan" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/scan"))" />
             <QButton Text="Display Board" Icon="display" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/board"))" />
             <PermissionGuard Permission="students.view">
-                <QButton Text="Student Roster" Icon="mortarboard-fill" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/roster"))" />
             </PermissionGuard>
             <PermissionGuard Permission="visitors.manage">
                 <QButton Text="Group Passes" Icon="people-fill" Variant="secondary" OnClick="@OpenPassesModal" />

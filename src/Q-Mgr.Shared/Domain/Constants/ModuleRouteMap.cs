@@ -63,9 +63,12 @@ public static class ModuleRouteMap
         // Matching is per whole segment, so "/admin/welfare" would not cover "/admin/welfare-reports".
         // That strictness is deliberate (it stops "/admin/visitors" swallowing an unrelated
         // "/admin/visitors-something"), which means each hyphenated route is listed on its own.
-        // The student roster sits under /admin/visitors/roster for historical reasons but belongs
-        // to Student Welfare, so it is listed first to win the match.
+        // The roster moved to /admin/students/roster when Student Welfare and Visitor Management
+        // were fully separated; the old path is still routable so existing links keep working, and
+        // both map to Student Welfare. The old one is listed before "/admin/visitors" so it wins
+        // the match rather than being claimed by Visitor Management.
         ("/admin/visitors/roster", ModuleCodes.StudentWelfare),
+        ("/admin/students/roster", ModuleCodes.StudentWelfare),
         ("/admin/visitors", ModuleCodes.VisitorManagement),
         ("/reports/visitors", ModuleCodes.VisitorManagement),
 

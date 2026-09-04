@@ -17,7 +17,7 @@
     <div class="header-left">
         <h1>Dashboard</h1>
         <div class="breadcrumb">
-            <span>Welcome back! Here's your queue overview for today.</span>
+            <span>@dashboardSubtitle</span>
         </div>
     </div>
     <div class="header-right">
@@ -916,6 +916,12 @@ else if (queueStatus != null)
     }
 
     private bool hasCoreQueue = true;
+
+    /// <summary>The header promised "your queue overview" to every organization, including those
+    /// holding no queue module at all.</summary>
+    private string dashboardSubtitle => hasCoreQueue
+        ? "Welcome back! Here's your queue overview for today."
+        : "Welcome back!";
     private List<string> activeModuleNames = new();
 
     /// <summary>
@@ -989,10 +995,15 @@ else if (queueStatus != null)
 
             await LoadQueueStatus();
 
+            // The queue hub pushes token and counter events, which mean nothing without Core
+            // Queue Management — joining it just opens a connection to receive silence.
             try
             {
-                await SignalR.ConnectAsync(BranchId);
-                SignalR.OnQueueUpdated += HandleQueueUpdated;
+                if (hasCoreQueue)
+                {
+                    await SignalR.ConnectAsync(BranchId);
+                    SignalR.OnQueueUpdated += HandleQueueUpdated;
+                }
             }
             catch (Exception ex)
             {
@@ -1027,7 +1038,7 @@ else if (queueStatus != null)
             await LoadQueueStatus();
             try
             {
-                await SignalR.ConnectAsync(BranchId);
+                if (hasCoreQueue) await SignalR.ConnectAsync(BranchId);
             }
             catch { }
         });
@@ -1035,6 +1046,7 @@ else if (queueStatus != null)
 
     private async Task LoadQueueStatus()
     {
+
         // Don't load if no branches exist or none selected
         if (!BranchState.HasBranches || BranchId == Guid.Empty)
         {
@@ -1044,6 +1056,17 @@ else if (queueStatus != null)
         }
 
         noBranchSelected = false;
+
+        // Core Queue Management owns everything this call returns; without it the API refuses the
+        // request with a 403 and the null result surfaced as "Unable to load queue data. Please
+        // ensure the API is running and the selected branch is valid." — an alarming, misleading
+        // banner sitting directly above the empty state that already explains the real situation.
+        // A welfare-only tenant saw it every time they opened their dashboard.
+        if (!hasCoreQueue)
+        {
+            isLoading = false;
+            return;
+        }
         isLoading = true;
         errorMessage = null;
         StateHasChanged();

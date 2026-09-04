@@ -192,7 +192,7 @@ else
                         <ul class="submenu">
                             @if (canViewStudents)
                             {
-                                <li><a href="admin/visitors/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/visitors/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Student Roster</a></li>
+                                <li><a href="admin/students/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Student Roster</a></li>
                             }
                             @if (canViewWelfare)
                             {
@@ -1135,7 +1135,7 @@ else
     // Exact match only — a StartsWith fallback used to live here to catch dynamic-segment routes
     // (Customer Display/Full-Screen Signage append a branch ID the nav link itself doesn't know
     // ahead of time), but it silently double-highlighted any nav item whose route was a literal
-    // string-prefix of another item's, e.g. "/admin/visitors" matching "/admin/visitors/roster",
+    // string-prefix of another item's, e.g. "/admin/visitors" matching "/admin/students/roster",
     // or "Overview" (/reports) matching every other /reports/* sub-page. Callers with a genuinely
     // dynamic route now pass the fully-resolved path (same one used in their own href) instead.
     private bool IsActive(string path)
