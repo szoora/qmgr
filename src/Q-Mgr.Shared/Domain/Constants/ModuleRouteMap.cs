@@ -102,6 +102,12 @@ public static class ModuleRouteMap
         ("api/v1/branches/{branchId}/service-types", ModuleCodes.CoreQueue),
         ("api/v1/branches/{branchId}/kiosk-settings", ModuleCodes.CoreQueue),
         ("api/v1/branches/{branchId}/printer-settings", ModuleCodes.CoreQueue),
+        // The feedback report belongs to Engagement, and ReportsController says so on the endpoints
+        // themselves. It must be listed before the broad "reports" entry or the middleware — which
+        // matches by path and runs before the attribute — claims it for Core Queue and refuses an
+        // Engagement-only tenant access to their own feedback export. Found by the module-coupling
+        // scan on 2026-09-04, confirmed as a live 403.
+        ("api/v1/branches/{branchId}/reports/feedback", ModuleCodes.EngagementCommunications),
         ("api/v1/branches/{branchId}/reports", ModuleCodes.CoreQueue),
         ("api/v1/branches/{branchId}/appointments", ModuleCodes.CoreQueue),
         ("api/v1/appointments", ModuleCodes.CoreQueue),
