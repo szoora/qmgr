@@ -339,7 +339,7 @@ else if (hasCoreQueue && queueStatus != null)
         <div class="module-section-head">
             <h2><QIcon Name="mortarboard-fill" /> Student Welfare</h2>
             <QButton Text="Open ledger" Icon="arrow-right" Variant="ghost" Size="sm"
-                     OnClick="@(() => Navigation.NavigateTo("/admin/welfare-open-actions"))" />
+                     OnClick="@(() => Navigation.NavigateTo("/admin/welfare-my-actions"))" />
         </div>
 
         @if (welfareSummary == null)
@@ -348,33 +348,41 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon welfare-open"><QIcon Name="clipboard-check" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@welfareSummary.OpenActionsCount</div>
-                        <div class="stat-label">Open actions</div>
+            <div class="stats-row">
+                <div class="stats-card primary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@welfareSummary.OpenActionsCount</span>
+                            <span class="stats-label">Open actions</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="clipboard-check" /></div>
                     </div>
                 </div>
-                <div class="stat-card @(welfareSummary.OverdueActionsCount > 0 ? "needs-attention" : "")">
-                    <div class="stat-icon welfare-overdue"><QIcon Name="exclamation-triangle-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@welfareSummary.OverdueActionsCount</div>
-                        <div class="stat-label">Overdue</div>
+                <div class="stats-card @(welfareSummary.OverdueActionsCount > 0 ? "danger" : "secondary")">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@welfareSummary.OverdueActionsCount</span>
+                            <span class="stats-label">Overdue</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="exclamation-triangle-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon welfare-records"><QIcon Name="journal-text" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@welfareSummary.TotalRecords</div>
-                        <div class="stat-label">Records</div>
+                <div class="stats-card secondary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@welfareSummary.TotalRecords</span>
+                            <span class="stats-label">Records</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="journal-text" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon welfare-students"><QIcon Name="people-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@studentCount</div>
-                        <div class="stat-label">Students</div>
+                <div class="stats-card secondary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@studentCount</span>
+                            <span class="stats-label">Students</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="people-fill" /></div>
                     </div>
                 </div>
             </div>
@@ -421,35 +429,43 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon visitor-onsite"><QIcon Name="person-check-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@visitorSummary.CurrentlyOnSite</div>
-                        <div class="stat-label">On site now</div>
+            <div class="stats-row">
+                <div class="stats-card primary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@visitorSummary.CurrentlyOnSite</span>
+                            <span class="stats-label">On site now</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="person-check-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon visitor-expected"><QIcon Name="calendar-check-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@visitorSummary.ExpectedToday</div>
-                        <div class="stat-label">Still expected</div>
+                <div class="stats-card secondary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@visitorSummary.ExpectedToday</span>
+                            <span class="stats-label">Still expected</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="calendar-check-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon visitor-today"><QIcon Name="door-open-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@visitorSummary.TotalToday</div>
-                        <div class="stat-label">Today</div>
+                <div class="stats-card secondary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@visitorSummary.TotalToday</span>
+                            <span class="stats-label">Today</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="door-open-fill" /></div>
                     </div>
                 </div>
                 @* A watchlisted person on site is the one number here that asks somebody to act,
-                   so it is marked rather than left to look like the others. *@
-                <div class="stat-card @(visitorSummary.WatchlistedOnSite > 0 ? "needs-attention" : "")">
-                    <div class="stat-icon visitor-watchlist"><QIcon Name="shield-exclamation" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@visitorSummary.WatchlistedOnSite</div>
-                        <div class="stat-label">Watchlisted on site</div>
+                   so it takes the danger stripe rather than looking like the others. *@
+                <div class="stats-card @(visitorSummary.WatchlistedOnSite > 0 ? "danger" : "secondary")">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@visitorSummary.WatchlistedOnSite</span>
+                            <span class="stats-label">Watchlisted on site</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="shield-exclamation" /></div>
                     </div>
                 </div>
             </div>
@@ -472,33 +488,41 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon engage-campaigns"><QIcon Name="megaphone-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@activeCampaignCount</div>
-                        <div class="stat-label">Live campaigns</div>
+            <div class="stats-row">
+                <div class="stats-card primary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@activeCampaignCount</span>
+                            <span class="stats-label">Live campaigns</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="megaphone-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon engage-rating"><QIcon Name="star-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))</div>
-                        <div class="stat-label">Average rating</div>
+                <div class="stats-card success">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))</span>
+                            <span class="stats-label">Average rating</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="star-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon engage-feedback"><QIcon Name="chat-square-text-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@feedbackSummary.TotalFeedbacks</div>
-                        <div class="stat-label">Responses</div>
+                <div class="stats-card secondary">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@feedbackSummary.TotalFeedbacks</span>
+                            <span class="stats-label">Responses</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="chat-square-text-fill" /></div>
                     </div>
                 </div>
-                <div class="stat-card @(feedbackSummary.PendingResponseCount > 0 ? "needs-attention" : "")">
-                    <div class="stat-icon engage-pending"><QIcon Name="reply-fill" /></div>
-                    <div class="stat-content">
-                        <div class="stat-value">@feedbackSummary.PendingResponseCount</div>
-                        <div class="stat-label">Awaiting reply</div>
+                <div class="stats-card @(feedbackSummary.PendingResponseCount > 0 ? "warning" : "secondary")">
+                    <div class="stats-content">
+                        <div class="stats-info">
+                            <span class="stats-number">@feedbackSummary.PendingResponseCount</span>
+                            <span class="stats-label">Awaiting reply</span>
+                        </div>
+                        <div class="stats-icon"><QIcon Name="reply-fill" /></div>
                     </div>
                 </div>
             </div>
@@ -536,22 +560,6 @@ else if (hasCoreQueue && queueStatus != null)
         font-size: 14px;
     }
 
-    .stat-card.needs-attention { border-color: var(--qm-danger); }
-
-    .stat-icon.welfare-open { background: var(--qm-primary-light); color: var(--qm-primary); }
-    .stat-icon.welfare-overdue { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
-    .stat-icon.welfare-records { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
-    .stat-icon.welfare-students { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
-
-    .stat-icon.visitor-onsite { background: var(--qm-primary-light); color: var(--qm-primary); }
-    .stat-icon.visitor-expected,
-    .stat-icon.visitor-today { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
-    .stat-icon.visitor-watchlist { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
-
-    .stat-icon.engage-campaigns { background: var(--qm-primary-light); color: var(--qm-primary); }
-    .stat-icon.engage-rating,
-    .stat-icon.engage-feedback { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
-    .stat-icon.engage-pending { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
 
     .welfare-category-list { display: flex; flex-direction: column; }
 
