@@ -178,7 +178,7 @@ public interface IBillingService
 
     /// <summary>
     /// Get effective limits for an organization (resolves its active subscription, then
-    /// plan limits + overrides). Falls back to free-tier limits if there's no active
+    /// modules held + overrides). Falls back to a minimal floor when the organization holds none
     /// subscription.
     /// </summary>
     Task<EffectiveLimits> GetEffectiveLimitsAsync(Guid organizationId);

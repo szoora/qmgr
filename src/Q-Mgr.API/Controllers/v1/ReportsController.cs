@@ -90,7 +90,7 @@ public class ReportsController : ControllerBase
     /// The <c>export_reports</c> feature-flag gate, done inline rather than via
     /// <c>[RequireFeature(FeatureCodes.ExportReports)]</c> because that attribute has no
     /// SuperAdmin bypass (unlike <c>[RequireModule]</c>): the platform admin's own org has no
-    /// subscription and no modules, so the attribute would resolve free-tier flags and 403 every
+    /// modules at all, so the attribute would resolve no entitlements and 403 every
     /// export for SuperAdmin. Same response shape as RequireFeatureAttribute so the Web client
     /// handles both identically. Call AFTER VerifyBranchOwnership so tenantContext is known good.
     /// </summary>

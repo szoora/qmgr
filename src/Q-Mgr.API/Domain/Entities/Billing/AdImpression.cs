@@ -3,7 +3,7 @@ using QMgr.Domain.Common;
 namespace QMgr.Domain.Entities.Billing;
 
 /// <summary>
-/// Tracks ad impressions on free tier displays for monetization
+/// Tracks ad impressions on the displays of organizations holding no paid module
 /// </summary>
 public class AdImpression : BaseEntity
 {

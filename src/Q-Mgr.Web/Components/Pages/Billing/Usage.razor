@@ -784,7 +784,6 @@ else
     private record LimitsResponse
     {
         public Guid OrganizationId { get; init; }
-        public string Tier { get; init; } = "";
         public Dictionary<string, LimitInfo> Limits { get; init; } = new();
     }
 

@@ -9,7 +9,7 @@
 -- references must be schema-qualified.
 --
 -- Also fixed: the role code was 'agent' (doesn't exist — the real system
--- role for a queue agent is 'staff'); Status/Tier are integer enum columns,
+-- role for a queue agent is 'staff'); Status is an integer enum column,
 -- not the string literals ('Active'/'Enterprise') originally used;
 -- Organization.IndustryType/PreferredCurrency/OnboardingStep are NOT NULL
 -- with no default and were missing from the original INSERT entirely; the
@@ -38,7 +38,7 @@ BEGIN
     -- Get or create Platform Organization
     SELECT "Id" INTO v_platform_org_id FROM qmgr.organizations WHERE "Slug" = 'platform';
     IF v_platform_org_id IS NULL THEN
-        INSERT INTO qmgr.organizations ("Id", "Name", "BrandName", "ContactEmail", "Slug", "Status", "Tier", "IndustryType", "PreferredCurrency", "OnboardingCompleted", "OnboardingStep", "VerifiedAt", "CreatedAt")
+        INSERT INTO qmgr.organizations ("Id", "Name", "BrandName", "ContactEmail", "Slug", "Status", "IndustryType", "PreferredCurrency", "OnboardingCompleted", "OnboardingStep", "VerifiedAt", "CreatedAt")
         VALUES (
             'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid,
             'Platform Administration',
@@ -46,7 +46,6 @@ BEGIN
             'admin@qmgr.platform',
             'platform',
             2, -- TenantStatus.Active
-            3, -- TenantTier.Enterprise
             0, -- IndustryType.General
             'USD',
             true,
@@ -60,7 +59,7 @@ BEGIN
     -- Get or create Demo Organization
     SELECT "Id" INTO v_demo_org_id FROM qmgr.organizations WHERE "Slug" = 'demo';
     IF v_demo_org_id IS NULL THEN
-        INSERT INTO qmgr.organizations ("Id", "Name", "BrandName", "ContactEmail", "Slug", "Status", "Tier", "IndustryType", "PreferredCurrency", "OnboardingCompleted", "OnboardingStep", "VerifiedAt", "CreatedAt")
+        INSERT INTO qmgr.organizations ("Id", "Name", "BrandName", "ContactEmail", "Slug", "Status", "IndustryType", "PreferredCurrency", "OnboardingCompleted", "OnboardingStep", "VerifiedAt", "CreatedAt")
         VALUES (
             gen_random_uuid(),
             'Demo Organization',
@@ -68,7 +67,6 @@ BEGIN
             'admin@qmgr.demo',
             'demo',
             2, -- TenantStatus.Active
-            2, -- TenantTier.Professional
             0, -- IndustryType.General
             'USD',
             true,

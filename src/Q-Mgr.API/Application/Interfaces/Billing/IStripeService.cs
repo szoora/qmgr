@@ -110,7 +110,7 @@ public interface IStripeService
     /// <summary>
     /// Creates one Stripe subscription with one item per selected module's price — the modular
     /// subscription system's real "multi-item" billing object. Unlike CreateSubscriptionAsync
-    /// (kept single-item, untouched, for the legacy Tier flow), this is the org's ONE shared
+    /// this is the org's ONE shared
     /// subscription that every Stripe-paid module becomes an item on; later modules join it via
     /// AddSubscriptionItemAsync rather than creating a second subscription.
     /// </summary>

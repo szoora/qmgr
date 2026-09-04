@@ -176,7 +176,7 @@ public class Organization : BaseAuditableEntity
     public virtual ICollection<UsageRecord> UsageRecords { get; set; } = new List<UsageRecord>();
 
     /// <summary>
-    /// Ad impressions (for free tier)
+    /// Ad impressions (shown to organizations holding no paid module)
     /// </summary>
     public virtual ICollection<AdImpression> AdImpressions { get; set; } = new List<AdImpression>();
 

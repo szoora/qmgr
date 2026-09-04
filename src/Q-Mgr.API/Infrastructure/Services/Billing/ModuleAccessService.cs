@@ -357,11 +357,11 @@ public class ModuleAccessService : IModuleAccessService
     }
 
     /// <summary>Holds only the module system's shared Stripe subscription ID — the customer ID
-    /// lives on Organization.StripeCustomerId directly (shared with the legacy tier flow) once
+    /// lives on Organization.StripeCustomerId directly once
     /// it's known, not duplicated here. Kept in Settings JSON rather than a new column because,
-    /// unlike CustomerId, there's nowhere else on Organization/Subscription for it: Subscription
-    /// entity's PlanId FK is required and points at a legacy tier plan, so a pure module-system
-    /// org (no Subscription row) has no safe home for it there.</summary>
+    /// unlike CustomerId, there's nowhere else on Organization/Subscription for it: the billing
+    /// account row carries no plan, and an organization can hold modules before an account
+    /// has been opened at all.</summary>
     private record ModuleBillingSettings(string? StripeSubscriptionId);
 
     private static ModuleBillingSettings ReadModuleBillingSettings(string? organizationSettingsJson)

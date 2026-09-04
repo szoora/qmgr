@@ -60,13 +60,12 @@ public interface IModuleAccessService
 
     /// <summary>The org's shared multi-item Stripe subscription/customer IDs, if any Stripe-paid
     /// module has ever been purchased. CustomerId reuses the pre-existing
-    /// Organization.StripeCustomerId column (shared with the legacy tier billing flow — one org
+    /// Organization.StripeCustomerId column (one org
     /// has exactly one Stripe customer either way). SubscriptionId is stored in Organization.
     /// Settings (JSON), same pattern already used for ClassColorSettings/VisitingDaySettings,
-    /// because it has nowhere else to live: Subscription.PlanId is a required FK to a (now-legacy)
-    /// tier plan, so a pure module-system org with no Subscription row at all has nowhere on that
-    /// entity to safely hang a Stripe subscription ID without also faking a PlanId that
-    /// BillingService/Subscription.razor would then misread as real tier data.</summary>
+    /// because it has nowhere else to live: the billing account row carries no plan, so there is
+    /// nowhere on that entity to hang a Stripe subscription id, and an organization may hold
+    /// modules before an account has been opened at all.</summary>
     Task<(string? StripeCustomerId, string? StripeSubscriptionId)> GetStripeModuleBillingAsync(Guid organizationId);
 
     /// <summary>Persists whichever of customerId/subscriptionId is non-null, leaving the other

@@ -13,7 +13,7 @@ namespace QMgr.Infrastructure.Services.Billing;
 /// the modules an organization holds, which since 2026-09-04 is the only source of entitlement, and
 /// the purchased-module path (<see cref="IModuleAccessService"/>). A module-only tenant (every
 /// new registration since the modular subscription system) has no tier subscription at all and
-/// used to fall through to free-tier flags — which permanently locked branding, exports, and API
+/// used to fall through to a zero-entitlement set — which permanently locked branding, exports, and API
 /// access for them regardless of what they'd paid for.
 /// </summary>
 public class FeatureFlagService : IFeatureFlagService
@@ -156,7 +156,7 @@ public class FeatureFlagService : IFeatureFlagService
     ///         the visitor-log CSV export is a ReportsExport permission + this flag)
     ///
     /// Any active or trialing module → ExportReports (a paying tenant can always export what it
-    /// can see). Any active module also turns ShowAds off — ads are the free-tier trade-off, not
+    /// can see). Any active module also turns ShowAds off — ads are what an organization holding no
     /// something a paying module customer should see. PrioritySupport and DedicatedSchema stay
     /// tier/plan-only: neither is a purchasable module feature.
     /// </summary>

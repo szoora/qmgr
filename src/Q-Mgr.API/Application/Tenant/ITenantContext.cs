@@ -19,7 +19,6 @@ public interface ITenantContext
     /// <summary>Database schema name for dedicated tenants (null = shared schema)</summary>
     string? SchemaName { get; }
 
-    /// <summary>Current subscription tier</summary>
 
     /// <summary>Current tenant status</summary>
     TenantStatus Status { get; }
@@ -30,7 +29,6 @@ public interface ITenantContext
     /// <summary>Whether tenant uses a dedicated database schema</summary>
     bool UsesDedicatedSchema { get; }
 
-    /// <summary>Whether to show ads (free tier only)</summary>
 
     /// <summary>Whether the tenant is in an active state (can access features)</summary>
     bool IsActive { get; }

@@ -190,7 +190,7 @@ public class OrganizationsController : ControllerBase
     /// <summary>
     /// Updates the whitelabel branding settings for the caller's own organization.
     /// Gated on the "white_label" feature (not just a permission) since this is a
-    /// paid-tier capability, not just an authorization boundary.
+    /// a module-granted capability, not just an authorization boundary.
     /// </summary>
     [HttpPut("organizations/{organizationId:guid}/branding")]
     [RequirePermission(Permissions.SettingsEdit)]

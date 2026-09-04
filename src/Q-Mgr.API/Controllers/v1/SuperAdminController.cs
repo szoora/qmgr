@@ -312,12 +312,6 @@ public class SuperAdminController : ControllerBase
         return Ok(new { message = "Organization verified." });
     }
 
-    // Legacy-tier -> modules grandfathering used to live here as a manual, platform-admin-
-    // triggered dry-run/confirm action. Converted to an automatic idempotent seeder step
-    // (DbSeeder.SeedLegacyTenantModuleGrantsAsync) instead — there's no ongoing "legacy tenant"
-    // scenario for a manual admin UI to guard: every registration since the module system shipped
-    // creates orgs at Tier=Free and goes straight through OrganizationModule, so this could only
-    // ever apply to pre-existing seed/demo rows, not a real customer risk needing manual review.
 
     private Guid? CurrentUserId()
     {
@@ -501,13 +495,12 @@ public class SuperAdminController : ControllerBase
     [ProducesResponseType(typeof(List<PlanDetails>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPlans()
     {
-        // SubscriptionPlan rows now serve two purposes (see the modular subscription plan):
-        // the legacy Free/Starter/Professional/Enterprise tier catalog this endpoint has always
-        // shown, and the 4 new module-catalog rows (Code in ModuleCodes.All). Excluding the
-        // latter here — the "Manage Modules" panel is the real place to see and manage those,
-        // and mixing both into one flat list read as one undifferentiated, confusing catalog.
+        // Every row in subscription_plans is a module now. This endpoint used to exclude module
+        // codes because the table also held the four pricing tiers and mixing both read as one
+        // undifferentiated catalog; with the tiers retired on 2026-09-04 that filter matched
+        // everything and the endpoint returned an empty list. It shows the module catalog, which
+        // is what the platform dashboard is asking it for.
         var plans = await _dbContext.SubscriptionPlans
-            .Where(p => !ModuleCodes.All.Contains(p.Code))
             .OrderBy(p => p.SortOrder)
             .Select(p => new PlanDetails
             {

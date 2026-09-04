@@ -29,7 +29,7 @@
 --   Idempotent, and safe to run more than once. It only ever touches rows whose
 --   Code is one of the five module codes: existing ones are refreshed in place
 --   and reactivated, missing ones are inserted. It does not touch the older
---   tier plans (free/starter/professional/enterprise), any organization, any
+--   any organization, any
 --   user, or any purchase. It runs in a single transaction, so a failure
 --   anywhere leaves the database exactly as it was.
 --
@@ -52,7 +52,7 @@ DECLARE
 BEGIN
     SELECT string_agg(c, ', ' ORDER BY c) INTO missing
     FROM unnest(ARRAY[
-        'Id','Name','Code','Description','Tier','MonthlyPriceUsd','AnnualPriceUsd',
+        'Id','Name','Code','Description','MonthlyPriceUsd','AnnualPriceUsd',
         'MonthlyPriceUgx','AnnualPriceUgx','MaxBranches','MaxDisplays','MaxUsersPerBranch',
         'MaxCountersPerBranch','MaxTokensPerMonth','MaxApiCallsPerMonth','MaxStorageMb',
         'ShowAds','RequiresDedicatedSchema','TrialDays','SortOrder','IsPublic','Badge',
@@ -115,7 +115,7 @@ WITH catalog(code, name, description, badge, sort_order,
      3, 1, 5, 2, 1000, 100000, 200)
 )
 INSERT INTO qmgr.subscription_plans (
-    "Id", "Name", "Code", "Description", "Tier",
+    "Id", "Name", "Code", "Description",
     "MonthlyPriceUsd", "AnnualPriceUsd", "MonthlyPriceUgx", "AnnualPriceUgx",
     "MaxBranches", "MaxDisplays", "MaxUsersPerBranch", "MaxCountersPerBranch",
     "MaxTokensPerMonth", "MaxApiCallsPerMonth", "MaxStorageMb",
@@ -123,7 +123,7 @@ INSERT INTO qmgr.subscription_plans (
     "IsPublic", "Badge", "CreatedAt", "IsActive"
 )
 SELECT
-    gen_random_uuid(), c.name, c.code, c.description, 0,
+    gen_random_uuid(), c.name, c.code, c.description,
     c.usd_month, c.usd_year, c.ugx_month, c.ugx_year,
     c.max_branches, c.max_displays, c.max_users, c.max_counters,
     c.max_tokens, c.max_api_calls, c.max_storage_mb,
