@@ -62,19 +62,16 @@ public class ModuleCatalogController : ControllerBase
             .OrderBy(p => p.SortOrder)
             .ToListAsync(cancellationToken);
 
-        // How many organizations hold each module right now, counted once rather than per row.
+        // Two numbers per module, from one pass over the holdings: how many organizations hold it,
+        // and how many of those are on a price the catalog no longer shows.
         var moduleIds = modules.Select(m => m.Id).ToList();
-        var subscriberCounts = await _dbContext.OrganizationModules
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(om => moduleIds.Contains(om.ModuleId) &&
-                         (om.Status == OrganizationModuleStatus.Active ||
-                          om.Status == OrganizationModuleStatus.Trialing))
-            .GroupBy(om => om.ModuleId)
-            .Select(g => new { ModuleId = g.Key, Count = g.Select(x => x.OrganizationId).Distinct().Count() })
-            .ToDictionaryAsync(x => x.ModuleId, x => x.Count, cancellationToken);
+        var holdings = await LoadHoldingsAsync(moduleIds, cancellationToken);
 
-        return Ok(modules.Select(m => ToDto(m, subscriberCounts.GetValueOrDefault(m.Id))).ToList());
+        return Ok(modules.Select(m =>
+        {
+            var (subscribers, grandfathered) = CountHolders(m, holdings);
+            return ToDto(m, subscribers, grandfathered);
+        }).ToList());
     }
 
     /// <summary>
@@ -114,8 +111,11 @@ public class ModuleCatalogController : ControllerBase
 
         // Worth a line in the log on its own: this is the number every existing subscriber's next
         // invoice is calculated from, and nothing else records that a change happened.
-        if (module.MonthlyPriceUgx != request.MonthlyPriceUgx || module.AnnualPriceUgx != request.AnnualPriceUgx ||
-            module.MonthlyPriceUsd != request.MonthlyPriceUsd || module.AnnualPriceUsd != request.AnnualPriceUsd)
+        var priceChanged =
+            module.MonthlyPriceUgx != request.MonthlyPriceUgx || module.AnnualPriceUgx != request.AnnualPriceUgx ||
+            module.MonthlyPriceUsd != request.MonthlyPriceUsd || module.AnnualPriceUsd != request.AnnualPriceUsd;
+
+        if (priceChanged)
         {
             _logger.LogWarning(
                 "Module {Code} repriced by a platform administrator: UGX {OldMonthlyUgx}/{OldAnnualUgx} -> {NewMonthlyUgx}/{NewAnnualUgx}, USD {OldMonthlyUsd}/{OldAnnualUsd} -> {NewMonthlyUsd}/{NewAnnualUsd}",
@@ -149,22 +149,80 @@ public class ModuleCatalogController : ControllerBase
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var subscribers = await CountSubscribersAsync(module.Id, cancellationToken);
+        // "Apply to existing subscribers", off by default and deliberately so. A grandfathered
+        // price shields a customer from an increase, which by the same token withholds a decrease
+        // from them, so passing a change on is something an administrator chooses rather than
+        // something that happens on its own. Only rows that actually hold an agreed price are
+        // touched: one with none already tracks the list price and needs nothing done to it.
+        var repriced = 0;
+        if (request.ApplyToExistingSubscribers && priceChanged)
+        {
+            var repricing = await _dbContext.OrganizationModules
+                .IgnoreQueryFilters()
+                .Where(om => om.ModuleId == module.Id &&
+                             om.AgreedPriceUgx != null &&
+                             om.Status != OrganizationModuleStatus.Cancelled)
+                .ToListAsync(cancellationToken);
+
+            foreach (var holding in repricing)
+            {
+                // Each row takes its own cycle's price — moving an annual holder onto the monthly
+                // figure would undercharge them by a factor of about twelve.
+                var annual = holding.BillingCycle == BillingCycle.Annual;
+                holding.AgreedPriceUgx = annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
+                holding.AgreedPriceUsd = annual ? module.AnnualPriceUsd : module.MonthlyPriceUsd;
+                holding.UpdatedAt = DateTime.UtcNow;
+            }
+
+            repriced = repricing.Count;
+            if (repriced > 0)
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                _logger.LogWarning(
+                    "Module {Code}: {Count} existing holders moved onto the new price at a platform administrator's request",
+                    code, repriced);
+            }
+        }
+
+        var holdings = await LoadHoldingsAsync(new List<Guid> { module.Id }, cancellationToken);
+        var (subscribers, grandfathered) = CountHolders(module, holdings);
         _logger.LogInformation("Module {Code} updated by a platform administrator", code);
 
-        return Ok(ToDto(module, subscribers));
+        return Ok(ToDto(module, subscribers, grandfathered, repriced));
     }
 
-    private async Task<int> CountSubscribersAsync(Guid moduleId, CancellationToken cancellationToken) =>
+    /// <summary>One organization's live hold on one module — the fields the two counts below need,
+    /// and nothing else.</summary>
+    private sealed record ModuleHolding(Guid ModuleId, Guid OrganizationId, BillingCycle BillingCycle, decimal? AgreedPriceUgx);
+
+    private async Task<List<ModuleHolding>> LoadHoldingsAsync(List<Guid> moduleIds, CancellationToken cancellationToken) =>
         await _dbContext.OrganizationModules
             .IgnoreQueryFilters()
             .AsNoTracking()
-            .Where(om => om.ModuleId == moduleId &&
+            .Where(om => moduleIds.Contains(om.ModuleId) &&
                          (om.Status == OrganizationModuleStatus.Active ||
                           om.Status == OrganizationModuleStatus.Trialing))
-            .Select(om => om.OrganizationId)
-            .Distinct()
-            .CountAsync(cancellationToken);
+            .Select(om => new ModuleHolding(om.ModuleId, om.OrganizationId, om.BillingCycle, om.AgreedPriceUgx))
+            .ToListAsync(cancellationToken);
+
+    /// <summary>
+    /// How many organizations hold this module, and how many of those are paying something other
+    /// than what the catalog now says. The second number is what makes a price edit legible: it
+    /// says how many customers the figure on screen does not actually apply to.
+    /// </summary>
+    private static (int Subscribers, int Grandfathered) CountHolders(
+        QMgr.Domain.Entities.Billing.SubscriptionPlan module, List<ModuleHolding> holdings)
+    {
+        var mine = holdings.Where(h => h.ModuleId == module.Id).ToList();
+
+        var grandfathered = mine.Count(h =>
+            h.AgreedPriceUgx != null &&
+            h.AgreedPriceUgx != (h.BillingCycle == BillingCycle.Annual
+                ? module.AnnualPriceUgx
+                : module.MonthlyPriceUgx));
+
+        return (mine.Select(h => h.OrganizationId).Distinct().Count(), grandfathered);
+    }
 
     /// <summary>
     /// Rejects values that would misprice or misrepresent a module rather than merely look odd.
@@ -199,7 +257,11 @@ public class ModuleCatalogController : ControllerBase
         return null;
     }
 
-    private static ModuleCatalogAdminDto ToDto(QMgr.Domain.Entities.Billing.SubscriptionPlan m, int subscriberCount) => new()
+    private static ModuleCatalogAdminDto ToDto(
+        QMgr.Domain.Entities.Billing.SubscriptionPlan m,
+        int subscriberCount,
+        int grandfatheredCount,
+        int repricedCount = 0) => new()
     {
         Id = m.Id,
         Code = m.Code,
@@ -221,6 +283,8 @@ public class ModuleCatalogController : ControllerBase
         MaxStorageMb = m.MaxStorageMb,
         IsActive = m.IsActive,
         IsPublic = m.IsPublic,
-        SubscriberCount = subscriberCount
+        SubscriberCount = subscriberCount,
+        GrandfatheredCount = grandfatheredCount,
+        RepricedCount = repricedCount
     };
 }

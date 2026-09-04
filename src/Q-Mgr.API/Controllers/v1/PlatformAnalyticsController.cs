@@ -50,10 +50,9 @@ public class PlatformAnalyticsController : ControllerBase
             .Where(s => s.Status == SubscriptionStatus.Active)
             .ToListAsync();
 
-        var mrr = activeSubscriptions.Sum(s =>
-            s.BillingCycle == BillingCycle.Monthly
-                ? s.Plan?.MonthlyPriceUsd ?? 0
-                : (s.Plan?.AnnualPriceUsd ?? 0) / 12);
+        // Honours each subscription's agreed price where one was captured — reading the plan's
+        // list price here would misstate revenue by exactly the grandfathered difference.
+        var mrr = activeSubscriptions.Sum(s => s.GetMonthlyRecurringRevenueUsd());
 
         var arr = mrr * 12;
 
@@ -189,20 +188,14 @@ public class PlatformAnalyticsController : ControllerBase
             .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
             .Select(g =>
             {
-                var monthlyRevenue = g.Sum(s =>
-                    s.BillingCycle == BillingCycle.Monthly
-                        ? s.Plan?.MonthlyPriceUsd ?? 0
-                        : (s.Plan?.AnnualPriceUsd ?? 0) / 12);
+                var monthlyRevenue = g.Sum(s => s.GetMonthlyRecurringRevenueUsd());
 
                 return new RevenueMetricsDto
                 {
                     Period = new DateTime(g.Key.Year, g.Key.Month, 1),
                     MRR = monthlyRevenue,
                     ARR = monthlyRevenue * 12,
-                    TotalRevenue = g.Sum(s =>
-                        s.BillingCycle == BillingCycle.Monthly
-                            ? s.Plan?.MonthlyPriceUsd ?? 0
-                            : s.Plan?.AnnualPriceUsd ?? 0),
+                    TotalRevenue = g.Sum(s => s.GetPeriodPriceUsd()),
                     NewSubscriptions = g.Count(),
                     TrialConversions = g.Count(s => s.TrialEnd.HasValue && s.Status == SubscriptionStatus.Active)
                 };

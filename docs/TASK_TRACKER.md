@@ -6,6 +6,113 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
+## 🧭 SESSION HANDOVER (written 2026-09-04) — price grandfathering shipped; read this one first
+
+Supersedes the 2026-09-03 handover below as the "read first" entry. That entry's **NEXT TASK —
+price grandfathering** section is now **[x] done**, built to the design it carried, with the three
+decisions it flagged resolved as described below. Everything else in it still stands, including
+the production-state warning: **nothing from 2026-09-03 or this session has run in production yet.**
+
+### What was built
+
+`Subscription` gained `AgreedUnitPrice` + `AgreedCurrency`; `OrganizationModule` gained
+`AgreedPriceUgx` + `AgreedPriceUsd`. Nullable columns on rows that already exist, no new table, per
+the standing enhance-before-you-add rule. Null means "track the list price", so a row that has
+never been through a capture behaves exactly as it did before the columns existed.
+
+| Where | What happens |
+| --- | --- |
+| `BillingService.CreateSubscriptionAsync` | Captures at the org's currency and the subscription's cycle |
+| `BillingService.ChangePlanAsync` | Recaptures from the new plan — a plan change is a new agreement |
+| `ModuleAccessService.ActivateAsync` | Captures both currencies; the single choke point all four module-activation callers pass through |
+| `BillingService.GenerateInvoiceAsync` | Prefers the agreed price over the plan's list price |
+| `ModulesController` purchase | Charges `GetChargeableUgxPriceAsync`, not the catalog figure |
+| `BillingController` overview + mobile-money pay | Both show and charge the agreed price |
+| `PlatformAnalyticsController` (3 sites), `SuperAdminController` (1) | MRR reads agreed prices |
+
+### The three decisions, as resolved
+
+1. **Backfilled.** `20260904053132_AddAgreedPriceGrandfathering` freezes every live subscription
+   and every paid module hold at today's price, so the first edit made in the catalog editor
+   cannot reprice anybody. Without it the feature would only have protected customers who signed
+   up after the deploy. Trialing module rows and platform-admin grants are deliberately left null:
+   nothing has been agreed on a trial, and nothing was ever charged for a grant.
+2. **Price cuts are opt-in.** "Apply to existing subscribers" in the Module Catalog editor,
+   **off by default**, rewrites the agreed prices of every non-cancelled holder that has one. It is
+   ignored when the prices did not change, and it logs a warning naming the count.
+3. **Both paths are in scope.** The tier `Subscription` path is where the recurring exposure
+   actually is, and it is done. Modules are done too, so the renewal path that does not exist yet
+   will find the price already recorded.
+
+### Two rules that are easy to get wrong later
+
+- **An agreed price is only used in the currency it was agreed in.** `GetEffectiveUnitPrice` falls
+  back to the list price on a mismatch rather than converting, because this system holds no
+  exchange rate and charging a UGX figure as USD is a thousand-fold error. This is also why USD MRR
+  does not sum a UGX-denominated agreed price.
+- **A renewal is not a new agreement.** `ModuleAccessService.IsNewAgreement` recaptures only on a
+  first activation, a re-purchase after cancellation, or a switch of billing cycle. Recapturing on
+  a renewal — or on a recovery from `PastDue` — would silently undo the grandfathering at the new
+  list price, which is the exact repricing this feature exists to prevent.
+
+### Two pre-existing bugs found live while testing this, both fixed
+
+Neither was introduced by this work; both were sitting in the path the feature had to run through,
+and both produced a hard failure with nothing catching it.
+
+1. **Every module purchase returned 400.** `PurchaseModuleRequest` was declared with
+   `[property: Required]` on a positional record parameter, which the framework's validation
+   rejects outright — *"validation metadata must be associated with the constructor parameter"* —
+   before the action ever runs. So `POST api/v1/modules/{code}/purchase`, the only self-service way
+   to buy a module, had been failing for every caller. Fixed by moving the attribute to the
+   parameter. A repo-wide grep found no other instance of this pattern.
+2. **Every plan change returned `CHANGE_FAILED`.** `ChangePlanAsync` logged
+   `subscription.Plan.Code` *after* assigning `subscription.PlanId`, and EF's navigation fixup
+   drops `Plan` the moment the foreign key moves — a `NullReferenceException`, swallowed into a
+   generic failure result. Worse, `SaveChangesAsync` ran before the throw, so the plan change was
+   persisted and the caller was told it had failed. Fixed by reading the old code before the
+   reassignment.
+
+### Verified live, against the dev database and a real API process
+
+| Case | Result |
+| --- | --- |
+| Migration backfill | 2 subscriptions and 7 paid module holds frozen at list; trials and grants left null |
+| Module repriced 120k → 150k, apply **off** | Catalog moved, 3 holders stayed at 120k, `grandfatheredCount` 3 |
+| Same edit reversed, apply **on** | `repricedCount` 3, holders moved, warning logged |
+| New tenant buys core-queue | Agreed 80,000 / $19 captured at purchase |
+| Catalog raised to 100,000, same tenant pays again | Agreed price unchanged; `/modules/mine` reports 80,000 |
+| Renewal invoice while list price was 400,000 | Invoice raised at the agreed **300,000** |
+| Plan change professional → enterprise → professional | Recaptured at each step, at the then-current list |
+| Agreed $59 against a $79 list | Tenant overview shows 59; platform MRR fell 357 → 337, exactly the difference |
+| UGX agreed price against USD reporting | MRR used the USD list price, not the UGX figure |
+
+The Mobile Money quote for a *tier* renewal (`POST billing/mobile-money/pay`) is the one read site
+not observed end to end — the gateway is disabled in dev and the amount is never logged, so there
+is nothing to watch. It goes through the same `GetEffectiveUnitPrice` the invoice test proved.
+
+### Left behind in the dev database, deliberately
+
+- Test tenant **Grandfather Price Test Clinic** (`c56eac25-d23a-4717-ae0e-51b92c66cc0b`, admin
+  `grandfather.test@qmgr.local` / `TestPass!2026`), holding core-queue and a professional
+  subscription whose agreed price was hand-set to $59 for the last check above. Useful for
+  re-testing this; delete it whenever.
+- Catalog and plan prices were changed during testing and **restored to their seeded values** —
+  verified by reading them back.
+
+### Worth knowing next time
+
+- **Tier plans have no editor.** `GET api/v1/admin/plans` is read-only and there is no PUT, so a
+  tier price can still only change by seeding or SQL. If one is ever built it needs the same
+  "apply to existing subscribers" option, or platform admins will have a repricing tool for modules
+  and a silent one for tiers.
+- Signing in as the documented dev SuperAdmin (`support@getsacc.com` / `admin`, in CLAUDE.md) on
+  localhost is what made this session's verification possible, where the previous one was blocked.
+  That is using the app as intended with the project's own seeded dev account — unlike minting a
+  JWT by hand, which the previous session was right to refuse.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-03, late) — read this one first
 
 Supersedes the two 2026-09-03 entries below, which remain accurate for what they cover. Four

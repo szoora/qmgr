@@ -42,11 +42,25 @@ public record ModuleCatalogAdminDto
     public bool IsPublic { get; init; }
 
     /// <summary>
-    /// How many organizations currently hold this module, active or in trial. This is the blast
-    /// radius of a price change: nothing stores what a subscriber agreed to pay, so a renewal
-    /// invoice is priced from this row at the moment it is generated.
+    /// How many organizations currently hold this module, active or in trial. This is the reach of
+    /// a price change — though not all of them are repriced by one: see
+    /// <see cref="GrandfatheredCount"/>.
     /// </summary>
     public int SubscriberCount { get; init; }
+
+    /// <summary>
+    /// How many of those holders are on a price this catalog row no longer shows, because it was
+    /// captured when they bought and has been edited since. Their invoices are calculated from
+    /// their own agreed price, not from the figures above.
+    /// </summary>
+    public int GrandfatheredCount { get; init; }
+
+    /// <summary>
+    /// The outcome of the request that returned this record: how many existing holders were moved
+    /// onto the new price because the administrator asked for it. Always 0 when reading the
+    /// catalog, and 0 on an update that left the prices alone or left the box unticked.
+    /// </summary>
+    public int RepricedCount { get; init; }
 }
 
 /// <summary>
@@ -79,4 +93,13 @@ public record UpdateModuleCatalogRequest
 
     public bool IsActive { get; init; }
     public bool IsPublic { get; init; }
+
+    /// <summary>
+    /// Move every existing holder of this module onto the new price as well, instead of leaving
+    /// them on the one they agreed to. Off by default: grandfathering is the whole point of the
+    /// agreed price, and an administrator has to choose to override it — which is also how a price
+    /// cut gets passed on, since otherwise existing customers would keep paying the old, higher
+    /// figure. Ignored when the prices did not change.
+    /// </summary>
+    public bool ApplyToExistingSubscribers { get; init; }
 }

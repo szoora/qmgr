@@ -123,6 +123,10 @@ public class BillingService : IBillingService
                     ? now.AddYears(1)
                     : now.AddMonths(1),
                 MobileMoneyPhone = mobileMoneyPhone,
+                // Grandfathering: lock in what this customer is agreeing to pay right now, so a
+                // later edit to the plan's price does not silently reprice them on renewal.
+                AgreedCurrency = organization.PreferredCurrency,
+                AgreedUnitPrice = ListPriceFor(plan, billingCycle, organization.PreferredCurrency),
                 CreatedAt = now
             };
 
@@ -235,7 +239,19 @@ public class BillingService : IBillingService
                 }
             }
 
+            // Read before the foreign key moves: assigning PlanId makes EF's navigation fixup drop
+            // subscription.Plan, so reading it in the log line below threw a NullReferenceException
+            // and every plan change came back as CHANGE_FAILED. Found live 2026-09-04.
+            var previousPlanCode = subscription.Plan?.Code ?? "(unknown)";
+
             subscription.PlanId = newPlan.Id;
+
+            // A plan change is a fresh agreement, so the agreed price is recaptured from the new
+            // plan rather than carried over — carrying it would let a customer move onto a more
+            // expensive plan while still paying the old plan's price.
+            var agreedCurrency = subscription.Organization?.PreferredCurrency ?? "USD";
+            subscription.AgreedCurrency = agreedCurrency;
+            subscription.AgreedUnitPrice = ListPriceFor(newPlan, subscription.BillingCycle, agreedCurrency);
             subscription.UpdatedAt = DateTime.UtcNow;
 
             // Update organization tier
@@ -248,7 +264,7 @@ public class BillingService : IBillingService
 
             _logger.LogInformation(
                 "Changed subscription {SubscriptionId} from plan {OldPlan} to {NewPlan}",
-                subscriptionId, subscription.Plan.Code, newPlanCode);
+                subscriptionId, previousPlanCode, newPlanCode);
 
             return new SubscriptionResult(true, subscription, null, null);
         }
@@ -516,10 +532,15 @@ public class BillingService : IBillingService
         if (subscription == null)
             throw new InvalidOperationException("Subscription not found");
 
-        var plan = subscription.Plan;
-        var price = subscription.BillingCycle == BillingCycle.Annual
-            ? (subscription.Organization?.PreferredCurrency == "UGX" ? plan.AnnualPriceUgx : plan.AnnualPriceUsd)
-            : (subscription.Organization?.PreferredCurrency == "UGX" ? plan.MonthlyPriceUgx : plan.MonthlyPriceUsd);
+        var plan = subscription.Plan ?? throw new InvalidOperationException("Subscription has no plan loaded");
+        var currency = subscription.Organization?.PreferredCurrency ?? "USD";
+
+        // The agreed price wins over the plan's current list price. This is the whole point of
+        // grandfathering: an administrator editing a plan's price must not change what an existing
+        // subscriber's next invoice comes to. A null agreed price tracks the list price, which is
+        // how every row behaved before those columns existed.
+        var price = subscription.GetEffectiveUnitPrice(
+            ListPriceFor(plan, subscription.BillingCycle, currency), currency);
 
         var invoice = new Invoice
         {
@@ -527,7 +548,7 @@ public class BillingService : IBillingService
             SubscriptionId = subscriptionId,
             InvoiceNumber = GenerateInvoiceNumber(),
             Status = InvoiceStatus.Open,
-            Currency = subscription.Organization?.PreferredCurrency ?? "USD",
+            Currency = currency,
             Subtotal = price,
             TaxAmount = 0,
             DiscountAmount = 0,
@@ -972,6 +993,19 @@ public class BillingService : IBillingService
     private static string GenerateInvoiceNumber()
     {
         return $"INV-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
+    }
+
+    /// <summary>
+    /// The list price of one billing period of <paramref name="plan"/> in
+    /// <paramref name="currency"/> — the price an agreed price is captured from, and the fallback
+    /// when a row has none.
+    /// </summary>
+    private static decimal ListPriceFor(SubscriptionPlan plan, BillingCycle cycle, string? currency)
+    {
+        var isUgx = string.Equals(currency, "UGX", StringComparison.OrdinalIgnoreCase);
+        return cycle == BillingCycle.Annual
+            ? (isUgx ? plan.AnnualPriceUgx : plan.AnnualPriceUsd)
+            : (isUgx ? plan.MonthlyPriceUgx : plan.MonthlyPriceUsd);
     }
 
     private static Dictionary<string, bool> ParseFeatures(string? featuresJson)

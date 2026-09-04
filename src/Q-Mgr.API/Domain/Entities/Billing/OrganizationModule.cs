@@ -41,6 +41,22 @@ public class OrganizationModule : BaseAuditableEntity
     /// <summary>Stripe subscription item ID, once the Stripe multi-item rework ships (phase 7)</summary>
     public string? StripeSubscriptionItemId { get; set; }
 
+    /// <summary>
+    /// The UGX price this organization agreed to for one billing period of this module, captured
+    /// when the module was activated. Null means "track the module's current list price".
+    /// </summary>
+    /// <remarks>
+    /// Both currencies are captured at once, unlike <see cref="Subscription.AgreedUnitPrice"/>,
+    /// because a module row has no organization currency of its own to disambiguate a single
+    /// figure — the purchase path charges UGX through Mobile Money while reporting is in USD.
+    /// The prices are for this row's <see cref="BillingCycle"/>, which is why
+    /// <c>ModuleAccessService.ActivateAsync</c> recaptures them whenever it sets the cycle.
+    /// </remarks>
+    public decimal? AgreedPriceUgx { get; set; }
+
+    /// <summary>The USD counterpart of <see cref="AgreedPriceUgx"/>, captured at the same moment.</summary>
+    public decimal? AgreedPriceUsd { get; set; }
+
     /// <summary>True if this grant was made directly by a platform admin (no payment collected) —
     /// distinguishes a comp/support grant from a real self-service or trial purchase</summary>
     public bool GrantedByPlatformAdmin { get; set; }
@@ -58,6 +74,13 @@ public class OrganizationModule : BaseAuditableEntity
     #region Helper properties
 
     public bool IsActiveOrTrialing => Status == OrganizationModuleStatus.Active || Status == OrganizationModuleStatus.Trialing;
+
+    /// <summary>The UGX price to charge for one period: the agreed price if one was captured,
+    /// otherwise the module's current list price.</summary>
+    public decimal GetEffectivePriceUgx(decimal listPrice) => AgreedPriceUgx ?? listPrice;
+
+    /// <summary>The USD counterpart of <see cref="GetEffectivePriceUgx"/>.</summary>
+    public decimal GetEffectivePriceUsd(decimal listPrice) => AgreedPriceUsd ?? listPrice;
 
     #endregion
 }

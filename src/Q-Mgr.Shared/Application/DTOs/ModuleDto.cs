@@ -30,4 +30,14 @@ public record OrganizationModuleStatusDto(
     string? Status,
     DateTime? ActivatedAt,
     DateTime? TrialEndsAt,
-    bool GrantedByPlatformAdmin);
+    bool GrantedByPlatformAdmin,
+
+    /// <summary>The UGX price this organization agreed to for one period, if one was captured
+    /// when the module was activated. Null means the module tracks the catalog's current list
+    /// price. Shown to the customer so a grandfathered price is visible rather than a surprise
+    /// on the invoice.</summary>
+    decimal? AgreedPriceUgx = null,
+
+    /// <summary>Which cycle <see cref="AgreedPriceUgx"/> is the price of ("Monthly"/"Annual"),
+    /// as a string for the same reason <see cref="Status"/> is one.</summary>
+    string? BillingCycle = null);

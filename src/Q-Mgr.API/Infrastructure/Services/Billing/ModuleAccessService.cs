@@ -105,7 +105,8 @@ public class ModuleAccessService : IModuleAccessService
             var purchased = row != null && row.IsActiveOrTrialing;
             return new OrganizationModuleStatusDto(
                 m.Code, m.Name, purchased,
-                row?.Status.ToString(), row?.ActivatedAt, row?.TrialEndsAt, row?.GrantedByPlatformAdmin ?? false);
+                row?.Status.ToString(), row?.ActivatedAt, row?.TrialEndsAt, row?.GrantedByPlatformAdmin ?? false,
+                row?.AgreedPriceUgx, row?.BillingCycle.ToString());
         }).ToList();
     }
 
@@ -162,6 +163,14 @@ public class ModuleAccessService : IModuleAccessService
             ? DateTime.UtcNow.AddYears(1)
             : DateTime.UtcNow.AddMonths(1);
 
+        // Grandfathering. Every path that turns a module into a paid commitment lands here — a
+        // Mobile Money purchase, a card checkout, a trial being paid off — so this is the one
+        // place the agreed price is captured. Read before anything below mutates the row: the
+        // decision depends on the cycle and status the row had on the way in.
+        var isNewAgreement = IsNewAgreement(existing, billingCycle);
+        var agreedUgx = billingCycle == BillingCycle.Annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
+        var agreedUsd = billingCycle == BillingCycle.Annual ? module.AnnualPriceUsd : module.MonthlyPriceUsd;
+
         if (existing != null)
         {
             existing.Status = OrganizationModuleStatus.Active;
@@ -169,6 +178,11 @@ public class ModuleAccessService : IModuleAccessService
             existing.CurrentPeriodEnd = periodEnd;
             existing.TrialEndsAt = null;
             existing.CancelledAt = null;
+            if (isNewAgreement)
+            {
+                existing.AgreedPriceUgx = agreedUgx;
+                existing.AgreedPriceUsd = agreedUsd;
+            }
             if (stripeSubscriptionItemId != null) existing.StripeSubscriptionItemId = stripeSubscriptionItemId;
             _dbContext.OrganizationModules.Update(existing);
         }
@@ -182,6 +196,8 @@ public class ModuleAccessService : IModuleAccessService
                 ActivatedAt = DateTime.UtcNow,
                 BillingCycle = billingCycle,
                 CurrentPeriodEnd = periodEnd,
+                AgreedPriceUgx = agreedUgx,
+                AgreedPriceUsd = agreedUsd,
                 StripeSubscriptionItemId = stripeSubscriptionItemId
             });
         }
@@ -189,6 +205,41 @@ public class ModuleAccessService : IModuleAccessService
         await _dbContext.SaveChangesAsync();
         await InvalidateCacheAsync(organizationId);
     }
+
+    public async Task<decimal> GetChargeableUgxPriceAsync(Guid organizationId, string moduleCode, BillingCycle billingCycle)
+    {
+        var module = await GetModuleOrThrowAsync(moduleCode);
+        var listPrice = billingCycle == BillingCycle.Annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
+
+        var existing = await _dbContext.OrganizationModules
+            .AsNoTracking()
+            .FirstOrDefaultAsync(om => om.OrganizationId == organizationId && om.ModuleId == module.Id);
+
+        // Same rule as ActivateAsync, deliberately: whatever this quotes is what that will lock
+        // in, and a customer paying one number while the row records another is the bug this
+        // whole feature exists to prevent.
+        return IsNewAgreement(existing, billingCycle)
+            ? listPrice
+            : existing!.GetEffectivePriceUgx(listPrice);
+    }
+
+    /// <summary>
+    /// Whether activating this row on <paramref name="billingCycle"/> is a fresh agreement, whose
+    /// price is captured at today's list, rather than the continuation of one already made.
+    /// </summary>
+    /// <remarks>
+    /// A renewal, or a recovery from <c>PastDue</c>, keeps the price the customer already agreed
+    /// to — recapturing there would quietly undo the grandfathering at the new list price, which
+    /// is exactly the repricing this is meant to prevent. A first purchase, a re-purchase after
+    /// the module was cancelled, and a switch between monthly and annual are all genuinely new
+    /// agreements: the last one because the stored prices are for one specific cycle, so keeping
+    /// them across a switch would charge a monthly price for a year.
+    /// </remarks>
+    private static bool IsNewAgreement(OrganizationModule? existing, BillingCycle billingCycle) =>
+        existing == null
+        || existing.AgreedPriceUgx == null
+        || existing.Status == OrganizationModuleStatus.Cancelled
+        || existing.BillingCycle != billingCycle;
 
     public async Task GrantAsync(Guid organizationId, string moduleCode, Guid grantedByUserId, string? note)
     {

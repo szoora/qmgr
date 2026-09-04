@@ -38,6 +38,15 @@ public interface IModuleAccessService
     /// which has no per-module subscription-item concept at all.</summary>
     Task ActivateAsync(Guid organizationId, string moduleCode, BillingCycle billingCycle, string? stripeSubscriptionItemId = null);
 
+    /// <summary>
+    /// What this organization would actually be charged, in UGX, for one period of
+    /// <paramref name="moduleCode"/> — its grandfathered price if it already holds the module at
+    /// an agreed price, otherwise today's list price. Charge from this rather than reading the
+    /// catalog price directly, or a repriced module quietly overcharges an existing holder whose
+    /// payment failed and who is simply paying again.
+    /// </summary>
+    Task<decimal> GetChargeableUgxPriceAsync(Guid organizationId, string moduleCode, BillingCycle billingCycle);
+
     /// <summary>Platform admin direct grant — no payment collected, immediately Active.</summary>
     Task GrantAsync(Guid organizationId, string moduleCode, Guid grantedByUserId, string? note);
 

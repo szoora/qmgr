@@ -76,7 +76,13 @@ public class ModulesController : ControllerBase
         return Ok(status);
     }
 
-    public record PurchaseModuleRequest([property: Required] string PhoneNumber, string BillingCycle = "Monthly");
+    /// <summary>
+    /// The attribute sits on the constructor parameter, not on the generated property. Written the
+    /// other way round ([property: Required]) the framework's validation rejects the request type
+    /// itself with a 400 before the action ever runs, which is what it had been doing to every
+    /// module purchase — found live 2026-09-04 while testing grandfathered pricing.
+    /// </summary>
+    public record PurchaseModuleRequest([Required] string PhoneNumber, string BillingCycle = "Monthly");
 
     private const int MaxReasonLength = 500;
 
@@ -129,7 +135,11 @@ public class ModulesController : ControllerBase
             return BadRequest(new { error = "INVALID_BILLING_CYCLE", message = "Billing cycle must be Monthly or Annual." });
         if (string.IsNullOrWhiteSpace(request.PhoneNumber))
             return BadRequest(new { error = "INVALID_PHONE", message = "A mobile money phone number is required." });
-        var amount = cycle == BillingCycle.Annual ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
+
+        // Not module.MonthlyPriceUgx/AnnualPriceUgx directly: an organization that already holds
+        // this module at an agreed price pays that price, not whatever the catalog says today.
+        // For a first purchase the two are the same number.
+        var amount = await _moduleAccessService.GetChargeableUgxPriceAsync(OrganizationId, moduleCode, cycle);
 
         if (_environment.IsDevelopment())
         {

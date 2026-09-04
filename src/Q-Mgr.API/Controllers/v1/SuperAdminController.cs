@@ -437,10 +437,8 @@ public class SuperAdminController : ControllerBase
             .Where(s => s.Status == SubscriptionStatus.Active)
             .ToListAsync();
 
-        var mrr = activeSubscriptions.Sum(s =>
-            s.BillingCycle == BillingCycle.Monthly
-                ? s.Plan?.MonthlyPriceUsd ?? 0
-                : (s.Plan?.AnnualPriceUsd ?? 0) / 12);
+        // Agreed prices win over list prices here — see Subscription.GetMonthlyRecurringRevenueUsd.
+        var mrr = activeSubscriptions.Sum(s => s.GetMonthlyRecurringRevenueUsd());
 
         var stats = new PlatformStats
         {

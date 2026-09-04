@@ -73,6 +73,35 @@ public class Subscription : BaseAuditableEntity
 
     #endregion
 
+    #region Agreed price (grandfathering)
+
+    /// <summary>
+    /// The price this organization agreed to for one billing period, captured when the
+    /// subscription is created and again whenever its plan changes. Null means "track the plan's
+    /// current list price", which is how every row behaved before this column existed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what stops an edit to a plan's price from silently repricing everybody already on
+    /// it. <see cref="AgreedCurrency"/> records which currency the number is in, and
+    /// <see cref="GetEffectiveUnitPrice"/> refuses to use it in any other one — a UGX figure
+    /// charged as USD would be a three-order-of-magnitude error.
+    /// </para>
+    /// <para>
+    /// The number is the price for this row's <see cref="BillingCycle"/>. Nothing changes a
+    /// subscription's cycle today; if that ever becomes possible, the agreed price has to be
+    /// recaptured in the same operation, or a customer switching to annual would be charged a
+    /// monthly price for a year.
+    /// </para>
+    /// </remarks>
+    public decimal? AgreedUnitPrice { get; set; }
+
+    /// <summary>ISO code of the currency <see cref="AgreedUnitPrice"/> is denominated in ("USD"
+    /// or "UGX"), taken from the organization's preferred currency at the time it was agreed.</summary>
+    public string? AgreedCurrency { get; set; }
+
+    #endregion
+
     #region Overrides (for Enterprise custom limits)
 
     /// <summary>Override max branches (null = use plan default)</summary>
@@ -138,6 +167,39 @@ public class Subscription : BaseAuditableEntity
 
     /// <summary>Get effective max storage in MB (considering overrides)</summary>
     public int GetEffectiveMaxStorage(int planDefault) => MaxStorageOverride ?? planDefault;
+
+    /// <summary>
+    /// The price to charge for one billing period: the agreed price when one was captured in
+    /// <paramref name="currency"/>, otherwise the plan's current list price.
+    /// </summary>
+    /// <remarks>An agreed price held in a different currency is deliberately ignored rather than
+    /// converted — this system holds no exchange rate, and charging a UGX number as USD is far
+    /// worse than falling back to today's list price.</remarks>
+    public decimal GetEffectiveUnitPrice(decimal listPrice, string currency) =>
+        AgreedUnitPrice.HasValue && string.Equals(AgreedCurrency, currency, StringComparison.OrdinalIgnoreCase)
+            ? AgreedUnitPrice.Value
+            : listPrice;
+
+    /// <summary>
+    /// What this subscription bills per period in USD, honouring any agreed price. Needs
+    /// <see cref="Plan"/> loaded; returns 0 when it is not.
+    /// </summary>
+    public decimal GetPeriodPriceUsd()
+    {
+        var listPrice = BillingCycle == BillingCycle.Annual
+            ? Plan?.AnnualPriceUsd ?? 0
+            : Plan?.MonthlyPriceUsd ?? 0;
+
+        return GetEffectiveUnitPrice(listPrice, "USD");
+    }
+
+    /// <summary>
+    /// Monthly recurring revenue in USD, honouring any agreed price. Revenue reporting has to go
+    /// through this rather than read the plan's list price directly, or it misstates revenue by
+    /// exactly the grandfathered difference.
+    /// </summary>
+    public decimal GetMonthlyRecurringRevenueUsd() =>
+        BillingCycle == BillingCycle.Annual ? GetPeriodPriceUsd() / 12 : GetPeriodPriceUsd();
 
     #endregion
 }

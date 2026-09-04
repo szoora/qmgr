@@ -259,6 +259,39 @@ above — a database extension is a server dependency.
   if you are tempted to promote a heuristic to a hard block, that is a decision to put to the user,
   not to infer. The flags are reviewed at `/platform/registration-review`.
 
+## Prices are grandfathered: never charge from a catalog row (decided 2026-09-04)
+
+What a customer pays is recorded on their own row, not looked up when the invoice is raised.
+`Subscription.AgreedUnitPrice`/`AgreedCurrency` and `OrganizationModule.AgreedPriceUgx`/
+`AgreedPriceUsd` hold it. **Any new code that needs a price to charge, quote, display or report
+must read the agreed price with a fallback to list — `Subscription.GetEffectiveUnitPrice`,
+`GetPeriodPriceUsd`, `GetMonthlyRecurringRevenueUsd`, `OrganizationModule.GetEffectivePriceUgx`/
+`GetEffectivePriceUsd`, or `IModuleAccessService.GetChargeableUgxPriceAsync` — never
+`plan.MonthlyPriceUgx` and friends directly.** Reading the catalog row is how an administrator's
+price edit used to silently reprice every existing customer's next invoice, which is the bug this
+exists to prevent. Null means "track the list price", so the helpers are always safe to call.
+
+Three rules that are easy to break by accident:
+
+- **An agreed price is only valid in the currency it was agreed in.** The helpers fall back to the
+  list price on a currency mismatch rather than converting: this system holds no exchange rate, and
+  charging a UGX figure as USD is a thousand-fold error. This is why USD MRR does not sum a
+  UGX-denominated agreed price, and why the tenant billing overview shows the USD list price to a
+  customer whose agreed price is in shillings.
+- **A renewal is not a new agreement.** `ModuleAccessService.IsNewAgreement` recaptures the price
+  only on a first activation, a re-purchase after cancellation, or a switch of billing cycle.
+  Recapturing on a renewal or a `PastDue` recovery would quietly undo the grandfathering at the new
+  list price. `ModulesController`'s purchase quote and `ActivateAsync`'s capture share that one
+  predicate on purpose: a customer paying one number while the row records another is exactly the
+  failure this is guarding against.
+- **Passing a price change on to existing customers is a deliberate act.** The Module Catalog
+  editor's "Apply to existing subscribers" is off by default and is the only thing that rewrites
+  agreed prices in bulk. Note the asymmetry it creates: a locked price shields a customer from an
+  increase and also withholds a decrease from them, so a price cut only reaches existing customers
+  when somebody ticks that box. **Tier plans have no editor at all** (`GET api/v1/admin/plans` is
+  read-only, there is no PUT), so if one is ever built it needs the same option or tier repricing
+  will be silent where module repricing is not.
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

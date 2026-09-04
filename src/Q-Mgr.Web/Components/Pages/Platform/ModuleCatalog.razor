@@ -118,8 +118,13 @@
                     <QIcon Name="exclamation-triangle-fill" Size="18" />
                     <span>
                         @editing.SubscriberCount organization@(editing.SubscriberCount == 1 ? " holds" : "s hold")
-                        this module. A price change here reaches @(editing.SubscriberCount == 1 ? "them" : "them all")
-                        on their next invoice.
+                        this module. A price change here applies to new purchases only —
+                        @(editing.SubscriberCount == 1 ? "this one keeps the price it" : "existing holders keep the price they")
+                        agreed to, unless you tick <strong>Apply to existing subscribers</strong> under Pricing.
+                        @if (editing.GrandfatheredCount > 0)
+                        {
+                            <text>@editing.GrandfatheredCount of them @(editing.GrandfatheredCount == 1 ? "is" : "are") already on an older price than the one shown below.</text>
+                        }
                     </span>
                 </div>
             }
@@ -168,6 +173,15 @@
                 <div class="form-group">
                     <QInput TValue="int" @bind-Value="form.TrialDays" Label="Trial length (days)" Type="number" Min="0" Max="365" />
                 </div>
+                <label class="editor-toggle">
+                    <input type="checkbox" checked="@form.ApplyToExistingSubscribers" @onchange="OnApplyToExistingChanged" />
+                    <span>
+                        <strong>Apply to existing subscribers.</strong> Leave this off and a change
+                        reaches new purchases only; everyone already holding the module keeps the
+                        price they agreed to. Tick it to move them onto the new price as well —
+                        which is also the only way a price cut reaches them.
+                    </span>
+                </label>
                 @if (annualIsWorseThanMonthly)
                 {
                     <div class="editor-hint">
@@ -469,6 +483,11 @@
         if (form != null) form.IsPublic = e.Value is bool value && value;
     }
 
+    private void OnApplyToExistingChanged(ChangeEventArgs e)
+    {
+        if (form != null) form.ApplyToExistingSubscribers = e.Value is bool value && value;
+    }
+
     private async Task Save()
     {
         if (form == null || editing == null) return;
@@ -488,7 +507,17 @@
 
             if (response.IsSuccessStatusCode)
             {
-                NotificationService.Notify(ToastSeverity.Success, $"{form.Name} updated.");
+                // The server reports how many existing holders it actually moved, which is not the
+                // same as how many were asked for: only holders on a captured price are repriced,
+                // and nothing is repriced at all when the prices were left alone.
+                var saved = await response.Content.ReadFromJsonAsync<ModuleCatalogAdminDto>(JsonOptions);
+                var repriced = saved?.RepricedCount ?? 0;
+
+                NotificationService.Notify(ToastSeverity.Success, $"{form.Name} updated.",
+                    repriced > 0
+                        ? $"{repriced} existing subscriber{(repriced == 1 ? "" : "s")} moved onto the new price."
+                        : null);
+
                 showEditor = false;
                 await Load();
             }
@@ -534,6 +563,10 @@
         public bool IsActive { get; set; }
         public bool IsPublic { get; set; }
 
+        /// <summary>Never carried over from the module being edited: it is a decision about this
+        /// one save, and it defaults to off every time the editor opens.</summary>
+        public bool ApplyToExistingSubscribers { get; set; }
+
         public static ModuleForm From(ModuleCatalogAdminDto m) => new()
         {
             Name = m.Name,
@@ -575,7 +608,8 @@
             MaxApiCallsPerMonth = MaxApiCallsPerMonth,
             MaxStorageMb = MaxStorageMb,
             IsActive = IsActive,
-            IsPublic = IsPublic
+            IsPublic = IsPublic,
+            ApplyToExistingSubscribers = ApplyToExistingSubscribers
         };
     }
 

@@ -93,9 +93,9 @@ public class BillingController : ControllerBase
             PlanName = subscription.Plan.Name,
             PlanCode = subscription.Plan.Code,
             BillingCycle = subscription.Subscription.BillingCycle.ToString(),
-            MonthlyAmount = subscription.Subscription.BillingCycle == BillingCycle.Monthly
-                ? subscription.Plan.MonthlyPriceUsd
-                : subscription.Plan.AnnualPriceUsd / 12,
+            // What this customer actually pays, agreed price included — showing the plan's list
+            // price to somebody on a grandfathered one would contradict their own invoice.
+            MonthlyAmount = subscription.Subscription.GetMonthlyRecurringRevenueUsd(),
             Currency = "USD",
             Status = subscription.Subscription.Status.ToString(),
             NextBillingDate = subscription.Subscription.CurrentPeriodEnd,
@@ -499,9 +499,18 @@ public class BillingController : ControllerBase
         if (plan == null)
             return NotFound(new { message = "Plan not found" });
 
-        var amount = request.BillingCycle == BillingCycle.Annual
+        var listAmount = request.BillingCycle == BillingCycle.Annual
             ? plan.AnnualPriceUgx
             : plan.MonthlyPriceUgx;
+
+        // This endpoint pays a renewal as well as a first purchase, so an organization already on
+        // this plan and cycle is charged the price it agreed to rather than today's list price.
+        // Anything else — a different plan, a different cycle, no subscription yet — is a new
+        // agreement and pays list.
+        var current = await _billingService.GetSubscriptionAsync(OrganizationId);
+        var amount = current != null && current.PlanId == plan.Id && current.BillingCycle == request.BillingCycle
+            ? current.GetEffectiveUnitPrice(listAmount, "UGX")
+            : listAmount;
 
         var narrative = $"Q-Mgr {plan.Name} subscription ({request.BillingCycle})";
 

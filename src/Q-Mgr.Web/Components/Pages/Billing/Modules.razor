@@ -55,6 +55,14 @@ else
                 <p class="module-marketplace-desc">@module.Description</p>
                 <div class="module-marketplace-price">UGX @module.MonthlyPriceUgx.ToString("N0")/mo <span class="muted">or UGX @module.AnnualPriceUgx.ToString("N0")/yr</span></div>
 
+                @if (purchased && status!.AgreedPriceUgx is { } agreed && agreed != ListPriceFor(module, status.BillingCycle))
+                {
+                    <p class="trial-note agreed-price">
+                        <QIcon Name="lock-fill" Size="14" />
+                        You pay UGX @agreed.ToString("N0")@(status.BillingCycle == "Annual" ? "/yr" : "/mo") — the price you signed up at.
+                    </p>
+                }
+
                 @if (purchased)
                 {
                     @if (status!.TrialEndsAt.HasValue)
@@ -240,6 +248,11 @@ else
         margin-top: 6px;
     }
 
+    .trial-note.agreed-price {
+        color: var(--qm-text-primary);
+        margin-top: 4px;
+    }
+
     .trial-gate-note {
         color: var(--qm-primary) !important;
         display: flex;
@@ -314,6 +327,12 @@ else
     // the matching client-side UX layer, derived from the already-loaded status list (no extra
     // API call). Null once the trial module is fully paid, so "Add Module" unlocks for the rest.
     private string? TrialingModuleName => mine.FirstOrDefault(m => m.Status == "Trialing")?.ModuleName;
+
+    /// <summary>The catalog's price for the cycle a holder is actually on. The card compares
+    /// against this so it only calls out an agreed price when it genuinely differs from what a new
+    /// customer would pay today.</summary>
+    private static decimal ListPriceFor(ModuleCatalogItem module, string? billingCycle) =>
+        billingCycle == "Annual" ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
 
     private string PurchaseModalTitle =>
         purchaseTarget != null && mine.FirstOrDefault(m => m.ModuleCode == purchaseTarget.Code)?.Status == "Trialing"
