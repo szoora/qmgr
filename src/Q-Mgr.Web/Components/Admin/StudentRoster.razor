@@ -244,8 +244,39 @@
             else if (activeTab == "home")
             {
                 <div class="stu-grid">
-                    <QInput TValue="string" @bind-Value="studentModel.HomeDistrict" Label="Home district" Placeholder="Mbarara" MaxLength="120"
-                            HelperText="How quickly a guardian can actually arrive." />
+                    <QSelect TValue="string" TItem="string" Value="@studentModel.HomeCountry"
+                             ValueChanged="@OnCountryChanged"
+                             Label="Home country" Placeholder="Not recorded" AllowClear="true"
+                             Items="@Geography.Countries" ValueSelector="@(c => c)" TextSelector="@(c => c)"
+                             HasError="@fieldErrors.ContainsKey(nameof(studentModel.HomeCountry))"
+                             ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.HomeCountry))" />
+
+                    @* A picker where the list is known, a text box where it is not. An empty
+                       dropdown for a country nobody has listed would be a dead end, and forcing a
+                       school to pick a wrong district to get past the form is worse than free text. *@
+                    @if (Geography.HasDistricts(studentModel.HomeCountry))
+                    {
+                        <QSelect TValue="string" TItem="string" @bind-Value="studentModel.HomeDistrict"
+                                 Label="@Geography.DistrictLabelFor(studentModel.HomeCountry)"
+                                 Placeholder="Not recorded" AllowClear="true"
+                                 Items="@Geography.DistrictsFor(studentModel.HomeCountry)"
+                                 ValueSelector="@(d => d)" TextSelector="@(d => d)"
+                                 HelperText="How quickly a guardian can actually arrive."
+                                 HasError="@fieldErrors.ContainsKey(nameof(studentModel.HomeDistrict))"
+                                 ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.HomeDistrict))" />
+                    }
+                    else
+                    {
+                        <QInput TValue="string" @bind-Value="studentModel.HomeDistrict"
+                                Label="@Geography.DistrictLabelFor(studentModel.HomeCountry)"
+                                Placeholder="@(string.IsNullOrWhiteSpace(studentModel.HomeCountry) ? "Choose a country first" : "Type the area")"
+                                MaxLength="120"
+                                Disabled="@string.IsNullOrWhiteSpace(studentModel.HomeCountry)"
+                                HelperText="@(string.IsNullOrWhiteSpace(studentModel.HomeCountry) ? "A district on its own is ambiguous across borders." : "No list for this country — type it.")"
+                                HasError="@fieldErrors.ContainsKey(nameof(studentModel.HomeDistrict))"
+                                ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.HomeDistrict))" />
+                    }
+
                     <QSelect TValue="StudentLivesWith?" TItem="EnumOption<StudentLivesWith>" @bind-Value="studentModel.LivesWith"
                              Label="Lives with" Placeholder="Not recorded" AllowClear="true"
                              Items="@LivesWithOptions" ValueSelector="@(o => (StudentLivesWith?)o.Value)" TextSelector="@(o => o.Label)" />
@@ -682,13 +713,29 @@
     /* @@key on the panel forces a fresh element per tab, so this replays on every switch. A 6px
        rise, not a slide across — a horizontal slide implies the tabs are a sequence you move
        through, and these are four views of one thing. */
+    /* `backwards`, NOT `both` — and this is load-bearing, not a style preference.
+       `both` keeps the final keyframe applied forever, so `transform: translateY(0)` stays on the
+       element after the animation ends. A transform of ANY value (zero included) makes an element
+       a containing block for its fixed-position descendants, and QSelect deliberately renders its
+       dropdown `position: fixed` at JS-measured screen coordinates precisely so no scrollable
+       ancestor can clip it. With `both`, that dropdown resolved against this panel instead of the
+       viewport and got clipped by the modal's scroll container — the option list vanished and the
+       modal grew a horizontal scrollbar. `backwards` drops the transform once the animation
+       finishes, which is visually identical (the last frame is translateY(0)) and leaves fixed
+       positioning working. Same reason on .stu-grid > * below. */
     .stu-tab-panel {
-        animation: stuPanelIn .22s ease both;
+        animation: stuPanelIn .22s ease backwards;
     }
 
+    /* Opacity only — NO transform. A transform on this element makes it a containing block for
+       fixed-position descendants, and QSelect renders its option list `position: fixed` at
+       JS-measured VIEWPORT coordinates. With a transform active those coordinates resolve against
+       this panel instead, so the list lands far down and to the right and drags a horizontal
+       scrollbar into the modal. It bites while the animation is still RUNNING, so no fill-mode
+       trick avoids it — the transform simply cannot be here. */
     @@keyframes stuPanelIn {
-        from { opacity: 0; transform: translateY(6px); }
-        to   { opacity: 1; transform: translateY(0); }
+        from { opacity: 0; }
+        to   { opacity: 1; }
     }
 
     .stu-grid {
@@ -700,9 +747,18 @@
     .stu-grid > .span-2 { grid-column: 1 / -1; }
 
     /* Fields fade in a beat behind the panel, in reading order. Six steps only — past that the
-       last field waits long enough to feel like the form is still loading. */
+       last field waits long enough to feel like the form is still loading.
+
+       `backwards`, not `both`: a `both` fill keeps the last keyframe applied forever, so
+       `transform: translateY(0)` would stay on the element, and a transform of ANY value (zero
+       included) makes it a containing block for fixed-position descendants. These wrappers are the
+       direct parents of QSelect triggers, and QSelect deliberately renders its option list
+       `position: fixed` at JS-measured screen coordinates so no scrollable ancestor can clip it —
+       a persisted transform here would quietly redefine what "fixed" resolves against.
+       `backwards` drops the transform once the animation finishes, which is visually identical
+       because the last frame is already translateY(0). */
     .stu-grid > * {
-        animation: stuFieldIn .26s ease both;
+        animation: stuFieldIn .26s ease backwards;
     }
 
     .stu-grid > *:nth-child(1) { animation-delay: .02s; }
@@ -712,9 +768,12 @@
     .stu-grid > *:nth-child(5) { animation-delay: .14s; }
     .stu-grid > *:nth-child(n+6) { animation-delay: .16s; }
 
+    /* Opacity only, for the containing-block reason on stuPanelIn above — these wrappers are the
+       DIRECT parents of the QSelect triggers, so a transform here is the one that actually
+       displaced the country dropdown. */
     @@keyframes stuFieldIn {
-        from { opacity: 0; transform: translateY(4px); }
-        to   { opacity: 1; transform: translateY(0); }
+        from { opacity: 0; }
+        to   { opacity: 1; }
     }
 
     .stu-form-error {
@@ -1298,7 +1357,7 @@
             }.Count(x => x),
             "home" => new[]
             {
-                Has(m.HomeDistrict), Has(m.HomeAddress), m.LivesWith.HasValue, Has(m.HomeLanguage), Has(m.Religion)
+                Has(m.HomeCountry), Has(m.HomeDistrict), Has(m.HomeAddress), m.LivesWith.HasValue, Has(m.HomeLanguage), Has(m.Religion)
             }.Count(x => x),
             "health" => new[]
             {
@@ -1316,6 +1375,26 @@
     // of day and storing one invites a timezone bug that silently shifts a child's date of birth
     // across midnight. These two properties are the bridge, and they are the only place the
     // conversion happens.
+    /// <summary>
+    /// Changing country clears a district that does not belong to the new one. Silently keeping
+    /// "Mbarara" after switching to Kenya would leave a value the server then rejects, and the
+    /// user would have no idea which field was at fault. A district that IS valid in the new
+    /// country (Busia exists in both Uganda and Kenya) is kept — clearing it would be needless.
+    /// </summary>
+    private void OnCountryChanged(string? country)
+    {
+        studentModel.HomeCountry = country;
+
+        if (!Geography.IsValidDistrict(country, studentModel.HomeDistrict))
+            studentModel.HomeDistrict = null;
+
+        if (string.IsNullOrWhiteSpace(country))
+            studentModel.HomeDistrict = null;
+
+        fieldErrors.Remove(nameof(studentModel.HomeCountry));
+        fieldErrors.Remove(nameof(studentModel.HomeDistrict));
+    }
+
     private DateTime? dateOfBirthValue
     {
         get => studentModel.DateOfBirth?.ToDateTime(TimeOnly.MinValue);
@@ -1462,6 +1541,7 @@
             House = s.House,
             DormitoryOrStream = s.DormitoryOrStream,
             PhotoUrl = s.PhotoUrl,
+            HomeCountry = s.HomeCountry,
             HomeDistrict = s.HomeDistrict,
             HomeAddress = s.HomeAddress,
             LivesWith = s.LivesWith,
@@ -1539,6 +1619,7 @@
         House = m.House,
         DormitoryOrStream = m.DormitoryOrStream,
         PhotoUrl = m.PhotoUrl,
+        HomeCountry = m.HomeCountry,
         HomeDistrict = m.HomeDistrict,
         HomeAddress = m.HomeAddress,
         LivesWith = m.LivesWith,
@@ -1586,11 +1667,19 @@
                 fieldErrors[nameof(studentModel.AdmissionDate)] = "Admission cannot precede the date of birth";
         }
 
+        if (!string.IsNullOrWhiteSpace(studentModel.HomeDistrict) && string.IsNullOrWhiteSpace(studentModel.HomeCountry))
+            fieldErrors[nameof(studentModel.HomeCountry)] = "Choose the country before the district";
+        else if (!Geography.IsValidDistrict(studentModel.HomeCountry, studentModel.HomeDistrict))
+            fieldErrors[nameof(studentModel.HomeDistrict)] = "That area is not in the chosen country";
+
         if (fieldErrors.Count == 0) return true;
 
-        // Every field validated above lives on the Identity tab today; keep the jump keyed off
-        // the field so it still lands correctly if one of them later moves.
-        activeTab = "identity";
+        // Open the tab holding the offending field — an error about a field on a hidden tab is
+        // indistinguishable from nothing happening.
+        var offending = fieldErrors.Keys.First();
+        activeTab = offending is nameof(UpdateStudentRequest.HomeCountry) or nameof(UpdateStudentRequest.HomeDistrict)
+            ? "home"
+            : "identity";
         studentFormError = fieldErrors.Values.First();
         return false;
     }

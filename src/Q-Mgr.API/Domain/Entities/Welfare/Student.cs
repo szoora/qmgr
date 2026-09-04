@@ -59,6 +59,10 @@ public class Student : BaseEntity
 
     // --- Home and family context ---
 
+    /// <summary>The country the district belongs to. Stored beside it because a bare district name is ambiguous across borders — Busia is both a Ugandan district and a Kenyan county.</summary>
+    [MaxLength(100)]
+    public string? HomeCountry { get; set; }
+
     /// <summary>Distance from home for a boarder: how quickly a guardian can actually arrive in a crisis.</summary>
     [MaxLength(120)]
     public string? HomeDistrict { get; set; }

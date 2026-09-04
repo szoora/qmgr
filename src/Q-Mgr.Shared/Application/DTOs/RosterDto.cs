@@ -41,6 +41,7 @@ public record StudentDto
     public string? DormitoryOrStream { get; init; }
     public string? PhotoUrl { get; init; }
 
+    public string? HomeCountry { get; init; }
     public string? HomeDistrict { get; init; }
     public string? HomeAddress { get; init; }
     public StudentLivesWith? LivesWith { get; init; }
@@ -128,6 +129,9 @@ public abstract record StudentProfileFields
     public StudentSex? Sex { get; set; }
     public DateOnly? AdmissionDate { get; set; }
     public StudentResidency? Residency { get; set; }
+
+    [MaxLength(100, ErrorMessage = "Country cannot exceed 100 characters")]
+    public string? HomeCountry { get; set; }
 
     [MaxLength(120, ErrorMessage = "Home district cannot exceed 120 characters")]
     public string? HomeDistrict { get; set; }

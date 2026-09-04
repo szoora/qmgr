@@ -46,6 +46,7 @@
                                class="q-select__search-input"
                                placeholder="Search..."
                                value="@searchQuery"
+                               @onblur="HandleBlur"
                                @oninput="@(e => searchQuery = e.Value?.ToString() ?? "")" />
                     </div>
                 }
@@ -107,6 +108,9 @@
     private string? dropdownStyle;
     private string searchQuery = "";
     private bool shouldFocusSearch;
+
+    /// <summary>Swallows the single blur caused by focus moving from the trigger into our own search box — see HandleBlur.</summary>
+    private bool suppressNextBlurClose;
 
     /// <summary>
     /// Below this many items, the search box adds clutter without helping (e.g. a
@@ -279,6 +283,7 @@
             }
 
             shouldFocusSearch = Items != null && Items.Count() > SearchThreshold;
+            if (shouldFocusSearch) suppressNextBlurClose = true;
         }
     }
 
@@ -299,9 +304,31 @@
         public double? Bottom { get; init; }
     }
 
+    /// <summary>
+    /// BUG FOUND LIVE (2026-09-04): a select with more than <see cref="SearchThreshold"/> items
+    /// renders a search box and focuses it as soon as the dropdown opens. That focus BLURS the
+    /// trigger button, which fired this handler, which closed the dropdown 200ms later — so the
+    /// list appeared, sat there for a fifth of a second, and vanished before anyone could pick
+    /// anything. Clicks then landed on whatever field happened to be underneath.
+    ///
+    /// It went unnoticed because until a 29-country picker was added, no select in the app had
+    /// more than six options and so none of them ever rendered a search box.
+    ///
+    /// The blur that moves focus into this component's OWN search box is not a real blur, so it
+    /// is swallowed once. Closing on an outside click still works because the search input carries
+    /// this same handler (see its @@onblur) — whichever of the two elements holds focus, losing it
+    /// closes the dropdown.
+    /// </summary>
     private void HandleBlur()
     {
         HasFocus = false;
+
+        if (suppressNextBlurClose)
+        {
+            suppressNextBlurClose = false;
+            return;
+        }
+
         // Delay closing to allow click on dropdown item
         _ = Task.Delay(200).ContinueWith(_ =>
         {

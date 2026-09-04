@@ -521,6 +521,7 @@ public class StudentsController : ControllerBase
                     student.House,
                     student.DormitoryOrStream,
                     student.PhotoUrl,
+                    student.HomeCountry,
                     student.HomeDistrict,
                     student.HomeAddress,
                     livesWith = student.LivesWith?.ToString(),
@@ -1007,6 +1008,7 @@ public class StudentsController : ControllerBase
         PhotoUrl = s.PhotoUrl,
 
         // --- Pastoral tier: context and health.
+        HomeCountry = pastoral ? s.HomeCountry : null,
         HomeDistrict = pastoral ? s.HomeDistrict : null,
         HomeAddress = pastoral ? s.HomeAddress : null,
         LivesWith = pastoral ? s.LivesWith : null,
@@ -1106,6 +1108,21 @@ public class StudentsController : ControllerBase
 
         // Guard the enums explicitly. A JSON body can carry any integer, and an out-of-range one
         // would otherwise be stored and then render as a blank chip forever.
+        // Geography. The country must be one the picker actually offers, and a district is checked
+        // against its country ONLY where Geography holds a complete list — everywhere else the
+        // field is free text and any value is legitimate, which is what makes partial coverage
+        // safe rather than a trap for a school in a country nobody has listed yet.
+        if (!string.IsNullOrWhiteSpace(p.HomeCountry) && !Geography.IsKnownCountry(p.HomeCountry))
+            return "Unrecognised country";
+
+        if (!string.IsNullOrWhiteSpace(p.HomeDistrict) && !Geography.IsValidDistrict(p.HomeCountry, p.HomeDistrict))
+            return $"'{p.HomeDistrict.Trim()}' is not a known {Geography.DistrictLabelFor(p.HomeCountry).Replace("Home ", "")} in {p.HomeCountry}";
+
+        // A district on its own cannot be checked and cannot be read back reliably: Busia is a
+        // Ugandan district and a Kenyan county, and the two are 200km and a border apart.
+        if (!string.IsNullOrWhiteSpace(p.HomeDistrict) && string.IsNullOrWhiteSpace(p.HomeCountry))
+            return "Choose the country before the district";
+
         if (p.Sex is { } sex && !Enum.IsDefined(sex)) return "Unrecognised value for sex";
         if (p.Residency is { } res && !Enum.IsDefined(res)) return "Unrecognised value for residency";
         if (p.LivesWith is { } lw && !Enum.IsDefined(lw)) return "Unrecognised value for lives-with";
@@ -1133,6 +1150,7 @@ public class StudentsController : ControllerBase
 
         if (!includePastoral) return;
 
+        s.HomeCountry = Clean(p.HomeCountry);
         s.HomeDistrict = Clean(p.HomeDistrict);
         s.HomeAddress = Clean(p.HomeAddress);
         s.LivesWith = p.LivesWith;

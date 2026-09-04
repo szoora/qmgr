@@ -475,7 +475,7 @@
         border-radius: var(--qm-radius-md);
         background: rgba(var(--qm-warning-rgb), .1);
         border: 1px solid rgba(var(--qm-warning-rgb), .32);
-        animation: epIn .28s ease both;
+        animation: epIn .28s ease backwards;
     }
 
     .escalation-prompt .ep-head {
@@ -496,9 +496,14 @@
 
     /* Slides down as it fades in: it appears in response to choosing "Punitive", and a thing that
        arrives because of what you just did should look like it arrived. */
+    /* No max-height in the keyframes: with a `both`/`forwards` fill the final value would stay
+       applied and silently clip a longer message. Opacity and a short rise say the same thing and
+       leave the box free to size to its content. The fill is `backwards` for the same reason the
+       student form's panels use it — a persisted transform, even translateY(0), turns the element
+       into a containing block for fixed-position descendants and breaks any dropdown inside it. */
     @@keyframes epIn {
-        from { opacity: 0; transform: translateY(-6px); max-height: 0; }
-        to   { opacity: 1; transform: translateY(0); max-height: 320px; }
+        from { opacity: 0; transform: translateY(-6px); }
+        to   { opacity: 1; transform: translateY(0); }
     }
 
     .plan-note {
@@ -511,7 +516,7 @@
         background: var(--qm-bg-elevated);
         color: var(--qm-text-secondary);
         font-size: 12.5px;
-        animation: epIn .24s ease both;
+        animation: epIn .24s ease backwards;
     }
 
     @@media (prefers-reduced-motion: reduce) {
