@@ -326,8 +326,31 @@
             {
                 <p class="qm-text-muted">Loading...</p>
             }
+            else if (modulesError != null)
+            {
+                @* The failure used to be a toast only, so the dialog just sat there looking like it
+                   was still working. Say it where the person is looking. *@
+                <p class="modules-empty">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    Could not load this tenant's modules. @modulesError
+                </p>
+            }
+            else if (!tenantModules.Any())
+            {
+                <p class="modules-empty">
+                    <QIcon Name="grid-3x3-gap-fill" />
+                    The module catalog is empty, so there is nothing to grant yet.
+                </p>
+            }
             else
             {
+                @if (!tenantModules.Any(m => m.Purchased))
+                {
+                    <p class="modules-empty">
+                        <QIcon Name="info-circle-fill" />
+                        This tenant holds no modules. Switch one on below to grant it.
+                    </p>
+                }
                 <div class="modules-toggle-list">
                     @foreach (var module in tenantModules)
                     {
@@ -603,6 +626,19 @@
     }
 
 
+    .modules-empty {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 0 0 14px;
+        padding: 14px 16px;
+        background: var(--qm-bg-elevated);
+        border-radius: var(--qm-radius-md);
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
     .modules-toggle-list {
         display: flex;
         flex-direction: column;
@@ -687,6 +723,10 @@
     private bool showModulesModal = false;
     private bool loadingModules = false;
     private List<TenantModuleStatus> tenantModules = new();
+
+    /// <summary>Why the module list could not be loaded, shown in the dialog rather than only as a
+    /// toast the person may have already dismissed or missed.</summary>
+    private string? modulesError;
     private bool showExtendTrialModal = false;
 
     private string suspendReason = "";
@@ -919,6 +959,7 @@
         selectedTenant = tenant;
         showModulesModal = true;
         loadingModules = true;
+        modulesError = null;
         tenantModules = new();
         StateHasChanged();
 
@@ -929,11 +970,13 @@
         }
         catch (Exception ex)
         {
+            modulesError = ex.Message;
             NotificationService.Notify(ToastSeverity.Error, "Error", ex.Message);
         }
         finally
         {
             loadingModules = false;
+            StateHasChanged();
         }
     }
 

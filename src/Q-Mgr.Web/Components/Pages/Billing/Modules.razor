@@ -43,13 +43,21 @@ else
             <div class="module-marketplace-card @(purchased ? "owned" : "")">
                 <div class="module-marketplace-head">
                     <h3>@module.Name</h3>
+                    @* An icon rather than a phrase. "NOT PURCHASED" repeated across every card was
+                       the loudest thing on a page whose job is to describe what each module does,
+                       and it crowded the module's own name. The title carries the wording for a
+                       screen reader and for anyone who hovers. *@
                     @if (purchased)
                     {
-                        <span class="status-pill @(status!.Status?.ToLower())">@status.Status</span>
+                        <span class="status-mark @(status!.Status?.ToLower())" title="@StatusLabel(status.Status)">
+                            <QIcon Name="@StatusIcon(status.Status)" Size="18" />
+                        </span>
                     }
                     else
                     {
-                        <span class="status-pill not-purchased">Not purchased</span>
+                        <span class="status-mark not-purchased" title="Not added">
+                            <QIcon Name="plus-circle" Size="18" />
+                        </span>
                     }
                 </div>
                 <p class="module-marketplace-desc">@module.Description</p>
@@ -76,19 +84,19 @@ else
                     <div class="module-card-actions">
                         @if (status.Status == "Trialing")
                         {
-                            <QButton Text="Pay Now" Icon="credit-card" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
+                            <QButton Text="Pay" Icon="credit-card" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
                         }
-                        <QButton Text="Remove Module" Icon="trash" Variant="outline-danger" OnClick="@(() => OpenRemoveConfirm(module.Code, module.Name))" />
+                        <QButton Text="Remove" Icon="trash" Variant="outline-danger" OnClick="@(() => OpenRemoveConfirm(module.Code, module.Name))" />
                     </div>
                 }
                 else if (TrialingModuleName != null)
                 {
-                    <QButton Text="Add Module" Icon="plus-circle" Variant="primary" Disabled="true" />
+                    <QButton Text="Add" Icon="plus-circle" Variant="primary" Disabled="true" />
                     <p class="trial-note blocked"><QIcon Name="lock-fill" Size="13" /> Pay for @TrialingModuleName first</p>
                 }
                 else
                 {
-                    <QButton Text="Add Module" Icon="plus-circle" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
+                    <QButton Text="Add" Icon="plus-circle" Variant="primary" OnClick="@(() => OpenPurchaseModal(module))" />
                 }
             </div>
         }
@@ -199,6 +207,22 @@ else
         margin: 0;
     }
 
+    .status-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    .status-mark.active { background: rgba(var(--qm-success-rgb), 0.15); color: var(--qm-success); }
+    .status-mark.trialing { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
+    .status-mark.pastdue { background: rgba(var(--qm-warning-rgb), 0.15); color: var(--qm-accent-orange); }
+    .status-mark.cancelled,
+    .status-mark.not-purchased { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+
     .status-pill {
         font-size: 11px;
         font-weight: 700;
@@ -263,10 +287,14 @@ else
     .module-card-actions {
         display: flex;
         gap: 8px;
+        flex-wrap: wrap;
     }
 
+    /* min-width:0 lets a button shrink inside the card instead of being forced to its label
+       width and spilling over the border — two buttons in one row is the case that broke. */
     .module-card-actions > * {
-        flex: 1;
+        flex: 1 1 0;
+        min-width: 0;
     }
 
     .purchase-status {
@@ -331,6 +359,29 @@ else
     /// <summary>The catalog's price for the cycle a holder is actually on. The card compares
     /// against this so it only calls out an agreed price when it genuinely differs from what a new
     /// customer would pay today.</summary>
+
+    /// <summary>
+    /// The icon standing in for a module's purchase status, and the words behind it. Kept together
+    /// so the tooltip can never drift from the glyph it explains.
+    /// </summary>
+    private static string StatusIcon(string? status) => status switch
+    {
+        "Active" => "check-circle-fill",
+        "Trialing" => "clock-fill",
+        "PastDue" => "exclamation-triangle-fill",
+        "Cancelled" => "x-circle",
+        _ => "plus-circle"
+    };
+
+    private static string StatusLabel(string? status) => status switch
+    {
+        "Active" => "Active",
+        "Trialing" => "On trial",
+        "PastDue" => "Payment overdue",
+        "Cancelled" => "Removed",
+        _ => "Not added"
+    };
+
     private static decimal ListPriceFor(ModuleCatalogItem module, string? billingCycle) =>
         billingCycle == "Annual" ? module.AnnualPriceUgx : module.MonthlyPriceUgx;
 

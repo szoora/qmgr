@@ -9,6 +9,8 @@
 @inject IModuleStateService ModuleState
 @inject IModuleApiService ModuleApi
 @inject NavigationManager Navigation
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
 
 <PageTitle>Dashboard - Q-Mgr</PageTitle>
 
@@ -106,18 +108,17 @@ else if (noBranchSelected)
         </div>
     </div>
 }
-else if (!hasCoreQueue)
+else if (!hasCoreQueue && !hasStudentWelfare)
 {
-    @* Every panel below this point reports on queues, counters and tokens, which belong to Core
-       Queue Management. Showing them to an organization that never bought it produced the report
-       that started this: a dashboard full of zeroes plus "Open Kiosk" and "Counter Terminal"
-       shortcuts leading to pages the tenant has no licence for. *@
+    @* Only when the organization holds nothing this dashboard can report on. It used to be shown
+       to anyone without Core Queue Management, so a school that had bought Student Welfare opened
+       on an advert for a module they had deliberately not bought. *@
     <div class="module-empty">
         <div class="module-empty-icon"><QIcon Name="grid-3x3-gap-fill" /></div>
-        <h2>Your queue dashboard lives in Core Queue Management</h2>
+        <h2>Nothing to show here yet</h2>
         <p>
-            Waiting lists, counters, tokens and the kiosk and display screens are all part of the
-            Core Queue Management module, which your organization hasn't added yet.
+            Your dashboard fills in as you add modules — waiting lists and counters from Core Queue
+            Management, welfare actions from Student Welfare, and so on.
         </p>
         <div class="module-empty-actions">
             <QButton Text="Browse modules" Icon="grid-3x3-gap-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
@@ -130,7 +131,7 @@ else if (!hasCoreQueue)
         }
     </div>
 }
-else if (queueStatus != null)
+else if (hasCoreQueue && queueStatus != null)
 {
     <!-- Statistics Cards -->
     <div class="stats-row">
@@ -327,6 +328,136 @@ else if (queueStatus != null)
         </QCard>
     </div>
 }
+
+@* Module sections. The dashboard is a composition now, not the queue dashboard with an apology
+   for everyone else: each module an organization holds contributes its own panel, so a school
+   holding only Student Welfare opens on overdue actions rather than on an advert. Sections sit
+   outside the branch/queue chain above so they render whichever of those branches ran. *@
+@if (branchReady && hasStudentWelfare)
+{
+    <div class="module-section">
+        <div class="module-section-head">
+            <h2><QIcon Name="mortarboard-fill" /> Student Welfare</h2>
+            <QButton Text="Open ledger" Icon="arrow-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/welfare-open-actions"))" />
+        </div>
+
+        @if (welfareSummary == null)
+        {
+            <div class="module-section-loading"><QSpinner Size="sm" /></div>
+        }
+        else
+        {
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon welfare-open"><QIcon Name="clipboard-check" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@welfareSummary.OpenActionsCount</div>
+                        <div class="stat-label">Open actions</div>
+                    </div>
+                </div>
+                <div class="stat-card @(welfareSummary.OverdueActionsCount > 0 ? "needs-attention" : "")">
+                    <div class="stat-icon welfare-overdue"><QIcon Name="exclamation-triangle-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@welfareSummary.OverdueActionsCount</div>
+                        <div class="stat-label">Overdue</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon welfare-records"><QIcon Name="journal-text" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@welfareSummary.TotalRecords</div>
+                        <div class="stat-label">Records</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon welfare-students"><QIcon Name="people-fill" /></div>
+                    <div class="stat-content">
+                        <div class="stat-value">@studentCount</div>
+                        <div class="stat-label">Students</div>
+                    </div>
+                </div>
+            </div>
+
+            @if (welfareSummary.ByCategory.Any())
+            {
+                <QCard Title="By category" Icon="tags-fill">
+                    <div class="welfare-category-list">
+                        @foreach (var c in welfareSummary.ByCategory.OrderByDescending(c => c.Count).Take(6))
+                        {
+                            <div class="welfare-category-row">
+                                <span class="welfare-category-name">@c.CategoryName</span>
+                                <span class="welfare-category-count">@c.Count</span>
+                            </div>
+                        }
+                    </div>
+                </QCard>
+            }
+            else
+            {
+                <QCard>
+                    <p class="module-section-empty">
+                        No welfare records yet. Add students to the roster, then log achievements,
+                        behaviour or safeguarding concerns against them.
+                    </p>
+                </QCard>
+            }
+        }
+    </div>
+}
+
+<style>
+    .module-section { margin-top: 28px; }
+
+    .module-section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 14px;
+    }
+
+    .module-section-head h2 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        font-family: var(--qm-font-display);
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .module-section-loading { padding: 24px; text-align: center; }
+
+    .module-section-empty {
+        margin: 0;
+        color: var(--qm-text-secondary);
+        font-size: 14px;
+    }
+
+    .stat-card.needs-attention { border-color: var(--qm-danger); }
+
+    .stat-icon.welfare-open { background: var(--qm-primary-light); color: var(--qm-primary); }
+    .stat-icon.welfare-overdue { background: var(--qm-danger-light, #f8e6e1); color: var(--qm-danger); }
+    .stat-icon.welfare-records { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+    .stat-icon.welfare-students { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
+
+    .welfare-category-list { display: flex; flex-direction: column; }
+
+    .welfare-category-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 14px;
+    }
+
+    .welfare-category-row:last-child { border-bottom: none; }
+    .welfare-category-name { color: var(--qm-text-primary); }
+    .welfare-category-count { font-weight: 600; color: var(--qm-text-primary); font-variant-numeric: tabular-nums; }
+</style>
 
 <style>
     .module-empty {
@@ -917,6 +1048,16 @@ else if (queueStatus != null)
 
     private bool hasCoreQueue = true;
 
+    /// <summary>Whether to render the Student Welfare section of the dashboard.</summary>
+    private bool hasStudentWelfare;
+
+    /// <summary>True once a real branch is resolved — module sections are branch-scoped, so they
+    /// wait for the same thing the queue panels do rather than querying with an empty id.</summary>
+    private bool branchReady => BranchState.HasBranches && BranchId != Guid.Empty;
+
+    private WelfareSummaryDto? welfareSummary;
+    private int studentCount;
+
     /// <summary>The header promised "your queue overview" to every organization, including those
     /// holding no queue module at all.</summary>
     private string dashboardSubtitle => hasCoreQueue
@@ -933,6 +1074,7 @@ else if (queueStatus != null)
         if (await PermissionService.IsSuperAdminAsync())
         {
             hasCoreQueue = true;
+            hasStudentWelfare = true;
             return;
         }
 
@@ -940,6 +1082,7 @@ else if (queueStatus != null)
         {
             var catalog = await ModuleApi.GetMineAsync();
             hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
+            hasStudentWelfare = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StudentWelfare);
             activeModuleNames = catalog
                 .Where(m => m.Purchased && m.ModuleCode != ModuleCodes.CoreQueue)
                 .Select(m => m.ModuleName)
@@ -950,6 +1093,7 @@ else if (queueStatus != null)
             // Fail open: if we can't tell, show the normal dashboard rather than telling a paying
             // customer they don't own Core Queue Management. Its data calls are gated server-side.
             hasCoreQueue = true;
+            hasStudentWelfare = false;
             activeModuleNames = new();
         }
     }
@@ -994,6 +1138,7 @@ else if (queueStatus != null)
             }
 
             await LoadQueueStatus();
+            await LoadWelfareSummaryAsync();
 
             // The queue hub pushes token and counter events, which mean nothing without Core
             // Queue Management — joining it just opens a connection to receive silence.
@@ -1036,12 +1181,39 @@ else if (queueStatus != null)
 
             noBranchSelected = false;
             await LoadQueueStatus();
+            await LoadWelfareSummaryAsync();
             try
             {
                 if (hasCoreQueue) await SignalR.ConnectAsync(BranchId);
             }
             catch { }
         });
+    }
+
+
+    /// <summary>
+    /// Loads the Student Welfare panel. Separate from the queue load so a school holding only this
+    /// module still gets a populated dashboard, and so neither module's failure blanks the other.
+    /// </summary>
+    private async Task LoadWelfareSummaryAsync()
+    {
+        if (!hasStudentWelfare || !branchReady) return;
+
+        try
+        {
+            welfareSummary = await Http.GetFromJsonAsync<WelfareSummaryDto>(
+                $"api/v1/branches/{BranchId}/welfare/summary", JsonOptions) ?? new WelfareSummaryDto();
+
+            var students = await Http.GetFromJsonAsync<List<StudentDto>>(
+                $"api/v1/branches/{BranchId}/students", JsonOptions);
+            studentCount = students?.Count ?? 0;
+        }
+        catch
+        {
+            // An empty panel is better than a red banner over a working dashboard — the same
+            // judgement the queue panels make.
+            welfareSummary ??= new WelfareSummaryDto();
+        }
     }
 
     private async Task LoadQueueStatus()
@@ -1103,6 +1275,7 @@ else if (queueStatus != null)
     private async Task RefreshData()
     {
         await LoadQueueStatus();
+            await LoadWelfareSummaryAsync();
     }
 
     private void HandleQueueUpdated(QueueStatusDto status)
