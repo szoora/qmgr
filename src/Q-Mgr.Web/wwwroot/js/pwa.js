@@ -8,6 +8,25 @@
         updateCheckInterval: 60 * 60 * 1000, // Check every hour
         checkIntervalId: null,
 
+        // ---- Reload guards -------------------------------------------------------------
+        //
+        // These exist because of a real, reported bug: "I'm typing my email address and the page
+        // suddenly refreshes."
+        //
+        // The service worker calls clients.claim() when it activates. On a FIRST visit there is no
+        // existing controller, so the worker activates immediately, claims the page that is
+        // already open, and that claim fires `controllerchange`. The handler below used to call
+        // window.location.reload() on any controllerchange whatsoever — so every first visit in a
+        // fresh browser reloaded itself once, a second or two in, which is however long the
+        // install takes to precache twelve assets over the network. Long enough to have started
+        // typing. Login is usually the first page anyone sees, which is why it looked like a login
+        // problem.
+        //
+        // A reload is only ever correct when the user pressed "Update Now" on the update banner.
+        hadControllerAtStartup: false,
+        updateAccepted: false,
+        reloading: false,
+
         // Initialize PWA
         async init() {
             if (!('serviceWorker' in navigator)) {
@@ -28,6 +47,11 @@
         // Register service worker
         async registerServiceWorker() {
             try {
+                // Read BEFORE registering. If this page is not controlled yet, the first
+                // controllerchange it sees will be the new worker's own clients.claim() — the
+                // initial takeover, not an update, and nothing to reload for.
+                this.hadControllerAtStartup = !!navigator.serviceWorker.controller;
+
                 this.registration = await navigator.serviceWorker.register('/service-worker.js', {
                     scope: '/'
                 });
@@ -51,7 +75,25 @@
 
                 // Listen for controller change (update activated)
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
-                    console.log('[PWA] Controller changed, reloading...');
+                    if (!this.hadControllerAtStartup) {
+                        // First visit: the new worker just claimed this page. Nothing changed
+                        // underneath the user, so there is nothing to reload for.
+                        console.log('[PWA] Initial controller claim — not reloading');
+                        this.hadControllerAtStartup = true;
+                        return;
+                    }
+
+                    if (!this.updateAccepted) {
+                        // A worker took over without the user asking. Leave the page alone: a
+                        // reload here throws away whatever they were typing.
+                        console.log('[PWA] Controller changed without an accepted update — not reloading');
+                        return;
+                    }
+
+                    if (this.reloading) return; // controllerchange can fire more than once
+                    this.reloading = true;
+
+                    console.log('[PWA] Update accepted and activated, reloading...');
                     window.location.reload();
                 });
 
@@ -129,11 +171,11 @@
                     bottom: 20px;
                     left: 50%;
                     transform: translateX(-50%);
-                    background: linear-gradient(135deg, #1e1e2d 0%, #252536 100%);
-                    border: 1px solid #0058cc;
+                    background: var(--qm-bg-card, #141414);
+                    border: 1px solid var(--qm-border, rgba(255,255,255,0.08));
                     border-radius: 16px;
                     padding: 16px 20px;
-                    box-shadow: 0 8px 32px rgba(0, 212, 255, 0.2), 0 0 0 1px rgba(0, 212, 255, 0.1);
+                    box-shadow: var(--qm-shadow-md, 0 8px 24px rgba(0,0,0,0.4));
                     z-index: 10000;
                     animation: pwa-slide-up 0.3s ease-out;
                     max-width: 90%;
@@ -160,7 +202,7 @@
                 .pwa-update-icon {
                     width: 48px;
                     height: 48px;
-                    background: linear-gradient(135deg, #0058cc, #26374a);
+                    background: var(--qm-primary, #8c2f52);
                     border-radius: 12px;
                     display: flex;
                     align-items: center;
@@ -169,7 +211,7 @@
                 }
 
                 .pwa-update-icon svg {
-                    color: #0d1117;
+                    color: var(--qm-text-on-primary, #ffffff);
                 }
 
                 .pwa-update-text {
@@ -219,12 +261,12 @@
                 }
 
                 .pwa-btn-update {
-                    background: linear-gradient(135deg, #0058cc, #26374a);
-                    color: #0d1117;
+                    background: var(--qm-primary, #8c2f52);
+                    color: var(--qm-text-on-primary, #ffffff);
                 }
 
                 .pwa-btn-update:hover {
-                    box-shadow: 0 4px 16px rgba(0, 212, 255, 0.4);
+                    
                     transform: translateY(-1px);
                 }
 
@@ -282,6 +324,11 @@
         // Apply update
         applyUpdate() {
             console.log('[PWA] Applying update...');
+
+            // The one thing that authorises the controllerchange handler to reload. Set before
+            // the message goes out, because the worker can activate faster than this function
+            // finishes.
+            this.updateAccepted = true;
 
             if (this.registration && this.registration.waiting) {
                 // Tell service worker to skip waiting

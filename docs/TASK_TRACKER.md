@@ -729,6 +729,69 @@ The three seeded students were deactivated afterwards.
 
 ---
 
+### Addendum 10, same day — the login page reloading itself mid-typing, root-caused in the service worker
+
+The user: *"the login screen still has that unexpected reload… sometimes I am typing an email
+address, suddenly it refreshes."* Phase 62 had fixed a **first-paint flash** on this page (the
+KioskLayout branding fetch). This is a different bug, and not a flash at all — a genuine full page
+reload, seconds in, discarding whatever was typed.
+
+#### The cause
+
+`pwa.js` reloaded on **any** `controllerchange`:
+
+```js
+navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();          // unconditional
+});
+```
+
+`service-worker.js` calls `self.clients.claim()` when it activates. On a first visit there is no
+existing controller, so the worker never waits — it installs, activates, claims the page that is
+already open, and that claim fires `controllerchange`. So **every first visit in a fresh browser
+reloaded itself once**, a second or two in, which is however long the install takes to precache
+twelve assets over the network. Long enough to have started typing.
+
+Login is usually the first page anyone sees, which is exactly why it presented as a login problem.
+Note what was *not* wrong: `skipWaiting()` is correctly commented out in the install handler, and
+the worker only skips waiting when the user presses "Update Now". The bug was entirely in what the
+page did when it noticed a takeover.
+
+#### The fix
+
+A reload is only ever correct when the user accepted an update, so three guards:
+
+- **`hadControllerAtStartup`**, read *before* `register()`. If the page was uncontrolled, the first
+  `controllerchange` is the initial claim — a takeover of a page that was showing the same content
+  anyway, with nothing to reload for.
+- **`updateAccepted`**, set only by `applyUpdate()` — the "Update Now" button — and set before the
+  SKIP_WAITING message goes out, because the worker can activate faster than that function returns.
+- **`reloading`**, because `controllerchange` can fire more than once.
+
+#### Verified live, both directions
+
+The service worker was unregistered and all caches cleared, then `/login` loaded fresh.
+
+| Case | Result |
+| --- | --- |
+| Page left alone for 9s after a fresh load | `navigation.type` still `navigate` — **no reload** |
+| A real `controllerchange` event dispatched at the listener | Page survived; `navigation.type` still `navigate`, `PWA.reloading` still false |
+| Same event with `updateAccepted = true` | `navigation.type` becomes **`reload`** — the legitimate path still works |
+
+That second row is the decisive one: it is the exact event that used to reload the page
+unconditionally, and it now does nothing.
+
+#### Also fixed while in the file
+
+The PWA update banner was still painted in the **pre-rebrand blue** — `#0058cc` borders and button
+fills, a `rgba(0, 212, 255, …)` neon glow, and the old dark-gradient card. It is injected by
+JavaScript rather than a stylesheet, which is why the Phase 41 sweep and this session's colour audit
+both missed it. Now on `--qm-bg-card`, `--qm-border`, `--qm-primary` and `--qm-shadow-md`, with the
+glow dropped, each with a literal fallback since it is written into a `<style>` element rather than
+a themed document.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
