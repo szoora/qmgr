@@ -1,4 +1,4 @@
-using System.Text.Json;
+using QMgr.Application.Mappings;
 using Mediator;
 using QMgr.Application.DTOs;
 using QMgr.Domain.Enums;
@@ -112,37 +112,7 @@ public class GetTokenQueryHandler : IRequestHandler<GetTokenQuery, TokenDto?>
             ? await _unitOfWork.Tokens.GetQueuePositionAsync(token.Id, cancellationToken)
             : (int?)null;
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            ExternalReference = token.ExternalReference,
-            ExternalSystem = token.ExternalSystem,
-            Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
-            PositionInQueue = position,
-            EstimatedWaitMinutes = token.EstimatedWaitMinutes,
-            ActualWaitMinutes = token.ActualWaitMinutes,
-            ServiceDurationMinutes = token.ServiceDurationMinutes,
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt,
-            ServiceStartedAt = token.ServiceStartedAt,
-            ServiceCompletedAt = token.ServiceCompletedAt
-        };
+        return TokenMapper.ToDto(token, positionInQueue: position);
     }
 }
 
@@ -165,37 +135,7 @@ public class GetTokenByExternalReferenceQueryHandler : IRequestHandler<GetTokenB
             ? await _unitOfWork.Tokens.GetQueuePositionAsync(token.Id, cancellationToken)
             : (int?)null;
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            ExternalReference = token.ExternalReference,
-            ExternalSystem = token.ExternalSystem,
-            Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
-            PositionInQueue = position,
-            EstimatedWaitMinutes = token.EstimatedWaitMinutes,
-            ActualWaitMinutes = token.ActualWaitMinutes,
-            ServiceDurationMinutes = token.ServiceDurationMinutes,
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt,
-            ServiceStartedAt = token.ServiceStartedAt,
-            ServiceCompletedAt = token.ServiceCompletedAt
-        };
+        return TokenMapper.ToDto(token, positionInQueue: position);
     }
 }
 
@@ -225,37 +165,7 @@ public class GetTokensByCustomerQueryHandler : IRequestHandler<GetTokensByCustom
                 ? await _unitOfWork.Tokens.GetQueuePositionAsync(token.Id, cancellationToken)
                 : (int?)null;
 
-            result.Add(new TokenDto
-            {
-                Id = token.Id,
-                TokenNumber = token.TokenNumber,
-                DisplayNumber = token.DisplayNumber,
-                Notes = token.Notes,
-                Status = token.Status,
-                Priority = token.Priority,
-                Source = token.Source,
-                BranchId = token.BranchId,
-                ServiceTypeId = token.ServiceTypeId,
-                CounterId = token.CounterId,
-                Customer = new CustomerDto
-                {
-                    Id = token.CustomerId,
-                    Name = token.CustomerName,
-                    Phone = token.CustomerPhone,
-                    Email = token.CustomerEmail
-                },
-                ExternalReference = token.ExternalReference,
-                ExternalSystem = token.ExternalSystem,
-                Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
-                PositionInQueue = position,
-                EstimatedWaitMinutes = token.EstimatedWaitMinutes,
-                ActualWaitMinutes = token.ActualWaitMinutes,
-                ServiceDurationMinutes = token.ServiceDurationMinutes,
-                CreatedAt = token.CreatedAt,
-                CalledAt = token.CalledAt,
-                ServiceStartedAt = token.ServiceStartedAt,
-                ServiceCompletedAt = token.ServiceCompletedAt
-            });
+            result.Add(TokenMapper.ToDto(token, positionInQueue: position));
         }
 
         return result;
@@ -302,42 +212,7 @@ public class GetWaitingTokensQueryHandler : IRequestHandler<GetWaitingTokensQuer
         {
             var serviceType = await _unitOfWork.ServiceTypes.GetByIdAsync(token.ServiceTypeId, cancellationToken);
 
-            result.Add(new TokenDto
-            {
-                Id = token.Id,
-                TokenNumber = token.TokenNumber,
-                DisplayNumber = token.DisplayNumber,
-                Notes = token.Notes,
-                Status = token.Status,
-                Priority = token.Priority,
-                Source = token.Source,
-                BranchId = token.BranchId,
-                ServiceTypeId = token.ServiceTypeId,
-                CounterId = token.CounterId,
-                Customer = new CustomerDto
-                {
-                    Id = token.CustomerId,
-                    Name = token.CustomerName,
-                    Phone = token.CustomerPhone,
-                    Email = token.CustomerEmail
-                },
-                ServiceType = serviceType != null ? new ServiceTypeDto
-                {
-                    Id = serviceType.Id,
-                    Name = serviceType.Name,
-                    Code = serviceType.Code,
-                    Description = serviceType.Description,
-                    Prefix = serviceType.Prefix,
-                    AverageServiceTimeMinutes = serviceType.AverageServiceTimeMinutes,
-                    Color = serviceType.Color
-                } : null,
-                ExternalReference = token.ExternalReference,
-                ExternalSystem = token.ExternalSystem,
-                Metadata = token.Metadata != null ? JsonSerializer.Deserialize<Dictionary<string, object>>(token.Metadata) : null,
-                PositionInQueue = position++,
-                EstimatedWaitMinutes = token.EstimatedWaitMinutes,
-                CreatedAt = token.CreatedAt
-            });
+            result.Add(TokenMapper.ToDto(token, serviceType: serviceType, positionInQueue: position++));
         }
 
         return result;

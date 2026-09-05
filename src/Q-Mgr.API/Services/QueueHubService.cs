@@ -1,3 +1,4 @@
+using QMgr.Application.Mappings;
 using Microsoft.AspNetCore.SignalR;
 using QMgr.API.Hubs;
 using QMgr.Application.DTOs;
@@ -19,7 +20,7 @@ public class QueueHubService : IQueueHubService
 
     public async Task NotifyTokenCreatedAsync(Token token, CancellationToken cancellationToken = default)
     {
-        var dto = MapTokenToDto(token);
+        var dto = TokenMapper.ToPublicDto(token);
         await _hubContext.Clients.Group($"branch_{token.BranchId}")
             .SendAsync("TokenCreated", dto, cancellationToken);
         _logger.LogDebug("Notified TokenCreated for branch {BranchId}", token.BranchId);
@@ -43,7 +44,7 @@ public class QueueHubService : IQueueHubService
 
     public async Task NotifyTokenServingAsync(Token token, CancellationToken cancellationToken = default)
     {
-        var dto = MapTokenToDto(token);
+        var dto = TokenMapper.ToPublicDto(token);
         await _hubContext.Clients.Group($"branch_{token.BranchId}")
             .SendAsync("TokenServing", dto, cancellationToken);
         _logger.LogDebug("Notified TokenServing for token {TokenId}", token.Id);
@@ -80,30 +81,5 @@ public class QueueHubService : IQueueHubService
         await _hubContext.Clients.Group($"branch_{counter.BranchId}")
             .SendAsync("CounterStatusChanged", dto, cancellationToken);
         _logger.LogDebug("Notified CounterStatusChanged for counter {CounterId}", counter.Id);
-    }
-
-    private static TokenDto MapTokenToDto(Token token)
-    {
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt
-        };
     }
 }

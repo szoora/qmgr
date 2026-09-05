@@ -476,6 +476,11 @@ public class BranchesController : ControllerBase
                 DisplayName = c.DisplayName ?? $"Counter {c.CounterNumber}",
                 Status = c.Status,
                 IsActive = c.IsActive,
+                // NOT TokenMapper.ToDto: this projection is translated to SQL, where a method
+                // call cannot go and JsonSerializer.Deserialize has no translation either. It
+                // also stays deliberately narrow — a counters list has no business carrying
+                // customer contact details or integration metadata — so the difference from the
+                // shared mapper is a decision, not drift. Keep the two copies here in step.
                 CurrentToken = c.CurrentToken != null ? new TokenDto
                 {
                     Id = c.CurrentToken.Id,
@@ -530,6 +535,11 @@ public class BranchesController : ControllerBase
                 DisplayName = c.DisplayName ?? $"Counter {c.CounterNumber}",
                 Status = c.Status,
                 IsActive = c.IsActive,
+                // NOT TokenMapper.ToDto: this projection is translated to SQL, where a method
+                // call cannot go and JsonSerializer.Deserialize has no translation either. It
+                // also stays deliberately narrow — a counters list has no business carrying
+                // customer contact details or integration metadata — so the difference from the
+                // shared mapper is a decision, not drift. Keep the two copies here in step.
                 CurrentToken = c.CurrentToken != null ? new TokenDto
                 {
                     Id = c.CurrentToken.Id,

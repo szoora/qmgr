@@ -1,3 +1,4 @@
+using QMgr.Application.Mappings;
 using Mediator;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
@@ -121,36 +122,7 @@ public class CallNextTokenCommandHandler : IRequestHandler<CallNextTokenCommand,
 
     private static TokenDto MapToDto(Token token, Counter counter)
     {
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            Counter = new CounterDto
-            {
-                Id = counter.Id,
-                CounterNumber = counter.CounterNumber,
-                DisplayName = counter.DisplayName,
-                Status = counter.Status
-            },
-            ActualWaitMinutes = token.ActualWaitMinutes,
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt
-        };
+        return TokenMapper.ToDto(token, counter);
     }
 }
 
@@ -219,16 +191,7 @@ public class CompleteServiceCommandHandler : IRequestHandler<CompleteServiceComm
         await _queueHubService.NotifyTokenCompletedAsync(token, cancellationToken);
         await _webhookService.TriggerTokenCompletedAsync(token, cancellationToken);
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            ServiceDurationMinutes = token.ServiceDurationMinutes,
-            ServiceCompletedAt = token.ServiceCompletedAt
-        };
+        return TokenMapper.ToDto(token);
     }
 }
 
@@ -318,36 +281,7 @@ public class CallSpecificTokenCommandHandler : IRequestHandler<CallSpecificToken
         await _customerNotifier.NotifyCalledToCounterAsync(token.Id, counter.Id);
         await _customerNotifier.NotifyApproachingTurnAsync(token.BranchId, token.ServiceTypeId);
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            Counter = new CounterDto
-            {
-                Id = counter.Id,
-                CounterNumber = counter.CounterNumber,
-                DisplayName = counter.DisplayName,
-                Status = counter.Status
-            },
-            ActualWaitMinutes = token.ActualWaitMinutes,
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt
-        };
+        return TokenMapper.ToDto(token, counter);
     }
 }
 
@@ -543,36 +477,7 @@ public class TransferTokenCommandHandler : IRequestHandler<TransferTokenCommand,
             await _queueHubService.NotifyCounterStatusChangedAsync(oldCounter, cancellationToken);
         await _webhookService.TriggerTokenCalledAsync(token, cancellationToken);
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            CounterId = token.CounterId,
-            Customer = new CustomerDto
-            {
-                Id = token.CustomerId,
-                Name = token.CustomerName,
-                Phone = token.CustomerPhone,
-                Email = token.CustomerEmail
-            },
-            Counter = new CounterDto
-            {
-                Id = destCounter.Id,
-                CounterNumber = destCounter.CounterNumber,
-                DisplayName = destCounter.DisplayName,
-                Status = destCounter.Status
-            },
-            ActualWaitMinutes = token.ActualWaitMinutes,
-            CreatedAt = token.CreatedAt,
-            CalledAt = token.CalledAt
-        };
+        return TokenMapper.ToDto(token, destCounter);
     }
 }
 

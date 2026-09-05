@@ -1,3 +1,4 @@
+using QMgr.Application.Mappings;
 using System.Text.Json;
 using Mediator;
 using QMgr.Application.DTOs;
@@ -94,31 +95,6 @@ public class CreateTokenCommandHandler : IRequestHandler<CreateTokenCommand, Tok
             await _usageTrackingService.IncrementTokensCreatedAsync(tenantContext.OrganizationId);
         }
 
-        return new TokenDto
-        {
-            Id = token.Id,
-            TokenNumber = token.TokenNumber,
-            DisplayNumber = token.DisplayNumber,
-            Notes = token.Notes,
-            Status = token.Status,
-            Priority = token.Priority,
-            Source = token.Source,
-            BranchId = token.BranchId,
-            ServiceTypeId = token.ServiceTypeId,
-            Customer = request.Customer,
-            ServiceType = new ServiceTypeDto
-            {
-                Id = serviceType.Id,
-                Name = serviceType.Name,
-                Code = serviceType.Code,
-                Prefix = serviceType.Prefix
-            },
-            ExternalReference = token.ExternalReference,
-            ExternalSystem = token.ExternalSystem,
-            PositionInQueue = position,
-            EstimatedWaitMinutes = estimatedWait,
-            CreatedAt = token.CreatedAt,
-            Metadata = request.Metadata
-        };
+        return TokenMapper.ToDto(token, serviceType: serviceType, positionInQueue: position, estimatedWaitMinutes: estimatedWait, customer: request.Customer);
     }
 }

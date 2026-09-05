@@ -515,8 +515,8 @@ Fixed at all ten sites across four files. The structural fix — one shared proj
 `AppointmentsController.Projection` already solves this for appointments and says so in its own
 comment — was **not** done here: the ten sites have genuinely different shapes (some carry the
 counter, some the queue position), and rewriting the queue's core write path was well outside
-"fix the PATCH stub". It is the right follow-up, and it is now the only remaining place in this
-area where one field is mapped in ten hand-written copies.
+"fix the PATCH stub". It was done straight after — see Addendum 6 below, which also found that the copies numbered
+twelve, not ten.
 
 #### Verified live
 
@@ -535,6 +535,77 @@ area where one field is mapped in ten hand-written copies.
 That last row needed a throwaway role with `tokens.view` and `dashboard.view` in the clinic tenant;
 the SuperAdmin holds everything and would have proven nothing. Deleted afterwards, its role
 deactivated, and the probe token cancelled.
+
+---
+
+### Addendum 6, same day — one TokenDto mapper, and the anonymous PII broadcast it uncovered
+
+The follow-up Addendum 5 named. There were **twelve** hand-written copies of the token mapping
+across five files, not the ten first counted — `QueueHubService` had a private `MapTokenToDto` of
+its own, and `BranchesController` two more.
+
+`TokenMapper` in `Application/Mappings` now owns it. Ten of the twelve call it; **277 lines of
+duplicated initializer removed, 24 added.** The optional parameters exist because the call sites
+genuinely know different things — the call-next handlers hold the counter, the create handler holds
+the service type and a freshly computed position, the status queries compute a position per row —
+so nothing is guessed at and anything not passed is simply omitted, as the copies did.
+
+#### Two things the copies were getting wrong, beyond `Notes`
+
+- **`CompleteServiceCommandHandler` returned a seven-field DTO** with `BranchId` left at
+  `Guid.Empty` and no customer, service type or timestamps. Any caller reading the completion
+  response got a token that did not know which branch it belonged to. It returns the full shape now.
+- **`JsonSerializer.Deserialize` was called bare in four of the copies.** That column holds an
+  opaque blob integrations write into, so a malformed value would have thrown out of the middle of a
+  queue read. The mapper catches `JsonException` and yields null — an integration field this app
+  does not own must not be able to fail a Call Next.
+
+#### The finding: customer phone and email were being broadcast to anonymous subscribers
+
+`QueueHub` is `[AllowAnonymous]` by design and says so — public customer displays and queue boards
+subscribe without a login. `QueueHubService`'s private copy of the mapping carried `Customer`, so
+**every `TokenCreated` and `TokenServing` pushed the customer's name, phone number and email to
+anyone who knew a branch GUID.** That predates this work; consolidating onto the full mapper would
+have made it worse by adding notes and metadata to the same broadcast.
+
+So the hub gets `TokenMapper.ToPublicDto` instead — and the removed set is **exactly** the one
+`QueueController.GetPublicWaitingTokens` already strips for the public board (customer, notes,
+metadata, external reference and system), so the two public paths now agree about what "public"
+means rather than each deciding alone. Verified safe to narrow: the only client handler for these
+two events reads `Id` and `DisplayNumber` and nothing else.
+
+**Left deliberately**: `CounterStatusChanged` still carries `ServingCustomerName` to the same
+anonymous group. A "now serving: <name>" display is plausibly the point of that screen, so blanking
+it would be changing product behaviour, not fixing a leak — it is a question for the user rather
+than a silent edit. A name is also a different order of exposure from a phone number and an email.
+
+#### Two sites deliberately keep their own copy
+
+`BranchesController`'s counter listings build `CurrentToken` inside an EF `Select` translated to
+SQL, where a method call cannot go and `JsonSerializer.Deserialize` has no translation. Splicing an
+expression tree in needs a library, which the standing no-new-dependency rule rules out. They also
+stay narrow on purpose — a counters list has no business carrying customer contact details. Both
+now carry a comment saying so, so the difference is a decision rather than drift.
+
+#### Verified live, end to end
+
+| Path | Result |
+| --- | --- |
+| Create token | Service type, `positionInQueue` 1, customer from the request, metadata all present |
+| GET token, waiting list, queue status | Full shape, unchanged |
+| **Call Next** — the product's core action | 200 with the counter block populated |
+| **Complete service with a note** | Full DTO, real `branchId`, and **the note reads back** — the whole round trip of the bug Addendum 5 found |
+| Public waiting list | `customer: null` — the scrub still applies |
+
+Probe counter and tokens cleaned up afterwards.
+
+#### Noticed, not touched
+
+`QueueOwnershipCheck.OwnsBranchAsync` does **not** exempt SuperAdmin, unlike the controllers'
+`VerifyBranchOwnership` which all do. So a platform administrator gets "Counter not found." on
+Call Next against a tenant's branch. Testing had to sign in as the tenant's own admin. That is an
+inconsistency between two ownership checks, not obviously a bug in either direction — worth a
+decision rather than a quiet change.
 
 ---
 
