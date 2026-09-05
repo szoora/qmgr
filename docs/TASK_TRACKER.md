@@ -103,6 +103,16 @@ session and the model does not type passwords into login forms. Everything above
 compile-level. **A live browser pass over the six batch bars and ten export menus is the first
 thing the next session should do**, ideally before deploying.
 
+### One standing question closed
+
+**There is no test project and there is not going to be one** (user decision, 2026-09-05, after
+this session's write-up called the absence a gap). Written up properly in CLAUDE.md under
+"Verification: there is no test project, and that is the decision," and struck out of the older
+tracker entries that still listed it as open work. **Do not propose one.** Verify by running the
+code against the dev tenant and seeding whatever data the path needs — creating rows to test with
+is setup, not a blocker to report, which is exactly the mistake this session made with the
+review-date undo before the user pushed back on it.
+
 ### Left behind on purpose
 
 - **Two dummy welfare records remain in the dev tenant**, on Akello Grace and Bwire Peter, labelled
@@ -2025,8 +2035,10 @@ checking remains blocked by the browser tooling's non-functional viewport resize
    difference. Adding an enum member would be the cleaner fix.
 5. **Welfare import job history uses the roster job endpoints**, which require `students.view` — a
    welfare-reports user without that permission sees an empty history list rather than an error.
-6. **No automated test coverage** anywhere in this repo, unchanged. Everything above is verified by
-   compilation, code review, and (where noted) live browser testing — not by tests.
+6. ~~**No automated test coverage** anywhere in this repo~~ — **settled 2026-09-05: there is not
+   going to be a test project, and this should stop being carried forward as an open item.** Work
+   is verified by running it against the dev tenant, seeding whatever data the path needs. See
+   CLAUDE.md, "Verification: there is no test project, and that is the decision."
 7. **Blocked on credentials, same as Stripe**: S3 media storage (code and config path exist, never
    run against a real bucket), and SMS/email provider credentials for a pilot org. Load testing
    and a security re-review against real production config also still need the real infrastructure.
@@ -3649,7 +3661,9 @@ non-deterministic ordering; now sorted by name).
 accurate): `ApiClient.RateLimitPerMinute` shown in admin UI but not enforced per-client (global IP
 rate limit only); no inbound webhook receiver (outbound exists); Visitor Management and Marketing
 have no API-key scopes wired up yet (JWT/staff-only); none of the Visitor/Marketing modules have
-automated test coverage, only live manual verification. None of these block a launch by
+automated test coverage, only live manual verification (**and that last one is no longer a
+limitation to close — settled 2026-09-05, there is no test project by decision; see CLAUDE.md**).
+None of these block a launch by
 themselves, but they're the right next places to look if something's reported broken in those
 areas specifically.
 
@@ -3760,8 +3774,9 @@ not a per-client one. No inbound webhook receiver — a partner can push data in
 but Q-Mgr can't call back out to them on events yet (outbound webhooks exist, inbound don't).
 Visitor Management and Marketing have no API-key scopes wired up (JWT/staff-only for now). None of
 today's new modules (Visitor Management, Marketing, the auth fix) have automated test coverage —
-only live manual verification against a running instance; that's the highest-leverage next step if
-another session picks this up.
+only live manual verification against a running instance; ~~that's the highest-leverage next step if
+another session picks this up~~ **— superseded 2026-09-05: there is no test project by decision,
+and live verification against seeded dev-tenant data is the method. See CLAUDE.md.**
 
 ---
 

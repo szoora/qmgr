@@ -124,6 +124,31 @@ mapping in this project, including the one that broke here, is hand-written obje
 code. There is no auto-mapper safety net — a mismatched field name is a silent runtime bug, not a
 compile error, until proven otherwise by exactly this kind of manual review.
 
+## Verification: there is no test project, and that is the decision (2026-09-05)
+
+**Do not propose, scaffold, or ask for a test project.** Earlier handovers listed "no automated
+test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
+there is not going to be one, and it should stop being carried forward as outstanding work.
+
+**Verify by running the thing against the dev tenant, seeding whatever data the path needs.**
+Creating rows to test with is a normal setup step, not a blocker to report. If a code path has no
+data to exercise it, make the data — a queue ticket, a visitor check-in, a welfare record — run the
+path end to end, and clean up afterwards where the API allows it. The pattern that does *not*
+count: verifying the paths that happened to have data, then listing the rest as "fixed but not
+exercised live." That was tried on 2026-09-05 and the user pushed back on it; creating the missing
+record took two POSTs and immediately surfaced a second real bug the untested path was hiding.
+
+Two things follow from this that are worth stating plainly:
+
+- **A clean build is not verification.** Most of this codebase's worst bugs compiled fine — the
+  unqualified raw SQL below, the silently-swallowed DTO mismatch in `Subscription.razor`, four
+  missing `switch` cases that made undo report a conflict against its own writes. Every one needed
+  the code actually run against a real row to show itself.
+- **Some rows cannot be cleaned up, and that is not a reason to skip the test.** The welfare ledger
+  has no DELETE endpoint by design — it is append-only. Dummy records created there stay. Label
+  them plainly (`Dummy record … Safe to delete`), say so in the handover, and leave removal to the
+  database owner rather than reaching for SQL.
+
 ## Raw SQL must schema-qualify table names explicitly — found live 2026-08-26, was a severe bug
 
 `QMgrDbContext` sets `modelBuilder.HasDefaultSchema("qmgr")`, so every normal EF LINQ query is
@@ -141,13 +166,14 @@ product, had been 500ing** until this was caught by accident while e2e-testing s
 (an actual live browser session hit the same error independently). Fixed by writing `FROM
 qmgr.tokens` explicitly. A repo-wide grep for `FromSql|ExecuteSql` at the time found only this one
 bad instance (the other 3 call sites are `pg_advisory_xact_lock(...)` calls with no table
-reference, which don't have this problem) — but that grep isn't automated regression coverage.
+reference, which don't have this problem) — but a grep is a snapshot, not a guarantee about code
+written after it.
 
 **Before merging any new raw SQL**: schema-qualify every table name explicitly (`qmgr.tablename`),
 and actually execute the query against a live row at least once — this bug class produces a hard
-runtime failure with no compiler, EF-migration, or type-check catching it, and (per this file's
-standing "no automated test coverage" gap) nothing else catches it either until a human or an e2e
-pass hits that exact code path.
+runtime failure with no compiler, EF-migration, or type-check catching it, and nothing else
+catches it either until somebody runs that exact code path — which is the whole reason the
+verification rule above exists.
 
 ## Auth: login identifier and SuperAdmin credentials (decided 2026-08-21)
 
