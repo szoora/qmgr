@@ -189,3 +189,72 @@ public record AppointmentSettingsDto
     /// NoShow. Default 30 minutes.</summary>
     public int NoShowGraceMinutes { get; init; } = 30;
 }
+
+/// <summary>
+/// One weekday's opening window, in the branch's own local time.
+/// </summary>
+/// <remarks>
+/// A list of seven of these, rather than the dictionary <c>Branch.OperatingHours</c> actually
+/// stores, because a form needs every day present and in order — including the closed ones, which
+/// the stored shape represents by leaving the key out entirely. The controller converts.
+/// </remarks>
+public record BranchOpeningHoursDto
+{
+    public DayOfWeek Day { get; init; }
+
+    /// <summary>False means closed all day; Open/Close are then ignored on save.</summary>
+    public bool IsOpen { get; init; }
+
+    /// <summary>24-hour local wall clock, "HH:mm".</summary>
+    public string Open { get; init; } = "08:00";
+    public string Close { get; init; } = "17:00";
+}
+
+/// <summary>
+/// Everything about a branch that governs when it is open and how it may be booked, read and
+/// written together.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Both halves already existed and neither had an editor. <c>Branch.OperatingHours</c> was written
+/// once by TenantProvisioningService with a hardcoded Mon-Fri 08:00-17:00 plus Sat 09:00-13:00 and
+/// could then only be changed by hand-written SQL, while <see cref="AppointmentSettingsDto"/> had
+/// a reader and no writer, so all seven of its values were pinned to their defaults — including
+/// <c>PublicBookingEnabled</c>, which defaults to true, meaning no branch could close its own
+/// public booking page.
+/// </para>
+/// <para>
+/// They are one payload because they are one decision: the hours say which slots exist at all, and
+/// the appointment settings say how that window is cut up and who may book into it. Editing one
+/// without seeing the other is how a branch ends up accepting bookings for a day it is shut.
+/// </para>
+/// </remarks>
+public record BranchSchedulingDto
+{
+    public Guid BranchId { get; init; }
+    public string BranchName { get; init; } = string.Empty;
+
+    /// <summary>The branch's IANA zone, for display — it is edited on the branch itself, not here,
+    /// but every time below is read in it, so a form that hid it would be lying by omission.</summary>
+    public string Timezone { get; init; } = "UTC";
+
+    /// <summary>Seven entries, Monday first.</summary>
+    public List<BranchOpeningHoursDto> OperatingHours { get; init; } = new();
+
+    public AppointmentSettingsDto Appointments { get; init; } = new();
+
+    /// <summary>
+    /// True when the branch row itself has no operating-hours JSON, so the days above are the
+    /// scheduler's built-in fallback rather than anything anybody chose. Worth saying on screen:
+    /// otherwise a branch that has never been configured looks identical to one deliberately set
+    /// to those same hours.
+    /// </summary>
+    public bool HoursAreDefaults { get; init; }
+}
+
+/// <summary>The write half of <see cref="BranchSchedulingDto"/>.</summary>
+public record UpdateBranchSchedulingRequest
+{
+    public List<BranchOpeningHoursDto> OperatingHours { get; init; } = new();
+    public AppointmentSettingsDto Appointments { get; init; } = new();
+}

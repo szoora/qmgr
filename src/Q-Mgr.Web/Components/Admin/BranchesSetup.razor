@@ -8,6 +8,11 @@
 @inject IToastService NotificationService
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
+@inject IAppointmentApiService AppointmentApi
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared.UI
 
 <PageTitle>Branches - Q-Mgr</PageTitle>
 
@@ -95,7 +100,15 @@
                                 {
                                     <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEditDialog(branch))" Title="Edit" />
                                 }
-                                <QButton Icon="gear-fill" Variant="ghost" Size="sm" OnClick="@(() => ManageBranch(branch))" Title="Settings" />
+                                @* Opening hours and booking rules, and nothing else lives behind
+                                   this button — so it is shown only to a tenant holding Core Queue.
+                                   Without that module the branch has no bookable slots to describe,
+                                   and this used to be a gear whose only function was a toast saying
+                                   the feature was coming. *@
+                                @if (canEdit && hasCoreQueue)
+                                {
+                                    <QButton Icon="gear-fill" Variant="ghost" Size="sm" OnClick="@(() => OpenSchedulingDialog(branch))" Title="Opening hours &amp; booking" />
+                                }
                                 @if (canEdit)
                                 {
                                     <QButton Icon="@(branch.IsActive ? "toggle-on" : "toggle-off")" Variant="ghost" Size="sm"
@@ -142,6 +155,89 @@
     </FooterContent>
 </QModal>
 
+@* ---------------- Opening hours & booking rules ---------------- *@
+<QModal @bind-Visible="showSchedulingDialog" Title="@($"{schedulingBranchName} — Opening Hours & Booking")" Size="lg">
+    <ChildContent>
+        @if (isLoadingScheduling)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /><span>Loading…</span></div>
+        }
+        else if (scheduling == null)
+        {
+            <p class="form-hint">Couldn't load this branch's settings. Close and try again.</p>
+        }
+        else
+        {
+            <div class="sched-section">
+                <h4>Opening hours</h4>
+                <p class="form-hint">
+                    Local time in <strong>@scheduling.Timezone</strong> — the branch's own zone, changed on the branch itself.
+                    These hours decide which appointment slots exist at all.
+                </p>
+                @if (scheduling.HoursAreDefaults)
+                {
+                    <p class="sched-note">
+                        <QIcon Name="info-circle" />
+                        <span>This branch has never had its hours set, so what's shown is the scheduler's built-in default. Saving makes it explicit.</span>
+                    </p>
+                }
+
+                <div class="sched-days">
+                    @foreach (var day in hoursForm)
+                    {
+                        <div class="sched-day @(day.IsOpen ? "" : "sched-day--closed")">
+                            <span class="sched-day-name">@day.Day</span>
+                            <QCheckbox Value="@day.IsOpen" Label="Open" ValueChanged="@(v => { day.IsOpen = v; })" />
+                            @if (day.IsOpen)
+                            {
+                                <input type="time" class="sched-time" value="@day.Open" @onchange="@(e => day.Open = e.Value?.ToString() ?? day.Open)" aria-label="@($"{day.Day} opening time")" />
+                                <span class="sched-dash">to</span>
+                                <input type="time" class="sched-time" value="@day.Close" @onchange="@(e => day.Close = e.Value?.ToString() ?? day.Close)" aria-label="@($"{day.Day} closing time")" />
+                            }
+                            else
+                            {
+                                <span class="sched-closed-label">Closed all day</span>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div class="sched-section">
+                <h4>Booking rules</h4>
+                <p class="form-hint">How that open window is cut into slots, and who may book into it.</p>
+
+                <div class="form-group">
+                    <QCheckbox @bind-Value="@publicBookingEnabled" Label="Let the public book online" />
+                    <p class="form-hint">
+                        Controls the anonymous booking page at <code>/book/@scheduling.BranchId</code>. Turn it off and that
+                        page stops taking bookings; staff can still book on someone's behalf.
+                    </p>
+                </div>
+
+                <div class="sched-grid">
+                    <QInput TValue="int?" @bind-Value="@slotIntervalMinutes" Label="Slot interval (minutes)" Placeholder="Service duration"
+                            HelperText="Blank = back-to-back slots the length of each service." />
+                    <QInput TValue="int" @bind-Value="@capacityPerSlot" Label="Capacity per slot"
+                            HelperText="How many bookings share one slot — parallel counters or staff." />
+                    <QInput TValue="int" @bind-Value="@minimumLeadTimeMinutes" Label="Minimum notice (minutes)"
+                            HelperText="A slot closes to new bookings this long before it starts." />
+                    <QInput TValue="int" @bind-Value="@maxAdvanceDays" Label="Book up to (days ahead)" />
+                    <QInput TValue="int" @bind-Value="@reminderLeadMinutes" Label="Reminder (minutes before)"
+                            HelperText="1440 is a day ahead." />
+                    <QInput TValue="int" @bind-Value="@noShowGraceMinutes" Label="No-show grace (minutes)"
+                            HelperText="How long after the start time before an unattended booking is marked a no-show." />
+                </div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showSchedulingDialog = false)" />
+        <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveScheduling"
+                 Loading="@isSavingScheduling" Disabled="@(scheduling == null || isLoadingScheduling)" />
+    </FooterContent>
+</QModal>
+
 <!-- Delete Confirmation Dialog -->
 <ConfirmDialog
     IsVisible="@showDeleteConfirm"
@@ -153,6 +249,65 @@
     OnClose="@HandleDeleteConfirm" />
 
 <style>
+    /* ---- Opening hours & booking dialog ---- */
+    .sched-section { margin-bottom: 24px; }
+    .sched-section:last-child { margin-bottom: 0; }
+
+    .sched-section h4 {
+        margin: 0 0 4px;
+        font-family: var(--qm-font-display);
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--qm-text-primary);
+    }
+
+    .sched-note {
+        display: flex; align-items: flex-start; gap: 8px;
+        margin: 8px 0 12px; font-size: 13px; color: var(--qm-text-secondary);
+    }
+
+    .sched-days {
+        display: flex; flex-direction: column; gap: 2px;
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        padding: 4px; margin-top: 12px;
+    }
+
+    .sched-day {
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        padding: 8px 10px; border-radius: var(--qm-radius-sm);
+    }
+
+    .sched-day:nth-child(odd) { background: var(--qm-bg-elevated); }
+    .sched-day--closed .sched-day-name { color: var(--qm-text-muted); }
+
+    /* Fixed width so the checkboxes and time boxes line up down the column rather than
+       stepping in and out with the length of each day's name. */
+    .sched-day-name { min-width: 92px; font-weight: 600; font-size: 13px; }
+
+    .sched-time {
+        padding: 6px 8px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-input);
+        color: var(--qm-text-primary);
+        font: inherit; font-size: 13px;
+    }
+
+    .sched-dash { font-size: 13px; color: var(--qm-text-muted); }
+    .sched-closed-label { font-size: 13px; color: var(--qm-text-muted); font-style: italic; }
+
+    .sched-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+        margin-top: 12px;
+    }
+
+    @@media (max-width: 640px) {
+        .sched-day { gap: 8px; }
+        .sched-day-name { min-width: 100%; }
+    }
+
     .page-header {
         display: flex;
         justify-content: space-between;
@@ -510,6 +665,12 @@
             canEdit = await PermissionService.HasPermissionAsync(Permissions.BranchesEdit);
             canDelete = await PermissionService.HasPermissionAsync(Permissions.BranchesDelete);
 
+            // Branches themselves are base product; the gear behind them is not. Same failing-open
+            // rule the sidebar uses — an unresolved module list means "we don't know", not "you own
+            // nothing", and the API refuses the call regardless.
+            await ModuleState.LoadAsync(ModuleApi);
+            hasCoreQueue = !ModuleState.LoadSucceeded || ModuleState.ActiveModuleCodes.Contains(ModuleCodes.CoreQueue);
+
             await LoadData();
             StateHasChanged();
         }
@@ -694,10 +855,112 @@
         branchToDelete = null;
     }
 
-    private void ManageBranch(BranchDto branch)
+    // ---- Opening hours & booking rules -------------------------------------------------------
+    //
+    // This replaces a gear button whose entire implementation was a toast saying the feature was
+    // coming. What it now edits is not new configuration: Branch.OperatingHours was stamped on
+    // every branch at provisioning and could then only be changed with SQL, and the appointment
+    // settings had a reader in AppointmentsController and no writer, so all seven values were
+    // pinned to their defaults while being consulted on every booking. PublicBookingEnabled
+    // defaults to true, which meant no branch could close its own public booking page.
+
+    private bool hasCoreQueue;
+    private bool showSchedulingDialog;
+    private bool isLoadingScheduling;
+    private bool isSavingScheduling;
+    private BranchSchedulingDto? scheduling;
+    private string schedulingBranchName = "";
+    private List<DayHoursForm> hoursForm = new();
+
+    // The appointment settings are records with init-only properties, so the form binds to plain
+    // fields and a new record is built on save rather than mutating one in place.
+    private bool publicBookingEnabled = true;
+    private int? slotIntervalMinutes;
+    private int capacityPerSlot = 1;
+    private int minimumLeadTimeMinutes = 30;
+    private int maxAdvanceDays = 60;
+    private int reminderLeadMinutes = 1440;
+    private int noShowGraceMinutes = 30;
+
+    /// <summary>Mutable mirror of BranchOpeningHoursDto, which is init-only.</summary>
+    private class DayHoursForm
     {
-        // Navigate to branch-specific settings
-        NotificationService.Notify(ToastSeverity.Info, "Info", "Branch settings coming soon");
+        public DayOfWeek Day { get; set; }
+        public bool IsOpen { get; set; }
+        public string Open { get; set; } = "08:00";
+        public string Close { get; set; } = "17:00";
+    }
+
+    private async Task OpenSchedulingDialog(BranchDto branch)
+    {
+        schedulingBranchName = branch.Name;
+        scheduling = null;
+        hoursForm = new();
+        showSchedulingDialog = true;
+        isLoadingScheduling = true;
+
+        scheduling = await AppointmentApi.GetSchedulingAsync(branch.Id);
+        if (scheduling != null)
+        {
+            hoursForm = scheduling.OperatingHours
+                .Select(d => new DayHoursForm { Day = d.Day, IsOpen = d.IsOpen, Open = d.Open, Close = d.Close })
+                .ToList();
+
+            var a = scheduling.Appointments;
+            publicBookingEnabled = a.PublicBookingEnabled;
+            slotIntervalMinutes = a.SlotIntervalMinutes;
+            capacityPerSlot = a.CapacityPerSlot;
+            minimumLeadTimeMinutes = a.MinimumLeadTimeMinutes;
+            maxAdvanceDays = a.MaxAdvanceDays;
+            reminderLeadMinutes = a.ReminderLeadMinutes;
+            noShowGraceMinutes = a.NoShowGraceMinutes;
+        }
+
+        isLoadingScheduling = false;
+    }
+
+    private async Task SaveScheduling()
+    {
+        if (scheduling == null) return;
+
+        isSavingScheduling = true;
+        try
+        {
+            var request = new UpdateBranchSchedulingRequest
+            {
+                OperatingHours = hoursForm
+                    .Select(d => new BranchOpeningHoursDto { Day = d.Day, IsOpen = d.IsOpen, Open = d.Open, Close = d.Close })
+                    .ToList(),
+                Appointments = new AppointmentSettingsDto
+                {
+                    PublicBookingEnabled = publicBookingEnabled,
+                    SlotIntervalMinutes = slotIntervalMinutes,
+                    CapacityPerSlot = capacityPerSlot,
+                    MinimumLeadTimeMinutes = minimumLeadTimeMinutes,
+                    MaxAdvanceDays = maxAdvanceDays,
+                    ReminderLeadMinutes = reminderLeadMinutes,
+                    NoShowGraceMinutes = noShowGraceMinutes
+                }
+            };
+
+            scheduling = await AppointmentApi.UpdateSchedulingAsync(scheduling.BranchId, request);
+            var openDays = request.OperatingHours.Count(d => d.IsOpen);
+            NotificationService.Notify(ToastSeverity.Success, "Saved",
+                openDays == 0
+                    ? "Saved — this branch is now marked closed every day, so no appointment slots will be offered."
+                    : $"Opening hours and booking rules saved ({openDays} open day{(openDays == 1 ? "" : "s")}).");
+            showSchedulingDialog = false;
+        }
+        catch (Exception ex)
+        {
+            // The API's own validation text, e.g. "Saturday: the closing time has to be after the
+            // opening time" — worth far more than a generic failure on a form of this shape.
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't save", ex.Message);
+        }
+        finally
+        {
+            isSavingScheduling = false;
+        }
     }
 
     private class BranchFormData

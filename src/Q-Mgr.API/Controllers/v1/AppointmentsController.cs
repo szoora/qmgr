@@ -383,6 +383,90 @@ public class AppointmentsController : ControllerBase
     }
 
     // =======================================================================================
+    // Branch scheduling settings — opening hours and the booking rules
+    // =======================================================================================
+
+    /// <summary>
+    /// The branch's opening hours and appointment rules, as one payload.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are read on every booking request and neither could be written until now: the
+    /// hours were whatever TenantProvisioningService stamped on the branch at sign-up, and the
+    /// appointment settings had this class's <c>ReadSettings</c> and no counterpart. See
+    /// <see cref="BranchSchedulingDto"/>. Gated on branches.view/branches.edit rather than a
+    /// settings permission because it edits one branch, is reached from the branch list, and
+    /// <c>settings.manage</c> does not exist in this system — only <c>settings.view</c>.
+    /// </remarks>
+    [HttpGet("settings")]
+    [RequirePermission(Permissions.BranchesView)]
+    [ProducesResponseType(typeof(BranchSchedulingDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetSchedulingSettings(Guid branchId, CancellationToken cancellationToken = default)
+    {
+        var verify = await VerifyBranchOwnership(branchId);
+        if (verify != null) return verify;
+
+        var branch = await _context.Branches.AsNoTracking()
+            .FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch == null) return NotFound();
+
+        return Ok(new BranchSchedulingDto
+        {
+            BranchId = branch.Id,
+            BranchName = branch.Name,
+            Timezone = branch.Timezone,
+            HoursAreDefaults = string.IsNullOrWhiteSpace(branch.OperatingHours),
+            OperatingHours = AppointmentScheduling.ReadOpeningHours(branch.OperatingHours),
+            Appointments = AppointmentScheduling.ReadSettings(branch.Settings)
+        });
+    }
+
+    /// <summary>Saves both halves together — see the remarks on the GET.</summary>
+    [HttpPut("settings")]
+    [RequirePermission(Permissions.BranchesEdit)]
+    [ProducesResponseType(typeof(BranchSchedulingDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateSchedulingSettings(
+        Guid branchId,
+        [FromBody] UpdateBranchSchedulingRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var verify = await VerifyBranchOwnership(branchId);
+        if (verify != null) return verify;
+
+        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch == null) return NotFound();
+
+        var error = AppointmentScheduling.ValidateScheduling(request);
+        if (error != null)
+            return BadRequest(new ProblemDetails { Title = error, Status = StatusCodes.Status400BadRequest });
+
+        branch.OperatingHours = AppointmentScheduling.WriteOpeningHours(request.OperatingHours);
+        branch.Settings = AppointmentScheduling.WriteSettings(branch.Settings, request.Appointments);
+        branch.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        // Worth a line of its own: turning public booking off takes a branch's booking page down,
+        // and nothing else records that somebody did it.
+        _logger.LogInformation(
+            "Branch {BranchId} scheduling updated: {OpenDays} open day(s), public booking {PublicBooking}",
+            branchId,
+            request.OperatingHours.Count(d => d.IsOpen),
+            request.Appointments.PublicBookingEnabled ? "enabled" : "disabled");
+
+        return Ok(new BranchSchedulingDto
+        {
+            BranchId = branch.Id,
+            BranchName = branch.Name,
+            Timezone = branch.Timezone,
+            HoursAreDefaults = false,
+            OperatingHours = AppointmentScheduling.ReadOpeningHours(branch.OperatingHours),
+            Appointments = AppointmentScheduling.ReadSettings(branch.Settings)
+        });
+    }
+
+    // =======================================================================================
     // Shared helpers
     // =======================================================================================
 
@@ -849,6 +933,123 @@ internal static class AppointmentScheduling
         }
         catch (JsonException) { /* malformed settings blob — treat as not configured */ }
         return new AppointmentSettingsDto();
+    }
+
+    /// <summary>
+    /// Merges the scheduling block back into the Branch.Settings blob, leaving every other key
+    /// (Vocabularies, ClassColors, VisitorConsent, VisitingDay) untouched — the same
+    /// read-modify-write VisitorsController uses. Note the shared caveat recorded in the task
+    /// tracker: two administrators saving different sections at the same moment can still clobber
+    /// each other, because the whole column is rewritten.
+    /// </summary>
+    internal static string WriteSettings(string? branchSettingsJson, AppointmentSettingsDto settings)
+    {
+        var merged = string.IsNullOrWhiteSpace(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(branchSettingsJson, JsonOptions) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+
+        merged[SettingsKey] = settings;
+        return JsonSerializer.Serialize(merged);
+    }
+
+    /// <summary>
+    /// The seven weekdays as a form can render them, Monday first. A day the stored JSON does not
+    /// mention is closed — that is what <see cref="GetOpeningHours"/> already concludes, so the
+    /// editor has to agree or saving an untouched form would change the branch's hours.
+    /// </summary>
+    internal static List<BranchOpeningHoursDto> ReadOpeningHours(string? operatingHoursJson)
+    {
+        var week = new[]
+        {
+            DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+            DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
+        };
+
+        return week.Select(day =>
+        {
+            var hours = GetOpeningHours(operatingHoursJson, day);
+            return new BranchOpeningHoursDto
+            {
+                Day = day,
+                IsOpen = hours != null,
+                // A closed day still carries a sensible pair, so ticking it open in the form does
+                // not present 00:00-00:00 and force the user to fill both boxes.
+                Open = hours != null ? Format(hours.Value.Open) : "08:00",
+                Close = hours != null ? Format(hours.Value.Close) : "17:00"
+            };
+        }).ToList();
+
+        static string Format(TimeSpan t) => $"{t.Hours:D2}:{t.Minutes:D2}";
+    }
+
+    /// <summary>
+    /// Back to the stored shape: lower-case day names, closed days omitted entirely. Always
+    /// returns a JSON object even when every day is closed — an empty object means "configured,
+    /// open never", where null would mean "never configured" and silently restore the built-in
+    /// Mon-Fri defaults.
+    /// </summary>
+    internal static string WriteOpeningHours(IEnumerable<BranchOpeningHoursDto> days)
+    {
+        var map = new Dictionary<string, object>();
+        foreach (var day in days.Where(d => d.IsOpen))
+        {
+            map[day.Day.ToString().ToLowerInvariant()] = new { open = day.Open, close = day.Close };
+        }
+        return JsonSerializer.Serialize(map);
+    }
+
+    /// <summary>
+    /// Rejects what would silently break booking rather than what merely looks unusual. The bounds
+    /// are wide on purpose: a 24-hour clinic and a two-hour weekly surgery are both legitimate.
+    /// </summary>
+    internal static string? ValidateScheduling(UpdateBranchSchedulingRequest request)
+    {
+        if (request.OperatingHours == null || request.OperatingHours.Count == 0)
+            return "Opening hours are missing.";
+
+        if (request.OperatingHours.Select(d => d.Day).Distinct().Count() != request.OperatingHours.Count)
+            return "The same weekday appears more than once.";
+
+        foreach (var day in request.OperatingHours.Where(d => d.IsOpen))
+        {
+            if (!TryParseTime(day.Open, out var open) || !TryParseTime(day.Close, out var close))
+                return $"{day.Day}: times must be written as HH:mm, for example 08:30.";
+
+            if (close <= open)
+                return $"{day.Day}: the closing time has to be after the opening time.";
+        }
+
+        var s = request.Appointments ?? new AppointmentSettingsDto();
+
+        if (s.SlotIntervalMinutes is < 5 or > 480)
+            return "The slot interval has to be between 5 and 480 minutes, or left blank to use each service's own duration.";
+
+        if (s.CapacityPerSlot is < 1 or > 100)
+            return "Capacity per slot has to be between 1 and 100.";
+
+        if (s.MinimumLeadTimeMinutes is < 0 or > 10080)
+            return "The minimum lead time has to be between 0 minutes and 7 days.";
+
+        if (s.MaxAdvanceDays is < 1 or > 365)
+            return "Bookings have to be accepted at least 1 day and at most 365 days ahead.";
+
+        if (s.ReminderLeadMinutes is < 0 or > 20160)
+            return "The reminder lead time has to be between 0 minutes and 14 days.";
+
+        if (s.NoShowGraceMinutes is < 0 or > 1440)
+            return "The no-show grace period has to be between 0 minutes and 24 hours.";
+
+        return null;
+    }
+
+    private static bool TryParseTime(string? value, out TimeSpan parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (!TimeSpan.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out parsed)) return false;
+        // TimeSpan happily parses "1.06:00:00" and negatives; a wall clock is neither.
+        return parsed >= TimeSpan.Zero && parsed < TimeSpan.FromDays(1);
     }
 
     /// <summary>Branch.Timezone is an IANA id ("Africa/Kampala"); an unknown one falls back to UTC.</summary>

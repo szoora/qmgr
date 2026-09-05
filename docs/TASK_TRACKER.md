@@ -292,6 +292,90 @@ without error. Rendering still unverified — the Chrome extension stayed discon
 
 ---
 
+### Addendum 3, same day — "Branch settings coming soon" was hiding two settings that had no editor at all
+
+The user asked what the gear button on a branch card was promising. The literal answer was
+*nothing*: `ManageBranch` was three lines, one of them a toast, and no page had ever been designed.
+
+Tracing what per-branch configuration actually exists turned up something worse than a dead button.
+`Branch.Settings` holds five keys and four of them have editors — `Vocabularies` and `ClassColors`
+on the roster, `VisitorConsent` and `VisitingDay` on the visitor pages. The fifth did not, and
+neither did a whole column:
+
+- **`Branch.OperatingHours`** is stamped once by `TenantProvisioningService` with a hardcoded
+  Mon–Fri 08:00–17:00 plus Sat 09:00–13:00, and nothing in the web app could change it. It decides
+  which appointment slots exist at all. A clinic open until 20:00, or a school open on Sunday, had
+  no way to say so short of SQL.
+- **`Branch.Settings["Appointments"]`** had `AppointmentScheduling.ReadSettings` and **no writer**,
+  so all seven values were pinned to their defaults while being read on every booking request.
+  Including `PublicBookingEnabled`, which defaults to **true** — meaning no branch could close its
+  own public booking page. That is a bug wearing a missing-feature costume.
+
+#### What was built
+
+`GET`/`PUT api/v1/branches/{branchId}/appointments/settings` on `AppointmentsController`, which
+already carries `[RequireModule(ModuleCodes.CoreQueue)]` and already sits under a route-mapped
+prefix — so the new endpoints inherit the module gate rather than declaring their own. Read and
+write are gated `branches.view`/`branches.edit`: this edits one branch, is reached from the branch
+list, and `settings.manage` does not exist in this system — only `settings.view`.
+
+Both halves travel as one payload (`BranchSchedulingDto`) because they are one decision. The hours
+say which slots exist; the rules say how that window is cut up and who may book into it. Editing
+one without seeing the other is how a branch ends up accepting bookings for a day it is shut.
+
+Three details worth keeping:
+
+- **The wire shape is seven days, the stored shape is a sparse dictionary.** `OperatingHours` omits
+  closed days entirely, and `GetOpeningHours` reads a missing day as closed. A form needs all seven
+  in order, so the controller converts both ways. A closed day still carries a sensible 08:00–17:00
+  pair so ticking it open does not present 00:00–00:00.
+- **Closed-every-week writes `{}`, never null.** An empty object means "configured, open never";
+  null means "never configured" and silently restores the built-in Mon–Fri defaults. Writing null
+  for an all-closed branch would have reopened it.
+- **The settings write is a read-modify-write merge** over the whole `Branch.Settings` column, the
+  same pattern `VisitorsController` uses, so the other four keys survive. It inherits the same
+  caveat already recorded here: two administrators saving different sections at the same moment can
+  still clobber each other.
+
+The gear now opens that dialog — and **only when the tenant holds Core Queue**, since opening hours
+and booking rules are all it contains. For the welfare-only school in the screenshot there is
+nothing behind it, so the button is gone rather than apologising.
+
+#### Verified live, and every value proved to do something
+
+Against the Grandfather Price Test Clinic (holds Core Queue), signed in as the dev SuperAdmin.
+
+| Case | Result |
+| --- | --- |
+| `GET settings` | The provisioned hours exactly — Mon–Fri 08:00–17:00, Sat 09:00–13:00, Sun closed — and the seven defaults |
+| `PUT`: Sun open 10:00–14:00, Sat closed, Mon 07:00–20:00, 20-min slots, capacity 3 | 200, echoed back |
+| Sunday availability, previously closed | `isOpen: true`, slots from `07:00Z` = 10:00 Africa/Kampala, 20 minutes apart, `remainingCapacity: 3` |
+| Saturday availability, previously open | `isOpen: false`, zero slots |
+| **Public booking off, then the anonymous endpoint** | **`BOOKING_DISABLED`, 404 — the thing no tenant could previously do** |
+| Closing time before opening time | 400, *"Sunday: the closing time has to be after the opening time."* |
+| Capacity 0 | 400, *"Capacity per slot has to be between 1 and 100."* |
+| Roster vocabularies after the save | 200 — the other `Branch.Settings` keys survived the merge |
+| Welfare-only tenant, **non-SuperAdmin** caller | **403 `MODULE_NOT_PURCHASED`**, while `GET /branches` still returns 200 |
+
+That last row needed a real account: the SuperAdmin bypasses every module gate by design, so it
+returns 200 and proves nothing. A throwaway role holding only `branches.view` + `dashboard.view` in
+the welfare-only tenant showed the gate working. Deleted afterwards (login now 401); its role row
+survives deactivated, because a soft-deleted user still references it.
+
+The clinic's hours and settings were **restored to their provisioned values and read back**, and
+public booking confirmed working again.
+
+Rendering still unverified — the Chrome extension stayed disconnected all session, so the dialog
+itself has not been seen on screen.
+
+#### Still open
+
+Three other "coming soon" stubs remain, all narrower than this one: bulk QR download and print
+signage on Customer Links, CSV export on Feedback Management, and an SMS notification button in the
+kiosk. Each is a toast in place of a feature, and none was touched here.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering

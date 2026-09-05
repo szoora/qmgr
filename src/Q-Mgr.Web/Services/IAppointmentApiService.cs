@@ -36,6 +36,16 @@ public interface IAppointmentApiService
     /// <summary>Converts the booking into a live queue token. Returns the updated booking plus the issued ticket.</summary>
     Task<AppointmentCheckInResponse> CheckInAsync(Guid branchId, Guid appointmentId);
 
+    // ---- Branch scheduling settings (opening hours + booking rules) -------------------------
+
+    /// <summary>Null when the branch is gone or the caller may not read it — the dialog then says so.</summary>
+    Task<BranchSchedulingDto?> GetSchedulingAsync(Guid branchId);
+
+    /// <summary>Throws <see cref="InvalidOperationException"/> carrying the API's own validation
+    /// message, so the dialog can show "Saturday: the closing time has to be after the opening
+    /// time" rather than a generic failure.</summary>
+    Task<BranchSchedulingDto> UpdateSchedulingAsync(Guid branchId, UpdateBranchSchedulingRequest request);
+
     // ---- Anonymous (public booking page) --------------------------------------------------
     Task<List<BookableServiceTypeDto>> GetPublicServiceTypesAsync(Guid branchId);
     Task<AppointmentAvailabilityDto?> GetPublicAvailabilityAsync(Guid branchId, Guid serviceTypeId, DateOnly date);
@@ -120,6 +130,26 @@ public class AppointmentApiService : IAppointmentApiService
             _logger.LogError(ex, "Failed to load availability for branch {BranchId}", branchId);
             return null;
         }
+    }
+
+    public async Task<BranchSchedulingDto?> GetSchedulingAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<BranchSchedulingDto>($"{Base(branchId)}/settings", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load scheduling settings for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<BranchSchedulingDto> UpdateSchedulingAsync(Guid branchId, UpdateBranchSchedulingRequest request)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"{Base(branchId)}/settings", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<BranchSchedulingDto>(_jsonOptions))!;
     }
 
     public async Task<AppointmentDto> CreateAppointmentAsync(Guid branchId, CreateAppointmentRequest request)
