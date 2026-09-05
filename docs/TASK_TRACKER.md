@@ -650,6 +650,24 @@ nothing but forward to `TokenMapper.ToDto`. Inlined.
 
 ---
 
+### Addendum 8, same day — the roster header sat to the right of the columns it named
+
+Every heading on `/admin/students/roster` was offset from its data. The cause was structural, not a
+tweak: **each row was its own grid**, sharing only a template string with the header —
+`auto 2.4fr 0.8fr 0.8fr 1.9fr auto`. An `auto` track is sized by the widest content *in its own
+grid*, so the header's empty trailing cell measured 0 while a data row's eight action buttons
+measured about 300px. The two `fr` sets then divided different leftovers, and every column drifted.
+
+Fixed by making `.roster-table` the grid and the rows `display: contents`, so all six tracks are
+measured once across every row. Add a ninth action button and the heading now moves with it.
+
+Two consequences of `display: contents` handled explicitly: a row has no box of its own any more,
+so the padding and the row separator moved to the cells; and there is no `column-gap`, because a
+gap would break that separator into dashes — the spacing is padding inside each cell instead. The
+mobile breakpoint gives the row its box back (`display: block`) since it stacks there.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering

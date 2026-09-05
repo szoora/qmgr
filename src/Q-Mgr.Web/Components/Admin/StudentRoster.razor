@@ -1071,13 +1071,45 @@
     .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
     .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
 
-    .roster-table { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; }
-    .roster-row { display: grid; grid-template-columns: auto 2.4fr 0.8fr 0.8fr 1.9fr auto; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 14px; }
+    /* One grid for the whole table, with every row contributing its cells to it.
+       Each row used to be its own grid sharing only a template string, and two of that template's
+       six tracks are `auto` — the checkbox and the actions. An `auto` track is sized by the widest
+       content in ITS OWN grid, so the header's empty trailing cell measured 0 while a data row's
+       eight action buttons measured ~300px. The `fr` tracks then split different leftovers and
+       every heading sat to the right of the column it named.
+       `display: contents` makes the rows' cells direct items of the table grid, so all six tracks
+       are measured once across every row. Adding a ninth button now moves the heading with it. */
+    .roster-table {
+        background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: auto 2.4fr 0.8fr 0.8fr 1.9fr auto;
+    }
+
+    .roster-row { display: contents; }
+
+    /* Padding and the separator move to the cells, because a row with `display: contents` has no
+       box of its own to carry them. No column-gap for the same reason the borders live here: a gap
+       would break the separator into dashes, so the spacing is padding inside each cell instead. */
+    .roster-row > * {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        padding: 12px 12px 12px 0;
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 14px;
+    }
+
+    .roster-row > *:first-child { padding-left: 16px; }
+    .roster-row > *:last-child { padding-right: 16px; }
+    .roster-row:last-child > * { border-bottom: none; }
+
     .roster-select { display: flex; align-items: center; }
     .roster-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
-    .roster-row:last-child { border-bottom: none; }
-    .roster-header { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
-    .roster-row.inactive { opacity: 0.5; }
+    .roster-header > * { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
+    .roster-row.inactive > * { opacity: 0.5; }
     /* Flex-wrap, not inline-flex: a student can carry a restriction warning plus several flag
        chips, and letting them wrap onto a second line keeps the NAME on one line — the name is
        what somebody is scanning the column for. */
@@ -1154,7 +1186,14 @@
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     @@media (max-width: 900px) {
-        .roster-row { grid-template-columns: 1fr; gap: 4px; }
+        /* Back to a stacked card per student. The row needs its box back to carry the padding and
+           the separator, which the desktop layout keeps on the cells. */
+        .roster-table { display: block; }
+        .roster-row { display: block; padding: 12px 16px; border-bottom: 1px solid var(--qm-border); }
+        .roster-row:last-child { border-bottom: none; }
+        .roster-row > * { padding: 0; border-bottom: none; }
+        .roster-row > *:first-child { padding-left: 0; }
+        .roster-row > *:last-child { padding-right: 0; }
         .roster-header { display: none; }
         .import-preview-row { grid-template-columns: 1fr 1fr; }
         .import-log-row { grid-template-columns: 1fr; }
