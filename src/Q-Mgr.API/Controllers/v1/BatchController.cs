@@ -181,7 +181,9 @@ public class BatchController : ControllerBase
                 continue;
             }
             if (!string.Equals(currentValue, e.NewValue, StringComparison.OrdinalIgnoreCase))
-                conflicts.Add($"{e.StudentName} — now \"{currentValue}\", not \"{e.NewValue}\"");
+                conflicts.Add(currentValue.Length == 0
+                    ? $"{e.StudentName} — now empty, not \"{e.NewValue}\""
+                    : $"{e.StudentName} — now \"{currentValue}\", not \"{e.NewValue}\"");
         }
 
         if (conflicts.Count > 0)
@@ -229,7 +231,7 @@ public class BatchController : ControllerBase
         BatchOperation.SetUserRole => await _context.Users.AsNoTracking().Where(u => u.Id == id).Select(u => u.RoleId.ToString()).FirstOrDefaultAsync(ct),
 
         BatchOperation.SetWelfareReviewDate => await _context.WelfareRecords.AsNoTracking().Where(r => r.Id == id)
-            .Select(r => r.ActionDueDate == null ? null : r.ActionDueDate.Value.ToString("yyyy-MM-dd")).FirstOrDefaultAsync(ct),
+            .Select(r => r.ActionDueDate == null ? "" : r.ActionDueDate.Value.ToString("yyyy-MM-dd")).FirstOrDefaultAsync(ct),
 
         BatchOperation.CancelTokens => await _context.Tokens.AsNoTracking().Where(t => t.Id == id)
             .Select(t => t.Status.ToString()).FirstOrDefaultAsync(ct),

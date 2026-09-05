@@ -976,9 +976,22 @@ column. Fifteen checks, all passing, run against the shipped source lifted verba
 
 #### Still not done
 
-- **`SetWelfareReviewDate`'s undo is fixed but not itself exercised live** — the dev tenant had no
-  welfare record in a state to run it against. Its two siblings (`CancelTokens`, `CheckOutVisitors`)
-  were both verified through the identical code path.
+- **`SetWelfareReviewDate`'s undo is now exercised live too**, on two dummy records created for it:
+  one that already had a review date and one that had none, so both branches of the revert ran. The
+  date went to 15 Oct, undo put 20 Sep back on the first and null back on the second, and a second
+  undo was refused naming both rows.
+
+  That second refusal is what exposed a smaller bug: it said Bwire Peter **"no longer exists"** for a
+  record sitting right there with an empty review date. `ReadCurrentAsync` returned null both for a
+  deleted row and for a row whose field is empty, and the conflict check reads null as deleted. It
+  now returns an empty string for a found row, so only a genuinely missing record reads as missing,
+  and the message says "now empty" instead. The check refused correctly either way — this was the
+  wording, not the decision — but an operator reading "no longer exists" about a record they can see
+  would reasonably distrust the whole undo.
+
+  **The two dummy records could not be removed afterwards**: the welfare ledger has no DELETE
+  endpoint by design, so they remain in the dev tenant labelled "Dummy record A/B … Safe to delete".
+  Removing them needs SQL, which is the DB owner's call, not something to do quietly.
 - **Nothing has been seen on screen.** Still API-level and compile-level verification: the model
   does not type a password into the login form, and the Web session was cleared by a restart.
 
