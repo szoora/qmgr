@@ -8,6 +8,7 @@ using Microsoft.Extensions.Caching.Distributed;
 using QMgr.API.Authorization;
 using QMgr.Application.Commands.Queue;
 using QMgr.Application.DTOs;
+using QMgr.Application.Interfaces;
 using QMgr.Application.Interfaces.Billing;
 using QMgr.Application.Queries.Queue;
 using QMgr.Domain.Constants;
@@ -38,6 +39,7 @@ public class QueueController : ControllerBase
     private readonly QMgrDbContext _context;
     private readonly IDistributedCache _cache;
     private readonly IUsageTrackingService _usageTracking;
+    private readonly IQueueCustomerNotifier _customerNotifier;
     private readonly ILogger<QueueController> _logger;
 
     // Free-text caps for the anonymous ticket-issuing endpoint. Nothing here is trusted: an
@@ -58,17 +60,29 @@ public class QueueController : ControllerBase
     private static readonly TimeSpan LookupWindow = TimeSpan.FromMinutes(5);
     private const int LookupLimitPerWindow = 120;
 
+    // Texting a ticket is the only thing here that spends the organization's money, so it gets a
+    // third, tighter budget and two caps the other endpoints do not need: how many messages one
+    // ticket may ever ask for, and how old a ticket may be and still ask. Without both, an
+    // anonymous endpoint that sends SMS to a caller-supplied number is an SMS pump.
+    private static readonly TimeSpan SmsWindow = TimeSpan.FromMinutes(10);
+    private const int SmsLimitPerWindow = 3;
+    private const int MaxSmsPerToken = 3;
+    private static readonly TimeSpan SmsTicketMaxAge = TimeSpan.FromHours(4);
+    private const string SmsCountMetadataKey = "ticketSmsCount";
+
     public QueueController(
         IMediator mediator,
         QMgrDbContext context,
         IDistributedCache cache,
         IUsageTrackingService usageTracking,
+        IQueueCustomerNotifier customerNotifier,
         ILogger<QueueController> logger)
     {
         _mediator = mediator;
         _context = context;
         _cache = cache;
         _usageTracking = usageTracking;
+        _customerNotifier = customerNotifier;
         _logger = logger;
     }
 
@@ -423,7 +437,155 @@ public class QueueController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Texts a ticket's details to a phone number the customer gives at the kiosk, and stores that
+    /// number on the ticket.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what the kiosk's "Send SMS" button does; until now it answered "coming soon". The
+    /// phone step before a ticket is issued is optional and easy to skip on a lobby terminal, and
+    /// somebody who skipped it had no second chance. Storing the number is the more useful half —
+    /// it means the automatic "it's your turn" message reaches them too, not just this one
+    /// confirmation.
+    /// </para>
+    /// <para>
+    /// It lives here, on the anonymous controller, because the kiosk is unattended and issues its
+    /// tickets through <see cref="IssuePublicToken"/> with no staff session — an authenticated
+    /// endpoint would 401 on exactly the device that needs this. That makes it the only anonymous
+    /// endpoint in this app that spends money, so it carries four controls rather than one:
+    /// a tight per-device rate limit, a hard cap of <see cref="MaxSmsPerToken"/> messages for the
+    /// life of any one ticket, a refusal once a ticket is older than
+    /// <see cref="SmsTicketMaxAge"/>, and a refusal for a ticket that is already finished. An
+    /// attacker who wants to pump SMS through this has to keep issuing real tickets against a real
+    /// branch, through the issue endpoint's own rate limit, for three messages each.
+    /// </para>
+    /// </remarks>
+    [HttpPost("tokens/{tokenId:guid}/send-sms")]
+    [ProducesResponseType(typeof(SendTicketSmsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> SendTicketSms(
+        Guid branchId,
+        Guid tokenId,
+        [FromBody] SendTicketSmsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var phone = Trimmed(request?.PhoneNumber);
+
+        // Deliberately loose on shape: this app serves Uganda and its neighbours, where a number
+        // is written 0771…, +256771… and 256771… interchangeably. Rejecting on a pattern here
+        // would refuse real numbers; the gateway is the thing that actually knows.
+        if (string.IsNullOrWhiteSpace(phone) || phone.Length < 7 || phone.Length > MaxPhoneLength || !phone.Any(char.IsDigit))
+            return BadRequest(new { error = "INVALID_PHONE", message = "Please enter a valid phone number." });
+
+        var branch = await _context.Branches.AsNoTracking()
+            .FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch == null || !branch.IsActive) return BranchNotFound(branchId);
+
+        var rateLimit = await CheckRateLimitAsync(
+            $"pubqueue:sms:{branchId}:{ClientKey()}", SmsLimitPerWindow, SmsWindow, cancellationToken);
+
+        if (!rateLimit.Allowed)
+        {
+            Response.Headers.RetryAfter = rateLimit.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            _logger.LogWarning("Anonymous ticket-SMS rate limit hit for branch {BranchId}", branchId);
+            return StatusCode(StatusCodes.Status429TooManyRequests, new
+            {
+                error = "RATE_LIMITED",
+                message = "Too many messages requested from this device. Please wait a moment or ask a member of staff.",
+                retryAfterSeconds = rateLimit.RetryAfterSeconds
+            });
+        }
+
+        var token = await _context.Tokens
+            .FirstOrDefaultAsync(t => t.Id == tokenId && t.BranchId == branchId, cancellationToken);
+        if (token == null)
+            return NotFound(new ProblemDetails { Title = "That ticket no longer exists.", Status = StatusCodes.Status404NotFound });
+
+        if (token.Status is not (TokenStatus.Waiting or TokenStatus.Called))
+            return BadRequest(new { error = "TICKET_CLOSED", message = "That ticket has already been served." });
+
+        if (DateTime.UtcNow - token.CreatedAt > SmsTicketMaxAge)
+            return BadRequest(new { error = "TICKET_EXPIRED", message = "That ticket is too old to send." });
+
+        var alreadySent = ReadSmsCount(token.Metadata);
+        if (alreadySent >= MaxSmsPerToken)
+            return BadRequest(new { error = "SMS_LIMIT", message = $"This ticket has already been texted {MaxSmsPerToken} times. Please note the number down." });
+
+        // Counted before the send, not after: a gateway that times out after accepting the message
+        // must not hand out a free retry, and over-counting one message is a far cheaper mistake
+        // than under-counting an unbounded number of them.
+        token.Metadata = WriteSmsCount(token.Metadata, alreadySent + 1);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var result = await _customerNotifier.SendTicketDetailsAsync(tokenId, branchId, phone, cancellationToken);
+
+        var message = result.Outcome switch
+        {
+            TicketDetailsSendOutcome.Sent => "Sent — check your phone.",
+            TicketDetailsSendOutcome.ChannelDisabled =>
+                "Text messages are switched off here, so nothing was sent. Your number is saved against the ticket.",
+            TicketDetailsSendOutcome.NotConfigured =>
+                "No text-message service is set up here yet, so nothing was sent. Your number is saved against the ticket.",
+            TicketDetailsSendOutcome.TokenNotFound => "That ticket no longer exists.",
+            _ => "The message could not be delivered. Your number is saved against the ticket — please note your ticket number down as well."
+        };
+
+        _logger.LogInformation("Ticket {TokenId} SMS request from a kiosk: {Outcome}", tokenId, result.Outcome);
+
+        return Ok(new SendTicketSmsResponse
+        {
+            Sent = result.Outcome == TicketDetailsSendOutcome.Sent,
+            PhoneStored = result.PhoneStored,
+            Outcome = result.Outcome.ToString(),
+            Message = message
+        });
+    }
+
     #region Helpers
+
+    /// <summary>
+    /// How many times this ticket has been texted, kept in the existing Token.Metadata JSON rather
+    /// than a new column — the standing enhance-before-you-add rule. A malformed blob reads as
+    /// zero, which is the safe direction only because the per-device rate limit is the real
+    /// backstop; this cap is the second line, not the first.
+    /// </summary>
+    private static int ReadSmsCount(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return 0;
+        try
+        {
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson);
+            if (root != null && root.TryGetValue(SmsCountMetadataKey, out var el) && el.TryGetInt32(out var count))
+                return count;
+        }
+        catch (JsonException) { /* integration blob we don't own — treat as no sends */ }
+        return 0;
+    }
+
+    /// <summary>Merges the counter back in, leaving any integration data in the blob alone.</summary>
+    private static string WriteSmsCount(string? metadataJson, int count)
+    {
+        Dictionary<string, object> merged;
+        try
+        {
+            merged = string.IsNullOrWhiteSpace(metadataJson)
+                ? new Dictionary<string, object>()
+                : (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson) ?? new())
+                    .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        }
+        catch (JsonException)
+        {
+            // Unparseable metadata is not ours to repair, but it must not block the counter that
+            // caps this endpoint — start a clean object rather than losing the cap entirely.
+            merged = new Dictionary<string, object>();
+        }
+
+        merged[SmsCountMetadataKey] = count;
+        return JsonSerializer.Serialize(merged);
+    }
 
     private IActionResult BranchNotFound(Guid branchId) => NotFound(new ProblemDetails
     {
@@ -558,4 +720,22 @@ public record WaitTimeResponse
     public int WaitingCount { get; init; }
     public int EstimatedWaitMinutes { get; init; }
     public int CountersActive { get; init; }
+}
+
+public record SendTicketSmsRequest
+{
+    public string? PhoneNumber { get; init; }
+}
+
+/// <summary>
+/// Carries both halves of the answer on purpose. <c>Sent</c> is what the person at the kiosk asked
+/// about; <c>PhoneStored</c> is true even when the send failed, because the number is kept either
+/// way and the automatic "it's your turn" message may still reach them.
+/// </summary>
+public record SendTicketSmsResponse
+{
+    public bool Sent { get; init; }
+    public bool PhoneStored { get; init; }
+    public string Outcome { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
 }

@@ -8,6 +8,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IJSRuntime JS
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -24,7 +25,7 @@
         </div>
         <div class="header-actions">
             <PermissionGuard Permission="feedback.analytics">
-                <QButton Text="Export" Icon="download" Variant="secondary" OnClick="@ExportFeedback" />
+                <QButton Text="Export" Icon="download" Variant="secondary" OnClick="@ExportFeedback" Loading="@isExporting" />
             </PermissionGuard>
             <QButton Text="Refresh" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
         </div>
@@ -1504,9 +1505,112 @@
         }
     }
 
-    private void ExportFeedback()
+    private bool isExporting;
+
+    /// <summary>
+    /// CSV of every response matching the filters currently set — not just the page on screen.
+    /// </summary>
+    /// <remarks>
+    /// The list here is paged with a "Load more" button, so exporting the in-memory
+    /// <c>feedbacks</c> collection would quietly export however far somebody had scrolled and call
+    /// it the export. It pages the API instead, with the same filter parameters the list uses, and
+    /// stops at <see cref="MaxExportRows"/> so a branch with years of history cannot pull the
+    /// whole table into a browser tab.
+    /// </remarks>
+    private const int ExportBatchSize = 500;
+    private const int MaxExportRows = 20000;
+
+    private async Task ExportFeedback()
     {
-        NotificationService.Notify(ToastSeverity.Info, "Export", "Export feature coming soon");
+        var branchId = BranchState.CurrentBranchId;
+        if (branchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.");
+            return;
+        }
+
+        isExporting = true;
+        try
+        {
+            var all = new List<FeedbackDto>();
+            var exportPage = 1;
+            var truncated = false;
+
+            while (true)
+            {
+                var query = $"api/v1/branches/{branchId}/feedbacks?page={exportPage}&pageSize={ExportBatchSize}";
+                if (filterRating.HasValue) query += $"&rating={filterRating}";
+                if (filterCategory.HasValue) query += $"&category={filterCategory}";
+                if (filterSource.HasValue) query += $"&source={filterSource}";
+                if (filterHasResponse.HasValue) query += $"&hasResponse={filterHasResponse}";
+
+                var response = await Http.GetAsync(query);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                    NotificationService.Notify(ToastSeverity.Error, title, detail);
+                    return;
+                }
+
+                var batch = await response.Content.ReadFromJsonAsync<List<FeedbackDto>>(JsonOptions) ?? new();
+                all.AddRange(batch);
+
+                if (batch.Count < ExportBatchSize) break;
+                if (all.Count >= MaxExportRows) { truncated = true; break; }
+                exportPage++;
+            }
+
+            if (all.Count == 0)
+            {
+                NotificationService.Notify(ToastSeverity.Info, "Nothing to export", "No responses match the current filters.");
+                return;
+            }
+
+            var rows = new List<string?[]>
+            {
+                new[] { "Submitted", "Ticket", "Rating", "NPS", "Category", "Source", "Service", "Counter",
+                        "Served By", "Customer", "Phone", "Email", "Comment", "Response", "Responded At", "Responded By" }
+            };
+
+            rows.AddRange(all.Select(f => new[]
+            {
+                f.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                f.TokenDisplayNumber ?? "",
+                f.Rating.ToString(),
+                f.NpsScore?.ToString() ?? "",
+                f.Category.ToString(),
+                f.Source.ToString(),
+                f.ServiceTypeName ?? "",
+                f.CounterName ?? "",
+                f.ServedByName ?? "",
+                f.CustomerName ?? "",
+                f.CustomerPhone ?? "",
+                f.CustomerEmail ?? "",
+                f.Comment ?? "",
+                f.Response ?? "",
+                f.RespondedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "",
+                f.RespondedByName ?? ""
+            }));
+
+            var csv = CsvWriter.Build(rows);
+            await JS.InvokeVoidAsync("downloadDataUrl", CsvWriter.ToDataUrl(csv),
+                $"feedback-{DateTime.Now:yyyyMMdd-HHmm}.csv");
+
+            NotificationService.Notify(
+                truncated ? ToastSeverity.Warning : ToastSeverity.Success,
+                "Exported",
+                truncated
+                    ? $"Exported the first {all.Count:N0} responses — narrow the filters to export the rest."
+                    : $"{all.Count:N0} response{(all.Count == 1 ? "" : "s")} exported.");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Export failed", ex.Message);
+        }
+        finally
+        {
+            isExporting = false;
+        }
     }
 
     private string GetSourceIcon(FeedbackSource source)

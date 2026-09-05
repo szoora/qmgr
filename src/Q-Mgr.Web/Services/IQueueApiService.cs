@@ -48,7 +48,18 @@ public interface IQueueApiService
     /// as a toast, not a silent nothing-happened.
     /// </summary>
     Task<ReportExportResult> ExportReportCsvAsync(string report, Guid branchId, DateOnly from, DateOnly to);
+
+    /// <summary>
+    /// Texts a ticket to a phone number and stores the number on the ticket. Like the export
+    /// above, a failure is a real answer the caller must show rather than swallow — the customer
+    /// is standing at the kiosk deciding whether to wait for a message.
+    /// </summary>
+    Task<SendTicketSmsResult> SendTicketSmsAsync(Guid branchId, Guid tokenId, string phoneNumber);
 }
+
+/// <param name="Sent">A message actually went out.</param>
+/// <param name="Message">Text to show the customer, written by the API so both ends agree.</param>
+public record SendTicketSmsResult(bool Sent, string Message);
 
 /// <summary>URL segments for <see cref="IQueueApiService.ExportReportCsvAsync"/>.</summary>
 public static class ReportExportKind
@@ -422,6 +433,40 @@ public class QueueApiService : IQueueApiService
             _logger.LogError(ex, "Failed to get service types");
             return new();
         }
+    }
+
+    public async Task<SendTicketSmsResult> SendTicketSmsAsync(Guid branchId, Guid tokenId, string phoneNumber)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsJsonAsync(
+                $"api/v1/branches/{branchId}/queue/tokens/{tokenId}/send-sms",
+                new { PhoneNumber = phoneNumber }, _jsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadFromJsonAsync<TicketSmsResponse>(_jsonOptions);
+                return new SendTicketSmsResult(body?.Sent ?? false, body?.Message ?? "Request completed.");
+            }
+
+            var message = await ApiErrorService.GetErrorMessageAsync(response);
+            _logger.LogWarning("Ticket SMS for token {TokenId} returned {StatusCode}", tokenId, (int)response.StatusCode);
+            return new SendTicketSmsResult(false, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send ticket SMS for token {TokenId}", tokenId);
+            return new SendTicketSmsResult(false, "Couldn't reach the server. Please note your ticket number down.");
+        }
+    }
+
+    /// <summary>Mirrors TokensController's SendTicketSmsResponse.</summary>
+    private record TicketSmsResponse
+    {
+        public bool Sent { get; init; }
+        public bool PhoneStored { get; init; }
+        public string? Outcome { get; init; }
+        public string? Message { get; init; }
     }
 
     public async Task<ReportExportResult> ExportReportCsvAsync(string report, Guid branchId, DateOnly from, DateOnly to)

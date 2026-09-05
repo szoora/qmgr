@@ -507,14 +507,109 @@
         showShareDialog = true;
     }
 
-    private void DownloadAllQRCodes()
+    /// <summary>The four public links this branch has, in the order they appear on the page.</summary>
+    private (string Title, string Hint, string Url)[] PublicLinks() => new[]
     {
-        NotificationService.Notify(ToastSeverity.Info, "Coming Soon", "Bulk QR code download will be available soon.");
+        ("Self-Service Kiosk", "Scan to take a ticket", GetKioskUrl()),
+        ("Customer Feedback", "Scan to tell us how we did", GetFeedbackUrl()),
+        ("Queue Display", "Scan to follow the queue on your phone", GetDisplayUrl()),
+        ("Full-Screen Signage", "Scan to open the signage screen", GetSignageUrl())
+    };
+
+    /// <summary>
+    /// One PNG per link, generated in the browser by the qrcodejs already loaded app-wide for
+    /// visitor badges — no new dependency, and no server round trip for something the page already
+    /// knows the URLs of.
+    /// </summary>
+    /// <remarks>
+    /// Four separate files rather than one contact sheet, because that is what the button says and
+    /// what the files are for: dropping into a poster, a letter or a door sticker individually.
+    /// Browsers ask permission before a page saves several files at once, so the toast warns about
+    /// it rather than leaving the user thinking three of the four silently failed.
+    /// </remarks>
+    private async Task DownloadAllQRCodes()
+    {
+        if (string.IsNullOrEmpty(selectedBranchId)) return;
+
+        var slug = Slugify(selectedBranch?.Name ?? "branch");
+        var saved = 0;
+
+        foreach (var (title, _, url) in PublicLinks())
+        {
+            var dataUrl = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", url);
+            if (string.IsNullOrEmpty(dataUrl)) continue;
+
+            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"qr-{slug}-{Slugify(title)}.png");
+            saved++;
+        }
+
+        NotificationService.Notify(
+            saved == 0 ? ToastSeverity.Error : ToastSeverity.Success,
+            saved == 0 ? "Couldn't generate the codes" : "QR codes downloaded",
+            saved == 0
+                ? "The QR generator didn't load. Refresh the page and try again."
+                : $"{saved} PNG files saved. Your browser may ask you to allow multiple downloads.");
     }
 
-    private void PrintSignage()
+    /// <summary>
+    /// A printable A5 card per link — branch name, what the code is for, the QR, and the URL in
+    /// text underneath for anyone who would rather type it. Goes through the same
+    /// QMgrPrint.browserPrint the ticket and roster printing already use.
+    /// </summary>
+    private async Task PrintSignage()
     {
-        NotificationService.Notify(ToastSeverity.Info, "Coming Soon", "Print signage feature will be available soon.");
+        if (string.IsNullOrEmpty(selectedBranchId)) return;
+
+        var cards = new List<string>();
+        foreach (var (title, hint, url) in PublicLinks())
+        {
+            var qr = await JS.InvokeAsync<string?>("visitorBadge.getQrDataUrl", url);
+            if (string.IsNullOrEmpty(qr)) continue;
+
+            cards.Add($"""
+                <section class="card">
+                    <h1>{System.Net.WebUtility.HtmlEncode(selectedBranch?.Name ?? "")}</h1>
+                    <h2>{System.Net.WebUtility.HtmlEncode(title)}</h2>
+                    <img src="{qr}" alt="" />
+                    <p class="hint">{System.Net.WebUtility.HtmlEncode(hint)}</p>
+                    <p class="url">{System.Net.WebUtility.HtmlEncode(url)}</p>
+                </section>
+                """);
+        }
+
+        if (cards.Count == 0)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't build the signage",
+                "The QR generator didn't load. Refresh the page and try again.");
+            return;
+        }
+
+        // Black on white, no theme tokens: this is going onto paper, where the app's dark palette
+        // would print as a solid block of ink.
+        // $$ so that single braces are literal CSS and {{...}} is the interpolation — a raw string
+        // literal does not use doubled braces as an escape the way "..." does.
+        var html = $$"""
+            <html><head><meta charset="utf-8"><title>Signage</title><style>
+                @page { size: A5; margin: 12mm; }
+                body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; color: #000; }
+                .card { page-break-after: always; text-align: center; padding: 8mm 0; }
+                .card:last-child { page-break-after: auto; }
+                h1 { font-size: 20pt; margin: 0 0 2mm; }
+                h2 { font-size: 14pt; font-weight: 600; margin: 0 0 6mm; color: #333; }
+                img { width: 70mm; height: 70mm; }
+                .hint { font-size: 13pt; margin: 6mm 0 2mm; }
+                .url { font-size: 9pt; color: #555; word-break: break-all; margin: 0 8mm; }
+            </style></head><body>{{string.Join("", cards)}}</body></html>
+            """;
+
+        await JS.InvokeVoidAsync("QMgrPrint.browserPrint", html, true);
+    }
+
+    /// <summary>Filename-safe, lower case, no runs of dashes.</summary>
+    private static string Slugify(string value)
+    {
+        var chars = value.Select(c => char.IsLetterOrDigit(c) ? char.ToLowerInvariant(c) : '-').ToArray();
+        return string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
 
     private async Task CopyAllLinks()

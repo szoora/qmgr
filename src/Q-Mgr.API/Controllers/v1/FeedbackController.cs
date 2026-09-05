@@ -493,6 +493,13 @@ public class FeedbackController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
+        // Clamped, not trusted. This took whatever pageSize the caller sent, which the admin list
+        // never exercised because it asks for 20 — until the CSV export started paging through
+        // in batches and made the parameter worth someone's attention. 500 is comfortably above
+        // that batch size and well below "select the whole table into memory".
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 500);
+
         var query = _context.Feedbacks
             .Include(f => f.ServiceType)
             .Include(f => f.Counter)

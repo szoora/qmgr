@@ -177,6 +177,74 @@ public class QueueCustomerNotifier : IQueueCustomerNotifier
     /// to nothing: INotificationService.SendSmsAsync/SendEmailAsync return false rather than
     /// throwing when the channel is disabled or unconfigured.
     /// </summary>
+    /// <summary>
+    /// Sends the ticket confirmation to a number the customer has just given, and stores it.
+    /// See <see cref="IQueueCustomerNotifier.SendTicketDetailsAsync"/> for why this one blocks
+    /// and reports where every other send here does neither.
+    /// </summary>
+    public async Task<TicketDetailsSendResult> SendTicketDetailsAsync(
+        Guid tokenId, Guid branchId, string phoneNumber, CancellationToken cancellationToken = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<QMgrDbContext>();
+        var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
+
+        // IgnoreQueryFilters for the same reason the background sends use it — no HTTP request is
+        // guaranteed to be in scope here — with BranchId doing the cross-tenant work instead. The
+        // caller has already verified the branch belongs to the signed-in organization.
+        var token = await db.Tokens.IgnoreQueryFilters().Include(t => t.ServiceType)
+            .FirstOrDefaultAsync(t => t.Id == tokenId && t.BranchId == branchId, cancellationToken);
+        if (token == null) return new TicketDetailsSendResult(TicketDetailsSendOutcome.TokenNotFound, false);
+
+        // Stored first, and kept even if the send fails: the number's real value is the "it's your
+        // turn" message later, which matters more than this confirmation.
+        token.CustomerPhone = phoneNumber.Trim();
+        await db.SaveChangesAsync(cancellationToken);
+
+        var ctx = await LoadContextAsync(db, token.BranchId, cancellationToken);
+        if (ctx == null) return new TicketDetailsSendResult(TicketDetailsSendOutcome.NotConfigured, true);
+
+        if (!ctx.Settings.SmsEnabled || !ctx.Settings.QueueNotifySms)
+            return new TicketDetailsSendResult(TicketDetailsSendOutcome.ChannelDisabled, true);
+
+        if (string.IsNullOrWhiteSpace(ctx.Settings.SmsApiKey))
+            return new TicketDetailsSendResult(TicketDetailsSendOutcome.NotConfigured, true);
+
+        // {Position} is in the default issued template, so it has to be real. Counted with the
+        // same ordering TokenRepository and the approaching-turn sweep above use — priority, then
+        // arrival — so the number the customer is texted matches the one on the display. A token
+        // that is no longer waiting has no position and the placeholder is left blank.
+        int? position = null;
+        if (token.Status == TokenStatus.Waiting)
+        {
+            var ahead = await db.Tokens.IgnoreQueryFilters()
+                .CountAsync(t => t.BranchId == token.BranchId
+                                 && t.ServiceTypeId == token.ServiceTypeId
+                                 && t.Status == TokenStatus.Waiting
+                                 && (t.Priority < token.Priority
+                                     || (t.Priority == token.Priority && t.CreatedAt < token.CreatedAt)),
+                    cancellationToken);
+            position = ahead + 1;
+        }
+
+        var placeholders = BuildPlaceholders(token, ctx, position, counter: null);
+        var body = Render(
+            Fallback(ctx.Settings.SmsTokenCreatedTemplate, NotificationSettings.DefaultSmsIssued),
+            placeholders,
+            htmlEncodeValues: false);
+
+        if (string.IsNullOrWhiteSpace(body))
+            return new TicketDetailsSendResult(TicketDetailsSendOutcome.SendFailed, true);
+
+        var sent = await notifications.SendSmsAsync(ctx.OrganizationId, token.CustomerPhone!, body, cancellationToken);
+        if (!sent) return new TicketDetailsSendResult(TicketDetailsSendOutcome.SendFailed, true);
+
+        // Same stage bookkeeping the automatic issued-notification does, so a customer who asked
+        // for this at the kiosk is not sent the identical message a second time.
+        await MarkStageAsync(db, token, StageIssued, cancellationToken);
+        return new TicketDetailsSendResult(TicketDetailsSendOutcome.Sent, true);
+    }
+
     private async Task<bool> SendAsync(
         INotificationService notifications,
         QueueContext ctx,

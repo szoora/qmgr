@@ -376,6 +376,103 @@ kiosk. Each is a toast in place of a feature, and none was touched here.
 
 ---
 
+### Addendum 4, same day — the last four "coming soon" toasts, replaced with the features they promised
+
+Four buttons across three pages answered with a toast. All four now do the thing. Each turned out
+to be buildable from parts already in the codebase, so none of them added a dependency.
+
+#### Kiosk → "Send SMS"
+
+The phone step before a ticket is issued is optional, has a **Skip** button, and is skipped
+constantly on a lobby terminal — and somebody who skipped it had no second chance. The button now
+asks for a number, sends the ticket confirmation, and **stores the number on the ticket**, which is
+the larger half: the automatic "it's your turn" message then reaches them too.
+
+Everything needed already existed — `QueueCustomerNotifier` sends exactly this message when a token
+is created with a phone. What it did not have was a way to say whether the message went out;
+`IQueueCustomerNotifier`'s whole contract is fire-and-forget, because a customer notification must
+never sit on the critical path of a Call Next. So `SendTicketDetailsAsync` was added as **the one
+blocking, reporting method on that interface**, documented as the deliberate exception: somebody is
+standing at the kiosk deciding whether to wait for a text or write the number down, and "we have
+accepted your request" is not an answer.
+
+**Where it lives matters.** The endpoint is on the anonymous `QueueController`, not
+`TokensController`, because the kiosk issues its tickets through `IssuePublicToken` with no staff
+session — an authenticated endpoint would 401 on exactly the device that needs this. That makes it
+**the only anonymous endpoint in this app that spends the organization's money**, so it carries
+four controls rather than one:
+
+- a per-device rate limit of 3 in 10 minutes, its own budget separate from ticket issuing;
+- a hard cap of 3 messages for the life of any one ticket, counted in the existing `Token.Metadata`
+  JSON rather than a new column, and **incremented before the send** — a gateway that times out
+  after accepting a message must not hand out a free retry;
+- a refusal once the ticket is over 4 hours old;
+- a refusal for a ticket that is already served or cancelled.
+
+An attacker who wants to pump SMS through this has to keep issuing real tickets against a real
+branch, through the issue endpoint's own rate limit, for three messages each.
+
+#### Feedback Management → "Export"
+
+Now a CSV of every response matching the current filters. The subtlety: that list is paged with a
+**Load more** button, so exporting the in-memory collection would have quietly exported however far
+somebody had scrolled and called it the export. It pages the API instead with the same filter
+parameters the list uses, capped at 20,000 rows with the toast saying so when it truncates.
+
+Two things came out of building it:
+
+- **`GET .../feedbacks` had no clamp on `pageSize`.** The admin list never exercised it because it
+  asks for 20; the export paging is what made the parameter worth looking at. Now clamped to
+  1–500, with `page` floored at 1.
+- **`CsvWriter`** is new and shared. `WelfareReports` had its own one-line escaper and this would
+  have been the second copy — the exact drift this codebase keeps rediscovering. It always quotes
+  (a feedback comment with a comma, a newline or a leading `=` is ordinary), uses CRLF, and emits a
+  BOM so Excel reads UTF-8 rather than mangling every non-ASCII name, which in this market is most
+  of them.
+
+#### Customer Links → "Download All QR Codes" and "Print Signage"
+
+Both built on `qrcodejs`, already loaded app-wide for visitor badges, through the existing
+`visitorBadge.getQrDataUrl` helper — no new dependency, no server round trip for URLs the page
+already knows.
+
+- **Download** writes one PNG per link rather than a contact sheet, because that is what the button
+  says and what the files are for: dropping into a poster or a door sticker individually. The toast
+  warns that the browser may ask permission for multiple downloads, so three of four don't look
+  like silent failures.
+- **Print Signage** builds an A5 card per link — branch name, what the code is for, the QR, and the
+  URL in text underneath for anyone who would rather type it — through the same
+  `QMgrPrint.browserPrint` the ticket and roster printing already use. Black on white, no theme
+  tokens: the app's dark palette would print as a solid block of ink.
+
+#### Verified live
+
+Against the Core Queue test clinic, using the anonymous kiosk path end to end.
+
+| Case | Result |
+| --- | --- |
+| Ticket issued anonymously, then SMS with `"abc"` | 400 `INVALID_PHONE` |
+| Valid number, no SMS gateway configured | 200, `sent: false`, `phoneStored: true`, *"No text-message service is set up here yet… Your number is saved against the ticket."* |
+| Token read back afterwards | `"phone":"0771234567"`, `"metadata":{"ticketSmsCount":3}` — **the number is stored and the per-ticket counter is real** |
+| 4th attempt inside the window | 429 `RATE_LIMITED` with `retryAfterSeconds` |
+
+The "no gateway configured" answer is this environment's actual truth, and it is the useful part:
+the button is honest today and becomes fully functional the moment credentials are set, where
+"coming soon" would have stayed a lie either way.
+
+**Not verified: rendering.** The Chrome extension stayed disconnected all session, so the kiosk
+phone dialog, the QR downloads and the print preview have not been seen on screen — the QR and
+print paths in particular are browser-side and deserve a click-through before a pilot.
+
+#### Found while doing this, not fixed
+
+`PATCH api/v1/branches/{branchId}/tokens/{tokenId}` is a stub of the same family: it validates the
+branch, fetches the token, and returns it unchanged under a comment reading `// Update logic here`.
+Nothing calls it. It was left alone rather than quietly given behaviour nobody asked for, but it is
+a no-op endpoint that reads as a working one.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering

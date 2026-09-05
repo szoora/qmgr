@@ -421,6 +421,32 @@ else
     </div>
 }
 
+@* Texting the ticket after the fact. The phone step above is skipped often — that is the point of
+   having a Skip button — so this is the second chance, and it also stores the number so the
+   "it's your turn" message reaches them later. *@
+@if (showSmsPrompt)
+{
+    <div class="ticket-overlay @GetIndustryClass()" @onclick="CancelSendSms">
+        <div class="customer-form-modal" role="dialog" aria-modal="true" aria-labelledby="kiosk-sms-title" @onclick:stopPropagation="true">
+            <h2 id="kiosk-sms-title">Text me my ticket</h2>
+            <p>We'll send your ticket number, and let you know when it's nearly your turn.</p>
+
+            <div class="form-group">
+                <label for="kiosk-sms-phone">Phone Number</label>
+                <input id="kiosk-sms-phone" type="tel" autocomplete="tel" maxlength="32" @bind="smsPhone" placeholder="0771234567" />
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="form-btn secondary" aria-label="Cancel and go back to the ticket" @onclick="CancelSendSms">Cancel</button>
+                <button type="button" class="form-btn primary" aria-label="Send my ticket by text message"
+                        disabled="@(isSendingSms || string.IsNullOrWhiteSpace(smsPhone))" @onclick="ConfirmSendSms">
+                    @(isSendingSms ? "Sending…" : "Send")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 <style>
     .kiosk-container {
         min-height: 100vh;
@@ -2674,9 +2700,59 @@ else
         }
     }
 
+    // ---- Text this ticket to a phone ---------------------------------------------------------
+    //
+    // The phone step before the ticket is issued is optional and easy to skip at a kiosk, and a
+    // customer who skipped it had no second chance — this button used to answer "coming soon".
+    // It now asks for the number, sends the confirmation, and (the more useful half) stores the
+    // number on the ticket so the "it's your turn" message reaches them as well.
+
+    private bool showSmsPrompt;
+    private string smsPhone = "";
+    private bool isSendingSms;
+
     private void SendSMS()
     {
-        NotificationService.Notify(ToastSeverity.Info, "SMS", "SMS notification feature coming soon.");
+        // Prefilled with whatever was given at the start, so the common case — the number was
+        // right and they just want it re-sent — is one tap.
+        smsPhone = customerPhone ?? "";
+        showSmsPrompt = true;
+        ResetRedirectTimer();
+    }
+
+    private async Task ConfirmSendSms()
+    {
+        if (generatedTicket == null || string.IsNullOrWhiteSpace(smsPhone)) return;
+
+        isSendingSms = true;
+        try
+        {
+            var branch = await ResolveBranchIdAsync();
+            if (branch is not { } branchId) return;
+            var result = await QueueApi.SendTicketSmsAsync(branchId, generatedTicket.TokenId, smsPhone.Trim());
+
+            // The API writes the wording, including the "your number is saved anyway" half, so the
+            // kiosk and the server can't tell the customer two different stories.
+            NotificationService.Notify(
+                result.Sent ? ToastSeverity.Success : ToastSeverity.Warning,
+                result.Sent ? "Message sent" : "Not sent",
+                result.Message,
+                result.Sent ? 5000 : 9000);
+
+            if (result.Sent) customerPhone = smsPhone.Trim();
+            showSmsPrompt = false;
+        }
+        finally
+        {
+            isSendingSms = false;
+            ResetRedirectTimer();
+        }
+    }
+
+    private void CancelSendSms()
+    {
+        showSmsPrompt = false;
+        ResetRedirectTimer();
     }
 
     private void CloseTicket()
