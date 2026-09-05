@@ -6,7 +6,123 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
-## 🧭 SESSION HANDOVER (written 2026-09-05) — the carried-forward backlog, worked through; two items were already done
+## 🧭 SESSION HANDOVER (written 2026-09-05, late) — batch operations and one shared export, finished; supersedes the 2026-09-05 entry below as the "read first" entry
+
+The earlier 2026-09-05 handover covers the carried-forward backlog this session started with. That
+work is done and is not repeated here. Read the **2026-09-04 late** handover for the state of the
+product itself — nothing in it has changed.
+
+### The one thing to know before touching anything
+
+**Still nothing is deployed.** The 2026-09-04 package and its irreversible
+`RetireTiersForModuleBilling` migration are exactly where that entry left them, and this session
+added a second migration (`20260905121359_AddBatchOperations`, two nullable text columns on
+`roster_import_job_entries`) on top. A fresh package is built and waiting:
+
+    scripts/deploy/dist/qmgr-0.2.0-20260905.1702.tar.gz   (109.1 MB, build 0.2.0+20260905.1702.a5561aa)
+
+Built with **`-ApiPort 8586 -WebPort 8587`** passed explicitly. The script's own defaults are
+8581/8582 and both are taken on that box by other apps — always pass these two, and re-run
+`ss -tlnp` on the server before deploying anyway, because this box's ports move independently of
+Q-Mgr.
+
+### What this session built
+
+Two features, both to the plan published earlier the same day.
+
+**One shared export**, replacing eight hand-rolled implementations that used two mechanisms, gated
+inconsistently, and offered CSV and nothing else. `QDataExport` + `DataExportService` +
+`wwwroot/js/dataExport.js`. It is now on ten pages: roster, welfare reports, visitor management,
+feedback management, users, appointments, counter performance, customer feedback, visitor report,
+campaign impressions.
+
+**Batch operations**, one resolver (`BatchOperationService`) understanding twelve operations, with
+a bar on every page the server supports: roster, welfare reports, visitor management, users,
+appointments, queue board.
+
+Three design points that are load-bearing and easy to undo by accident:
+
+- **The preview and the commit call the same resolver.** A preview that predicts and a commit that
+  re-derives will disagree the moment anything moves between them.
+- **Every export format renders in the browser.** That is the no-server-dependencies rule deciding
+  the architecture, not a convenience — a real `.xlsx` or `.pdf` writer is a NuGet package in the
+  deploy target. SheetJS was already loaded app-wide, and PDF is print-to-PDF.
+- **`RowProvider` is a delegate, not a list.** A page that exports its in-memory collection exports
+  however far somebody scrolled and calls it the export.
+
+### The two bugs worth carrying forward, because both are a class, not an instance
+
+**Undo was missing for four of the twelve operations, and reported a conflict against its own
+writes.** `BatchController.ReadCurrentAsync` had cases for the student, welfare-status,
+welfare-assignment and user operations and fell through to `_ => null` for the rest; a null there
+means "the record no longer exists", so `CancelTokens`, `CancelAppointments`, `CheckOutVisitors`
+and `SetWelfareReviewDate` each answered "N of N records have changed" about records nobody had
+touched. `RevertAsync` had the same four gaps behind it. **If a thirteenth operation is ever added, it
+needs a case in both switches, and the value read back must be written in exactly the shape the
+resolver recorded as `NewValue`** — `CheckOutVisitors` compares against the literal strings
+`"Checked out"` and `"On site since HH:mm"` because that is what `ResolveVisitorCheckOutAsync`
+wrote; a status enum there would conflict with every row.
+
+**An empty field read as a deleted record.** Found by running the fixed undo twice: it refused, but
+said a record "no longer exists" while that record sat there with an empty review date.
+`ReadCurrentAsync` returned null for both cases and the conflict check reads null as gone. A found
+row now returns an empty string, so only a genuinely missing record reads as missing. The decision
+was never wrong — an empty value never equals a non-empty `NewValue` — but an operator reading "no
+longer exists" about a record on their screen would reasonably distrust everything else undo says.
+
+### The judgement call most likely to be reversed by someone who does not know why
+
+**Four export buttons deliberately do not render the rows already on screen.** Counter performance,
+customer feedback, the visitor report and campaign impressions fetch from the API instead. Those
+exports are gated on `Permissions.ReportsExport` **and** the `ExportReports` plan feature, and
+`ReportsController.VerifyExportFeature` only exists server-side. Rendering the in-memory rows would
+have handed report exports to tenants whose plan excludes them — a monetisation bypass introduced
+by a refactor meant to be cosmetic.
+
+So `QDataExport` grew a **`SourceProvider`** for a source whose columns arrive with the data, and
+`ExportCsvSource.Parse` turns the server's CSV into those columns and rows. The server still
+decides whether there is a file at all, and **its CSV header stays the single definition of the
+column list**, which is why none of those four pages restates it. The cost, and it is a real one:
+every cell is text, so a column of numbers from there will not sum in Excel the way a typed
+`ExportColumn` does. If someone "fixes" that by exporting the local rows, they reopen the gate.
+
+### What is verified, and what is not
+
+Verified live against the dev tenant (branch `a805ba99-ef62-4685-a1ad-b11b2ea7747f`), API-level:
+the roster promotion end to end with its per-row log and a refused conflicting undo; bulk ticket
+cancellation run and undone, second undo refused naming both rows; a real visitor checked out and
+undone back to on site; the review-date batch on two records — one with an existing date, one
+without — undone to 20 Sep and null respectively. `SetUserRole` refuses to hand out the platform
+administrator role in bulk. `ExportCsvSource` has fifteen checks against quoted commas, doubled
+quotes, an embedded newline, a short row, a BOM, a header-only file, a missing trailing newline, a
+blank line between records and an unnamed header column, run against the shipped source lifted
+verbatim.
+
+**Not verified: any of it on screen.** The Web app restart during testing cleared the signed-in
+session and the model does not type passwords into login forms. Everything above is API-level and
+compile-level. **A live browser pass over the six batch bars and ten export menus is the first
+thing the next session should do**, ideally before deploying.
+
+### Left behind on purpose
+
+- **Two dummy welfare records remain in the dev tenant**, on Akello Grace and Bwire Peter, labelled
+  `Dummy record A/B … Safe to delete`. They were created to exercise the review-date undo and
+  cannot be removed through the API: the welfare ledger has no DELETE endpoint, which is correct —
+  it is append-only by design. Removing them needs SQL against the dev database, which is the
+  owner's call. The user was told and has not asked for it.
+- **`UsersSetup.razor` defines its own local `UserInfo` class** shadowing the shared
+  `QMgr.Shared/Application/DTOs/UserInfo`. Found while adding the export; **not** merged, because
+  the two are genuinely different shapes — the local one carries `Role`/`Branch`/`IsActive`, which
+  the shared one lacks, and it matches what that page's endpoint actually returns. Worth a look
+  against CLAUDE.md's standing DTO-duplication warning, but it is not the same bug: nothing is
+  being maintained in two places, the names simply collide.
+- **`CancelTokens` on the queue board is a selection *mode*, not a permanent column.** That board
+  moves under SignalR. If someone makes the checkboxes permanent, tickets will shift under the
+  operator's cursor and the wrong ones will be cancelled.
+
+---
+
+## 🧭 SESSION HANDOVER (written 2026-09-05) — the carried-forward backlog, worked through; two items were already done (superseded as "read first" by the 2026-09-05 late entry above; still accurate for the backlog it covers)
 
 Read the 2026-09-04 late handover below for the state of the product; this entry only covers the
 follow-up list it left. **Still nothing deployed** — the 2026-09-04 package and its irreversible
