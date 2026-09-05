@@ -157,21 +157,20 @@
                             <span class="roster-empty-guardians">None yet</span>
                         }
                     </span>
-                    @* Three actions on the row, the rest behind a menu that names them.
+                    @* Two actions on the row, the rest behind a menu that names them.
                        There were eight identical ghost icons here and no way to tell them apart
                        without hovering each one in turn — and two of them were the same glyph in
                        outline and filled form (person-vcard for "open picture", person-vcard-fill
-                       for "print card"). What is inline is what a matron does every day; what is
-                       rare or consequential — a subject-access export, a consent withdrawal — is
-                       one deliberate click further away, where it also gets a written label. *@
+                       for "print card"). What stays inline is what a matron does every day, and
+                       only that: adding a guardian happens once per family, an export or a consent
+                       withdrawal almost never. Everything else is one deliberate click away, where
+                       it also gets a written label instead of a tooltip nobody hovers. *@
                     <span class="roster-actions">
                         @if (canLogWelfare)
                         {
                             <QButton Icon="journal-plus" Text="Log" Size="sm" Variant="primary" Class="roster-action"
                                      OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
                         }
-                        <QButton Icon="person-plus" Text="Guardian" Size="sm" Variant="ghost" Class="roster-action"
-                                 OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
                         <QButton Icon="pencil" Text="Edit" Size="sm" Variant="ghost" Class="roster-action"
                                  OnClick="@(() => OpenEditStudentModal(s))" Title="Edit student" />
 
@@ -192,6 +191,13 @@
                                         </button>
                                     </li>
                                 }
+                                @* Next to the card it prints: both are about the guardians rather
+                                   than the child, and a guardian is added once, not every day. *@
+                                <li>
+                                    <button type="button" class="dropdown-item" @onclick="@(() => OpenAddGuardianModal(s))">
+                                        <QIcon Name="person-plus" /> Add guardian
+                                    </button>
+                                </li>
                                 <li>
                                     <button type="button" class="dropdown-item" @onclick="@(() => PrintStudentIdCard(s))">
                                         <QIcon Name="printer-fill" /> Print visitation card
