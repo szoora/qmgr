@@ -848,6 +848,54 @@ public class WelfareController : ControllerBase
     }
 
     /// <summary>
+    /// Who this timeline is about, plus the branch's intervention suggestions — everything the
+    /// welfare timeline needs that it used to take from the roster.
+    /// </summary>
+    /// <remarks>
+    /// See <see cref="WelfareTimelineContextDto"/> for why this is gated at <c>welfare.view</c>
+    /// and for what it refuses to carry. In short: the timeline endpoint next door already hands
+    /// a plain <c>welfare.view</c> caller the student's name on every record, so requiring
+    /// <c>students.view</c> to put that same name in the page header withheld nothing and broke
+    /// the page. Enumerating the branch stays a roster capability.
+    /// </remarks>
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/welfare-context")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(WelfareTimelineContextDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTimelineContext(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        // Inactive students are included on purpose: a child who has left still has a ledger, and
+        // a safeguarding record does not stop being readable because the roster row was retired.
+        var student = await _context.Students
+            .AsNoTracking()
+            .Where(s => s.Id == studentId && s.BranchId == branchId)
+            .Select(s => new { s.Id, s.FullName, s.StudentCode, s.ClassName, s.IsActive })
+            .FirstOrDefaultAsync();
+
+        if (student == null) return NotFound();
+
+        var settingsJson = await _context.Branches
+            .Where(b => b.Id == branchId)
+            .Select(b => b.Settings)
+            .FirstOrDefaultAsync();
+
+        return Ok(new WelfareTimelineContextDto
+        {
+            StudentId = student.Id,
+            FullName = student.FullName,
+            StudentCode = student.StudentCode,
+            ClassName = student.ClassName,
+            IsActive = student.IsActive,
+            // Read through StudentsController's own parser rather than a second copy of it — the
+            // vocabulary lives in one place in Branch.Settings and is parsed in one place too.
+            ActionsTaken = StudentsController.ReadVocabularies(settingsJson).ActionsTaken
+        });
+    }
+
+    /// <summary>
     /// Welfare-scoped history for the imports the endpoint above starts.
     ///
     /// These three reads exist because the welfare page was calling StudentsController's copies,

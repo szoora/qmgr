@@ -21,17 +21,27 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>@(student?.FullName ?? "Student") — Welfare Timeline</h1>
+            <h1>@SubjectName — Welfare Timeline</h1>
             <p class="subtitle">
-                @if (student != null)
+                @if (context != null)
                 {
-                    @($"{student.StudentCode ?? "No code"} · {student.ClassName ?? "No class"}")
+                    @($"{context.StudentCode ?? "No code"} · {context.ClassName ?? "No class"}")
                 }
                 else
                 {
                     @:Achievements, behavior and welfare records, oldest to newest, in one place
                 }
             </p>
+            @* The ledger reads fine on welfare.view alone. Two things on this page are roster
+               capabilities and are simply absent without students.view — better named once here
+               than left as buttons that mysteriously never appear. *@
+            @if (!isLoading && !canViewRoster)
+            {
+                <p class="roster-notice">
+                    <QIcon Name="info-circle" />
+                    <span>Guardian details and the branch roster aren't available to this account, so notifying a guardian, logging one incident against several students, and the subject-access export are all unavailable here. The ledger itself is complete.</span>
+                </p>
+            }
             @if (!isLoading && FinalizedRecords.Any(r => r.Points.HasValue && r.Points.Value != 0))
             {
                 <div class="points-summary">
@@ -46,7 +56,7 @@
             {
                 <QButton Text="Log Record" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
             }
-            @if (canExport)
+            @if (canViewRoster)
             {
                 <QButton Text="Export data (SAR)" Icon="file-earmark-arrow-down" Variant="secondary" OnClick="@ExportStudentData" Loading="@isExporting"
                          Title="Download everything held about this student as one JSON file — for a subject-access request" />
@@ -67,7 +77,7 @@
         <div class="empty-state">
             <QIcon Name="journal-richtext" Size="xl" />
             <h3>No Records Yet</h3>
-            <p>Nothing has been logged for @(student?.FullName ?? "this student") yet.</p>
+            <p>Nothing has been logged for @(context?.FullName ?? "this student") yet.</p>
             @if (canCreate)
             {
                 <QButton Text="Log First Record" Icon="plus-lg" Variant="primary" OnClick="@ShowCreateDialog" />
@@ -318,7 +328,15 @@
                 </div>
             </div>
         }
-        @if (otherStudents.Any())
+        @* Logging one incident against several children means listing the branch's students, which
+           is a roster capability, not a welfare one — the same reasoning the API applies when it
+           gates branch-wide welfare search above plain welfare.view. Without roster access the
+           picker is absent, and says so rather than just not being there. *@
+        @if (!canViewRoster)
+        {
+            <p class="form-hint">Logging this against more than one student needs roster access, which this account doesn't have. The record will be logged for @SubjectName only.</p>
+        }
+        else if (otherStudents.Any())
         {
             <div class="form-group">
                 <label>Also applies to</label>
@@ -464,7 +482,7 @@
 @* Suggestions for the action field. Rendered here rather than inside the dialog so it survives
    the dialog's open/close, matching how the roster form does it. *@
 <datalist id="vocab-actions-taken">
-    @foreach (var v in vocabularies.ActionsTaken)
+    @foreach (var v in (context?.ActionsTaken ?? new()))
     {
         <option value="@v"></option>
     }
@@ -594,6 +612,10 @@
     .form-group { margin-bottom: 16px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
+    /* Informational, not a warning — nothing is wrong, this account simply holds welfare access
+       without roster access. Muted so it reads as a note rather than an error. */
+    .roster-notice { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 0; font-size: 13px; color: var(--qm-text-muted); max-width: 70ch; }
+
     .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: var(--qm-accent-orange, #d97706); margin-bottom: 16px; }
 
     .timeline-card--draft { border-style: dashed; opacity: 0.85; }
@@ -634,12 +656,19 @@
     private Guid branchId;
     private StudentDto? student;
     private bool isLoading = true;
-    private bool canCreate, canEdit, canNotify, canExport, isExporting;
+    private bool canCreate, canEdit, canNotify, canViewRoster, isExporting;
     private List<WelfareRecordDto> records = new();
     private List<WelfareCategoryDto> categories = new();
     private List<StudentDto> otherStudents = new();
     private List<StaffOption> staffOptions = new();
-    private BranchVocabulariesDto vocabularies = new();
+
+    /// <summary>Welfare-tier facts about the subject. Present on welfare.view alone; `student`
+    /// above is the roster-tier record and is null without students.view.</summary>
+    private WelfareTimelineContextDto? context;
+
+    /// <summary>Name to show in the header. The welfare-tier context first, because it is the one
+    /// that survives without roster access.</summary>
+    private string SubjectName => context?.FullName ?? student?.FullName ?? "Student";
 
     private IEnumerable<WelfareCategoryDto> FilteredCategories => categories.Where(c => c.CaseType == createModel.CaseType);
 
@@ -745,9 +774,12 @@
             canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
             canEdit = await PermissionService.HasPermissionAsync(Permissions.WelfareEdit);
             canNotify = await PermissionService.HasPermissionAsync(Permissions.WelfareNotify);
-            // The SAR export endpoint requires students.view AND welfare.view; welfare.view is
-            // already established by the gate above, so only the other half is checked here.
-            canExport = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
+            // Roster access, which this page can now do without. It gates the three things that
+            // genuinely need the roster: the guardian list (to notify one), the branch's other
+            // students (to log one incident against several), and the SAR export — whose endpoint
+            // requires students.view AND welfare.view, welfare.view already being established by
+            // the gate above.
+            canViewRoster = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
 
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
@@ -762,14 +794,25 @@
         isLoading = true;
         try
         {
-            // The branch's own list of interventions, offered as suggestions on the action field.
-            // It degrades to an empty datalist — i.e. a plain free-text box — if the call fails,
-            // which is the same shape the roster form uses.
-            vocabularies = await StudentApi.GetVocabulariesAsync(branchId);
+            // Who the page is about, and the intervention suggestions — from the welfare-scoped
+            // endpoint, so this much works on welfare.view alone. It used to come from the roster,
+            // which meant a caller without students.view got a timeline with no name on it while
+            // the records below it carried that same name on every row.
+            var contextResponse = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-context");
+            if (contextResponse.IsSuccessStatusCode)
+                context = await contextResponse.Content.ReadFromJsonAsync<WelfareTimelineContextDto>(JsonOptions);
 
-            var allStudents = await StudentApi.GetStudentsAsync(branchId, includeInactive: true);
-            student = allStudents.FirstOrDefault(s => s.Id == StudentId);
-            otherStudents = allStudents.Where(s => s.Id != StudentId && s.IsActive).ToList();
+            // The roster tier: guardians (to notify one) and the branch's other students (to log
+            // one incident against several). Both are students.view, both are genuinely roster
+            // capabilities, and neither is required to read a timeline — so a caller without it
+            // loses those two actions and keeps the page. canViewRoster is what the UI checks
+            // before explaining the absence, rather than silently hiding a feature.
+            if (canViewRoster)
+            {
+                var allStudents = await StudentApi.GetStudentsAsync(branchId, includeInactive: true);
+                student = allStudents.FirstOrDefault(s => s.Id == StudentId);
+                otherStudents = allStudents.Where(s => s.Id != StudentId && s.IsActive).ToList();
+            }
 
             var categoriesResponse = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
             if (categoriesResponse.IsSuccessStatusCode)

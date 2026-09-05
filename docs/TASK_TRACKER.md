@@ -119,15 +119,75 @@ relationships and four actions. Harmless, and useful if the import outcomes need
 
 ### Worth knowing next time
 
-- **`StudentWelfareTimeline` still needs `students.view` to be useful at all** — it loads the
-  student list to name the child, so a welfare-only user sees a blank page rather than a timeline.
-  Fixing the import history did not fix that; it is a separate, larger question about whether the
-  welfare module should be usable without roster access.
+- ~~**`StudentWelfareTimeline` still needs `students.view` to be useful at all**~~ — **closed the
+  same day; see the addendum below.** It loaded the student list to name the child, so a
+  welfare-only user saw a page headed "Student". The timeline now reads its subject from a
+  welfare-scoped endpoint, and the three features that genuinely need the roster degrade visibly
+  instead of silently.
 - **A welfare record and a welfare category cannot be deleted through the API.** Deliberate, but it
   means test data in the ledger is permanent short of SQL.
 - Everything else the 2026-09-04 late handover flagged still stands: `PUT /students/{id}` is a full
   replace, `Branch.Settings` is read-modify-write, attendance is out of scope, and district lists
   change by statute.
+
+---
+
+### Addendum, same day — the welfare timeline no longer needs `students.view`
+
+The item the entry above left open. The page took the child's name, code and class from the roster,
+so a caller holding `welfare.view` and not `students.view` got a timeline headed "Student" with an
+empty intervention list.
+
+**The gate was not protecting anything.** `GET branches/{b}/students/{s}/welfare-records` is gated
+on `welfare.view` alone and returns `StudentName` on every record, plus `AdditionalStudentNames`.
+The name was already disclosed to exactly that caller and then not displayed.
+
+**Where the line actually belongs was already written down in this codebase.**
+`WelfareController.SearchRecords` gates branch-wide search at `welfare.reports.view` rather than
+plain `welfare.view`, and says why: seeing every student's record in one searchable list "is a
+materially bigger exposure than navigating to one student at a time." Naming *one* student on
+their own timeline sits inside `welfare.view`; **enumerating the branch does not**. That split is
+what got built, rather than a fresh judgement:
+
+- New `GET branches/{b}/students/{s}/welfare-context`, gated `welfare.view`, returning
+  `WelfareTimelineContextDto` — name, code, class, active flag, and the branch's `ActionsTaken`
+  suggestions. It answers about one named student and offers no way to list any others. It
+  deliberately carries nothing from the roster tier: no guardians, no home or family context, no
+  health summary. Inactive students are included on purpose — a child who has left still has a
+  ledger. The vocabulary is read through `StudentsController.ReadVocabularies`, not a second parser.
+- The page keeps `students.view` for the three things that genuinely need the roster: the guardian
+  list (to notify one), the branch's other students (to log one incident against several), and the
+  SAR export, whose endpoint requires both permissions. All three now degrade **visibly**: a muted
+  notice under the page title names what is unavailable and why, and the create dialog says the
+  record will be logged for this student only. Previously they were buttons that silently never
+  appeared.
+
+**Reachability, for the record.** Both seeded roles that hold `welfare.view` (Admin and Staff) also
+hold `students.view`, so this was never reachable through a system role. It is reachable through a
+custom role — which is not hypothetical: `RbacSeeder`'s own comment anticipates an Admin creating
+exactly such a role ("e.g. a 'Counselor' role") for confidential-tier access.
+
+**Verified live, with a real account of that shape.** Built the custom role the seeder describes —
+`welfare.view` + `welfare.create` + `dashboard.view`, no `students.view` — assigned it to a user in
+the Welfare Only School e2e tenant, and signed in as them:
+
+| Call | Before | Now |
+| --- | --- | --- |
+| `students` (roster list) | 403 | 403 — unchanged, correctly |
+| `students/vocabularies` | 403 | 403 — unchanged, correctly |
+| `students/{id}/welfare-context` | — | **200**, with name, code, class and four action suggestions |
+| `students/{id}/welfare-records` | 200 | 200 |
+| `welfare-records` (branch-wide search) | 403 | **403 — enumeration did not open** |
+| `students/{id}/data-export` (SAR) | 403 | 403 — still needs both permissions |
+| `welfare-context`, unknown student | — | 404 |
+| `welfare-context`, another branch | — | 404, not a confirm-existence |
+
+The probe account was deleted afterwards (login now 401) and its role deactivated — the role row
+survives because a soft-deleted user still references it, which is why `DELETE /roles/{id}` refuses
+with "Role in use". Recreating the fixture is three calls: `POST /roles` with the three permission
+ids, `POST /users` with that role, then sign in.
+
+Still not seen on screen — the Chrome extension stayed disconnected.
 
 ---
 

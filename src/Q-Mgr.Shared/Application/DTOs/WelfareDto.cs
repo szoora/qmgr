@@ -260,6 +260,36 @@ public record StartWelfareImportRequest
 }
 
 /// <summary>
+/// The little a welfare timeline needs before it can render: who the page is about, and the
+/// branch's own list of interventions to suggest on the action field.
+///
+/// It exists because the page used to get both from the roster, which is gated on
+/// <c>students.view</c> — so a caller holding only <c>welfare.view</c> got a page with no name on
+/// it. That gate was not protecting anything: <see cref="WelfareRecordDto.StudentName"/> is
+/// already returned to a plain <c>welfare.view</c> caller on every record in the timeline, so the
+/// name was disclosed and then not displayed.
+///
+/// What it deliberately does NOT carry is anything the roster tier owns — no guardians, no home
+/// or family context, no health summary, and above all no way to enumerate the branch. Listing
+/// every student is the exposure WelfareController.SearchRecords already reasons about when it
+/// gates branch-wide search at <c>welfare.reports.view</c> rather than plain <c>welfare.view</c>;
+/// the same reasoning applies here, so this endpoint answers about one named student and nothing
+/// else. Class and code are included because a safeguarding record has to be attached to the
+/// right child, and a name alone does not distinguish two of them.
+/// </summary>
+public record WelfareTimelineContextDto
+{
+    public Guid StudentId { get; init; }
+    public string FullName { get; init; } = string.Empty;
+    public string? StudentCode { get; init; }
+    public string? ClassName { get; init; }
+    public bool IsActive { get; init; }
+
+    /// <summary>Suggestions for the action/intervention field — the branch's ActionsTaken list.</summary>
+    public List<string> ActionsTaken { get; init; } = new();
+}
+
+/// <summary>
 /// Cohort and disproportionality reporting. Counts alone would only say which group misbehaves
 /// most; the share of records that reached a punitive response is the number that says something
 /// about the school rather than about the children.

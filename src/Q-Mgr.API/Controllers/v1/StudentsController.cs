@@ -1435,9 +1435,9 @@ public class StudentsController : ControllerBase
     // holding the old string, and a delete has to be refused while anyone still holds the value.
     // =========================================================================================
 
-    private const string VocabularySettingsKey = "Vocabularies";
+    internal const string VocabularySettingsKey = "Vocabularies";
 
-    private static BranchVocabulariesDto ReadVocabularies(string? branchSettingsJson)
+    internal static BranchVocabulariesDto ReadVocabularies(string? branchSettingsJson)
     {
         if (string.IsNullOrEmpty(branchSettingsJson)) return new BranchVocabulariesDto();
         try
