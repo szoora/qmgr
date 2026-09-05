@@ -1,5 +1,7 @@
 @page "/reports/counters"
 @using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
 @inject IReportsApiService ReportsApi
 @inject IQueueApiService QueueApi
 @inject IPermissionService PermissionService
@@ -32,7 +34,13 @@
             </div>
             <div class="filter-item">
                 <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
-                <QButton Text="Export" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
+                @* The server still decides whether this export may happen at all — see
+                   ProvideExportSourceAsync. Only the formatting moved into the browser. *@
+                <QDataExport TItem="string[]"
+                             Title="Counter performance"
+                             FileStem="counter-performance"
+                             Subtitle="@RangeCaption"
+                             SourceProvider="@ProvideExportSourceAsync" />
             </div>
         </div>
         <p class="range-caption">Showing @RangeCaption</p>
@@ -461,7 +469,6 @@
     private string selectedPeriod = "today";
     private Guid? selectedCounter;
     private bool isLoading = true;
-    private bool isExporting;
     private bool isForbidden;
     private string? errorMessage;
 
@@ -571,38 +578,27 @@
     /// idle ones stay visible (mirroring the API's own reasoning), which is why the on-screen
     /// "Counter" filter is deliberately not applied to the file.
     /// </summary>
-    private async Task ExportCsv()
+    /// <summary>
+    /// Fetches the range from the gated report endpoint and lets the shared exporter render it.
+    /// The rows on screen are the same rows, but exporting those directly would skip the
+    /// ReportsExport permission and the plan's export feature, both of which only the API checks.
+    /// </summary>
+    private async Task<(IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows)> ProvideExportSourceAsync()
     {
         var branchId = BranchState.CurrentBranchId;
         if (branchId == Guid.Empty)
-        {
-            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.", 4000);
-            return;
-        }
+            throw new InvalidOperationException("Select a branch before exporting.");
 
         var (from, to) = ResolvePeriod(selectedPeriod);
-        isExporting = true;
-        try
-        {
-            var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Counters, branchId, from, to);
-            if (!result.Success)
-            {
-                if (result.IsForbidden)
-                    NotificationService.Notify(ToastSeverity.Warning, "Export not available",
-                        result.ErrorMessage ?? "You don't have permission to export reports, or your plan doesn't include exports.", 6000);
-                else
-                    NotificationService.Notify(ToastSeverity.Error, "Export failed",
-                        result.ErrorMessage ?? "Couldn't export counter performance. Please try again.", 5000);
-                return;
-            }
+        var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Counters, branchId, from, to);
 
-            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(result.Csv!);
-            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"counter-performance-{from:yyyyMMdd}-{to:yyyyMMdd}.csv");
-        }
-        finally
-        {
-            isExporting = false;
-        }
+        if (!result.Success)
+            throw new InvalidOperationException(result.ErrorMessage
+                ?? (result.IsForbidden
+                    ? "You don't have permission to export reports, or your plan doesn't include exports."
+                    : "Couldn't export counter performance. Please try again."));
+
+        return ExportCsvSource.Parse(result.Csv!);
     }
 
     private static (DateOnly From, DateOnly To) ResolvePeriod(string period)

@@ -3,6 +3,7 @@
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
 @inject IAppointmentApiService AppointmentApi
 @inject IQueueApiService QueueApi
 @inject IBranchStateService BranchState
@@ -19,6 +20,15 @@
             <p class="subtitle">Scheduled bookings, and the arrivals waiting to be checked in</p>
         </div>
         <div class="header-actions">
+            @* The day (or week) on screen is what downloads — the filters are the query. *@
+            <QDataExport TItem="AppointmentDto"
+                         Title="Appointments"
+                         FileStem="appointments"
+                         Subtitle="@ExportSubtitle"
+                         Columns="@AppointmentExportColumns"
+                         RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(appointments.Count == 0)"
+                         DisabledReason="Nothing is booked in this range." />
             <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadAppointments" />
             @if (canManage)
             {
@@ -68,14 +78,45 @@
     }
     else
     {
+        @* Bookings are cancelled in groups far more often than one at a time — a closed day, a
+           clinic that will not run. Same resolver, preview and undo as every other list. *@
+        @if (selectedIds.Count > 0 && canManage)
+        {
+            <div class="batch-bar">
+                <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedIds.Count.ToString("N0")</strong> selected</span>
+                <QButton Text="Cancel bookings" Icon="x-circle" Size="sm" Variant="danger" OnClick="@RunCancelBatch"
+                         Title="Cancel every selected booking, with one reason recorded against all of them" />
+                <button type="button" class="batch-clear" @onclick="@(() => selectedIds.Clear())">Clear selection</button>
+            </div>
+        }
+
         <div class="appointment-list">
             @foreach (var group in appointments.GroupBy(a => a.ScheduledAt.ToLocalTime().Date).OrderBy(g => g.Key))
             {
                 <div class="appointment-day">
-                    <h3 class="day-heading">@group.Key.ToString("dddd, d MMMM")</h3>
+                    <div class="day-heading-row">
+                        <h3 class="day-heading">@group.Key.ToString("dddd, d MMMM")</h3>
+                        @if (canManage && group.Any(IsCancellable))
+                        {
+                            <button type="button" class="day-select" @onclick="@(() => ToggleDay(group))">
+                                @(DaySelected(group) ? "Clear this day" : "Select this day")
+                            </button>
+                        }
+                    </div>
                     @foreach (var appointment in group.OrderBy(a => a.ScheduledAt))
                     {
                         <div class="appointment-row status-@appointment.Status.ToString().ToLowerInvariant()">
+                            @if (canManage)
+                            {
+                                <span class="appointment-select">
+                                    @if (IsCancellable(appointment))
+                                    {
+                                        <input type="checkbox" checked="@selectedIds.Contains(appointment.Id)"
+                                               @onchange="@(e => ToggleSelection(appointment.Id, (bool)(e.Value ?? false)))"
+                                               aria-label="@($"Select {appointment.CustomerName}'s booking")" />
+                                    }
+                                </span>
+                            }
                             <div class="appointment-time">
                                 <span class="time">@appointment.ScheduledAt.ToLocalTime().ToString("HH:mm")</span>
                                 <span class="duration">@appointment.DurationMinutes min</span>
@@ -208,6 +249,15 @@
 </QModal>
 
 <style>
+    .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+    .day-heading-row { display: flex; align-items: baseline; gap: 12px; }
+    .day-select { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 12px; color: var(--qm-primary); text-decoration: underline; }
+    .appointment-select { display: flex; align-items: center; width: 20px; }
+    .appointment-select input { width: 16px; height: 16px; accent-color: var(--qm-primary); cursor: pointer; }
+
     .appointments-toolbar { margin-bottom: 16px; }
 
     .toolbar-row {
@@ -311,10 +361,86 @@
     }
 </style>
 
+<QBatchDialog @ref="batchDialog" BranchId="@BranchId" OnQueued="@OnBatchQueued" />
+
 @code {
     private record StatusOption(string Label, AppointmentStatus? Value);
     private record ServiceOption(string Label, Guid? Value, int DurationMinutes);
     private record SlotOption(string Label, DateTime? Value);
+
+    // ---- Selection, batch cancel and export ------------------------------------------------
+    //
+    // A booking that is already cancelled, completed or marked no-show has nothing left to
+    // cancel, so it never offers a checkbox — the count on the bar is always a count that will
+    // actually change.
+
+    private readonly HashSet<Guid> selectedIds = new();
+    private QBatchDialog? batchDialog;
+
+    private static bool IsCancellable(AppointmentDto a) =>
+        a.Status is AppointmentStatus.Booked or AppointmentStatus.Confirmed or AppointmentStatus.CheckedIn;
+
+    private void ToggleSelection(Guid id, bool selected)
+    {
+        if (selected) selectedIds.Add(id); else selectedIds.Remove(id);
+    }
+
+    private bool DaySelected(IEnumerable<AppointmentDto> day) =>
+        day.Where(IsCancellable).All(a => selectedIds.Contains(a.Id));
+
+    private void ToggleDay(IEnumerable<AppointmentDto> day)
+    {
+        var cancellable = day.Where(IsCancellable).Select(a => a.Id).ToList();
+        if (cancellable.All(selectedIds.Contains))
+        {
+            foreach (var id in cancellable) selectedIds.Remove(id);
+        }
+        else
+        {
+            foreach (var id in cancellable) selectedIds.Add(id);
+        }
+    }
+
+    private async Task RunCancelBatch()
+    {
+        if (batchDialog == null || selectedIds.Count == 0) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.CancelAppointments,
+            Ids = selectedIds.ToList()
+        });
+    }
+
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        selectedIds.Clear();
+        await LoadAppointments();
+    }
+
+    private string ExportSubtitle => showWholeWeek
+        ? $"Week of {WeekStart:d MMM yyyy} · {appointments.Count:N0} booking(s)"
+        : $"{selectedDate:dddd, d MMMM yyyy} · {appointments.Count:N0} booking(s)";
+
+    private DateTime WeekStart => selectedDate.AddDays(-(int)selectedDate.DayOfWeek);
+
+    private static readonly List<ExportColumn<AppointmentDto>> AppointmentExportColumns = new()
+    {
+        new("Reference", a => a.ReferenceCode, ExportType.Text, 14),
+        new("Scheduled", a => a.ScheduledAt.ToLocalTime(), ExportType.Date, 20),
+        new("Minutes", a => a.DurationMinutes, ExportType.Number, 9),
+        new("Customer", a => a.CustomerName, ExportType.Text, 26),
+        new("Phone", a => a.CustomerPhone, ExportType.Text, 16),
+        new("Email", a => a.CustomerEmail, ExportType.Text, 28),
+        new("Service", a => a.ServiceTypeName, ExportType.Text, 22),
+        new("Status", a => DescribeStatus(a.Status), ExportType.Text, 14),
+        new("Ticket", a => a.TokenDisplayNumber, ExportType.Text, 12),
+        new("Checked in", a => a.CheckedInAt?.ToLocalTime(), ExportType.Date, 18),
+        new("Notes", a => a.Notes, ExportType.Text, 40)
+    };
+
+    private Task<ExportRows<AppointmentDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<AppointmentDto>(
+            appointments.OrderBy(a => a.ScheduledAt).ToList(), false));
 
     private List<AppointmentDto> appointments = new();
     private List<ServiceOption> serviceOptions = new();

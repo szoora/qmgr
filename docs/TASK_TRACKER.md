@@ -896,6 +896,92 @@ Being explicit, because the request was "all appropriate sites":
   session, and a password is never typed by the model. Everything above is API-level and
   compile-level verification.
 
+
+### Addendum 12, same day — the remaining pages, and a real gap in undo that only showed up once they existed
+
+Picks up exactly where Addendum 11 stopped: the batch bar existed on one page and export on three.
+
+#### Batch selection now exists everywhere the server already supported it
+
+| Page | Operations | Selection affordance |
+|---|---|---|
+| Welfare reports | Assign to…, Set review date, Set status | Per-row checkbox + select-all in the header |
+| Visitor management | Check out | Per-row checkbox + "Select them all" on the on-site hint |
+| Users & roles | Enable, Disable, Change role | Radzen's own multi-select on the existing grid |
+| Appointments | Cancel bookings | Per-row checkbox + "Select this day" on each day heading |
+| Queue board | Cancel tickets | An explicit "Clear tickets" mode, then per-row + "Select all waiting" |
+
+Two of those deserve their reasoning recorded, because the obvious implementation is wrong in both:
+
+- **The queue board's selection is a mode, not a permanent column.** That board refreshes itself
+  over SignalR — tickets appear and vanish while somebody is looking at it. Checkboxes standing on
+  a moving list are an invitation to cancel the wrong ticket, so selection is off until it is
+  switched on, the list drops its `Take(20)` cap while it is on, and a ticket removed by the live
+  feed is removed from the selection in the same handler. The count on the bar is always tickets
+  that are still waiting.
+- **Appointments only offer a checkbox where cancelling means something.** A booking already
+  cancelled, completed or marked no-show has nothing left to cancel and gets no checkbox at all, so
+  "select this day" never quietly includes rows the resolver will skip.
+
+#### Undo was missing for four of the eleven operations, and said something untrue about it
+
+Found by running the new queue batch end to end rather than by reading the code: cancelling two
+tickets worked, and undoing it answered **"2 of 2 records have changed since this batch ran"** and
+reverted nothing. Both tickets were sitting there, cancelled, unchanged by anybody.
+
+`BatchController.ReadCurrentAsync` — the conflict check that runs before undo touches a single row
+— had cases for the student, welfare-status, welfare-assignment and user operations and fell
+through to `_ => null` for the rest. A null there means "the record no longer exists," so
+`CancelTokens`, `CancelAppointments`, `CheckOutVisitors` and `SetWelfareReviewDate` each reported a
+conflict against their own writes. `RevertAsync` had the same four gaps behind it, so even a
+passing conflict check would have reverted nothing.
+
+The fix is four cases in each switch, and the thing to keep in mind if a twelfth operation is ever
+added: **the value read back has to be written in exactly the shape the resolver recorded as
+`NewValue`**, not merely an equivalent one. `CheckOutVisitors` compares against the literal strings
+`"Checked out"` and `"On site since HH:mm"` because that is what `ResolveVisitorCheckOutAsync`
+wrote; a status enum there would conflict with every row. `SetWelfareReviewDate` uses
+`yyyy-MM-dd` for the same reason. Reverting an appointment also clears `CancellationReason` — a
+live booking should not carry "Cancelled in bulk" as a leftover.
+
+Verified live against the dev tenant: cancelled two real tickets, undid it (2 restored, both back
+to `Waiting`), and the second undo was correctly refused naming both rows. Same round trip for a
+real visitor check-out, undone back to on-site. Test rows were cleaned up afterwards.
+
+#### Export: the last six pages, and why three of them do not render from the rows on screen
+
+Feedback management moved onto the shared component keeping its own paged fetch — the whole
+filtered set, page by page, with the row cap reported as a truncation rather than silently
+exporting the first page. Users and appointments got typed column lists over the data they hold.
+
+The other three — **counter performance, customer feedback, the visitor report** — plus campaign
+impressions do *not* export the rows they already have in memory, and that is deliberate. Those
+exports are gated on `Permissions.ReportsExport` **and** the `ExportReports` plan feature, and
+`VerifyExportFeature` only exists in the API. Rendering the rows client-side would have handed
+report exports to tenants whose plan does not include them — a monetisation bypass introduced by a
+refactor meant to be cosmetic.
+
+So the fetch stays on the gated endpoint and only the formatting moved: `QDataExport` gained a
+`SourceProvider` for a source whose columns arrive with the data, and `ExportCsvSource.Parse` turns
+the server's own CSV into those columns and rows. The server still decides whether there is a file
+at all, and **its CSV header stays the single definition of the column list**, which is why none of
+those four pages restates it. The cost is that every cell is text, so a column of numbers from
+there will not sum in Excel the way a typed `ExportColumn` does — the right side of that trade for
+a report that is read rather than modelled.
+
+The parser is RFC 4180 and was checked against the shapes that actually break naive splitting —
+quoted commas, doubled quotes, a newline inside a field, a short row (padded, not shifted), a BOM,
+a header-only file, a missing trailing newline, a blank line between records, and an unnamed header
+column. Fifteen checks, all passing, run against the shipped source lifted verbatim.
+
+#### Still not done
+
+- **`SetWelfareReviewDate`'s undo is fixed but not itself exercised live** — the dev tenant had no
+  welfare record in a state to run it against. Its two siblings (`CancelTokens`, `CheckOutVisitors`)
+  were both verified through the identical code path.
+- **Nothing has been seen on screen.** Still API-level and compile-level verification: the model
+  does not type a password into the login form, and the Web session was cleared by a restart.
+
 ---
 
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)

@@ -113,10 +113,38 @@
     }
     else
     {
+            @* Closing out the building at the end of the day. The bar appears only when visits are
+               selected, and the operation refuses anyone already checked out or never checked in
+               rather than stamping a checkout time on them. *@
+            @if (selectedVisitIds.Count > 0 && canCheckOut)
+            {
+                <div class="batch-bar">
+                    <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedVisitIds.Count.ToString("N0")</strong> selected</span>
+                    <QButton Text="Check out" Icon="box-arrow-right" Size="sm" Variant="primary" OnClick="@RunCheckOutBatch"
+                             Title="Close out every selected visit that is still open" />
+                    <button type="button" class="batch-clear" @onclick="@(() => selectedVisitIds.Clear())">Clear selection</button>
+                </div>
+            }
+
+            @if (visitors.Any(v => v.CheckedInAt.HasValue && !v.CheckedOutAt.HasValue))
+            {
+                <div class="onsite-hint">
+                    <QIcon Name="info-circle" />
+                    <span>@visitors.Count(v => v.CheckedInAt.HasValue && !v.CheckedOutAt.HasValue) still on site.</span>
+                    <button type="button" class="batch-clear" style="margin-left:0" @onclick="SelectAllOnSite">Select them all</button>
+                </div>
+            }
+
         <div class="visitor-list">
             @foreach (var visitor in visitors)
             {
                 <div class="visitor-card @(visitor.IsWatchlisted ? "watchlisted" : "") status-@visitor.Status.ToString().ToLower()">
+                    @if (canCheckOut)
+                    {
+                        <input type="checkbox" class="visitor-select" checked="@selectedVisitIds.Contains(visitor.Id)"
+                               @onchange="@(e => ToggleVisitSelection(visitor.Id, (bool)(e.Value ?? false)))"
+                               aria-label="@($"Select {visitor.FullName}")" />
+                    }
                     <div class="visitor-main">
                         <div class="visitor-identity">
                             <span class="badge-code">@visitor.BadgeCode</span>
@@ -199,6 +227,8 @@
         </div>
     }
 </div>
+
+<QBatchDialog @ref="batchDialog" BranchId="@BranchState.CurrentBranchId" OnQueued="@OnBatchQueued" />
 
 <QModal @bind-Visible="showCheckInModal" Title="Check In Visitor" Size="md">
     <ChildContent>
@@ -457,6 +487,17 @@
     .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
 
     .visitor-list { display: flex; flex-direction: column; gap: 12px; }
+    .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+
+    /* The count of who is still in the building, with the one action somebody locking up wants. */
+    .onsite-hint { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-secondary); margin-bottom: 12px; }
+    .onsite-hint .q-icon { color: var(--qm-text-muted); }
+
+    .visitor-select { width: 16px; height: 16px; cursor: pointer; margin-right: 12px; float: left; margin-top: 4px; }
+
     .visitor-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 14px 18px; }
     .visitor-card.watchlisted { border-left-color: var(--qm-danger); }
     .visitor-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -548,6 +589,49 @@
 
     private bool CardNeedsOverride(StudentGuardianSearchResultDto? roster) =>
         roster != null && roster.CheckInsToday >= CardAbuseWarningThreshold && !roster.GuardianIsWatchlisted && !isManagerOrAbove;
+
+    // ---- Batch: end-of-day check-out ---------------------------------------------------------
+    //
+    // The evacuation report already answers "who is still in the building". Nothing closed them
+    // out, so a visit left open on Friday was still open on Monday. This is that gap.
+
+    private bool canCheckOut;
+    private readonly HashSet<Guid> selectedVisitIds = new();
+    private QBatchDialog? batchDialog;
+
+    private void ToggleVisitSelection(Guid id, bool select)
+    {
+        if (select) selectedVisitIds.Add(id);
+        else selectedVisitIds.Remove(id);
+    }
+
+    /// <summary>
+    /// Selects exactly the visits that are still open — which is what somebody locking up actually
+    /// wants, and saves them ticking forty boxes to find the four that matter.
+    /// </summary>
+    private void SelectAllOnSite()
+    {
+        foreach (var v in visitors.Where(v => v.CheckedInAt.HasValue && !v.CheckedOutAt.HasValue))
+            selectedVisitIds.Add(v.Id);
+    }
+
+    private async Task RunCheckOutBatch()
+    {
+        if (batchDialog == null) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.CheckOutVisitors,
+            Ids = selectedVisitIds.ToList()
+        });
+    }
+
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        selectedVisitIds.Clear();
+        NotificationService.Notify(ToastSeverity.Info, "Running", accepted.Summary, 6000);
+        await Task.Delay(1500);
+        await LoadData();
+    }
 
     // ---- Export -----------------------------------------------------------------------------
 
@@ -652,6 +736,8 @@
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+
+        canCheckOut = await PermissionService.HasPermissionAsync(Permissions.VisitorsCheckOut);
 
         await ModuleState.LoadAsync(ModuleApi);
         if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))

@@ -280,3 +280,118 @@ public class DataExportService : IDataExportService
         return string.Join('-', new string(chars).Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
 }
+
+/// <summary>
+/// Turns a CSV the <em>server</em> produced into the columns and rows the exporter renders.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Three report exports — counter performance, customer feedback and the visitor log — are gated
+/// on <c>Permissions.ReportsExport</c> <em>and</em> the <c>ExportReports</c> plan feature, and the
+/// plan half of that is only enforced in the API. Rendering those rows straight from what the
+/// page already has in memory would have handed exports to tenants whose plan does not include
+/// them, so the fetch stays on the gated endpoint and only the <em>formatting</em> moves to the
+/// browser: the server still decides whether there is a file at all, and its own CSV header stays
+/// the single definition of the column list, which is why none of those pages restates it.
+/// </para>
+/// <para>
+/// Everything arrives as text, so the workbook's cells are text too — a column of numbers from
+/// here will not sum in Excel the way one built from typed <see cref="ExportColumn{T}"/> values
+/// does. That is the price of not duplicating the server's column list, and it is the right side
+/// of the trade for a report that is read rather than modelled.
+/// </para>
+/// </remarks>
+public static class ExportCsvSource
+{
+    /// <summary>Parses RFC 4180 CSV: quoted fields, embedded commas, newlines and doubled quotes.</summary>
+    public static (IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows) Parse(string csv)
+    {
+        var records = ParseRecords(csv);
+        if (records.Count == 0)
+            return (Array.Empty<ExportColumn<string[]>>(), new ExportRows<string[]>(Array.Empty<string[]>(), false));
+
+        var header = records[0];
+        var columns = header
+            .Select((h, i) => new ExportColumn<string[]>(
+                string.IsNullOrWhiteSpace(h) ? $"Column {i + 1}" : h,
+                row => i < row.Length ? row[i] : null,
+                ExportType.Text,
+                EstimateWidth(h)))
+            .ToList();
+
+        // A short row is padded rather than dropped — a trailing empty field the writer omitted
+        // must not shift every later column left.
+        var rows = records.Skip(1)
+            .Where(r => r.Length > 0 && !(r.Length == 1 && string.IsNullOrEmpty(r[0])))
+            .Select(r => r.Length == header.Length ? r : Resize(r, header.Length))
+            .ToList();
+
+        return (columns, new ExportRows<string[]>(rows, false));
+    }
+
+    private static string[] Resize(string[] row, int length)
+    {
+        var padded = new string[length];
+        for (var i = 0; i < length; i++) padded[i] = i < row.Length ? row[i] : string.Empty;
+        return padded;
+    }
+
+    private static int EstimateWidth(string header) => Math.Clamp(header.Length + 4, 10, 40);
+
+    private static List<string[]> ParseRecords(string csv)
+    {
+        var records = new List<string[]>();
+        if (string.IsNullOrEmpty(csv)) return records;
+
+        // A BOM survives ReadAsStringAsync often enough to be worth stripping here rather than
+        // letting it become part of the first column's name.
+        if (csv[0] == '\uFEFF') csv = csv[1..];
+
+        var fields = new List<string>();
+        var field = new StringBuilder();
+        var inQuotes = false;
+
+        for (var i = 0; i < csv.Length; i++)
+        {
+            var c = csv[i];
+
+            if (inQuotes)
+            {
+                if (c != '"') { field.Append(c); continue; }
+                if (i + 1 < csv.Length && csv[i + 1] == '"') { field.Append('"'); i++; continue; }
+                inQuotes = false;
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"':
+                    inQuotes = true;
+                    break;
+                case ',':
+                    fields.Add(field.ToString());
+                    field.Clear();
+                    break;
+                case '\r':
+                    break;
+                case '\n':
+                    fields.Add(field.ToString());
+                    field.Clear();
+                    records.Add(fields.ToArray());
+                    fields.Clear();
+                    break;
+                default:
+                    field.Append(c);
+                    break;
+            }
+        }
+
+        if (field.Length > 0 || fields.Count > 0)
+        {
+            fields.Add(field.ToString());
+            records.Add(fields.ToArray());
+        }
+
+        return records;
+    }
+}

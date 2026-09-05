@@ -1,6 +1,8 @@
 @page "/reports/feedback"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
 @inject IReportsApiService ReportsApi
 @inject IQueueApiService QueueApi
 @inject IPermissionService PermissionService
@@ -73,7 +75,8 @@
             <div class="empty-state-icon"><QIcon Name="chat-dots-fill" /></div>
             <h3>No feedback in this range</h3>
             <p>No customer submitted feedback between @RangeCaption. Pick a wider date range, or check back once customers have rated a visit.</p>
-            <QButton Text="Export empty CSV" Icon="cloud-download-fill" Variant="secondary" Size="sm" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
+            <QDataExport TItem="string[]" Title="Customer feedback" FileStem="customer-feedback"
+                         Subtitle="@RangeCaption" SourceProvider="@ProvideExportSourceAsync" />
         </QCard>
     }
     else
@@ -212,7 +215,10 @@
         <QCard Class="feedback-list-card">
             <div class="list-header">
                 <h4>Recent Feedback</h4>
-                <QButton Text="Export All" Icon="cloud-download-fill" Variant="secondary" Size="sm" OnClick="@ExportCsv" Loading="@isExporting" Disabled="@isExporting" />
+                @* "All" is deliberate: the Rating / Service Type controls filter the list on
+                   screen, while the export is the whole range the report covers. *@
+                <QDataExport TItem="string[]" Title="Customer feedback" FileStem="customer-feedback"
+                             Text="Export all" Subtitle="@RangeCaption" SourceProvider="@ProvideExportSourceAsync" />
             </div>
 
             @if (!filteredComments.Any())
@@ -632,7 +638,6 @@
     private string? selectedRating;
     private string? selectedService;
     private bool isLoading = true;
-    private bool isExporting;
     private bool isForbidden;
     private string? errorMessage;
 
@@ -772,38 +777,27 @@
     /// figure above. The CSV additionally carries customer contact details, which is why it is
     /// gated on the stronger reports.export permission while this page's data is not.
     /// </summary>
-    private async Task ExportCsv()
+    /// <summary>
+    /// Goes through the gated report endpoint rather than rendering the comments already loaded —
+    /// ReportsExport and the plan's export feature are both API-side checks, and this is a bulk
+    /// export of customer names, contact details and free-text comments.
+    /// </summary>
+    private async Task<(IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows)> ProvideExportSourceAsync()
     {
         var branchId = BranchState.CurrentBranchId;
         if (branchId == Guid.Empty)
-        {
-            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.", 4000);
-            return;
-        }
+            throw new InvalidOperationException("Select a branch before exporting.");
 
         var (from, to) = ResolvePeriod(selectedPeriod);
-        isExporting = true;
-        try
-        {
-            var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Feedback, branchId, from, to);
-            if (!result.Success)
-            {
-                if (result.IsForbidden)
-                    NotificationService.Notify(ToastSeverity.Warning, "Export not available",
-                        result.ErrorMessage ?? "You don't have permission to export reports, or your plan doesn't include exports.", 6000);
-                else
-                    NotificationService.Notify(ToastSeverity.Error, "Export failed",
-                        result.ErrorMessage ?? "Couldn't export customer feedback. Please try again.", 5000);
-                return;
-            }
+        var result = await QueueApi.ExportReportCsvAsync(ReportExportKind.Feedback, branchId, from, to);
 
-            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(result.Csv!);
-            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"customer-feedback-{from:yyyyMMdd}-{to:yyyyMMdd}.csv");
-        }
-        finally
-        {
-            isExporting = false;
-        }
+        if (!result.Success)
+            throw new InvalidOperationException(result.ErrorMessage
+                ?? (result.IsForbidden
+                    ? "You don't have permission to export reports, or your plan doesn't include exports."
+                    : "Couldn't export customer feedback. Please try again."));
+
+        return ExportCsvSource.Parse(result.Csv!);
     }
 
     private static (DateOnly From, DateOnly To) ResolvePeriod(string period)

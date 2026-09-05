@@ -4,9 +4,12 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IPermissionService PermissionSvc
 @inject NavigationManager Navigation
+@inject IBranchStateService BranchState
 @using System.Text.Json
 @using QMgr.Web.Services
+@using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
 
 <PageTitle>Users & Roles - Q-Mgr</PageTitle>
 
@@ -16,10 +19,21 @@
             <h1>Users & Roles</h1>
             <p class="subtitle">Manage system users and their permissions</p>
         </div>
-        @if (canCreateUsers)
-        {
-            <QButton Text="Add User" Icon="person-plus-fill" Variant="primary" OnClick="@ShowAddDialog" />
-        }
+        <div class="header-actions">
+            @* Gated on the same read this page already needed to render at all. *@
+            <QDataExport TItem="UserInfo"
+                         Title="Users"
+                         FileStem="users"
+                         Subtitle="@ExportSubtitle"
+                         Columns="@UserExportColumns"
+                         RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(!users.Any())"
+                         DisabledReason="There are no users to export." />
+            @if (canCreateUsers)
+            {
+                <QButton Text="Add User" Icon="person-plus-fill" Variant="primary" OnClick="@ShowAddDialog" />
+            }
+        </div>
     </div>
 
     <div class="tabs-container">
@@ -41,8 +55,32 @@
         }
         else
         {
+            @* Staff arrive and leave in cohorts at term boundaries, which is the whole reason
+               this is a batch rather than a row action. Radzen's grid already does multi-select,
+               so the selection needs no new affordance. *@
+            @if (selectedUsers?.Any() == true && canEditUsers)
+            {
+                <div class="batch-bar">
+                    <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedUsers.Count.ToString("N0")</strong> selected</span>
+                    <QButton Text="Enable" Icon="person-check" Size="sm" Variant="secondary" OnClick="@(() => RunUserActive(true))" />
+                    <QButton Text="Disable" Icon="person-slash" Size="sm" Variant="secondary" OnClick="@(() => RunUserActive(false))"
+                             Title="They can no longer sign in. Their records and history stay." />
+                    <div class="dropdown">
+                        <QButton Text="Change role" Icon="shield" Size="sm" Variant="secondary" data-bs-toggle="dropdown" aria-expanded="false" />
+                        <ul class="dropdown-menu batch-menu">
+                            @foreach (var r in roles)
+                            {
+                                <li><button type="button" class="dropdown-item" @onclick="@(() => RunUserRole(r.Id))">@r.Name</button></li>
+                            }
+                        </ul>
+                    </div>
+                    <button type="button" class="batch-clear" @onclick="@(() => selectedUsers = null)">Clear selection</button>
+                </div>
+            }
+
             <div class="data-table-container">
-                <RadzenDataGrid Data="@users" TItem="UserInfo" AllowFiltering="true" AllowSorting="true" AllowPaging="true" PageSize="10">
+                <RadzenDataGrid Data="@users" TItem="UserInfo" AllowFiltering="true" AllowSorting="true" AllowPaging="true" PageSize="10"
+                                SelectionMode="Radzen.DataGridSelectionMode.Multiple" @bind-Value="@selectedUsers">
                     <Columns>
                         <RadzenDataGridColumn TItem="UserInfo" Property="FullName" Title="Name">
                             <Template Context="user">
@@ -257,6 +295,17 @@
 </QModal>
 
 <style>
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+
+    .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 14px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
+    .batch-bar .dropdown { display: inline-flex; }
+    .batch-menu { min-width: 190px; padding: 6px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md); }
+    .batch-menu .dropdown-item { display: block; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer; }
+    .batch-menu .dropdown-item:hover { background: var(--qm-primary-light); }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+
     .admin-page { padding: 0; }
 
     .page-header {
@@ -540,6 +589,8 @@
     }
 </style>
 
+<QBatchDialog @ref="batchDialog" BranchId="@BranchState.CurrentBranchId" OnQueued="@OnBatchQueued" />
+
 @code {
     private static string GetRoleVariant(string? role) => role?.ToLowerInvariant() switch
     {
@@ -557,6 +608,62 @@
     private UserInfo? editingUser;
     private RoleInfo? editingRole;
     private UserFormData formData = new();
+
+    // ---- Batch: staff accounts ---------------------------------------------------------------
+    //
+    // Radzen's grid already does multi-select, so this needed no new selection affordance —
+    // only the bar and the two operations. Both go through the same resolver, preview and undo
+    // every other list uses.
+
+    // ---- Export -----------------------------------------------------------------------------
+
+    private string ExportSubtitle => $"{users.Count:N0} user(s) · {DateTime.Now:d MMMM yyyy}";
+
+    private static readonly List<ExportColumn<UserInfo>> UserExportColumns = new()
+    {
+        new("Username", u => u.Username, ExportType.Text, 20),
+        new("Full name", u => u.FullName, ExportType.Text, 26),
+        new("Email", u => u.Email, ExportType.Text, 30),
+        new("Role", u => u.Role, ExportType.Text, 20),
+        new("Branch", u => u.Branch, ExportType.Text, 24),
+        new("Active", u => u.IsActive, ExportType.Bool, 10)
+    };
+
+    private Task<ExportRows<UserInfo>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<UserInfo>(users, false));
+
+    private IList<UserInfo>? selectedUsers;
+    private QBatchDialog? batchDialog;
+
+    private async Task RunUserActive(bool enable)
+    {
+        if (batchDialog == null || selectedUsers == null) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.SetUserActive,
+            Ids = selectedUsers.Select(u => u.Id).ToList(),
+            Value = enable ? "true" : "false"
+        });
+    }
+
+    private async Task RunUserRole(Guid roleId)
+    {
+        if (batchDialog == null || selectedUsers == null) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.SetUserRole,
+            Ids = selectedUsers.Select(u => u.Id).ToList(),
+            TargetUserId = roleId
+        });
+    }
+
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        selectedUsers = null;
+        NotificationService.Notify(ToastSeverity.Info, "Running", accepted.Summary, 6000);
+        await Task.Delay(1500);
+        await LoadData();
+    }
 
     private List<UserInfo> users = new();
     private List<RoleInfo> roles = new();

@@ -13,6 +13,7 @@
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
 
 <PageTitle>Feedback Management - Q-Mgr</PageTitle>
@@ -25,7 +26,13 @@
         </div>
         <div class="header-actions">
             <PermissionGuard Permission="feedback.analytics">
-                <QButton Text="Export" Icon="download" Variant="secondary" OnClick="@ExportFeedback" Loading="@isExporting" />
+                @* Four formats over the same paged fetch this page already did for its CSV. *@
+                <QDataExport TItem="FeedbackDto"
+                             Title="Feedback responses"
+                             FileStem="feedback"
+                             Subtitle="@ExportSubtitle"
+                             Columns="@FeedbackExportColumns"
+                             RowProvider="@ProvideExportRowsAsync" />
             </PermissionGuard>
             <QButton Text="Refresh" Icon="arrow-clockwise" Variant="primary" OnClick="@LoadData" />
         </div>
@@ -1505,7 +1512,6 @@
         }
     }
 
-    private bool isExporting;
 
     /// <summary>
     /// CSV of every response matching the filters currently set — not just the page on screen.
@@ -1520,97 +1526,78 @@
     private const int ExportBatchSize = 500;
     private const int MaxExportRows = 20000;
 
-    private async Task ExportFeedback()
+    private string ExportSubtitle
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (filterRating.HasValue) parts.Add($"{filterRating} star");
+            if (filterCategory.HasValue) parts.Add(filterCategory.Value.ToString());
+            if (filterSource.HasValue) parts.Add(filterSource.Value.ToString());
+            if (filterHasResponse.HasValue) parts.Add(filterHasResponse.Value ? "answered" : "unanswered");
+            return parts.Count > 0 ? "Filtered: " + string.Join(", ", parts) : "All responses";
+        }
+    }
+
+    private static readonly List<ExportColumn<FeedbackDto>> FeedbackExportColumns = new()
+    {
+        new("Submitted", f => f.CreatedAt.ToLocalTime(), ExportType.Date, 18),
+        new("Ticket", f => f.TokenDisplayNumber, ExportType.Text, 12),
+        new("Rating", f => f.Rating, ExportType.Number, 8),
+        new("NPS", f => f.NpsScore, ExportType.Number, 8),
+        new("Category", f => f.Category, ExportType.Text, 16),
+        new("Source", f => f.Source, ExportType.Text, 12),
+        new("Service", f => f.ServiceTypeName, ExportType.Text, 22),
+        new("Counter", f => f.CounterName, ExportType.Text, 16),
+        new("Served by", f => f.ServedByName, ExportType.Text, 22),
+        new("Customer", f => f.CustomerName, ExportType.Text, 24),
+        new("Phone", f => f.CustomerPhone, ExportType.Text, 16),
+        new("Email", f => f.CustomerEmail, ExportType.Text, 28),
+        new("Comment", f => f.Comment, ExportType.Text, 50),
+        new("Response", f => f.Response, ExportType.Text, 40),
+        new("Responded at", f => f.RespondedAt?.ToLocalTime(), ExportType.Date, 18),
+        new("Responded by", f => f.RespondedByName, ExportType.Text, 22)
+    };
+
+    /// <summary>
+    /// Pages the whole filtered set out of the API rather than exporting the page on screen — the
+    /// same loop the CSV button used, now feeding every format. A hard row ceiling stops a careless
+    /// filter from pulling the whole table into a browser tab; the caller reports the truncation.
+    /// </summary>
+    private async Task<ExportRows<FeedbackDto>> ProvideExportRowsAsync()
     {
         var branchId = BranchState.CurrentBranchId;
         if (branchId == Guid.Empty)
-        {
-            NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Select a branch before exporting.");
-            return;
-        }
+            throw new InvalidOperationException("Select a branch before exporting.");
 
-        isExporting = true;
-        try
-        {
-            var all = new List<FeedbackDto>();
-            var exportPage = 1;
-            var truncated = false;
+        var all = new List<FeedbackDto>();
+        var exportPage = 1;
+        var truncated = false;
 
-            while (true)
+        while (true)
+        {
+            var query = $"api/v1/branches/{branchId}/feedbacks?page={exportPage}&pageSize={ExportBatchSize}";
+            if (filterRating.HasValue) query += $"&rating={filterRating}";
+            if (filterCategory.HasValue) query += $"&category={filterCategory}";
+            if (filterSource.HasValue) query += $"&source={filterSource}";
+            if (filterHasResponse.HasValue) query += $"&hasResponse={filterHasResponse}";
+
+            var response = await Http.GetAsync(query);
+            if (!response.IsSuccessStatusCode)
             {
-                var query = $"api/v1/branches/{branchId}/feedbacks?page={exportPage}&pageSize={ExportBatchSize}";
-                if (filterRating.HasValue) query += $"&rating={filterRating}";
-                if (filterCategory.HasValue) query += $"&category={filterCategory}";
-                if (filterSource.HasValue) query += $"&source={filterSource}";
-                if (filterHasResponse.HasValue) query += $"&hasResponse={filterHasResponse}";
-
-                var response = await Http.GetAsync(query);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
-                    NotificationService.Notify(ToastSeverity.Error, title, detail);
-                    return;
-                }
-
-                var batch = await response.Content.ReadFromJsonAsync<List<FeedbackDto>>(JsonOptions) ?? new();
-                all.AddRange(batch);
-
-                if (batch.Count < ExportBatchSize) break;
-                if (all.Count >= MaxExportRows) { truncated = true; break; }
-                exportPage++;
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                throw new InvalidOperationException($"{title}: {detail}");
             }
 
-            if (all.Count == 0)
-            {
-                NotificationService.Notify(ToastSeverity.Info, "Nothing to export", "No responses match the current filters.");
-                return;
-            }
+            var batch = await response.Content.ReadFromJsonAsync<List<FeedbackDto>>(JsonOptions) ?? new();
+            all.AddRange(batch);
 
-            var rows = new List<string?[]>
-            {
-                new[] { "Submitted", "Ticket", "Rating", "NPS", "Category", "Source", "Service", "Counter",
-                        "Served By", "Customer", "Phone", "Email", "Comment", "Response", "Responded At", "Responded By" }
-            };
-
-            rows.AddRange(all.Select(f => new[]
-            {
-                f.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
-                f.TokenDisplayNumber ?? "",
-                f.Rating.ToString(),
-                f.NpsScore?.ToString() ?? "",
-                f.Category.ToString(),
-                f.Source.ToString(),
-                f.ServiceTypeName ?? "",
-                f.CounterName ?? "",
-                f.ServedByName ?? "",
-                f.CustomerName ?? "",
-                f.CustomerPhone ?? "",
-                f.CustomerEmail ?? "",
-                f.Comment ?? "",
-                f.Response ?? "",
-                f.RespondedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "",
-                f.RespondedByName ?? ""
-            }));
-
-            var csv = CsvWriter.Build(rows);
-            await JS.InvokeVoidAsync("downloadDataUrl", CsvWriter.ToDataUrl(csv),
-                $"feedback-{DateTime.Now:yyyyMMdd-HHmm}.csv");
-
-            NotificationService.Notify(
-                truncated ? ToastSeverity.Warning : ToastSeverity.Success,
-                "Exported",
-                truncated
-                    ? $"Exported the first {all.Count:N0} responses — narrow the filters to export the rest."
-                    : $"{all.Count:N0} response{(all.Count == 1 ? "" : "s")} exported.");
+            if (batch.Count < ExportBatchSize) break;
+            if (all.Count >= MaxExportRows) { truncated = true; break; }
+            exportPage++;
         }
-        catch (Exception ex)
-        {
-            NotificationService.Notify(ToastSeverity.Error, "Export failed", ex.Message);
-        }
-        finally
-        {
-            isExporting = false;
-        }
+
+        return new ExportRows<FeedbackDto>(all, truncated);
     }
 
     private string GetSourceIcon(FeedbackSource source)

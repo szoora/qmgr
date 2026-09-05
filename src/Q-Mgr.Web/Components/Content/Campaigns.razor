@@ -1,6 +1,8 @@
 @page "/content/campaigns"
 @using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
 @inject IContentApiService ContentApi
 @inject IToastService NotificationService
 @inject IPermissionService PermissionService
@@ -263,7 +265,14 @@
         <QButton Text="Close" Icon="x-lg" Variant="secondary" OnClick="@CloseStatsDialog" />
         @if (canExport)
         {
-            <QButton Text="@(isExporting ? "Exporting..." : "Export CSV")" Icon="cloud-download-fill" Variant="primary" OnClick="@ExportStatsCsv" Disabled="@(isExporting || statsLoading || stats == null)" />
+            <QDataExport TItem="string[]"
+                         Title="Campaign impressions"
+                         FileStem="@($"campaign-{Slugify(statsCampaign?.Name ?? "stats")}-impressions")"
+                         Subtitle="@($"{statsCampaign?.Name} · {statsFrom:d MMM yyyy} – {statsTo:d MMM yyyy}")"
+                         Variant="primary"
+                         SourceProvider="@ProvideStatsExportSourceAsync"
+                         Disabled="@(statsLoading || stats == null)"
+                         DisabledReason="Load the campaign's statistics first." />
         }
     </FooterContent>
 </QModal>
@@ -641,7 +650,6 @@
     // Impression stats dialog state
     private bool showStatsDialog = false;
     private bool statsLoading = false;
-    private bool isExporting = false;
     private CampaignDto? statsCampaign;
     private CampaignStatsDto? stats;
     private DateOnly statsFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-29);
@@ -884,27 +892,20 @@
     private int SharePercent(int count) =>
         stats == null || stats.TotalImpressions == 0 ? 0 : (int)Math.Round(100.0 * count / stats.TotalImpressions);
 
-    private async Task ExportStatsCsv()
+    /// <summary>
+    /// The per-impression rows only exist server-side — this page holds the rolled-up statistics,
+    /// not the log the export is for.
+    /// </summary>
+    private async Task<(IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows)> ProvideStatsExportSourceAsync()
     {
-        if (statsCampaign == null) return;
+        if (statsCampaign == null)
+            throw new InvalidOperationException("Open a campaign's statistics before exporting.");
 
-        isExporting = true;
-        try
-        {
-            var csv = await ContentApi.ExportCampaignStatsCsvAsync(statsCampaign.Id, statsFrom, statsTo);
-            if (csv == null)
-            {
-                NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't export campaign impressions.");
-                return;
-            }
+        var csv = await ContentApi.ExportCampaignStatsCsvAsync(statsCampaign.Id, statsFrom, statsTo);
+        if (csv == null)
+            throw new InvalidOperationException("Couldn't export this campaign's impressions. Please try again.");
 
-            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
-            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"campaign-{Slugify(statsCampaign.Name)}-impressions.csv");
-        }
-        finally
-        {
-            isExporting = false;
-        }
+        return ExportCsvSource.Parse(csv);
     }
 
     // Mirrors the API's filename slug so the browser-side download name matches the server's.

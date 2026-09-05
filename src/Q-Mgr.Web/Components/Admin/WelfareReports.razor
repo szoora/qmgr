@@ -155,13 +155,51 @@
         }
         else
         {
+            @* Same bar as the roster, same dialog, same pipeline behind it — a welfare record is
+               a different noun over identical machinery. *@
+            @if (selectedRecordIds.Count > 0 && canEditWelfare)
+            {
+                <div class="batch-bar">
+                    <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedRecordIds.Count.ToString("N0")</strong> selected</span>
+
+                    <QButton Text="Assign to…" Icon="person-check" Size="sm" Variant="primary"
+                             OnClick="@OpenAssignPrompt"
+                             Title="Give every selected record the same owner for its follow-up action" />
+
+                    <QButton Text="Set review date" Icon="calendar-check" Size="sm" Variant="secondary"
+                             OnClick="@(() => showReviewPrompt = true)" />
+
+                    <div class="dropdown">
+                        <QButton Text="Set status" Icon="flag" Size="sm" Variant="secondary"
+                                 data-bs-toggle="dropdown" aria-expanded="false" />
+                        <ul class="dropdown-menu batch-menu">
+                            @foreach (var st in BatchStatuses)
+                            {
+                                <li><button type="button" class="dropdown-item" @onclick="@(() => RunStatusBatch(st))">@st</button></li>
+                            }
+                        </ul>
+                    </div>
+
+                    <button type="button" class="batch-clear" @onclick="@(() => selectedRecordIds.Clear())">Clear selection</button>
+                </div>
+            }
+
             <div class="results-table">
                 <div class="results-row results-header">
+                    <span class="results-select">
+                        <input type="checkbox" checked="@AllVisibleSelected"
+                               @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
+                               title="Select every record matching the current filters" />
+                    </span>
                     <span>Student</span><span>Category</span><span>Tier</span><span>Status</span><span>Occurred</span><span>Reported By</span><span></span>
                 </div>
                 @foreach (var r in VisibleSearchResults)
                 {
                     <div class="results-row">
+                        <span class="results-select">
+                            <input type="checkbox" checked="@selectedRecordIds.Contains(r.Id)"
+                                   @onchange="@(e => ToggleSelection(r.Id, (bool)(e.Value ?? false)))" />
+                        </span>
                         <span class="results-student">@r.StudentName</span>
                         <span>@r.CategoryName</span>
                         <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
@@ -230,6 +268,39 @@
     start → live progress → row-by-row log): it's the same background job, the same
     RosterImportProgress SignalR event and the same entries log — only the row columns differ.
 *@
+@* Both of these collect the one value the batch needs before there is anything to preview. *@
+<QModal @bind-Visible="showAssignPrompt" Title="Assign follow-up to" Size="sm">
+    <ChildContent>
+        <p class="form-hint">
+            Every selected record's follow-up action moves to this person. Their existing owner is
+            replaced — you'll see exactly which records change before anything is saved.
+        </p>
+        <QSelect TValue="Guid?" TItem="StaffOption" Value="@assignTargetUserId" Items="@staffOptions"
+                 TextSelector="@(x => x.Name)" ValueSelector="@(x => (Guid?)x.Id)"
+                 Label="Staff member" ValueChanged="@(v => assignTargetUserId = v)" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showAssignPrompt = false)" />
+        <QButton Text="Preview" Icon="arrow-right" Variant="primary" OnClick="@ConfirmAssign" Disabled="@(assignTargetUserId is null)" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showReviewPrompt" Title="Set a review date" Size="sm">
+    <ChildContent>
+        <p class="form-hint">
+            The overdue-action reminder job already watches this date, so setting it here puts every
+            selected record back into that sweep.
+        </p>
+        <QDatePicker @bind-Value="@reviewDateValue" Label="Review by" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReviewPrompt = false)" />
+        <QButton Text="Preview" Icon="arrow-right" Variant="primary" OnClick="@ConfirmReviewDate" Disabled="@(reviewDateValue is null)" />
+    </FooterContent>
+</QModal>
+
+<QBatchDialog @ref="batchDialog" BranchId="@branchId" OnQueued="@OnBatchQueued" />
+
 <QModal @bind-Visible="showImportModal" Title="Import Historical Records" Size="lg">
     <ChildContent>
         @if (importJob == null)
@@ -517,7 +588,18 @@
     .bar-count { font-size: 13px; font-weight: 700; color: var(--qm-text-primary); text-align: right; }
 
     .results-table { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); overflow: hidden; }
-    .results-row { display: grid; grid-template-columns: 1.3fr 1.3fr 0.8fr 1fr 1fr 1.2fr auto; gap: 10px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .batch-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-primary-light); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 16px; }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
+    .batch-bar .dropdown { display: inline-flex; }
+    .batch-menu { min-width: 190px; padding: 6px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md); }
+    .batch-menu .dropdown-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer; }
+    .batch-menu .dropdown-item:hover, .batch-menu .dropdown-item:focus-visible { background: var(--qm-primary-light); }
+    .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
+    .results-select { display: flex; align-items: center; }
+    .results-select input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+
+    .results-row { display: grid; grid-template-columns: auto 1.3fr 1.3fr 0.8fr 1fr 1fr 1.2fr auto; gap: 10px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
     .results-row:last-child { border-bottom: none; }
     .results-header { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .results-student { font-weight: 600; color: var(--qm-text-primary); }
@@ -742,6 +824,7 @@
             }
 
             canImport = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
+            canEditWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareEdit);
 
             // Arriving from a dashboard tile: open the tab it asked for, with its filter applied.
             // Anything else in ?view= is ignored rather than showing an empty list for a filter
@@ -968,6 +1051,111 @@
             await InvokeAsync(StateHasChanged);
         }
     }
+
+    // ---- Batch operations -------------------------------------------------------------------
+    //
+    // A welfare record is a different noun over identical machinery: the same selection, the same
+    // preview dialog, the same resolver, the same undo. This page contributes the ids and the
+    // operation; nothing else about batching lives here.
+
+    private bool canEditWelfare;
+    private readonly HashSet<Guid> selectedRecordIds = new();
+    private QBatchDialog? batchDialog;
+
+    private bool AllVisibleSelected => VisibleSearchResults.Any() && VisibleSearchResults.All(r => selectedRecordIds.Contains(r.Id));
+
+    private void ToggleSelectAll(bool select)
+    {
+        foreach (var r in VisibleSearchResults)
+        {
+            if (select) selectedRecordIds.Add(r.Id);
+            else selectedRecordIds.Remove(r.Id);
+        }
+    }
+
+    private void ToggleSelection(Guid id, bool select)
+    {
+        if (select) selectedRecordIds.Add(id);
+        else selectedRecordIds.Remove(id);
+    }
+
+    /// <summary>
+    /// Draft is deliberately absent: a draft is somebody's unfinished note, and moving one in bulk
+    /// would finalize a record its author had not finished writing.
+    /// </summary>
+    private static readonly WelfareStatus[] BatchStatuses =
+    {
+        WelfareStatus.Open, WelfareStatus.UnderReview, WelfareStatus.ActionTaken, WelfareStatus.Resolved
+    };
+
+    private bool showAssignPrompt;
+    private bool showReviewPrompt;
+    private Guid? assignTargetUserId;
+    private DateTime? reviewDateValue = DateTime.Today.AddDays(14);
+
+    private async Task RunStatusBatch(WelfareStatus status)
+    {
+        if (batchDialog == null) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.SetWelfareStatus,
+            Ids = selectedRecordIds.ToList(),
+            Value = status.ToString()
+        });
+    }
+
+    private async Task OpenAssignPrompt()
+    {
+        await LoadStaffAsync();
+        showAssignPrompt = true;
+    }
+
+    private async Task ConfirmAssign()
+    {
+        if (batchDialog == null || assignTargetUserId is null) return;
+        showAssignPrompt = false;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.AssignWelfareAction,
+            Ids = selectedRecordIds.ToList(),
+            TargetUserId = assignTargetUserId
+        });
+    }
+
+    private async Task ConfirmReviewDate()
+    {
+        if (batchDialog == null || reviewDateValue is null) return;
+        showReviewPrompt = false;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.SetWelfareReviewDate,
+            Ids = selectedRecordIds.ToList(),
+            DateValue = reviewDateValue
+        });
+    }
+
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        selectedRecordIds.Clear();
+        NotificationService.Notify(ToastSeverity.Info, "Running", accepted.Summary, 6000);
+        // The search is re-run once the job has had a moment; the ledger is what people read next.
+        await Task.Delay(1500);
+        await LoadSearch();
+    }
+
+    private record StaffOption(Guid Id, string Name);
+    private List<StaffOption> staffOptions = new();
+
+    private async Task LoadStaffAsync()
+    {
+        if (staffOptions.Any()) return;
+        var response = await Http.GetAsync($"api/v1/users?branchId={branchId}");
+        if (!response.IsSuccessStatusCode) return;
+        var users = await response.Content.ReadFromJsonAsync<List<StaffApiUser>>(JsonOptions) ?? new();
+        staffOptions = users.Where(u => u.IsActive).Select(u => new StaffOption(u.Id, u.FullName)).ToList();
+    }
+
+    private record StaffApiUser(Guid Id, string FullName, bool IsActive);
 
     // ---- Export ---------------------------------------------------------------------------
     //

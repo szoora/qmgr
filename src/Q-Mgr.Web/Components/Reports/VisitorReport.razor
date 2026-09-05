@@ -1,5 +1,6 @@
 @page "/reports/visitors"
 @using QMgr.Application.DTOs
+@using QMgr.Web.Services
 @using QMgr.Web.Components.Shared.UI
 @inject IVisitorApiService VisitorApi
 @inject IBranchStateService BranchState
@@ -46,7 +47,11 @@ else
                     <QButton Text="Apply" Icon="funnel-fill" Variant="primary" OnClick="@LoadReport" />
                 </div>
                 <div class="filter-item">
-                    <QButton Text="@(isExporting ? "Exporting..." : "Export CSV")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@isExporting" />
+                    @* Gated on ReportsExport server-side rather than VisitorsView — this is a bulk
+                       PII export (a name, phone and email per row), not the on-screen summary. *@
+                    <QDataExport TItem="string[]" Title="Visitor log" FileStem="visitor-log"
+                                 Subtitle="@($"{fromDate:d MMM yyyy} – {toDate:d MMM yyyy}")"
+                                 SourceProvider="@ProvideExportSourceAsync" />
                 </div>
             </div>
         </QCard>
@@ -193,7 +198,6 @@ else
 @code {
     private Guid branchId;
     private bool isLoading = true;
-    private bool isExporting;
     private VisitorReportDto? report;
     private DateOnly fromDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-6);
     private DateOnly toDate = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -235,24 +239,17 @@ else
         isLoading = false;
     }
 
-    private async Task ExportCsv()
+    /// <summary>
+    /// The log comes from the gated export endpoint, not from the summary this page already holds:
+    /// ReportsExport and the plan's export feature are both checked API-side only.
+    /// </summary>
+    private async Task<(IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows)> ProvideExportSourceAsync()
     {
-        isExporting = true;
-        try
-        {
-            var csv = await VisitorApi.ExportVisitorReportCsvAsync(branchId, fromDate, toDate);
-            if (csv == null)
-            {
-                NotificationService.Notify(ToastSeverity.Error, "Error", "Couldn't export the visitor log");
-                return;
-            }
+        var csv = await VisitorApi.ExportVisitorReportCsvAsync(branchId, fromDate, toDate);
+        if (csv == null)
+            throw new InvalidOperationException(
+                "Couldn't export the visitor log. Exporting reports needs the reports.export permission and a plan that includes exports.");
 
-            var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
-            await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"visitor-log-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.csv");
-        }
-        finally
-        {
-            isExporting = false;
-        }
+        return ExportCsvSource.Parse(csv);
     }
 }

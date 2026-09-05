@@ -1,6 +1,9 @@
 @page "/queue/board"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
 @inject IBranchStateService BranchState
@@ -19,6 +22,14 @@
             <span class="qb-branch-name">@BranchName</span>
         </div>
         <div class="qb-header-right">
+            @if (canCancelTokens)
+            {
+                @* Selection is an explicit mode, not always-on: this board refreshes itself over
+                   SignalR, and stray checkboxes on a moving list invite the wrong ticket. *@
+                <button type="button" class="qb-select-toggle @(selectionMode ? "on" : "")" @onclick="ToggleSelectionMode">
+                    @(selectionMode ? "Done" : "Clear tickets")
+                </button>
+            }
             <span class="qb-current-time">@currentTime.ToString("HH:mm:ss")</span>
             <span class="qb-current-date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
         </div>
@@ -60,12 +71,32 @@
         <!-- Waiting Queue Section -->
         <div class="qb-waiting-section">
             <h2>Waiting Queue <span class="qb-count">(@(waitingTokens?.Count ?? 0))</span></h2>
+
+            @if (selectionMode && waitingTokens is { Count: > 0 })
+            {
+                <div class="qb-batch-bar">
+                    <button type="button" class="qb-select-all" @onclick="ToggleSelectAll">
+                        @(AllWaitingSelected ? "Clear selection" : "Select all waiting")
+                    </button>
+                    <span class="qb-batch-count">@selectedTokenIds.Count.ToString("N0") selected</span>
+                    <QButton Text="Cancel tickets" Icon="x-circle" Size="sm" Variant="danger"
+                             Disabled="@(selectedTokenIds.Count == 0)" OnClick="@RunCancelBatch" />
+                </div>
+            }
+
             <div class="qb-waiting-list">
                 @if (waitingTokens != null && waitingTokens.Any())
                 {
-                    @foreach (var token in waitingTokens.Take(20))
+                    @foreach (var token in (selectionMode ? waitingTokens : waitingTokens.Take(20)))
                     {
                         <div class="qb-waiting-item @(token.Priority == TokenPriority.Priority ? "qb-priority" : "") @(token.Priority == TokenPriority.VIP ? "qb-vip" : "")">
+                            @if (selectionMode)
+                            {
+                                <input type="checkbox" class="qb-waiting-check"
+                                       checked="@selectedTokenIds.Contains(token.Id)"
+                                       @onchange="@(e => ToggleSelection(token.Id, (bool)(e.Value ?? false)))"
+                                       aria-label="@($"Select ticket {token.DisplayNumber}")" />
+                            }
                             <span class="qb-token-number">@token.DisplayNumber</span>
                             <span class="qb-service-type">@(token.ServiceType?.Name ?? "General")</span>
                             @if (token.Priority != TokenPriority.Normal)
@@ -74,7 +105,7 @@
                             }
                         </div>
                     }
-                    @if (waitingTokens.Count > 20)
+                    @if (!selectionMode && waitingTokens.Count > 20)
                     {
                         <div class="qb-more-waiting">+@(waitingTokens.Count - 20) more waiting...</div>
                     }
@@ -109,6 +140,13 @@
 </div>
 
 <style>
+    .qb-select-toggle { padding: 6px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+    .qb-select-toggle.on { border-color: var(--qm-primary); background: var(--qm-primary); color: #fff; }
+    .qb-batch-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-primary-light); }
+    .qb-select-all { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-primary); text-decoration: underline; }
+    .qb-batch-count { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .qb-waiting-check { width: 16px; height: 16px; margin-right: 10px; accent-color: var(--qm-primary); cursor: pointer; }
+
     .qb-queue-board {
         display: flex;
         flex-direction: column;
@@ -360,6 +398,8 @@
     }
 </style>
 
+<QBatchDialog @ref="batchDialog" BranchId="@BranchId" OnQueued="@OnBatchQueued" />
+
 @code {
     private Guid BranchId => BranchState.CurrentBranchId;
     private string BranchName => BranchState.CurrentBranchName ?? "Select Branch";
@@ -371,6 +411,57 @@
     private HashSet<Guid> newTokenIds = new();
     private System.Threading.Timer? timer;
 
+    // ---- Bulk cancellation -------------------------------------------------------------------
+    //
+    // Closing time, a cancelled clinic, a machine that went down: the queue is emptied in one
+    // move far more often than ticket by ticket. Selection only exists while the mode is on, and
+    // a ticket that leaves the board over SignalR drops out of the selection with it — the count
+    // on the bar is always tickets that are still waiting.
+
+    private bool canCancelTokens;
+    private bool selectionMode;
+    private readonly HashSet<Guid> selectedTokenIds = new();
+    private QBatchDialog? batchDialog;
+
+    private bool AllWaitingSelected =>
+        waitingTokens is { Count: > 0 } && waitingTokens.All(t => selectedTokenIds.Contains(t.Id));
+
+    private void ToggleSelectionMode()
+    {
+        selectionMode = !selectionMode;
+        if (!selectionMode) selectedTokenIds.Clear();
+    }
+
+    private void ToggleSelection(Guid id, bool selected)
+    {
+        if (selected) selectedTokenIds.Add(id); else selectedTokenIds.Remove(id);
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (waitingTokens == null) return;
+        if (AllWaitingSelected) selectedTokenIds.Clear();
+        else foreach (var t in waitingTokens) selectedTokenIds.Add(t.Id);
+    }
+
+    private async Task RunCancelBatch()
+    {
+        if (batchDialog == null || selectedTokenIds.Count == 0) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.CancelTokens,
+            Ids = selectedTokenIds.ToList()
+        });
+    }
+
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        selectedTokenIds.Clear();
+        selectionMode = false;
+        await LoadData();
+    }
+
+
     protected override async Task OnInitializedAsync()
     {
         // Check permission
@@ -379,6 +470,8 @@
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+
+        canCancelTokens = await PermissionService.HasPermissionAsync(Permissions.TokensCancel);
 
         // Initialize branch state
         await BranchState.InitializeAsync();
@@ -465,6 +558,7 @@
 
             // Remove from waiting list
             waitingTokens?.RemoveAll(t => t.Id == token.Id);
+            selectedTokenIds.Remove(token.Id);
 
             // Update counter display
             if (counters != null && token.CounterId.HasValue)

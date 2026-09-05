@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
@@ -226,6 +227,22 @@ public class BatchController : ControllerBase
         BatchOperation.AssignWelfareAction => await _context.WelfareRecords.AsNoTracking().Where(r => r.Id == id).Select(r => r.AssignedToUserId.ToString()).FirstOrDefaultAsync(ct),
         BatchOperation.SetUserActive => await _context.Users.AsNoTracking().Where(u => u.Id == id).Select(u => u.IsActive ? "Active" : "Inactive").FirstOrDefaultAsync(ct),
         BatchOperation.SetUserRole => await _context.Users.AsNoTracking().Where(u => u.Id == id).Select(u => u.RoleId.ToString()).FirstOrDefaultAsync(ct),
+
+        BatchOperation.SetWelfareReviewDate => await _context.WelfareRecords.AsNoTracking().Where(r => r.Id == id)
+            .Select(r => r.ActionDueDate == null ? null : r.ActionDueDate.Value.ToString("yyyy-MM-dd")).FirstOrDefaultAsync(ct),
+
+        BatchOperation.CancelTokens => await _context.Tokens.AsNoTracking().Where(t => t.Id == id)
+            .Select(t => t.Status.ToString()).FirstOrDefaultAsync(ct),
+
+        BatchOperation.CancelAppointments => await _context.Appointments.AsNoTracking().Where(a => a.Id == id)
+            .Select(a => a.Status.ToString()).FirstOrDefaultAsync(ct),
+
+        // "Checked out" / "On site since HH:mm" — the same two strings ResolveVisitorCheckOutAsync
+        // writes, because the conflict check compares against what it recorded, not a status enum.
+        BatchOperation.CheckOutVisitors => await _context.Visitors.AsNoTracking().Where(v => v.Id == id && v.DeletedAt == null)
+            .Select(v => v.CheckedOutAt != null ? "Checked out" : "On site since " + (v.CheckedInAt == null ? "" : v.CheckedInAt.Value.ToString("HH:mm")))
+            .FirstOrDefaultAsync(ct),
+
         _ => null
     };
 
@@ -308,6 +325,37 @@ public class BatchController : ControllerBase
                 var u = await _context.Users.FirstAsync(x => x.Id == id, ct);
                 if (Guid.TryParse(previous, out var rid)) u.RoleId = rid;
                 u.UpdatedAt = DateTime.UtcNow; break;
+            }
+            case BatchOperation.SetWelfareReviewDate:
+            {
+                var r = await _context.WelfareRecords.FirstAsync(x => x.Id == id, ct);
+                r.ActionDueDate = DateTime.TryParse(previous, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var due)
+                    ? DateTime.SpecifyKind(due, DateTimeKind.Utc)
+                    : null;
+                r.UpdatedAt = DateTime.UtcNow; break;
+            }
+            case BatchOperation.CancelTokens:
+            {
+                var t = await _context.Tokens.FirstAsync(x => x.Id == id, ct);
+                if (Enum.TryParse<TokenStatus>(previous, true, out var ts)) t.Status = ts;
+                break;
+            }
+            case BatchOperation.CancelAppointments:
+            {
+                var a = await _context.Appointments.FirstAsync(x => x.Id == id, ct);
+                if (Enum.TryParse<AppointmentStatus>(previous, true, out var ast)) a.Status = ast;
+                // The reason belonged to the cancellation; putting the booking back should not
+                // leave "Cancelled in bulk" sitting on a live appointment.
+                a.CancellationReason = null;
+                a.UpdatedAt = DateTime.UtcNow; break;
+            }
+            case BatchOperation.CheckOutVisitors:
+            {
+                // Undoing a check-out puts the visitor back on site; the check-in time was never
+                // touched, so clearing the departure is the whole reversal.
+                var v = await _context.Visitors.FirstAsync(x => x.Id == id, ct);
+                v.CheckedOutAt = null;
+                v.UpdatedAt = DateTime.UtcNow; break;
             }
         }
     }

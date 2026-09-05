@@ -110,7 +110,11 @@
     /// <summary>Base of the filename; a timestamp is appended. "roster" becomes roster-20260905-1420.xlsx.</summary>
     [Parameter, EditorRequired] public string FileStem { get; set; } = "export";
 
-    [Parameter, EditorRequired] public IReadOnlyList<ExportColumn<TItem>> Columns { get; set; } = Array.Empty<ExportColumn<TItem>>();
+    /// <summary>
+    /// The column list, when the caller knows it. Left unset by a caller that supplies
+    /// <see cref="SourceProvider"/> instead, which is why this is not <c>EditorRequired</c>.
+    /// </summary>
+    [Parameter] public IReadOnlyList<ExportColumn<TItem>> Columns { get; set; } = Array.Empty<ExportColumn<TItem>>();
 
     /// <summary>
     /// Everything matching the caller's <em>current filters</em> — not the page on screen.
@@ -122,7 +126,15 @@
     /// caller supply a fetch forces the question at the point where it can still be answered
     /// correctly.
     /// </remarks>
-    [Parameter, EditorRequired] public Func<Task<ExportRows<TItem>>> RowProvider { get; set; } = default!;
+    [Parameter] public Func<Task<ExportRows<TItem>>>? RowProvider { get; set; }
+
+    /// <summary>
+    /// For a source whose columns only exist once the data arrives — a CSV the server generated,
+    /// whose header <em>is</em> the column list. Supplying this instead of
+    /// <see cref="Columns"/> + <see cref="RowProvider"/> keeps that list defined in exactly one
+    /// place: the code that produced the file. See <c>ExportCsvSource</c>.
+    /// </summary>
+    [Parameter] public Func<Task<(IReadOnlyList<ExportColumn<TItem>> Columns, ExportRows<TItem> Rows)>>? SourceProvider { get; set; }
 
     [Parameter] public ExportFormat Formats { get; set; } = ExportFormat.All;
 
@@ -155,8 +167,24 @@
 
         try
         {
-            var rows = await RowProvider();
-            var result = await ExportService.ExportAsync(format, FileStem, Title, Columns, rows, Subtitle);
+            IReadOnlyList<ExportColumn<TItem>> columns;
+            ExportRows<TItem> rows;
+
+            if (SourceProvider != null)
+            {
+                (columns, rows) = await SourceProvider();
+            }
+            else if (RowProvider != null)
+            {
+                columns = Columns;
+                rows = await RowProvider();
+            }
+            else
+            {
+                throw new InvalidOperationException("QDataExport needs either RowProvider or SourceProvider.");
+            }
+
+            var result = await ExportService.ExportAsync(format, FileStem, Title, columns, rows, Subtitle);
 
             Toast.Notify(
                 result.Success ? (result.Truncated ? ToastSeverity.Warning : ToastSeverity.Success) : ToastSeverity.Error,
