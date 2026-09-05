@@ -135,7 +135,7 @@ else if (hasCoreQueue && queueStatus != null)
 {
     <!-- Statistics Cards -->
     <div class="stats-row">
-        <div class="stats-card primary">
+        <a class="stats-card primary" href="@QueueLiveHref">
             <div class="stats-content">
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.TotalWaiting</span>
@@ -148,9 +148,9 @@ else if (hasCoreQueue && queueStatus != null)
                     <QIcon Name="hourglass-split" />
                 </div>
             </div>
-        </div>
+        </a>
 
-        <div class="stats-card success">
+        <a class="stats-card success" href="@QueueLiveHref">
             <div class="stats-content">
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.TotalServing</span>
@@ -163,9 +163,9 @@ else if (hasCoreQueue && queueStatus != null)
                     <QIcon Name="headset" />
                 </div>
             </div>
-        </div>
+        </a>
 
-        <div class="stats-card warning">
+        <a class="stats-card warning" href="@QueueAnalyticsHref">
             <div class="stats-content">
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.AverageWaitMinutes.ToString("F0")<small>min</small></span>
@@ -178,9 +178,9 @@ else if (hasCoreQueue && queueStatus != null)
                     <QIcon Name="stopwatch-fill" />
                 </div>
             </div>
-        </div>
+        </a>
 
-        <div class="stats-card danger">
+        <a class="stats-card danger" href="@QueueAnalyticsHref">
             <div class="stats-content">
                 <div class="stats-info">
                     <span class="stats-number">@queueStatus.Summary.TotalCompletedToday</span>
@@ -197,7 +197,7 @@ else if (hasCoreQueue && queueStatus != null)
                     <QIcon Name="check2-all" />
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 
     <!-- Main Content Grid -->
@@ -349,7 +349,7 @@ else if (hasCoreQueue && queueStatus != null)
         else
         {
             <div class="stats-row">
-                <div class="stats-card primary">
+                <a class="stats-card primary" href="@WelfareOpenHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@welfareSummary.OpenActionsCount</span>
@@ -357,8 +357,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="clipboard-check" /></div>
                     </div>
-                </div>
-                <div class="stats-card @(welfareSummary.OverdueActionsCount > 0 ? "danger" : "secondary")">
+                </a>
+                <a class="stats-card @(welfareSummary.OverdueActionsCount > 0 ? "danger" : "secondary")" href="@WelfareOverdueHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@welfareSummary.OverdueActionsCount</span>
@@ -366,8 +366,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="exclamation-triangle-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card secondary">
+                </a>
+                <a class="stats-card secondary" href="@WelfareRecordsHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@welfareSummary.TotalRecords</span>
@@ -375,8 +375,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="journal-text" /></div>
                     </div>
-                </div>
-                <div class="stats-card secondary">
+                </a>
+                <a class="stats-card secondary" href="@RosterHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@studentCount</span>
@@ -384,7 +384,7 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="people-fill" /></div>
                     </div>
-                </div>
+                </a>
             </div>
 
             @if (welfareSummary.ByCategory.Any())
@@ -430,7 +430,7 @@ else if (hasCoreQueue && queueStatus != null)
         else
         {
             <div class="stats-row">
-                <div class="stats-card primary">
+                <a class="stats-card primary" href="@VisitorDeskHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@visitorSummary.CurrentlyOnSite</span>
@@ -438,8 +438,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="person-check-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card secondary">
+                </a>
+                <a class="stats-card secondary" href="@VisitorExpectedHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@visitorSummary.ExpectedToday</span>
@@ -447,8 +447,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="calendar-check-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card secondary">
+                </a>
+                <a class="stats-card secondary" href="@VisitorReportHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@visitorSummary.TotalToday</span>
@@ -456,10 +456,10 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="door-open-fill" /></div>
                     </div>
-                </div>
+                </a>
                 @* A watchlisted person on site is the one number here that asks somebody to act,
                    so it takes the danger stripe rather than looking like the others. *@
-                <div class="stats-card @(visitorSummary.WatchlistedOnSite > 0 ? "danger" : "secondary")">
+                <a class="stats-card @(visitorSummary.WatchlistedOnSite > 0 ? "danger" : "secondary")" href="@VisitorDeskHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@visitorSummary.WatchlistedOnSite</span>
@@ -467,7 +467,7 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="shield-exclamation" /></div>
                     </div>
-                </div>
+                </a>
             </div>
         }
     </div>
@@ -489,7 +489,7 @@ else if (hasCoreQueue && queueStatus != null)
         else
         {
             <div class="stats-row">
-                <div class="stats-card primary">
+                <a class="stats-card primary" href="@CampaignsHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@activeCampaignCount</span>
@@ -497,8 +497,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="megaphone-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card success">
+                </a>
+                <a class="stats-card success" href="@FeedbackReportHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))</span>
@@ -506,8 +506,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="star-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card secondary">
+                </a>
+                <a class="stats-card secondary" href="@FeedbackReportHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@feedbackSummary.TotalFeedbacks</span>
@@ -515,8 +515,8 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="chat-square-text-fill" /></div>
                     </div>
-                </div>
-                <div class="stats-card @(feedbackSummary.PendingResponseCount > 0 ? "warning" : "secondary")">
+                </a>
+                <a class="stats-card @(feedbackSummary.PendingResponseCount > 0 ? "warning" : "secondary")" href="@FeedbackInboxHref">
                     <div class="stats-content">
                         <div class="stats-info">
                             <span class="stats-number">@feedbackSummary.PendingResponseCount</span>
@@ -524,7 +524,7 @@ else if (hasCoreQueue && queueStatus != null)
                         </div>
                         <div class="stats-icon"><QIcon Name="reply-fill" /></div>
                     </div>
-                </div>
+                </a>
             </div>
         }
     </div>
@@ -659,6 +659,33 @@ else if (hasCoreQueue && queueStatus != null)
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 24px;
         margin-bottom: 24px;
+    }
+
+    /* Every stat tile is an anchor. One without a destination — because this account can't open
+       the page behind it — has no href, which makes it inert and unfocusable by the browser's own
+       rules, exactly the old behaviour. The shared .stats-card already lifts on hover, so that
+       lift is cancelled here for the inert ones rather than promising a click that does nothing. */
+    a.stats-card {
+        display: block;
+        color: inherit;
+        text-decoration: none;
+    }
+
+    a.stats-card:not([href]) {
+        cursor: default;
+    }
+
+    a.stats-card:not([href]):hover {
+        box-shadow: var(--qm-shadow-sm);
+        border-color: var(--qm-border);
+        transform: none;
+    }
+
+    a.stats-card:not([href]):hover::after { opacity: 0; }
+
+    a.stats-card:focus-visible {
+        outline: 3px solid var(--qm-primary);
+        outline-offset: 3px;
     }
 
     .stats-card .stats-content {
@@ -1186,10 +1213,66 @@ else if (hasCoreQueue && queueStatus != null)
         moduleResolution = ResolveModulesAsync();
         await moduleResolution;
 
+        // What the stat cards are allowed to link to. A card whose destination the caller can't
+        // open stays a plain tile rather than a link that bounces them off /unauthorized — see
+        // StatHref below.
+        canViewReports = await PermissionService.HasPermissionAsync(Permissions.ReportsView);
+        canViewQueue = await PermissionService.HasPermissionAsync(Permissions.QueueView);
+        canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
+        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
+        canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
+        canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
+        canRespondFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackRespond);
+        canViewContent = await PermissionService.HasPermissionAsync(Permissions.ContentView);
+
         // Note: We'll load data in OnAfterRenderAsync when BranchState is properly initialized
     }
 
     private bool hasCoreQueue = true;
+
+    // ---- Stat-card destinations -------------------------------------------------------------
+    //
+    // Every tile on this page counts something that has a page behind it, and until now none of
+    // them said so — the numbers were a dead end and the only way onward was the section's own
+    // "Open …" button. Each card is now a real <a href>, so it middle-clicks, opens in a tab and
+    // reads as a link to a screen reader, which an @onclick div does not.
+    //
+    // Two rules the destinations follow:
+    //   * the page must actually show the number on the card. This is why the welfare action
+    //     cards go to the branch-wide ledger with a filter rather than to /admin/welfare-my-actions
+    //     — that page lists only what is assigned to the signed-in user, so a card reading "12"
+    //     would open a list of two. Without welfare.reports.view there is no branch-wide view, and
+    //     "mine" is then the honest destination, so that is where it goes.
+    //   * a card the caller cannot open is not a link. StatHref returns null and the card renders
+    //     as the plain tile it always was, rather than a link that bounces off /unauthorized.
+
+    private bool canViewReports, canViewQueue, canViewStudents, canViewWelfareReports;
+    private bool canViewVisitors, canViewFeedback, canRespondFeedback, canViewContent;
+
+    // Queue: the live board shows what is waiting and being served right now; the wait and
+    // throughput figures are analytics, and that is a different page.
+    private string? QueueLiveHref => canViewQueue ? "/queue/board" : null;
+    private string? QueueAnalyticsHref => canViewReports ? "/reports/queue" : null;
+
+    // Welfare: the ledger, filtered to the tile's own definition. `view=open` is "not resolved"
+    // and `view=overdue` adds "past its due date" — the same two predicates GetSummary counts.
+    private string? WelfareOpenHref =>
+        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=open" : "/admin/welfare-my-actions";
+    private string? WelfareOverdueHref =>
+        canViewWelfareReports ? "/admin/welfare-reports?tab=search&view=overdue" : "/admin/welfare-my-actions";
+    private string? WelfareRecordsHref => canViewWelfareReports ? "/admin/welfare-reports" : null;
+    private string? RosterHref => canViewStudents ? "/admin/students/roster" : null;
+
+    // Visitors: the desk is where on-site people are, and where you act on a watchlist hit.
+    private string? VisitorDeskHref => canViewVisitors ? "/admin/visitors" : null;
+    private string? VisitorExpectedHref => canViewVisitors ? "/admin/visitors/expected" : null;
+    private string? VisitorReportHref => canViewReports ? "/reports/visitors" : null;
+
+    // Engagement: ratings and volume are a report; an unanswered comment is a job, and that
+    // lives in the feedback inbox rather than the report.
+    private string? CampaignsHref => canViewContent ? "/content/campaigns" : null;
+    private string? FeedbackReportHref => canViewReports && canViewFeedback ? "/reports/feedback" : null;
+    private string? FeedbackInboxHref => canRespondFeedback ? "/admin/feedback" : null;
 
     /// <summary>
     /// The in-flight module resolution. Anything that reads the `has*` flags awaits this first,

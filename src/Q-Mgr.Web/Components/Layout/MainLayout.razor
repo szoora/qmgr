@@ -299,9 +299,17 @@ else
                             }
                             @* Every item below pairs its RBAC check with ModuleAllows, which reads the
                                same ModuleRouteMap the navigation guard and the API middleware use — so
-                               an item is visible exactly when it is reachable. Branches, Users & Roles,
-                               Industry, Branding, Notifications and System Settings carry no module:
-                               they are base product, available to every tenant. *@
+                               an item is visible exactly when it is reachable.
+
+                               Base product, no module, shown to every tenant: Branches, Users & Roles,
+                               Notifications and System Settings — each is needed to run the account
+                               itself whatever was bought.
+
+                               Industry and Branding were on that list until 2026-09-05 and should not
+                               have been. Both configure the public kiosk and display screens and
+                               nothing else, so a school holding only Student Welfare was being offered
+                               a kiosk theme picker for a kiosk it does not have. See the notes on
+                               those two entries in ModuleRouteMap. *@
                             @if (canViewCounters && ModuleAllows("/admin/counters"))
                             {
                                 <li><a href="admin/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
@@ -319,9 +327,12 @@ else
                                 <li><a href="admin/printer-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
                                 <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
                             }
-                            @if (canViewSettings)
+                            @if (canViewSettings && ModuleAllows("/admin/industry"))
                             {
                                 <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
+                            }
+                            @if (canViewSettings && ModuleAllows("/admin/branding-settings"))
+                            {
                                 <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
                             }
                             @if (canViewSettings && ModuleAllows("/admin/integrations"))
@@ -934,8 +945,10 @@ else
         if (!ModuleState.IsLoaded || !ModuleState.LoadSucceeded || isSuperAdmin) return;
 
         var path = "/" + NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
-        var required = ModuleRouteMap.RequiredModuleForPage(path);
-        if (required == null || ModuleState.ActiveModuleCodes.Contains(required)) return;
+        // Any one of the listed modules opens the page — see ModuleRouteMap.WebRoutesAnyOf. An
+        // empty list means base product.
+        var required = ModuleRouteMap.RequiredModulesForPage(path);
+        if (required.Count == 0 || required.Any(ModuleState.ActiveModuleCodes.Contains)) return;
 
         ToastService.Notify(
             ToastSeverity.Info,
@@ -955,8 +968,8 @@ else
     /// </summary>
     private bool ModuleAllows(string path)
     {
-        var required = ModuleRouteMap.RequiredModuleForPage(path);
-        return required == null || HasModule(required);
+        var required = ModuleRouteMap.RequiredModulesForPage(path);
+        return required.Count == 0 || required.Any(HasModule);
     }
 
     // BUG FIX: this link previously pointed at the API's internal ApiBaseUrl - correct for Web's

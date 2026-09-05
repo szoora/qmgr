@@ -117,14 +117,26 @@
             <QSelect TValue="WelfareStatus?" TItem="(string Label, WelfareStatus? Value)" Value="@searchStatus" Items="@statusFilterOptions"
                      TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Status" ValueChanged="@(v => searchStatus = v)" />
             <QButton Text="Search" Icon="search" Variant="primary" OnClick="@LoadSearch" />
-            <QButton Text="@($"Export CSV ({searchResults.Count})")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@(!searchResults.Any())" />
+            <QButton Text="@($"Export CSV ({VisibleSearchResults.Count})")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@(!VisibleSearchResults.Any())" />
         </div>
+
+        @* Arriving from a dashboard tile applies a filter the filter bar above can't express, so
+           it is shown as a removable chip. A filter you can't see is a bug report waiting to
+           happen — "the search is missing records" — and this is the fix for that. *@
+        @if (dueView != null)
+        {
+            <div class="due-view-chip">
+                <QIcon Name="funnel-fill" />
+                <span>Showing <strong>@DueViewLabel</strong> only — @VisibleSearchResults.Count of @searchResults.Count records</span>
+                <button type="button" class="due-view-clear" @onclick="ClearDueView">Clear</button>
+            </div>
+        }
 
         @if (isLoadingSearch)
         {
             <div class="loading-container"><QSpinner Size="lg" /><span>Searching...</span></div>
         }
-        else if (!searchResults.Any())
+        else if (!VisibleSearchResults.Any())
         {
             <div class="empty-state">
                 <QIcon Name="search" Size="xl" />
@@ -138,7 +150,7 @@
                 <div class="results-row results-header">
                     <span>Student</span><span>Category</span><span>Tier</span><span>Status</span><span>Occurred</span><span>Reported By</span><span></span>
                 </div>
-                @foreach (var r in searchResults)
+                @foreach (var r in VisibleSearchResults)
                 {
                     <div class="results-row">
                         <span class="results-student">@r.StudentName</span>
@@ -456,6 +468,18 @@
 
     .filter-bar { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
     .filter-bar--wrap { align-items: center; }
+
+    .due-view-chip {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        background: var(--qm-primary-light); border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md); padding: 8px 12px; margin-bottom: 12px;
+        font-size: 13px; color: var(--qm-text-secondary);
+    }
+
+    .due-view-clear {
+        margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer;
+        font: inherit; font-weight: 600; color: var(--qm-primary); text-decoration: underline;
+    }
     .search-input { flex: 1; min-width: 220px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); align-self: stretch; }
 
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
@@ -510,8 +534,52 @@
 </style>
 
 @code {
+    /// <summary>Which tab to open on. The dashboard's stat tiles link straight here.</summary>
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>
+    /// A view filter over the search results: "open" for anything not resolved, "overdue" for
+    /// those of them past their due date. Neither is a server-side filter — `SearchRecords` has no
+    /// notion of overdue — so both are applied here over the rows it returns.
+    ///
+    /// They exist so the dashboard's "Open actions" and "Overdue" tiles can open a list that
+    /// actually holds the number printed on them: these two predicates are word for word what
+    /// WelfareController.GetSummary counts for OpenActionsCount and OverdueActionsCount.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewParam { get; set; }
+
     private Guid branchId;
     private string activeTab = "dashboard";
+
+    /// <summary>Null, "open" or "overdue" — see ViewParam.</summary>
+    private string? dueView;
+
+    /// <summary>The rows rendered by the search tab, after the due-view filter.</summary>
+    private List<WelfareRecordDto> VisibleSearchResults => dueView switch
+    {
+        "open" => searchResults.Where(IsOpen).ToList(),
+        "overdue" => searchResults.Where(IsOverdue).ToList(),
+        _ => searchResults
+    };
+
+    private static bool IsOpen(WelfareRecordDto r) => r.Status != WelfareStatus.Resolved;
+
+    private static bool IsOverdue(WelfareRecordDto r) =>
+        IsOpen(r) && r.ActionDueDate.HasValue && r.ActionDueDate.Value < DateTime.UtcNow;
+
+    private string DueViewLabel => dueView switch
+    {
+        "open" => "Open (not resolved)",
+        "overdue" => "Overdue",
+        _ => ""
+    };
+
+    /// <summary>Drops the filter and the query string with it, so a refresh doesn't bring it back.</summary>
+    private void ClearDueView()
+    {
+        dueView = null;
+        Navigation.NavigateTo("/admin/welfare-reports?tab=search", replace: true);
+    }
 
     // ---------------- Dashboard ----------------
     private bool isLoadingSummary;
@@ -666,6 +734,12 @@
 
             canImport = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
 
+            // Arriving from a dashboard tile: open the tab it asked for, with its filter applied.
+            // Anything else in ?view= is ignored rather than showing an empty list for a filter
+            // nobody can see or clear.
+            if (ViewParam is "open" or "overdue") dueView = ViewParam;
+            if (TabParam is "search" or "cohorts" or "dashboard") activeTab = TabParam;
+
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
 
@@ -676,6 +750,7 @@
             await NotificationClient.JoinBranchAsync(branchId);
 
             await LoadSummary();
+            if (activeTab == "search") await LoadSearch();
             StateHasChanged();
         }
     }
@@ -888,7 +963,7 @@
     private async Task ExportCsv()
     {
         var lines = new List<string> { "Student,Category,CaseType,Tier,Points,Status,OccurredAt,ReportedBy,ActionTaken,AssignedTo,DueDate,Description" };
-        foreach (var r in searchResults)
+        foreach (var r in VisibleSearchResults)
         {
             lines.Add(string.Join(",", new[]
             {

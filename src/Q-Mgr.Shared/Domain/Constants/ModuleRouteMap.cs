@@ -78,6 +78,13 @@ public static class ModuleRouteMap
         ("/admin/welfare-my-actions", ModuleCodes.StudentWelfare),
         ("/admin/welfare-reports", ModuleCodes.StudentWelfare),
 
+        // Industry type is read by exactly two things: the kiosk, which themes itself and writes
+        // its welcome copy from it, and tenant provisioning, which seeds default service types
+        // from it. Both are Core Queue. The page says as much in its own subtitle ("customize the
+        // kiosk experience") and its main action opens /queue/kiosk — a route this same table
+        // already refuses without the module, so the page was offering a button that bounced.
+        ("/admin/industry", ModuleCodes.CoreQueue),
+
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
         ("/admin/integrations", ModuleCodes.IntegrationsApi),
@@ -86,6 +93,26 @@ public static class ModuleRouteMap
         // /reports/visitors and /reports/feedback entries above must win before this catches the
         // remaining /reports pages, which are all queue and counter metrics.
         ("/reports", ModuleCodes.CoreQueue),
+    };
+
+    /// <summary>
+    /// Pages that earn their place through any one of several modules, rather than exactly one.
+    /// Checked before <see cref="WebRoutes"/>, and satisfied when the tenant holds at least one.
+    /// <para>
+    /// This exists for a real shape the single-module table cannot express. Branding Settings
+    /// configures only public-facing surfaces — its own cards say so, one per card: the display
+    /// theme covers "your public customer-display and kiosk screens", the logo is "shown on public
+    /// kiosk and display screens", the colors are "applied as CSS accent colors on kiosk and
+    /// display screens", and the banner runs on "Customer Display and Full-Screen Signage". None
+    /// of it touches the admin shell. Customer Display, the kiosk, Join and Ticket belong to Core
+    /// Queue; Signage and the feedback pages belong to Engagement. So the page is worth opening
+    /// with either module and worth nothing with neither — which is what a welfare-only school
+    /// was being shown.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlyList<(string Path, string[] Modules)> WebRoutesAnyOf = new[]
+    {
+        ("/admin/branding-settings", new[] { ModuleCodes.CoreQueue, ModuleCodes.EngagementCommunications }),
     };
 
     /// <summary>
@@ -148,18 +175,39 @@ public static class ModuleRouteMap
     };
 
     /// <summary>
-    /// The module a Blazor page path requires, or null when the page is part of the base product.
+    /// The modules a Blazor page path requires — empty when the page is part of the base product,
+    /// one entry for the ordinary case, and more than one when holding <em>any</em> of them is
+    /// enough. Callers should treat a non-empty result as "at least one of these".
+    /// </summary>
+    public static IReadOnlyList<string> RequiredModulesForPage(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return Array.Empty<string>();
+
+        var normalized = Normalize(path);
+
+        // Any-of first: these are specific pages, and a broader single-module prefix must not
+        // claim one of them by matching earlier.
+        foreach (var (route, modules) in WebRoutesAnyOf)
+        {
+            if (IsSegmentPrefix(normalized, route)) return modules;
+        }
+
+        foreach (var (route, module) in WebRoutes)
+        {
+            if (IsSegmentPrefix(normalized, route)) return new[] { module };
+        }
+        return Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// The single module a page requires, or null when it is base product or is satisfied by any
+    /// one of several. Prefer <see cref="RequiredModulesForPage"/>; this remains for callers that
+    /// genuinely want one name, such as a message naming the module to buy.
     /// </summary>
     public static string? RequiredModuleForPage(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path)) return null;
-
-        var normalized = Normalize(path);
-        foreach (var (route, module) in WebRoutes)
-        {
-            if (IsSegmentPrefix(normalized, route)) return module;
-        }
-        return null;
+        var modules = RequiredModulesForPage(path);
+        return modules.Count == 1 ? modules[0] : null;
     }
 
     /// <summary>

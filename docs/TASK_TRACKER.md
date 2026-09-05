@@ -191,6 +191,107 @@ Still not seen on screen — the Chrome extension stayed disconnected.
 
 ---
 
+### Addendum 2, same day — dashboard tiles link somewhere, and two settings pages stop being offered to tenants that can't use them
+
+Both from the same session's screenshots of the live site.
+
+#### The stat tiles were a dead end
+
+All sixteen of them, across four module sections — the numbers had no destination, and the only way
+onward was each section's own "Open …" button. Worse, the shared `.stats-card` already lifts on
+hover, so every tile was *promising* a click it never honoured.
+
+Each tile is now a real `<a href>`, so it middle-clicks, opens in a tab, and reads as a link. Two
+rules the destinations follow:
+
+- **The page has to show the number on the tile.** This is why the welfare action tiles do *not*
+  go to `/admin/welfare-my-actions`: that page lists only what is assigned to the signed-in user,
+  so a tile reading 12 would open a list of 2. They go to the branch-wide ledger with a filter that
+  matches the tile's own definition. Where the caller holds no `welfare.reports.view` there is no
+  branch-wide view, and "mine" is then the honest destination, so that is where it falls back to.
+- **A tile the caller can't open is not a link.** The href is null, which makes the anchor inert
+  and unfocusable by the browser's own rules, and the hover lift is cancelled for those — no link
+  that bounces off `/unauthorized`.
+
+| Tile | Goes to |
+| --- | --- |
+| Waiting in Queue, Being Served Now | `/queue/board` |
+| Average Wait, Completed Today | `/reports/queue` |
+| Open actions | `/admin/welfare-reports?tab=search&view=open` (else my actions) |
+| Overdue | `…&view=overdue` (else my actions) |
+| Records | `/admin/welfare-reports` |
+| Students | `/admin/students/roster` |
+| On site now, Watchlisted on site | `/admin/visitors` |
+| Still expected | `/admin/visitors/expected` |
+| Today (visitors) | `/reports/visitors` |
+| Live campaigns | `/content/campaigns` |
+| Average rating, Responses | `/reports/feedback` |
+| Awaiting reply | `/admin/feedback` — a reply is a job, not a report |
+
+`?view=open|overdue` is new on the welfare reports page. Neither is a server-side filter —
+`SearchRecords` has no notion of overdue — so both are applied over the rows it returns, using the
+predicates `GetSummary` counts word for word, which is what makes the tile and the list agree. The
+filter shows as a removable chip reading "showing X of Y": **a filter you cannot see is a bug
+report waiting to happen** ("the search is missing records"), and clearing it drops the query
+string too, so a refresh does not bring it back. The CSV export follows the filter rather than the
+full result set.
+
+#### Industry and Branding were being offered to schools with no kiosk
+
+The user's question — *"does Industry Settings have any relevance if the queue module is not
+enabled"* — was correct, and the audit found a second page with the same problem.
+
+`ModuleRouteMap`'s own doc comment listed Industry and Branding among the base-product pages
+"available to every tenant". Neither belongs there:
+
+- **Industry Settings** feeds exactly two consumers, found by grepping every read of
+  `IndustryType`: the kiosk, which themes itself and writes its welcome copy from it, and tenant
+  provisioning, which seeds default service types from it. Both are Core Queue. The page's own
+  subtitle says "customize the kiosk experience", and its main action opens `/queue/kiosk` — a
+  route the same table already refuses without the module, so the page was offering a button that
+  bounced. Now mapped to `core-queue`.
+- **Branding Settings** configures public surfaces and nothing else — its cards say so one by one:
+  the display theme covers "your public customer-display and kiosk screens", the logo is "shown on
+  public kiosk and display screens", the colours are "applied as CSS accent colors on kiosk and
+  display screens", the banner runs on "Customer Display and Full-Screen Signage". Confirmed
+  against the layouts: `DisplayLayout` and `KioskLayout` wrap Customer Display, Signage, the kiosk,
+  Join, Ticket, Book and the feedback pages, and **nothing branded touches the admin shell**.
+
+Branding is therefore worth opening with **Core Queue or Engagement**, and worth nothing with
+neither — a shape the one-module-per-route table could not express. `WebRoutesAnyOf` is new for
+exactly this, checked before the single-module table so a broad prefix cannot claim one of its
+entries. `RequiredModulesForPage` returns the set; `RequiredModuleForPage` stays for callers that
+want one name to put in a message.
+
+**The rest of Administration audited clean.** Branches, Users & Roles, Notifications and System
+Settings are genuinely base — each is needed to run the account whatever was bought, and
+Notifications carries welfare guardian alerts and visitor SMS as well as queue ones. Every other
+admin route was already mapped. System Settings was already gating its own Queue, Display and
+Notifications tabs by module internally, so it needed nothing.
+
+**Deliberately not changed: the API side.** `organizations/{id}/industry` and `/branding` stay
+ungated. They are the tenant's own organization record, already behind `settings.manage`, so there
+is no exposure; and the branding endpoint is read by the public kiosk and display pages during
+sign-up and before authentication, where a module gate would break the very pages branding exists
+for. The page gate is the right control here, not the endpoint.
+
+#### Verified
+
+Route resolution was checked by running `RequiredModulesForPage` over all 32 admin, report and
+module routes, then over three tenant shapes:
+
+| Tenant holds | Industry | Branding | System Settings | Branches |
+| --- | --- | --- | --- | --- |
+| Student Welfare only | hidden | hidden | visible | visible |
+| Core Queue | visible | visible | visible | visible |
+| Engagement only | hidden | **visible** | visible | visible |
+
+That third row is the one the any-of table exists for. Both projects build clean and the app serves
+`/`, `/admin/welfare-reports`, the filtered variant, `/admin/industry` and `/admin/branding-settings`
+without error. Rendering still unverified — the Chrome extension stayed disconnected.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
