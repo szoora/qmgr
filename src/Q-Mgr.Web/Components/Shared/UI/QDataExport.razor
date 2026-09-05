@@ -1,0 +1,179 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TItem
+@using QMgr.Web.Services
+@inject IDataExportService ExportService
+@inject IToastService Toast
+
+@* One export control for every list in this app.
+
+   It replaces eight hand-rolled implementations that between them used two different mechanisms,
+   gated inconsistently, and offered only CSV. The caller declares its columns once and hands over
+   a way to fetch rows; everything below — formats, filenames, the row cap, progress, the download
+   and the wording of the result — belongs here so no page has to remember it. *@
+
+<div class="dropdown qde">
+    <QButton Icon="@(isWorking ? "hourglass-split" : "download")"
+             Text="@Text"
+             Size="@Size"
+             Variant="@Variant"
+             Disabled="@(isWorking || Disabled)"
+             Title="@(Disabled ? DisabledReason : "Export this list")"
+             data-bs-toggle="dropdown"
+             aria-expanded="false" />
+
+    <ul class="dropdown-menu dropdown-menu-end qde-menu">
+        <li class="qde-head">@Title</li>
+
+        @if (Formats.HasFlag(ExportFormat.Excel))
+        {
+            <li><button type="button" class="dropdown-item" @onclick="@(() => Run(ExportFormat.Excel))">
+                <QIcon Name="file-earmark-spreadsheet" /> <span>Excel workbook</span><em>.xlsx</em>
+            </button></li>
+        }
+        @if (Formats.HasFlag(ExportFormat.Csv))
+        {
+            <li><button type="button" class="dropdown-item" @onclick="@(() => Run(ExportFormat.Csv))">
+                <QIcon Name="filetype-csv" /> <span>Comma-separated</span><em>.csv</em>
+            </button></li>
+        }
+        @if (Formats.HasFlag(ExportFormat.Json))
+        {
+            <li><button type="button" class="dropdown-item" @onclick="@(() => Run(ExportFormat.Json))">
+                <QIcon Name="filetype-json" /> <span>Structured data</span><em>.json</em>
+            </button></li>
+        }
+
+        @if (Formats.HasFlag(ExportFormat.Pdf) || Formats.HasFlag(ExportFormat.Print))
+        {
+            <li><hr class="dropdown-divider" /></li>
+        }
+        @if (Formats.HasFlag(ExportFormat.Pdf))
+        {
+            @* Honest about what happens: the browser's print dialog is where "Save as PDF" lives,
+               and pretending this is a one-click download would just confuse whoever clicks it. *@
+            <li><button type="button" class="dropdown-item" @onclick="@(() => Run(ExportFormat.Pdf))">
+                <QIcon Name="file-earmark-pdf" /> <span>PDF</span><em>via print</em>
+            </button></li>
+        }
+        @if (Formats.HasFlag(ExportFormat.Print))
+        {
+            <li><button type="button" class="dropdown-item" @onclick="@(() => Run(ExportFormat.Print))">
+                <QIcon Name="printer" /> <span>Print</span><em>A4</em>
+            </button></li>
+        }
+    </ul>
+</div>
+
+<style>
+    .qde { display: inline-flex; }
+
+    .qde-menu {
+        min-width: 250px; padding: 6px;
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md);
+    }
+
+    .qde-head {
+        font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+        color: var(--qm-text-muted); padding: 6px 10px 8px;
+    }
+
+    .qde-menu .dropdown-item {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 8px 10px; border: none; background: none;
+        border-radius: var(--qm-radius-sm);
+        font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer;
+    }
+
+    .qde-menu .dropdown-item:hover,
+    .qde-menu .dropdown-item:focus-visible {
+        background: var(--qm-primary-light); color: var(--qm-text-primary);
+    }
+
+    .qde-menu .dropdown-item .q-icon { color: var(--qm-text-muted); flex: none; }
+    .qde-menu .dropdown-item span { flex: 1; }
+
+    /* The extension, right-aligned and quiet — it identifies the row at a glance without
+       competing with the label. */
+    .qde-menu .dropdown-item em {
+        font-style: normal; font-family: var(--qm-font-mono);
+        font-size: 11px; color: var(--qm-text-muted);
+    }
+
+    .qde-menu .dropdown-divider { margin: 6px 4px; border-top-color: var(--qm-border); }
+</style>
+
+@code {
+    /// <summary>Shown at the top of the menu, used as the sheet name and the printed heading.</summary>
+    [Parameter, EditorRequired] public string Title { get; set; } = "Export";
+
+    /// <summary>Base of the filename; a timestamp is appended. "roster" becomes roster-20260905-1420.xlsx.</summary>
+    [Parameter, EditorRequired] public string FileStem { get; set; } = "export";
+
+    [Parameter, EditorRequired] public IReadOnlyList<ExportColumn<TItem>> Columns { get; set; } = Array.Empty<ExportColumn<TItem>>();
+
+    /// <summary>
+    /// Everything matching the caller's <em>current filters</em> — not the page on screen.
+    /// </summary>
+    /// <remarks>
+    /// This is a delegate rather than a list on purpose. A paged list that exported its in-memory
+    /// collection would quietly export however far somebody had scrolled and call it the export,
+    /// which is a real bug this session found and fixed by hand in Feedback Management. Making the
+    /// caller supply a fetch forces the question at the point where it can still be answered
+    /// correctly.
+    /// </remarks>
+    [Parameter, EditorRequired] public Func<Task<ExportRows<TItem>>> RowProvider { get; set; } = default!;
+
+    [Parameter] public ExportFormat Formats { get; set; } = ExportFormat.All;
+
+    /// <summary>Printed under the heading — the filter description, so a printout says what it is.</summary>
+    [Parameter] public string? Subtitle { get; set; }
+
+    [Parameter] public string Text { get; set; } = "Export";
+    [Parameter] public string Size { get; set; } = "sm";
+    [Parameter] public string Variant { get; set; } = "secondary";
+
+    /// <summary>
+    /// Set by the caller from the permission that governs <em>reading</em> this data. Downloading a
+    /// list is a bigger data-protection event than paging through it, but a second permission on
+    /// every list is friction nobody asked for — so the rule is: if you may read it, you may take
+    /// it with you, and the button is absent otherwise.
+    /// </summary>
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string DisabledReason { get; set; } = "You don't have permission to export this.";
+
+    /// <summary>Fired after a successful export, for a page that wants to log or refresh.</summary>
+    [Parameter] public EventCallback<ExportResult> OnExported { get; set; }
+
+    private bool isWorking;
+
+    private async Task Run(ExportFormat format)
+    {
+        if (isWorking) return;
+        isWorking = true;
+        StateHasChanged();
+
+        try
+        {
+            var rows = await RowProvider();
+            var result = await ExportService.ExportAsync(format, FileStem, Title, Columns, rows, Subtitle);
+
+            Toast.Notify(
+                result.Success ? (result.Truncated ? ToastSeverity.Warning : ToastSeverity.Success) : ToastSeverity.Error,
+                result.Success ? "Exported" : "Nothing exported",
+                result.Message,
+                result.Truncated ? 9000 : 5000);
+
+            if (result.Success) await OnExported.InvokeAsync(result);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Export failed", ex.Message);
+        }
+        finally
+        {
+            isWorking = false;
+            StateHasChanged();
+        }
+    }
+}

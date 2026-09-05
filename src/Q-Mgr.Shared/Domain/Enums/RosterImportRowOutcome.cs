@@ -26,5 +26,18 @@ public enum RosterImportRowOutcome
     ///
     /// Appended, never inserted — these values are persisted as integers on RosterImportJobEntry.
     /// </summary>
-    AlreadyExists = 4
+    AlreadyExists = 4,
+
+    /// <summary>
+    /// The row was deliberately left alone — it is not an error and nothing about it is wrong.
+    ///
+    /// This exists for batch operations, where "nothing to do" is an ordinary and frequent
+    /// outcome: a student already in the final class has no class to be promoted to, one whose
+    /// class is not in the branch's list cannot be advanced safely, and one already holding the
+    /// value being set needs no write. Folding those into <see cref="Failed"/> would put a normal
+    /// result in the error column and make a clean promotion look like it half broke.
+    ///
+    /// Appended, never inserted.
+    /// </summary>
+    Skipped = 5
 }

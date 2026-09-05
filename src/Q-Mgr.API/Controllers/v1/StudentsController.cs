@@ -978,7 +978,9 @@ public class StudentsController : ControllerBase
         StudentName = e.StudentName,
         GuardianName = e.GuardianName,
         Outcome = e.Outcome,
-        Message = e.Message
+        Message = e.Message,
+        PreviousValue = e.PreviousValue,
+        NewValue = e.NewValue
     };
 
     /// <summary>The clamp both controllers apply to an entries page.</summary>

@@ -45,6 +45,7 @@ public static class DependencyInjection
         services.AddSingleton<IVisitorBadgeTokenService, VisitorBadgeTokenService>();
         services.AddScoped<IVisitorActivityBroadcaster, VisitorActivityBroadcaster>();
         services.AddScoped<IRosterImportBroadcaster, RosterImportBroadcaster>();
+        services.AddScoped<IBatchOperationService, BatchOperationService>();
 
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();

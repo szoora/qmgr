@@ -1,0 +1,230 @@
+@namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@inject IBatchApiService BatchApi
+@inject IToastService Toast
+
+@* The preview-and-commit dialog, shared by every list that can run a batch.
+
+   The preview is a step, not a confirmation. Against a school roster the operator needs to see
+   "731 promoted, 88 leavers, 4 unknown class" before anything is written — and then go and fix
+   the four. Everything below is in service of that: the counts lead, the rows that will not
+   change are shown with their reason, and the commit button says how many records it will touch
+   so nobody presses it thinking it means something else. *@
+
+<QModal @bind-Visible="isOpen" Title="@DialogTitle" Size="lg">
+    <ChildContent>
+        @if (isResolving)
+        {
+            <div class="qbd-loading"><QSpinner Size="lg" /><span>Working out what this would do…</span></div>
+        }
+        else if (preview?.BlockingError is { } blocked)
+        {
+            <div class="qbd-blocked">
+                <QIcon Name="exclamation-octagon-fill" />
+                <div>
+                    <strong>This can't run</strong>
+                    <p>@blocked</p>
+                </div>
+            </div>
+        }
+        else if (preview != null)
+        {
+            <p class="qbd-summary">@preview.Summary</p>
+
+            <div class="qbd-counts">
+                <div class="qbd-count qbd-count--change">
+                    <span class="qbd-n">@preview.WillChange.ToString("N0")</span>
+                    <span class="qbd-l">will change</span>
+                </div>
+                <div class="qbd-count @(preview.WillSkip > 0 ? "qbd-count--skip" : "")">
+                    <span class="qbd-n">@preview.WillSkip.ToString("N0")</span>
+                    <span class="qbd-l">left alone</span>
+                </div>
+                <div class="qbd-count @(preview.WillFail > 0 ? "qbd-count--fail" : "")">
+                    <span class="qbd-n">@preview.WillFail.ToString("N0")</span>
+                    <span class="qbd-l">can't be read</span>
+                </div>
+            </div>
+
+            @* The rows that will NOT change come first. They are the ones somebody has to make a
+               decision about — a leaver, a typo'd class — and burying them under 700 green rows
+               is how they get missed. *@
+            @if (preview.WillSkip > 0 || preview.WillFail > 0)
+            {
+                <h4 class="qbd-h">Needs your attention</h4>
+                <div class="qbd-rows">
+                    @foreach (var r in preview.Rows.Where(r => r.Outcome != RosterImportRowOutcome.Updated).Take(60))
+                    {
+                        <div class="qbd-row qbd-row--@r.Outcome.ToString().ToLowerInvariant()">
+                            <span class="qbd-name">@r.Label<em>@r.SubLabel</em></span>
+                            <span class="qbd-msg">@r.Message</span>
+                        </div>
+                    }
+                </div>
+                @if (preview.Rows.Count(r => r.Outcome != RosterImportRowOutcome.Updated) > 60)
+                {
+                    <p class="qbd-more">…and @(preview.Rows.Count(r => r.Outcome != RosterImportRowOutcome.Updated) - 60) more.</p>
+                }
+            }
+
+            @if (preview.WillChange > 0)
+            {
+                <h4 class="qbd-h">Will change</h4>
+                <div class="qbd-rows">
+                    @foreach (var r in preview.Rows.Where(r => r.Outcome == RosterImportRowOutcome.Updated).Take(40))
+                    {
+                        <div class="qbd-row qbd-row--updated">
+                            <span class="qbd-name">@r.Label<em>@r.SubLabel</em></span>
+                            <span class="qbd-msg">@r.Message</span>
+                        </div>
+                    }
+                </div>
+                @if (preview.WillChange > 40)
+                {
+                    <p class="qbd-more">…and @(preview.WillChange - 40) more, all the same.</p>
+                }
+            }
+
+            <div class="qbd-reason">
+                <QInput TValue="string" @bind-Value="@reason" Label="Note (optional)"
+                        Placeholder="e.g. End of Term 2 promotion, approved by the head teacher"
+                        HelperText="Kept with the batch in the history, so somebody can tell later why this ran." />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="Close" Disabled="@isRunning" />
+        <QButton Text="@CommitLabel"
+                 Icon="check-lg"
+                 Variant="primary"
+                 Loading="@isRunning"
+                 Disabled="@(preview == null || preview.BlockingError != null || preview.WillChange == 0 || isResolving)"
+                 OnClick="Commit" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .qbd-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px; color: var(--qm-text-muted); }
+
+    .qbd-blocked {
+        display: flex; gap: 12px; align-items: flex-start;
+        background: rgba(var(--qm-danger-rgb), 0.08); border: 1px solid var(--qm-danger);
+        border-radius: var(--qm-radius-md); padding: 16px;
+    }
+    .qbd-blocked .q-icon { color: var(--qm-danger); font-size: 20px; flex: none; }
+    .qbd-blocked strong { display: block; margin-bottom: 4px; }
+    .qbd-blocked p { margin: 0; font-size: 14px; color: var(--qm-text-secondary); }
+
+    .qbd-summary { font-size: 15px; font-weight: 600; margin: 0 0 16px; }
+
+    .qbd-counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+    .qbd-count {
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        padding: 12px 14px; display: flex; flex-direction: column; gap: 2px;
+    }
+    .qbd-count--change { border-color: var(--qm-primary); background: var(--qm-primary-light); }
+    .qbd-count--skip { border-color: var(--qm-accent-orange, #d97706); }
+    .qbd-count--fail { border-color: var(--qm-danger); }
+    .qbd-n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .qbd-l { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); }
+
+    .qbd-h { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 18px 0 8px; }
+
+    .qbd-rows { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); max-height: 260px; overflow-y: auto; }
+    .qbd-row {
+        display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 12px;
+        padding: 8px 12px; border-bottom: 1px solid var(--qm-border); font-size: 13px; align-items: baseline;
+    }
+    .qbd-row:last-child { border-bottom: none; }
+    .qbd-row--updated { border-left: 3px solid var(--qm-primary); }
+    .qbd-row--skipped { border-left: 3px solid var(--qm-accent-orange, #d97706); }
+    .qbd-row--failed { border-left: 3px solid var(--qm-danger); }
+
+    .qbd-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .qbd-name em { font-style: normal; font-weight: 400; color: var(--qm-text-muted); margin-left: 6px; font-size: 12px; }
+    .qbd-msg { color: var(--qm-text-secondary); min-width: 0; }
+
+    .qbd-more { font-size: 12.5px; color: var(--qm-text-muted); margin: 6px 2px 0; }
+    .qbd-reason { margin-top: 18px; }
+
+    @@media (max-width: 640px) {
+        .qbd-counts { grid-template-columns: 1fr; }
+        .qbd-row { grid-template-columns: 1fr; gap: 2px; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid BranchId { get; set; }
+
+    /// <summary>Raised once the batch has been queued, with the job id — the caller listens for progress.</summary>
+    [Parameter] public EventCallback<BatchAcceptedDto> OnQueued { get; set; }
+
+    private bool isOpen;
+    private bool isResolving;
+    private bool isRunning;
+    private BatchRequest? request;
+    private BatchPreviewDto? preview;
+    private string reason = "";
+
+    private string DialogTitle => request?.Operation switch
+    {
+        BatchOperation.AdvanceClass => "Promote to next class",
+        BatchOperation.SetField => "Set a field on the selected students",
+        BatchOperation.Deactivate => "Mark students as left",
+        BatchOperation.SetConsent => "Data consent",
+        BatchOperation.AssignWelfareAction => "Assign welfare records",
+        BatchOperation.SetWelfareReviewDate => "Set a review date",
+        BatchOperation.SetWelfareStatus => "Change welfare status",
+        BatchOperation.CheckOutVisitors => "Check out visitors",
+        BatchOperation.CancelTokens => "Cancel tickets",
+        BatchOperation.CancelAppointments => "Cancel bookings",
+        BatchOperation.SetUserActive => "Enable or disable accounts",
+        BatchOperation.SetUserRole => "Change role",
+        _ => "Batch update"
+    };
+
+    /// <summary>The count goes on the button so nobody commits thinking it means something else.</summary>
+    private string CommitLabel => preview is { WillChange: > 0 }
+        ? $"Apply to {preview.WillChange:N0}"
+        : "Apply";
+
+    /// <summary>Opens the dialog and immediately resolves the preview.</summary>
+    public async Task ShowAsync(BatchRequest batch)
+    {
+        request = batch;
+        reason = "";
+        preview = null;
+        isOpen = true;
+        isResolving = true;
+        StateHasChanged();
+
+        preview = await BatchApi.PreviewAsync(BranchId, batch);
+        isResolving = false;
+        StateHasChanged();
+    }
+
+    private void Close() => isOpen = false;
+
+    private async Task Commit()
+    {
+        if (request == null || preview == null) return;
+
+        isRunning = true;
+        try
+        {
+            var accepted = await BatchApi.RunAsync(BranchId, request with { Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim() });
+            isOpen = false;
+            Toast.Notify(ToastSeverity.Info, "Running", $"{accepted.Summary} — this runs in the background.", 6000);
+            await OnQueued.InvokeAsync(accepted);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Couldn't run this", ex.Message, 8000);
+        }
+        finally
+        {
+            isRunning = false;
+        }
+    }
+}

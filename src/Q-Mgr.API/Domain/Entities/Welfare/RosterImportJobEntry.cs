@@ -29,5 +29,23 @@ public class RosterImportJobEntry : BaseEntity
     public Guid? StudentId { get; set; }
     public Guid? GuardianProfileId { get; set; }
 
+    /// <summary>
+    /// What the changed field held before this row ran, and what it holds after.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These are what make a batch <b>undoable</b>, which is the difference between an operation an
+    /// administrator will actually run against 800 children and one they will not. Without the old
+    /// value, reversing a mistaken promotion means editing eight hundred rows by hand.
+    /// </para>
+    /// <para>
+    /// They are also what makes the log readable a term later: "S3 → S4" says what happened where
+    /// "Updated" does not. Null on an import, which changes many fields at once and has no single
+    /// before-and-after to record.
+    /// </para>
+    /// </remarks>
+    public string? PreviousValue { get; set; }
+    public string? NewValue { get; set; }
+
     public virtual RosterImportJob? RosterImportJob { get; set; }
 }

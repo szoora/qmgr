@@ -1,4 +1,5 @@
 @page "/admin/visitors"
+@using QMgr.Web.Services
 @using System.Text.Json
 @implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
@@ -26,6 +27,16 @@
             <p class="subtitle">Check in visitors, notify hosts, and keep a record of who's on site</p>
         </div>
         <div class="header-actions">
+            @* Gated on visitors.view, which is what this page already requires to be read at
+               all — downloading the day's visitors is not a second decision. *@
+            <QDataExport TItem="VisitorDto"
+                         Title="Visitors"
+                         FileStem="visitors"
+                         Subtitle="@ExportSubtitle"
+                         Columns="@VisitorExportColumns"
+                         RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(!visitors.Any())"
+                         DisabledReason="No visits match the current view." />
             <QButton Text="Scan Badge" Icon="qr-code-scan" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/scan"))" />
             <QButton Text="Display Board" Icon="display" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/visitors/board"))" />
             <PermissionGuard Permission="students.view">
@@ -537,6 +548,29 @@
 
     private bool CardNeedsOverride(StudentGuardianSearchResultDto? roster) =>
         roster != null && roster.CheckInsToday >= CardAbuseWarningThreshold && !roster.GuardianIsWatchlisted && !isManagerOrAbove;
+
+    // ---- Export -----------------------------------------------------------------------------
+
+    private string ExportSubtitle => $"{visitors.Count:N0} visit(s) in the current view · {DateTime.Now:d MMMM yyyy}";
+
+    private static readonly List<ExportColumn<VisitorDto>> VisitorExportColumns = new()
+    {
+        new("Badge", v => v.BadgeCode, ExportType.Text, 12),
+        new("Visitor", v => v.FullName, ExportType.Text, 26),
+        new("Phone", v => v.Phone, ExportType.Text, 16),
+        new("Company", v => v.Company, ExportType.Text, 22),
+        new("Purpose", v => v.Purpose, ExportType.Text, 24),
+        new("Host", v => v.HostName, ExportType.Text, 22),
+        new("Visiting", v => v.StudentName, ExportType.Text, 24),
+        new("Checked in", v => v.CheckedInAt?.ToLocalTime(), ExportType.Date, 18),
+        new("Checked out", v => v.CheckedOutAt?.ToLocalTime(), ExportType.Date, 18),
+        new("Vehicle", v => v.VehiclePlate, ExportType.Text, 12),
+        new("Watchlisted", v => v.IsWatchlisted, ExportType.Bool, 12)
+    };
+
+    /// <summary>The rows in the current view — the evacuation list, if that is what is on screen.</summary>
+    private Task<ExportRows<VisitorDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<VisitorDto>(visitors, false));
 
     private List<VisitorDto> allVisitors = new();
     private List<VisitorDto> visitors = new();

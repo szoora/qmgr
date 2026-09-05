@@ -5,6 +5,7 @@
 @page "/admin/visitors/roster"
 @implements IAsyncDisposable
 @inject IStudentApiService StudentApi
+@inject IBatchApiService BatchApi
 @inject INotificationClientService NotificationClient
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
@@ -49,7 +50,80 @@
         <QButton Text="@($"Print Selected ({selectedStudentIds.Count})")" Icon="printer-fill" Variant="secondary" OnClick="@PrintAllStudentCards"
                  Disabled="@(selectedStudentIds.Count == 0)"
                  Title="Print Student Visitation Cards for the checked students — 8 per A4 sheet" />
+
+        @* Export gates on the permission that governs *reading* the roster, not a second one of
+           its own. Downloading a list is a bigger data-protection event than paging through it,
+           but a separate permission on every list is friction nobody asked for — and this page is
+           already behind students.view. *@
+        <QDataExport TItem="StudentDto"
+                     Title="Student roster"
+                     FileStem="@($"roster-{(BranchState.CurrentBranchName ?? "branch")}")"
+                     Subtitle="@ExportSubtitle"
+                     Columns="@RosterExportColumns"
+                     RowProvider="@ProvideExportRowsAsync" />
     </div>
+
+    @* The batch bar appears only when something is selected, and says what is selected — a bar
+       that is always there reads as chrome, and one that says "Actions" makes somebody click it
+       to find out what it would act on. *@
+    @if (selectedStudentIds.Count > 0 && canManageStudents)
+    {
+        <div class="batch-bar">
+            <span class="batch-bar-count">
+                <QIcon Name="check2-square" />
+                <strong>@selectedStudentIds.Count.ToString("N0")</strong> selected
+            </span>
+
+            <QButton Text="Promote to next class" Icon="arrow-up-circle" Size="sm" Variant="primary"
+                     OnClick="@(() => OpenBatch(BatchOperation.AdvanceClass))"
+                     Title="Move each selected student to the next class in this branch's list" />
+
+            <div class="dropdown">
+                <QButton Text="Set a field" Icon="pencil-square" Size="sm" Variant="secondary"
+                         data-bs-toggle="dropdown" aria-expanded="false" />
+                <ul class="dropdown-menu batch-menu">
+                    @foreach (var f in BatchFields)
+                    {
+                        <li><button type="button" class="dropdown-item" @onclick="@(() => OpenSetField(f))">@FieldLabel(f)</button></li>
+                    }
+                </ul>
+            </div>
+
+            <div class="dropdown">
+                <QButton Text="More" Icon="three-dots" Size="sm" Variant="ghost"
+                         data-bs-toggle="dropdown" aria-expanded="false" />
+                <ul class="dropdown-menu dropdown-menu-end batch-menu">
+                    <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "give"))">
+                        <QIcon Name="patch-check" /> Record data consent
+                    </button></li>
+                    <li><button type="button" class="dropdown-item" @onclick="@(() => OpenBatch(BatchOperation.SetConsent, "withdraw"))">
+                        <QIcon Name="patch-exclamation" /> Withdraw data consent
+                    </button></li>
+                    <li><hr class="dropdown-divider" /></li>
+                    @* Retiring a child hides them from the roster, the gate and visiting day, so it
+                       is its own deliberate action and never a side effect of promotion. *@
+                    <li><button type="button" class="dropdown-item batch-danger" @onclick="@(() => OpenBatch(BatchOperation.Deactivate))">
+                        <QIcon Name="box-arrow-right" /> Mark as left
+                    </button></li>
+                </ul>
+            </div>
+
+            <button type="button" class="batch-clear" @onclick="@(() => selectedStudentIds.Clear())">Clear selection</button>
+        </div>
+    }
+
+    @* Undo stays offered until it is used or the page is left. There is deliberately no time
+       limit — a window would be arbitrary, and the real question is whether anything has moved
+       underneath, which the server asks when the button is pressed. *@
+    @if (lastBatchJobId.HasValue)
+    {
+        <div class="batch-done">
+            <QIcon Name="check-circle-fill" />
+            <span>@lastBatchSummary</span>
+            <QButton Text="Undo this" Icon="arrow-counterclockwise" Size="sm" Variant="ghost" OnClick="@UndoLastBatch" />
+            <button type="button" class="batch-clear" @onclick="@(() => lastBatchJobId = null)">Dismiss</button>
+        </div>
+    }
 
     @if (isLoading)
     {
@@ -238,6 +312,34 @@
         </div>
     }
 </div>
+
+@* Set-a-field needs its value before there is anything to preview. The options come from the
+   branch's own lists or the field's real enum — never free text, because a typo'd house name
+   silently creates a new house nobody can find again. *@
+<QModal @bind-Visible="showSetFieldPrompt" Title="@($"Set {(pendingField.HasValue ? FieldLabel(pendingField.Value).ToLowerInvariant() : "field")}")" Size="sm">
+    <ChildContent>
+        <p class="form-hint">This will be written to all @selectedStudentIds.Count.ToString("N0") selected students. You'll see exactly what changes before anything is saved.</p>
+        @if (SetFieldOptions.Any())
+        {
+            <QSelect TValue="string" TItem="string" Value="@setFieldValue" Items="@SetFieldOptions"
+                     Label="@(pendingField.HasValue ? FieldLabel(pendingField.Value) : "Value")"
+                     ValueChanged="@(v => setFieldValue = v ?? "")" />
+        }
+        else
+        {
+            <QInput TValue="string" @bind-Value="@setFieldValue" Label="Value" MaxLength="100" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSetFieldPrompt = false)" />
+        <QButton Text="Preview" Icon="arrow-right" Variant="primary" OnClick="@ConfirmSetField"
+                 Disabled="@string.IsNullOrWhiteSpace(setFieldValue)" />
+    </FooterContent>
+</QModal>
+
+@* The batch preview-and-commit dialog. Shared with every other list that runs a batch — the
+   roster owns none of its behaviour, only the request it hands over. *@
+<QBatchDialog @ref="batchDialog" BranchId="@branchId" OnQueued="@OnBatchQueued" />
 
 @* Suggestion sources for the fields that stay free text. A datalist offers the known values and
    accepts anything else, which is the right shape for a vocabulary a school will always have an
@@ -1139,6 +1241,47 @@
         .stu-tab { transition: none; }
     }
     .roster-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+
+    /* The batch bar. Present only while something is selected, and leading with the count —
+       a bar that is always there reads as chrome, and one labelled "Actions" makes somebody
+       click it to find out what it would act on. */
+    .batch-bar {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        background: var(--qm-primary-light); border: 1px solid var(--qm-primary);
+        border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 16px;
+    }
+    .batch-bar-count { display: flex; align-items: center; gap: 7px; font-size: 14px; margin-right: 4px; }
+    .batch-bar-count strong { font-variant-numeric: tabular-nums; }
+    .batch-bar .dropdown { display: inline-flex; }
+
+    .batch-menu {
+        min-width: 220px; padding: 6px;
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card); box-shadow: var(--qm-shadow-md);
+    }
+    .batch-menu .dropdown-item {
+        display: flex; align-items: center; gap: 9px; width: 100%;
+        padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm);
+        font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer;
+    }
+    .batch-menu .dropdown-item:hover,
+    .batch-menu .dropdown-item:focus-visible { background: var(--qm-primary-light); }
+    .batch-menu .dropdown-item .q-icon { color: var(--qm-text-muted); flex: none; }
+    .batch-menu .dropdown-item.batch-danger { color: var(--qm-danger); }
+    .batch-menu .dropdown-item.batch-danger .q-icon { color: var(--qm-danger); }
+    .batch-menu .dropdown-divider { margin: 6px 4px; border-top-color: var(--qm-border); }
+
+    .batch-clear {
+        margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer;
+        font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline;
+    }
+
+    .batch-done {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        background: rgba(var(--qm-success-rgb), 0.1); border: 1px solid var(--qm-success);
+        border-radius: var(--qm-radius-md); padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
+    }
+    .batch-done .q-icon { color: var(--qm-success); }
     .roster-search-input { flex: 1; min-width: 240px; padding: 10px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); }
     .roster-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-muted); cursor: pointer; }
 
@@ -1387,6 +1530,167 @@
     // picking a few from class A, then filtering to class B and picking more, combines both) but
     // "select all" only ever acts on what the current filter shows, same as most bulk-action UIs.
     private HashSet<Guid> selectedStudentIds = new();
+
+    // ---- Batch operations -------------------------------------------------------------------
+    //
+    // The roster owns none of the batch machinery. It builds a BatchRequest describing what the
+    // operator picked and hands it to the shared dialog, which previews it, commits it and reports
+    // back. Everything after that — the resolver, the background writer, the undo — is the same
+    // code every other list in the app uses.
+
+    private QBatchDialog? batchDialog;
+
+    /// <summary>The fields a batch may set, in the order they matter on a term boundary.</summary>
+    private static readonly BatchField[] BatchFields =
+    {
+        BatchField.House, BatchField.DormitoryOrStream, BatchField.ClassName,
+        BatchField.Residency, BatchField.FeesStatus, BatchField.TransportMode, BatchField.SponsorName
+    };
+
+    private static string FieldLabel(BatchField f) => f switch
+    {
+        BatchField.ClassName => "Class (set directly)",
+        BatchField.House => "House",
+        BatchField.DormitoryOrStream => "Dormitory / stream",
+        BatchField.Residency => "Residency",
+        BatchField.FeesStatus => "Fees status",
+        BatchField.TransportMode => "Transport",
+        BatchField.SponsorName => "Sponsor",
+        _ => f.ToString()
+    };
+
+    private async Task OpenBatch(BatchOperation operation, string? value = null)
+    {
+        if (batchDialog == null) return;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = operation,
+            Ids = selectedStudentIds.ToList(),
+            Value = value
+        });
+    }
+
+    private BatchField? pendingField;
+
+    /// <summary>
+    /// Set-a-field needs a value before it can be previewed, so it goes through a small prompt
+    /// first. The vocabulary fields offer the branch's own list; the enum fields offer their real
+    /// options — neither is free text, because a typo'd house name silently creates a new house.
+    /// </summary>
+    private async Task OpenSetField(BatchField field)
+    {
+        pendingField = field;
+        setFieldValue = field switch
+        {
+            BatchField.House => vocabularies.Houses.FirstOrDefault(h => h.IsActive)?.Name ?? "",
+            BatchField.DormitoryOrStream => vocabularies.Dormitories.FirstOrDefault(d => d.IsActive)?.Name ?? "",
+            BatchField.ClassName => vocabularies.Classes.FirstOrDefault(c => c.IsActive)?.Name ?? "",
+            BatchField.Residency => nameof(StudentResidency.Boarder),
+            BatchField.FeesStatus => nameof(StudentFeesStatus.Clear),
+            BatchField.TransportMode => nameof(StudentTransportMode.SchoolBus),
+            _ => ""
+        };
+        showSetFieldPrompt = true;
+        await Task.CompletedTask;
+    }
+
+    private bool showSetFieldPrompt;
+    private string setFieldValue = "";
+
+    private List<string> SetFieldOptions => pendingField switch
+    {
+        BatchField.House => vocabularies.Houses.Where(h => h.IsActive).OrderBy(h => h.SortOrder).Select(h => h.Name).ToList(),
+        BatchField.DormitoryOrStream => vocabularies.Dormitories.Where(d => d.IsActive).OrderBy(d => d.SortOrder).Select(d => d.Name).ToList(),
+        BatchField.ClassName => vocabularies.Classes.Where(c => c.IsActive).OrderBy(c => c.SortOrder).Select(c => c.Name).ToList(),
+        BatchField.Residency => Enum.GetNames<StudentResidency>().ToList(),
+        BatchField.FeesStatus => Enum.GetNames<StudentFeesStatus>().ToList(),
+        BatchField.TransportMode => Enum.GetNames<StudentTransportMode>().ToList(),
+        _ => new List<string>()
+    };
+
+    private async Task ConfirmSetField()
+    {
+        if (batchDialog == null || pendingField is not { } field) return;
+        showSetFieldPrompt = false;
+        await batchDialog.ShowAsync(new BatchRequest
+        {
+            Operation = BatchOperation.SetField,
+            Ids = selectedStudentIds.ToList(),
+            Field = field,
+            Value = setFieldValue
+        });
+    }
+
+    /// <summary>
+    /// A batch has been queued. The roster listens on the same progress channel the import already
+    /// uses, so the existing HandleImportProgress reload path covers it — this just clears the
+    /// selection, because leaving 731 rows ticked after acting on them invites acting twice.
+    /// </summary>
+    private async Task OnBatchQueued(BatchAcceptedDto accepted)
+    {
+        lastBatchJobId = accepted.JobId;
+        lastBatchSummary = accepted.Summary;
+        selectedStudentIds.Clear();
+        await Task.CompletedTask;
+    }
+
+    private Guid? lastBatchJobId;
+    private string? lastBatchSummary;
+
+    /// <summary>Reverses the batch that just ran, if nothing has moved underneath it.</summary>
+    private async Task UndoLastBatch()
+    {
+        if (lastBatchJobId is not { } jobId) return;
+
+        var result = await BatchApi.UndoAsync(branchId, jobId);
+        NotificationService.Notify(
+            result.Success ? ToastSeverity.Success : ToastSeverity.Warning,
+            result.Success ? "Reversed" : "Not reversed",
+            result.Message + (result.ConflictedRows.Any() ? " — " + string.Join("; ", result.ConflictedRows.Take(3)) : ""),
+            result.Success ? 5000 : 12000);
+
+        if (result.Success)
+        {
+            lastBatchJobId = null;
+            await LoadStudents();
+        }
+    }
+
+    // ---- Export -----------------------------------------------------------------------------
+
+    private string ExportSubtitle =>
+        (string.IsNullOrWhiteSpace(filterQuery) ? "All students" : $"Filtered by \"{filterQuery}\"")
+        + (includeInactive ? ", including inactive" : ", active only");
+
+    /// <summary>
+    /// Declared once and used by every format, so a column added here cannot be forgotten in the
+    /// workbook — which is exactly how the hand-rolled exports this replaces drifted apart.
+    /// </summary>
+    private static readonly List<ExportColumn<StudentDto>> RosterExportColumns = new()
+    {
+        new("Student code", s => s.StudentCode, ExportType.Text, 14),
+        new("Full name", s => s.FullName, ExportType.Text, 28),
+        new("Class", s => s.ClassName, ExportType.Text, 10),
+        new("House", s => s.House, ExportType.Text, 14),
+        new("Dormitory / stream", s => s.DormitoryOrStream, ExportType.Text, 18),
+        new("Residency", s => s.Residency, ExportType.Text, 12),
+        new("Fees status", s => s.FeesStatus, ExportType.Text, 14),
+        new("Date of birth", s => s.DateOfBirth, ExportType.Date, 14),
+        new("Sex", s => s.Sex, ExportType.Text, 8),
+        new("Admitted", s => s.AdmissionDate, ExportType.Date, 14),
+        new("Guardians", s => s.Guardians.Count, ExportType.Number, 10),
+        new("Guardian names", s => string.Join("; ", s.Guardians.Select(g => $"{g.FullName} ({g.Relationship})")), ExportType.Text, 40),
+        new("Guardian phones", s => string.Join("; ", s.Guardians.Select(g => g.Phone).Where(p => !string.IsNullOrWhiteSpace(p))), ExportType.Text, 30),
+        new("Data consent", s => s.DataConsentGivenAt.HasValue, ExportType.Bool, 12),
+        new("Active", s => s.IsActive, ExportType.Bool, 8)
+    };
+
+    /// <summary>
+    /// Everything matching the current filters — which on this page is the whole loaded roster
+    /// narrowed by the search box, not the rows scrolled into view.
+    /// </summary>
+    private Task<ExportRows<StudentDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<StudentDto>(FilteredStudents.ToList(), false));
 
     private bool AllFilteredSelected => FilteredStudents.Any() && FilteredStudents.All(s => selectedStudentIds.Contains(s.Id));
 

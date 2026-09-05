@@ -117,7 +117,16 @@
             <QSelect TValue="WelfareStatus?" TItem="(string Label, WelfareStatus? Value)" Value="@searchStatus" Items="@statusFilterOptions"
                      TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Status" ValueChanged="@(v => searchStatus = v)" />
             <QButton Text="Search" Icon="search" Variant="primary" OnClick="@LoadSearch" />
-            <QButton Text="@($"Export CSV ({VisibleSearchResults.Count})")" Icon="cloud-download-fill" Variant="secondary" OnClick="@ExportCsv" Disabled="@(!VisibleSearchResults.Any())" />
+            @* The shared export replaces this page's own CSV writer — same rows, four formats,
+               and a column list that cannot drift from the one the workbook uses. *@
+            <QDataExport TItem="WelfareRecordDto"
+                         Title="Welfare records"
+                         FileStem="welfare-records"
+                         Subtitle="@ExportSubtitle"
+                         Columns="@WelfareExportColumns"
+                         RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(!VisibleSearchResults.Any())"
+                         DisabledReason="Nothing matches the current filters." />
         </div>
 
         @* Arriving from a dashboard tile applies a filter the filter bar above can't express, so
@@ -960,25 +969,46 @@
         }
     }
 
-    private async Task ExportCsv()
+    // ---- Export ---------------------------------------------------------------------------
+    //
+    // This page used to write its own CSV, one of eight such implementations across the app. The
+    // columns are declared once below and used by every format, so a column added here cannot be
+    // forgotten in the workbook.
+
+    private string ExportSubtitle
     {
-        var lines = new List<string> { "Student,Category,CaseType,Tier,Points,Status,OccurredAt,ReportedBy,ActionTaken,AssignedTo,DueDate,Description" };
-        foreach (var r in VisibleSearchResults)
+        get
         {
-            lines.Add(string.Join(",", new[]
-            {
-                CsvField(r.StudentName), CsvField(r.CategoryName), CsvField(r.CaseType.ToString()), CsvField(r.Tier.ToString()),
-                CsvField(r.Points?.ToString() ?? ""), CsvField(r.Status.ToString()), CsvField(r.OccurredAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")),
-                CsvField(r.ReportedByName), CsvField(r.ActionTaken ?? ""), CsvField(r.AssignedToName ?? ""),
-                CsvField(r.ActionDueDate?.ToLocalTime().ToString("yyyy-MM-dd") ?? ""), CsvField(r.Description)
-            }));
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(searchKeyword)) parts.Add($"matching \"{searchKeyword}\"");
+            if (searchCaseType.HasValue) parts.Add(searchCaseType.Value.ToString());
+            if (searchStatus.HasValue) parts.Add(searchStatus.Value.ToString());
+            if (dueView != null) parts.Add(DueViewLabel.ToLowerInvariant());
+            if (searchFrom.HasValue || searchTo.HasValue)
+                parts.Add($"{searchFrom:d MMM yyyy} – {searchTo:d MMM yyyy}".Replace(" – ", searchTo.HasValue ? " – " : " onwards"));
+            return parts.Any() ? "Filtered: " + string.Join(", ", parts) : "All records";
         }
-        var csv = string.Join("\n", lines);
-        var dataUrl = "data:text/csv;charset=utf-8," + Uri.EscapeDataString(csv);
-        await JS.InvokeVoidAsync("downloadDataUrl", dataUrl, $"welfare-records-{DateTime.Now:yyyyMMdd-HHmm}.csv");
     }
 
-    private static string CsvField(string value) => "\"" + (value ?? "").Replace("\"", "\"\"") + "\"";
+    private static readonly List<ExportColumn<WelfareRecordDto>> WelfareExportColumns = new()
+    {
+        new("Student", r => r.StudentName, ExportType.Text, 26),
+        new("Occurred", r => r.OccurredAt.ToLocalTime(), ExportType.Date, 18),
+        new("Case type", r => r.CaseType, ExportType.Text, 14),
+        new("Category", r => r.CategoryName, ExportType.Text, 22),
+        new("Tier", r => r.Tier, ExportType.Text, 10),
+        new("Points", r => r.Points, ExportType.Number, 8),
+        new("Status", r => r.Status, ExportType.Text, 14),
+        new("Reported by", r => r.ReportedByName, ExportType.Text, 22),
+        new("Action taken", r => r.ActionTaken, ExportType.Text, 30),
+        new("Assigned to", r => r.AssignedToName, ExportType.Text, 22),
+        new("Review by", r => r.ActionDueDate?.ToLocalTime(), ExportType.Date, 14),
+        new("Description", r => r.Description, ExportType.Text, 50)
+    };
+
+    /// <summary>The rows the filters produced, not the ones scrolled into view.</summary>
+    private Task<ExportRows<WelfareRecordDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<WelfareRecordDto>(VisibleSearchResults, false));
 
     private async Task PrintRecord(WelfareRecordDto r)
     {

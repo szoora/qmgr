@@ -292,6 +292,11 @@ public record RosterImportJobEntryDto
     public string? GuardianName { get; init; }
     public RosterImportRowOutcome Outcome { get; init; }
     public string Message { get; init; } = string.Empty;
+
+    /// <summary>What the changed field held before and after — populated for a batch, null for an
+    /// import, which changes many fields at once and has no single before-and-after to show.</summary>
+    public string? PreviousValue { get; init; }
+    public string? NewValue { get; init; }
 }
 
 /// <summary>Pushed over the notification hub's branch group as the background job runs.</summary>

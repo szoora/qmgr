@@ -64,6 +64,8 @@ builder.Services.AddScoped<IAppInitializationService, AppInitializationService>(
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>();
+builder.Services.AddScoped<IDataExportService, DataExportService>();
+builder.Services.AddScoped<IBatchApiService, BatchApiService>();
 builder.Services.AddScoped<IQueueApiService, QueueApiService>();
 builder.Services.AddScoped<IVisitorApiService, VisitorApiService>();
 builder.Services.AddScoped<IReportsApiService, ReportsApiService>();
