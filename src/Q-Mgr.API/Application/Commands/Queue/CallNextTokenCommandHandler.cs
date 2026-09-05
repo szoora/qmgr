@@ -1,3 +1,4 @@
+using QMgr.Domain.Constants;
 using QMgr.Application.Mappings;
 using Mediator;
 using QMgr.Application.DTOs;
@@ -28,6 +29,23 @@ internal static class QueueOwnershipCheck
         var tenantContext = tenantContextAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
             return false;
+
+        // SuperAdmin administers every tenant, and a SuperAdmin's JWT carries the Platform org's
+        // own org_id — a known quirk documented on QMgrDbContext.TenantIsolationEnabled — so a
+        // plain org comparison blocks them from every branch outside the Platform org. All
+        // thirteen VerifyBranchOwnership implementations in the controllers exempt SuperAdmin for
+        // exactly that reason, and ModuleAccessMiddleware's own comment asserts this is "the same
+        // bypass the ownership checks all use". This check was the one place that did not, which
+        // is why a platform administrator got "Counter not found." on Call Next against a
+        // tenant's branch while being able to cancel that same tenant's tokens through
+        // TokensController one file away.
+        //
+        // This IS a widening, and deliberately only for SuperAdmin: the organization comparison
+        // below is untouched, so a tenant admin still cannot reach another tenant's queue — the
+        // cross-tenant hole this class was written to close (see the summary above) stays closed.
+        // The branch must still exist, so a bad id is still a not-found rather than a silent pass.
+        if (RoleCodes.IsSuperAdmin(tenantContext.UserRole))
+            return await unitOfWork.Branches.ExistsAsync(b => b.Id == branchId, cancellationToken);
 
         return await unitOfWork.Branches.ExistsAsync(
             b => b.Id == branchId && b.OrganizationId == tenantContext.OrganizationId,
@@ -117,12 +135,7 @@ public class CallNextTokenCommandHandler : IRequestHandler<CallNextTokenCommand,
         await _customerNotifier.NotifyCalledToCounterAsync(token.Id, counter!.Id);
         await _customerNotifier.NotifyApproachingTurnAsync(token.BranchId, token.ServiceTypeId);
 
-        return MapToDto(token, counter!);
-    }
-
-    private static TokenDto MapToDto(Token token, Counter counter)
-    {
-        return TokenMapper.ToDto(token, counter);
+        return TokenMapper.ToDto(token, counter!);
     }
 }
 

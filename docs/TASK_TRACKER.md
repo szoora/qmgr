@@ -604,8 +604,49 @@ Probe counter and tokens cleaned up afterwards.
 `QueueOwnershipCheck.OwnsBranchAsync` does **not** exempt SuperAdmin, unlike the controllers'
 `VerifyBranchOwnership` which all do. So a platform administrator gets "Counter not found." on
 Call Next against a tenant's branch. Testing had to sign in as the tenant's own admin. That is an
-inconsistency between two ownership checks, not obviously a bug in either direction — worth a
-decision rather than a quiet change.
+inconsistency between two ownership checks. **Resolved in Addendum 7 below**, after the user asked
+for it.
+
+---
+
+### Addendum 7, same day — the one ownership check that did not exempt SuperAdmin
+
+`QueueOwnershipCheck.OwnsBranchAsync` compared the caller's organization to the branch's and
+stopped there. Every one of the **thirteen** `VerifyBranchOwnership` implementations in the
+controllers exempts SuperAdmin, and `ModuleAccessMiddleware`'s own comment asserts this is "the
+same bypass the ownership checks all use" — which was true of everything except this one.
+
+The reason it matters is a known quirk, documented on `QMgrDbContext.TenantIsolationEnabled`: a
+SuperAdmin's JWT carries the Platform organization's own `org_id`, so a plain org comparison blocks
+them from every branch outside the Platform org. The result was a platform administrator getting
+**"Counter not found." on Call Next** against a tenant's branch while being able to cancel that same
+tenant's tokens through `TokensController` one file away. It affects all five call sites — call
+next, call specific, complete, no-show and transfer.
+
+**This is a widening, and it is scoped to SuperAdmin only.** The organization comparison for
+everybody else is untouched, so the cross-tenant hole this class was written to close — a tenant
+admin calling or completing another tenant's live tokens, which the class summary records as
+confirmed exploitable — stays closed. The branch must still exist, so a bad id is still a not-found
+rather than a silent pass.
+
+#### Verified live, both directions
+
+| Case | Result |
+| --- | --- |
+| SuperAdmin, Call Next on a tenant's counter | **200** — was "Counter not found." |
+| SuperAdmin, Complete on the same counter | 200 — a second call site of the same check |
+| **A tenant admin against another organization's counter** | **404 "Counter not found." — the boundary holds** |
+| That same admin on their own counter | 204 (ownership passed, nothing waiting) |
+
+The negative case is the one that mattered: a counter was created in the welfare school's branch
+and the clinic's own administrator was pointed at it. Refused, exactly as before the change.
+
+Probe counters removed afterwards.
+
+#### Also tidied
+
+The mapper refactor had left `CallNextTokenCommandHandler` with a private `MapToDto` that did
+nothing but forward to `TokenMapper.ToDto`. Inlined.
 
 ---
 
