@@ -696,8 +696,9 @@ preferences:
   collapsing to icons below, since labels there would push into the guardians column. Add guardian
   started inline and was moved into the menu on the user's call: a guardian is added once per
   family, not daily, and it sits next to the visitation card it prints.
-- **The rest behind a `⋯` menu that names them in words**: open picture, welfare timeline, print
-  visitation card, then a divider, then record/withdraw consent and export data (SAR). A tooltip
+- **The rest behind a `⋯` menu that names them in words**: open picture, welfare timeline, add
+  guardian, print visitation card, then a divider, then record/withdraw consent and export data
+  (SAR). A tooltip
   makes you hover eight things one at a time; a menu shows all of them at once, which is the
   actual answer to "the icons are hard to interpret".
 - **Collisions resolved**: print now uses `printer-fill`, the same glyph the guardian chips beside
