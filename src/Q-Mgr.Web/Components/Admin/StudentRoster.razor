@@ -157,27 +157,30 @@
                             <span class="roster-empty-guardians">None yet</span>
                         }
                     </span>
-                    @* Two actions on the row, the rest behind a menu that names them.
+                    @* One action on the row, everything else behind a menu that names them.
                        There were eight identical ghost icons here and no way to tell them apart
                        without hovering each one in turn — and two of them were the same glyph in
                        outline and filled form (person-vcard for "open picture", person-vcard-fill
-                       for "print card"). What stays inline is what a matron does every day, and
-                       only that: adding a guardian happens once per family, an export or a consent
-                       withdrawal almost never. Everything else is one deliberate click away, where
-                       it also gets a written label instead of a tooltip nobody hovers. *@
+                       for "print card"). Logging a record is the only thing done on every pass
+                       down this list; editing a student, adding a guardian, printing a card, an
+                       export or a consent withdrawal are all occasional, so they are one
+                       deliberate click away where they get a written label rather than a tooltip
+                       nobody hovers. The one that stays keeps its label at every width. *@
                     <span class="roster-actions">
                         @if (canLogWelfare)
                         {
                             <QButton Icon="journal-plus" Text="Log" Size="sm" Variant="primary" Class="roster-action"
                                      OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
                         }
-                        <QButton Icon="pencil" Text="Edit" Size="sm" Variant="ghost" Class="roster-action"
-                                 OnClick="@(() => OpenEditStudentModal(s))" Title="Edit student" />
-
                         <div class="dropdown roster-more">
                             <QButton Icon="three-dots" Size="sm" Variant="ghost" Title="More actions"
                                      data-bs-toggle="dropdown" aria-expanded="false" aria-label="@($"More actions for {s.FullName}")" />
                             <ul class="dropdown-menu dropdown-menu-end">
+                                <li>
+                                    <button type="button" class="dropdown-item" @onclick="@(() => OpenEditStudentModal(s))">
+                                        <QIcon Name="pencil" /> Edit student
+                                    </button>
+                                </li>
                                 @if (canViewWelfare)
                                 {
                                     <li>
@@ -1211,13 +1214,9 @@
     .class-color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
     .roster-actions { display: flex; gap: 6px; justify-self: end; align-items: center; }
 
-    /* Labels below 1500px would push the actions into the guardians column, so they collapse to
-       icons there and the title attribute carries the meaning — the menu keeps its written labels
-       at every width, which is where somebody goes when an icon is not obvious. */
-    @@media (max-width: 1500px) {
-        .roster-action .q-btn__text { display: none; }
-        .roster-action .q-btn__icon { margin-right: 0; }
-    }
+    /* The label stays visible at every width, phone included. There is only one inline action now,
+       so it costs almost nothing horizontally — and an unlabelled icon is the thing this whole
+       rework was undoing. Everything else lives in the menu, where it is written out in words. */
 
     /* The row's own menu. Bootstrap's dropdown is already loaded app-wide and drives the user menu
        in MainLayout, so this needs no new component and no new script. */

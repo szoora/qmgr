@@ -692,13 +692,15 @@ preferences:
 
 - **The student's name is the link** to their picture page. That is what people aim at first, and
   it retired an icon that did nothing else.
-- **Two actions inline** — Log (primary, filled) and Edit — carrying text labels above 1500px and
-  collapsing to icons below, since labels there would push into the guardians column. Add guardian
-  started inline and was moved into the menu on the user's call: a guardian is added once per
-  family, not daily, and it sits next to the visitation card it prints.
-- **The rest behind a `⋯` menu that names them in words**: open picture, welfare timeline, add
-  guardian, print visitation card, then a divider, then record/withdraw consent and export data
-  (SAR). A tooltip
+- **One action inline** — Log (primary, filled), **with its label visible at every width including
+  phones**. Add guardian and then Edit were both moved into the menu on the user's call: a guardian
+  is added once per family and a student record is edited occasionally, while logging a record is
+  the only thing done on every pass down the list. With a single button left, the label costs
+  almost nothing horizontally, and the media query that used to hide labels below 1500px is gone —
+  an unlabelled icon was the thing this rework existed to undo.
+- **The rest behind a `⋯` menu that names them in words**, most-used first: edit student, open
+  picture, welfare timeline, add guardian, print visitation card, then a divider, then
+  record/withdraw consent and export data (SAR). A tooltip
   makes you hover eight things one at a time; a menu shows all of them at once, which is the
   actual answer to "the icons are hard to interpret".
 - **Collisions resolved**: print now uses `printer-fill`, the same glyph the guardian chips beside
