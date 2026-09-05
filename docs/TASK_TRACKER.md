@@ -794,6 +794,110 @@ a themed document.
 
 ---
 
+### Addendum 11, same day — batch operations and one shared export, built to the published plan
+
+The plan is the artifact published earlier today. The user asked for it in full, without answering
+its four open questions, so **the plan's own recommendations were taken** and are restated at the
+end of this entry.
+
+#### Shared export
+
+`QDataExport` + `DataExportService` + `dataExport.js` replace eight hand-rolled implementations
+that used two mechanisms, gated inconsistently, and offered CSV and nothing else.
+
+Every format renders in the browser, and that is the no-server-dependencies rule deciding the
+architecture rather than a convenience: a real `.xlsx` or `.pdf` writer on the server is a NuGet
+package in the deploy target, while **SheetJS is already loaded app-wide** for parsing roster
+uploads, and the browser's print dialog is already how this app produces printed cards. So the
+workbook writer cost nothing new, and PDF is print-to-PDF rather than a generated file.
+
+Three details worth keeping:
+
+- **A column carries its type.** `ExportType.Text` on a student code is what stops Excel reading
+  "007" as the number 7 and `+256771234567` as scientific notation — the commonest way a
+  spreadsheet export corrupts an identifier.
+- **`RowProvider` is a delegate, not a list.** A paged page that exported its in-memory collection
+  would export however far somebody had scrolled and call it the export — the bug found by hand in
+  Feedback Management earlier today. Making the caller supply a fetch forces the question where it
+  can still be answered correctly.
+- **Blobs, not data URLs.** A data URL is fine for a few kilobytes of CSV and wrong for a 900-row
+  workbook; the URL length limit bites long before the data does.
+
+#### Batch operations
+
+Two verbs cover every bulk edit anyone asked for — **Advance** along an ordered vocabulary (only
+Class has a maintained `SortOrder`) and **Set** one value on all — and both go through one
+resolver, `BatchOperationService`, which today understands twelve operations across students,
+welfare, visitors, queue, appointments and staff accounts.
+
+**The preview and the commit call the same resolver.** That is the point of the design: a preview
+computed by different code from the commit could disagree with it, which would make it worse than
+useless, because an operator would have trusted it. The commit re-resolves rather than replaying
+the preview, since a colleague may have moved the same records in the meantime.
+
+**Nothing is built on `PUT /students/{id}`.** It is a full replace, recorded in this tracker as
+having silently wiped a class during testing; a batch built on it inherits that hazard once per
+selected student. Every write names exactly one field.
+
+Schema is three additions and no new table — `RosterImportKind.Batch`,
+`RosterImportRowOutcome.Skipped`, and `PreviousValue`/`NewValue` on the job entry. A batch has
+rows, outcomes, progress, counts and a history, which `RosterImportJob` already models; this is the
+same reasoning the welfare backfill used. The two entry columns are what make undo real.
+
+#### The two rules that shaped the behaviour
+
+- **Promotion never retires anybody.** A final-year student has no next class, and is listed as a
+  leaver rather than deactivated — hiding a child from the roster, the gate and visiting day is a
+  decision somebody makes deliberately, from its own separate action.
+- **Undo is all-or-nothing, with no time limit.** A window would be arbitrary; the real question is
+  whether anything moved underneath, which is what gets asked. A partial undo leaves a roster in a
+  state nobody chose and nobody can describe.
+
+#### Verified server-side, end to end
+
+Against a seeded S1–S4 ladder covering all four promotion cases.
+
+| Case | Result |
+| --- | --- |
+| Preview a promotion of 5 students | "3 promoted · 1 in the final class left where they are"; the S4 leaver and the "P7" unknown class each named separately |
+| Commit | Exactly the three moved; the leaver and the unknown class untouched |
+| Per-row log | `S1 -> S2`, `S3 -> S4` — before and after, readable a term later |
+| Job history | Appears in the existing import history as `kind: Batch`, titled by its own summary rather than a filename |
+| Undo | 3 records restored to S1/S1/S3 |
+| **Undo after somebody edits one student** | **Refused: "1 of 3 records have changed since this batch ran"**, naming Akello Grace, reverting nothing |
+| Invalid enum value | Refused before any preview is produced |
+| Empty selection | 400, no job created |
+
+Testing also exposed a mapping gap of exactly the class fixed this morning for `TokenDto.Notes`:
+`RosterImportJobEntryDto` did not carry the two new columns, so the per-row log showed em-dashes
+while undo worked correctly from the real values underneath. Fixed in the same pass.
+
+#### The four open questions, as taken
+
+1. **Final-year students** — reported as leavers, never deactivated by promotion; "Mark as left" is
+   its own action with its own preview.
+2. **Undo window** — none. Refused on any per-record conflict instead.
+3. **Export permission** — gated on the permission that governs *reading* the data, with no second
+   permission and no extra feature flag in the admin UI.
+4. **PDF** — print-to-PDF, no jsPDF. The component's interface does not change if that is revisited.
+
+#### What is NOT done yet
+
+Being explicit, because the request was "all appropriate sites":
+
+- **The resolver, API and undo support all twelve operations**, and the roster's UI drives four of
+  them. **The batch *bar* is only on the roster.** Welfare reports, visitor management, users and
+  appointments each still need their own selection checkboxes and bar — the server work is done and
+  each page is now a small addition rather than a feature.
+- **Export is wired on three pages** — roster, welfare reports, visitor management. Users,
+  appointments, campaign impressions, counter performance, customer feedback and the visitor report
+  still have their old bespoke exports or none.
+- **Nothing has been seen on screen.** The Web app restart during testing cleared the signed-in
+  session, and a password is never typed by the model. Everything above is API-level and
+  compile-level verification.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
