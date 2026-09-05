@@ -58,7 +58,18 @@
 </div>
 
 <style>
+    /* Accent, scoped. This page shares KioskLayout and the same always-dark gradient with
+       KioskMode, which worked out its accent by contrast rather than by brand: --qm-primary
+       (#8c2f52) measures about 2.4:1 against the dark #0f0f1a it was being paired with here as
+       button text, well under the 4.5:1 AA needs, and KioskMode records the same finding at
+       2.96:1 for its own hover state. This page had been left on the raw token that fix
+       replaced, so it was the one public kiosk surface still failing. Same values as
+       KioskMode's .industry-general so the two pages of one flow finally match. */
     .feedback-entry-page {
+        --fe-accent: #d1567f;
+        --fe-accent-hover: #e0759e;
+        --fe-on-accent: #0f0f1a;
+
         min-height: 100vh;
         background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
         display: flex;
@@ -82,7 +93,7 @@
     .logo {
         width: 80px;
         height: 80px;
-        background: #8c2f52;
+        background: var(--fe-accent);
         border-radius: var(--qm-radius-xl);
         display: flex;
         align-items: center;
@@ -92,7 +103,7 @@
 
     .logo .q-icon {
         font-size: 40px;
-        color: #0f0f1a;
+        color: var(--fe-on-accent);
     }
 
     .entry-card h1 {
@@ -161,9 +172,9 @@
 
     .code-input:focus {
         outline: none;
-        border-color: #8c2f52;
+        border-color: var(--fe-accent);
         background: rgba(255, 255, 255, 0.08);
-        box-shadow: 0 0 0 4px rgba(140, 47, 82, 0.1);
+        box-shadow: 0 0 0 4px rgba(209, 86, 127, 0.15);
     }
 
     .code-input-section small {
@@ -179,10 +190,10 @@
         justify-content: center;
         gap: 10px;
         padding: 18px 48px;
-        background: #8c2f52;
+        background: var(--fe-accent);
         border: none;
         border-radius: var(--qm-radius-xl);
-        color: #0f0f1a;
+        color: var(--fe-on-accent);
         font-size: 18px;
         font-weight: 700;
         cursor: pointer;
@@ -197,13 +208,14 @@
 
     .submit-btn:focus-visible,
     .code-input:focus-visible {
-        outline: 3px solid var(--qm-primary);
+        outline: 3px solid var(--fe-accent);
         outline-offset: 3px;
     }
 
+    /* Was a 40px neon glow in the old blue-era wine — the treatment Phase 41 removed app-wide
+       and this page kept. Flat, like everything else. */
     .submit-btn:hover:not(:disabled) {
-        transform: scale(1.02);
-        box-shadow: 0 0 40px rgba(140, 47, 82, 0.4);
+        background: var(--fe-accent-hover);
     }
 
     .help-section {
@@ -243,13 +255,26 @@
     /* ================================
        Light Theme Override
        Admin-selectable per-organization (see BrandingSettings.razor "Display
-       Theme"); applied via [data-theme] on the KioskLayout wrapper. Every
-       color above is a hardcoded dark-mode literal (not a --qm-* token), so
-       each one needs an explicit light counterpart here rather than inheriting
-       automatically from qm-theme.css's own [data-theme="light"] block.
+       Theme"); applied via [data-theme] on the KioskLayout wrapper. Most
+       colors above are hardcoded dark-mode literals (not --qm-* tokens), so
+       each needs an explicit light counterpart here rather than inheriting
+       automatically from qm-theme.css's own [data-theme="light"] block. The
+       accent is now the exception: it is one scoped variable, so light mode
+       redefines it once below instead of restating every rule that uses it.
        ================================ */
     [data-theme="light"] .feedback-entry-page {
         background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+
+        /* The dark accent above is a light wine picked to survive a near-black ground; on this
+           near-white one it is the opposite problem, so light mode takes the ordinary wine with
+           white on it (9.4:1). Both are literals rather than --qm-primary for the reason
+           KioskMode gives: a white-label organization can set that token to any hex it likes,
+           and a public accessibility floor is not something to hand to a customer's colour
+           picker. It does mean white-label branding does not reach this page — the same
+           trade-off KioskMode already makes, stated here so it reads as a decision. */
+        --fe-accent: #7a2847;
+        --fe-accent-hover: #611e38;
+        --fe-on-accent: #ffffff;
     }
 
     [data-theme="light"] .entry-card {

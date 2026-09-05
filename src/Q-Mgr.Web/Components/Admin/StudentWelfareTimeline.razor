@@ -402,8 +402,10 @@
 <QModal @bind-Visible="showActionDialog" Title="Assign Follow-up Action" Size="md">
     <ChildContent>
         <div class="form-group">
-            <QInput TValue="string" @bind-Value="@actionModel.ActionTaken" Label="Action / Intervention" Placeholder="e.g., Detention, Parental meeting, Restorative conversation" />
-            <p class="form-hint">Common examples: detention, parental meeting, restorative conversation, referral, internal exclusion.</p>
+            <QInput TValue="string" @bind-Value="@actionModel.ActionTaken" Label="Action / Intervention"
+                    List="vocab-actions-taken"
+                    Placeholder="e.g., Detention, Parental meeting, Restorative conversation" />
+            <p class="form-hint">Suggested from the branch's own list — anything else is still accepted.</p>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -458,6 +460,15 @@
                  Disabled="@(notifyDraft == null || !notifyDraft.HasContactInfo || string.IsNullOrWhiteSpace(notifyMessage))" />
     </FooterContent>
 </QModal>
+
+@* Suggestions for the action field. Rendered here rather than inside the dialog so it survives
+   the dialog's open/close, matching how the roster form does it. *@
+<datalist id="vocab-actions-taken">
+    @foreach (var v in vocabularies.ActionsTaken)
+    {
+        <option value="@v"></option>
+    }
+</datalist>
 
 <style>
     /* ---------------- The graduated response ---------------- */
@@ -527,7 +538,7 @@
 
     .points-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .points-summary__item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
-    .points-summary__item--positive { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .points-summary__item--positive { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .points-summary__item--negative { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
     .points-summary__item--net { background: var(--qm-bg-secondary); color: var(--qm-text-primary); }
 
@@ -551,11 +562,11 @@
 
     .tier-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
-    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
+    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
 
     .points-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
-    .points-badge--positive { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .points-badge--positive { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .points-badge--negative { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
 
     .confidential-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
@@ -575,7 +586,7 @@
 
     .notification-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
     .notification-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-    .notification-item--success { color: #16a34a; }
+    .notification-item--success { color: var(--qm-accent-green, #16a34a); }
     .notification-item--failed { color: var(--qm-danger, #dc2626); }
 
     .timeline-card-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
@@ -583,16 +594,16 @@
     .form-group { margin-bottom: 16px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
-    .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: #d97706; margin-bottom: 16px; }
+    .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: var(--qm-accent-orange, #d97706); margin-bottom: 16px; }
 
     .timeline-card--draft { border-style: dashed; opacity: 0.85; }
 
     .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .status-badge--draft { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
     .status-badge--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
-    .status-badge--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .status-badge--underreview { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
     .status-badge--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
-    .status-badge--resolved { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .status-badge--resolved { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .status-select { display: inline-block; width: auto; min-width: 140px; }
 
     .action-box { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 10px 12px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); font-size: 13px; }
@@ -628,6 +639,7 @@
     private List<WelfareCategoryDto> categories = new();
     private List<StudentDto> otherStudents = new();
     private List<StaffOption> staffOptions = new();
+    private BranchVocabulariesDto vocabularies = new();
 
     private IEnumerable<WelfareCategoryDto> FilteredCategories => categories.Where(c => c.CaseType == createModel.CaseType);
 
@@ -750,6 +762,11 @@
         isLoading = true;
         try
         {
+            // The branch's own list of interventions, offered as suggestions on the action field.
+            // It degrades to an empty datalist — i.e. a plain free-text box — if the call fails,
+            // which is the same shape the roster form uses.
+            vocabularies = await StudentApi.GetVocabulariesAsync(branchId);
+
             var allStudents = await StudentApi.GetStudentsAsync(branchId, includeInactive: true);
             student = allStudents.FirstOrDefault(s => s.Id == StudentId);
             otherStudents = allStudents.Where(s => s.Id != StudentId && s.IsActive).ToList();

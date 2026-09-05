@@ -56,12 +56,11 @@ the single source of truth for all `--qm-*` custom properties):
   for accents only (badge background via `--qm-primary-light`, price text, icons). If a future
   color complaint is about one specific page/component rather than the brand as a whole, prefer
   this pattern — scope the fix to that component, don't touch the shared token without asking.
-- **Radius — currently diverges from Webster, worth deliberate reconciliation.** Webster's
-  dominant convention is a flat, minimal `border-radius: 3px` on cards/buttons/inputs (with 50%
-  circles for avatars). Q-Mgr's current tokens (`--qm-radius-sm/md/lg/xl` = 6/10/16/24px) are
-  noticeably rounder/softer — this divergence is real and is part of why pages can still read as
-  "generic AI dashboard" rather than matching the shared reference. Reconciling this (which radius
-  scale to standardize on) is outstanding work, not yet decided.
+- **Radius — reconciled; this note was stale and is corrected 2026-09-05.** It described the
+  tokens as 6/10/16/24px and the reconciliation as undecided. `qm-theme.css` has in fact carried
+  `--qm-radius-sm/md/lg/xl` = **3/4/6/8px** since the repository's baseline snapshot — Webster's
+  flat convention, already adopted. Keep new work on these tokens rather than reintroducing a
+  softer radius; there is nothing outstanding here.
 - **Shadow — Webster's convention** is a soft, low-spread card shadow (`0px 3px 10px
   rgba(0,0,0,0.1)`) plus a larger ambient shadow for section depth (`0px 0px 50px rgba(0,0,0,
   0.05)`). Compare against `--qm-shadow-sm/md/lg` before changing anything broadly.
@@ -261,15 +260,19 @@ above — a database extension is a server dependency.
 
 ## Prices are grandfathered: never charge from a catalog row (decided 2026-09-04)
 
+**Amended 2026-09-05:** this section was written the morning of 2026-09-04, before the tier
+retirement later the same day dropped `Subscription.PlanId`, `Subscription.AgreedUnitPrice` and
+`AgreedCurrency`. The four `Subscription.*` helpers it originally named no longer exist — the
+surviving list is below. The rule itself is unchanged; only tiers are gone.
+
 What a customer pays is recorded on their own row, not looked up when the invoice is raised.
-`Subscription.AgreedUnitPrice`/`AgreedCurrency` and `OrganizationModule.AgreedPriceUgx`/
-`AgreedPriceUsd` hold it. **Any new code that needs a price to charge, quote, display or report
-must read the agreed price with a fallback to list — `Subscription.GetEffectiveUnitPrice`,
-`GetPeriodPriceUsd`, `GetMonthlyRecurringRevenueUsd`, `OrganizationModule.GetEffectivePriceUgx`/
-`GetEffectivePriceUsd`, or `IModuleAccessService.GetChargeableUgxPriceAsync` — never
-`plan.MonthlyPriceUgx` and friends directly.** Reading the catalog row is how an administrator's
-price edit used to silently reprice every existing customer's next invoice, which is the bug this
-exists to prevent. Null means "track the list price", so the helpers are always safe to call.
+`OrganizationModule.AgreedPriceUgx`/`AgreedPriceUsd` hold it. **Any new code that needs a price to
+charge, quote, display or report must read the agreed price with a fallback to list —
+`OrganizationModule.GetEffectivePriceUgx`/`GetEffectivePriceUsd`, or
+`IModuleAccessService.GetChargeableUgxPriceAsync` — never `plan.MonthlyPriceUgx` and friends
+directly.** Reading the catalog row is how an administrator's price edit used to silently reprice
+every existing customer's next invoice, which is the bug this exists to prevent. Null means "track
+the list price", so the helpers are always safe to call.
 
 Three rules that are easy to break by accident:
 
@@ -288,9 +291,14 @@ Three rules that are easy to break by accident:
   editor's "Apply to existing subscribers" is off by default and is the only thing that rewrites
   agreed prices in bulk. Note the asymmetry it creates: a locked price shields a customer from an
   increase and also withholds a decrease from them, so a price cut only reaches existing customers
-  when somebody ticks that box. **Tier plans have no editor at all** (`GET api/v1/admin/plans` is
-  read-only, there is no PUT), so if one is ever built it needs the same option or tier repricing
-  will be silent where module repricing is not.
+  when somebody ticks that box. The Module Catalog editor is now the **only** price editor there
+  needs to be: every row in `subscription_plans` is a module since the tiers were retired, so the
+  "tier plans have no editor" gap earlier handovers carried forward has no subject left. `GET
+  api/v1/admin/plans` is still read-only and still has no PUT, but it returns the module catalog,
+  and the platform dashboard card fed by it now links through to the editor rather than presenting
+  prices nobody could change. If a second pricing concept is ever introduced, it needs its own
+  "apply to existing subscribers" option or its repricing will be silent where module repricing
+  is not.
 
 ## Process note for future sessions
 

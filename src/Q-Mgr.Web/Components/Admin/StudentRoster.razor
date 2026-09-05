@@ -576,7 +576,7 @@
             <label class="full-width">Full Name *<input @bind="guardianModel.FullName" placeholder="Robert Guardian" /></label>
             <label>Phone<input @bind="guardianModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="guardianModel.Email" placeholder="guardian@example.com" /></label>
-            <label class="full-width">Relationship<input @bind="guardianModel.Relationship" placeholder="Father, Mother, Guardian, Auntie..." /></label>
+            <label class="full-width">Relationship<input @bind="guardianModel.Relationship" list="vocab-relationships" placeholder="Father, Mother, Guardian, Auntie..." /></label>
         </div>
         <p class="form-hint">A phone or email is required — it's how this guardian is matched at the gate.</p>
     </ChildContent>
@@ -665,9 +665,9 @@
                         <div class="import-log">
                             @foreach (var entry in importEntries)
                             {
-                                <div class="import-log-row outcome-@entry.Outcome.ToString().ToLower()">
+                                <div class="import-log-row outcome-@ImportOutcomeDisplay.CssModifier(entry.Outcome)">
                                     <span class="import-log-rownum">#@entry.RowNumber</span>
-                                    <span class="import-log-outcome">@entry.Outcome</span>
+                                    <span class="import-log-outcome">@ImportOutcomeDisplay.Label(entry.Outcome)</span>
                                     <span class="import-log-name">@(entry.StudentName ?? "—") / @(entry.GuardianName ?? "—")</span>
                                     <span class="import-log-message">@entry.Message</span>
                                 </div>
@@ -1149,6 +1149,7 @@
     .outcome-created .import-log-outcome { color: #3f7d58; }
     .outcome-updated .import-log-outcome { color: var(--qm-primary); }
     .outcome-duplicateinfile .import-log-outcome { color: #a9781f; }
+    .outcome-alreadyexists .import-log-outcome { color: #7a6a55; }
     .outcome-failed .import-log-outcome { color: var(--qm-danger, #d9534f); }
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

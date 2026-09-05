@@ -292,9 +292,9 @@
                         <div class="import-log">
                             @foreach (var entry in importEntries)
                             {
-                                <div class="import-log-row outcome-@entry.Outcome.ToString().ToLower()">
+                                <div class="import-log-row outcome-@ImportOutcomeDisplay.CssModifier(entry.Outcome)">
                                     <span class="import-log-rownum">#@entry.RowNumber</span>
-                                    <span class="import-log-outcome">@entry.Outcome</span>
+                                    <span class="import-log-outcome">@ImportOutcomeDisplay.Label(entry.Outcome)</span>
                                     @* For a welfare job the entry's GuardianName column carries the category name. *@
                                     <span class="import-log-name">@(entry.StudentName ?? entry.StudentCode ?? "—") / @(entry.GuardianName ?? "—")</span>
                                     <span class="import-log-message" title="@entry.Message">@entry.Message</span>
@@ -443,6 +443,7 @@
     .outcome-created .import-log-outcome { color: #3f7d58; }
     .outcome-updated .import-log-outcome { color: var(--qm-primary); }
     .outcome-duplicateinfile .import-log-outcome { color: #a9781f; }
+    .outcome-alreadyexists .import-log-outcome { color: #7a6a55; }
     .outcome-failed .import-log-outcome { color: var(--qm-danger, #d9534f); }
     .import-log-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -491,14 +492,14 @@
 
     .tier-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
     .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
-    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .tier-badge--medium { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
+    .tier-badge--low { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
 
     .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
     .status-chip--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
-    .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: #d97706; }
+    .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
     .status-chip--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
-    .status-chip--resolved { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .status-chip--resolved { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
 
     @@media (max-width: 900px) {
         .results-row { grid-template-columns: 1fr 1fr; }
@@ -787,7 +788,7 @@
         // The final broadcast carries no FailureReason — re-fetch the job row once it's terminal
         // so a whole-job failure (not just per-row ones) shows its reason instead of a bare badge.
         if (progress.Status == RosterImportStatus.Failed)
-            importJob = await StudentApi.GetImportJobAsync(branchId, importJob.Id) ?? importJob;
+            importJob = await StudentApi.GetImportJobAsync(branchId, importJob.Id, RosterImportKind.Welfare) ?? importJob;
 
         await InvokeAsync(StateHasChanged);
     }
@@ -797,7 +798,7 @@
         showImportEntries = !showImportEntries;
         if (showImportEntries && importJob != null && !importEntries.Any())
         {
-            importEntries = await StudentApi.GetImportJobEntriesAsync(branchId, importJob.Id);
+            importEntries = await StudentApi.GetImportJobEntriesAsync(branchId, importJob.Id, RosterImportKind.Welfare);
         }
     }
 

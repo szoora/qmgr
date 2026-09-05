@@ -847,6 +847,77 @@ public class WelfareController : ControllerBase
         return Accepted(StudentsController.MapToDto(job));
     }
 
+    /// <summary>
+    /// Welfare-scoped history for the imports the endpoint above starts.
+    ///
+    /// These three reads exist because the welfare page was calling StudentsController's copies,
+    /// which are gated on <c>students.view</c> — so a welfare-reports user without it saw an empty
+    /// history rather than the jobs they had just run themselves. The permission attribute cannot
+    /// express "students.view OR welfare.view", and widening the roster endpoints would hand every
+    /// welfare user the roster's import log too. A welfare-scoped copy is the narrower answer: it
+    /// is gated on <c>welfare.view</c> and hard-filtered to <see cref="RosterImportKind.Welfare"/>,
+    /// so it can only ever return the jobs this controller creates. Mapping is shared with
+    /// StudentsController rather than re-written here.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/welfare-records/import-jobs")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(List<RosterImportJobDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetImportJobs(Guid branchId, [FromQuery] int limit = 50)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var jobs = await _context.RosterImportJobs
+            .Where(j => j.BranchId == branchId && j.Kind == RosterImportKind.Welfare)
+            .OrderByDescending(j => j.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToListAsync();
+
+        return Ok(jobs.Select(StudentsController.MapToDto).ToList());
+    }
+
+    /// <summary>One welfare import job — what the page polls while a backfill is running.</summary>
+    [HttpGet("branches/{branchId:guid}/welfare-records/import-jobs/{jobId:guid}")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(RosterImportJobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetImportJob(Guid branchId, Guid jobId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var job = await _context.RosterImportJobs.FirstOrDefaultAsync(j =>
+            j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Welfare);
+        if (job == null) return NotFound();
+        return Ok(StudentsController.MapToDto(job));
+    }
+
+    /// <summary>Every row's outcome for one welfare import — the per-row log, not the counts.</summary>
+    [HttpGet("branches/{branchId:guid}/welfare-records/import-jobs/{jobId:guid}/entries")]
+    [RequirePermission(Permissions.WelfareView)]
+    [ProducesResponseType(typeof(List<RosterImportJobEntryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetImportJobEntries(Guid branchId, Guid jobId,
+        [FromQuery] RosterImportRowOutcome? outcome = null, [FromQuery] int limit = 500)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var jobExists = await _context.RosterImportJobs.AnyAsync(j =>
+            j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Welfare);
+        if (!jobExists) return NotFound();
+
+        var query = _context.RosterImportJobEntries.Where(e => e.RosterImportJobId == jobId);
+        if (outcome.HasValue) query = query.Where(e => e.Outcome == outcome.Value);
+
+        var entries = await query
+            .OrderBy(e => e.RowNumber)
+            .Take(Math.Clamp(limit, 1, StudentsController.MaxImportEntriesPerPage))
+            .ToListAsync();
+
+        return Ok(entries.Select(StudentsController.MapToDto).ToList());
+    }
+
     // ---------------------------------------------------------------------
     // Attachments — same IMediaStorageService every other upload in this app already uses
     // ---------------------------------------------------------------------

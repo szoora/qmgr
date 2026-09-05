@@ -12,5 +12,19 @@ public enum RosterImportRowOutcome
     DuplicateInFile = 2,
 
     /// <summary>Failed validation (missing required field, no usable guardian contact) — nothing written for this row.</summary>
-    Failed = 3
+    Failed = 3,
+
+    /// <summary>
+    /// The row duplicates something that was already stored before this import started, not
+    /// another row in the same file — nothing was written for it.
+    ///
+    /// Kept distinct from <see cref="DuplicateInFile"/> on purpose: "you listed this twice" is a
+    /// mistake to fix in the spreadsheet, whereas "this was already recorded" usually means the
+    /// file overlaps a period somebody has already entered by hand, which is a different thing to
+    /// do about it. Both still count toward the job's DuplicateCount, which tallies rows skipped
+    /// as duplicates regardless of which side the duplicate came from.
+    ///
+    /// Appended, never inserted — these values are persisted as integers on RosterImportJobEntry.
+    /// </summary>
+    AlreadyExists = 4
 }

@@ -6,7 +6,132 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 
 ---
 
-## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped; read this one first
+## 🧭 SESSION HANDOVER (written 2026-09-05) — the carried-forward backlog, worked through; two items were already done
+
+Read the 2026-09-04 late handover below for the state of the product; this entry only covers the
+follow-up list it left. **Still nothing deployed** — the 2026-09-04 package and its irreversible
+`RetireTiersForModuleBilling` migration are exactly where that entry left them.
+
+The request was to fix seven carried-forward items. Five needed work. **Two were already fixed and
+the notes were simply stale** — which is the finding worth carrying forward on its own, because
+both had been repeated verbatim across handovers after the code had moved on.
+
+### Already done; the notes were stale
+
+- **The two report pages do not render sample numbers.** `CounterPerformance.razor` and
+  `CustomerFeedback.razor` were made real by `811c94c` on 2026-09-03 — the same day the "still
+  open" note was written, so the note was never updated. Both files now open with a comment
+  stating every figure is the API's own DTO, and a grep for `Random`/`Next(`/sample literals across
+  both finds nothing.
+- **There is no tier-plan editor to build.** The note asked for one with an "apply to existing
+  subscribers" option. The tier retirement later on 2026-09-04 dropped `SubscriptionPlan.Tier`,
+  `Subscription.PlanId`, `AgreedUnitPrice` and `AgreedCurrency`: **every row in
+  `subscription_plans` is a module now**, and the Module Catalog editor already writes all of them,
+  option included. The real remaining gap was a UI one — the platform dashboard's card, fed by the
+  read-only `GET api/v1/admin/plans`, was still headed "Subscription Plans" and offered no route to
+  the editor. It is now headed "Modules" with an **Edit catalog** action into
+  `/platform/module-catalog`.
+
+### Fixed
+
+1. **The two suggestion lists are wired.** `vocab-relationships` was a `<datalist>` nothing
+   referenced; the add-guardian input now carries `list="vocab-relationships"`. The welfare action
+   field took its suggestions from a hardcoded placeholder; `StudentWelfareTimeline` now loads the
+   branch vocabularies and feeds `ActionsTaken` through a `vocab-actions-taken` datalist, rendered
+   outside the dialog so it survives open/close. A failed vocabulary load degrades to an empty
+   datalist — a plain free-text box — never a blocked form.
+2. **`RosterImportRowOutcome.AlreadyExists = 4`**, appended. A welfare import row that duplicates
+   something already on the ledger no longer reports as `DuplicateInFile` with prose explaining the
+   difference. Both still count toward the job's `DuplicateCount`, which tallies rows skipped as
+   duplicates whichever side the duplicate came from. Both import logs also stopped printing the
+   bare enum name — `ImportOutcomeDisplay` (one file, shared by the roster and welfare logs) turns
+   `DuplicateInFile` into "Repeated in file" and the new member into "Already on record".
+3. **Welfare import history no longer needs `students.view`.** The welfare page was calling
+   `StudentsController`'s three import-job reads, which are gated on `students.view`, so a
+   welfare-reports user without it saw an empty history of imports they had just run themselves.
+   `[RequirePermission]` cannot express "students.view OR welfare.view", and widening the roster
+   endpoints would hand every welfare user the roster's import log. `WelfareController` now has its
+   own three reads, gated on `welfare.view` and **hard-filtered to `RosterImportKind.Welfare`**, so
+   they can only ever return the jobs that controller creates. Mapping is shared with
+   `StudentsController` rather than copied.
+4. **The public feedback page was failing WCAG, and it was the page KioskMode's own fix missed.**
+   `FeedbackEntry.razor` shares `KioskLayout` and the same always-dark gradient with
+   `KioskMode.razor`. KioskMode worked its accent out by contrast and recorded why: `--qm-primary`
+   (`#8c2f52`) is tuned for light dashboard grounds and measures about **2.4:1** against the dark
+   `#0f0f1a` it was being used with as button text, against the 4.5:1 AA needs — KioskMode logs the
+   same finding at 2.96:1 for its own hover state. FeedbackEntry had been left on exactly the
+   pairing that fix replaced. It now uses one scoped `--fe-accent` (KioskMode's own
+   `.industry-general` values, so the two pages of one flow finally match), light mode redefines
+   that one variable instead of restating every rule, and the 40px neon glow on the submit button —
+   the treatment Phase 41 removed app-wide — is gone.
+5. **The hardcoded-colour sweep, and what it actually found.** The standing note predicted more
+   instances of "hardcoded colours, never tokenized". Swept every `.razor` and `.css` file. The
+   result is better than the note assumed: **the stylesheets are clean** (`app.css`, `layout.css`,
+   `q-components.css`, `auth-pages.css`, `doc-page.css` and four of the five component sheets hold
+   no colour literal at all; the remainder is `background: #000` for media letterboxing). Of 375
+   hex literals in `.razor` files, the overwhelming majority are legitimate and should stay:
+   user-picked palette values in the branding/service-type/welfare-category pickers, print
+   stylesheets (paper is white regardless of theme), `<meta>` tag colours that cannot take a CSS
+   variable, and the kiosk/display literals that carry recorded contrast reasoning. Two real
+   findings: the FeedbackEntry failure above, and **22 bare semantic colours** in
+   `StudentWelfareTimeline` and `WelfareReports` — tokenized to `var(--qm-accent-green, …)` and
+   `var(--qm-accent-orange, …)`, the same-valued tokens, so nothing moves visually but a future
+   palette change now reaches them.
+
+### Also corrected in CLAUDE.md, because both were misleading a reader
+
+- The **grandfathering** section named `Subscription.AgreedUnitPrice`, `AgreedCurrency`,
+  `GetEffectiveUnitPrice`, `GetPeriodPriceUsd` and `GetMonthlyRecurringRevenueUsd`. It was written
+  the morning of 2026-09-04; the tier retirement that afternoon deleted all five. The rule is
+  unchanged, the surviving helper list is now the real one.
+- The **radius** section said the tokens were 6/10/16/24px and that reconciliation with Webster was
+  undecided. `qm-theme.css` has held 3/4/6/8px since the baseline snapshot. Webster's flat scale
+  was adopted long ago; nothing is outstanding.
+
+### Verified live, against a real API process and the dev database
+
+Signed in as the documented dev SuperAdmin (`support@getsacc.com`, in CLAUDE.md).
+
+| Case | Result |
+| --- | --- |
+| `GET /admin/module-catalog` signed in | 200, five modules with subscriber and grandfathered counts |
+| `PUT /admin/module-catalog/core-queue` | 200, badge written and read back — **the save path the previous handover called unproven** — then restored to null |
+| `GET /admin/registration-attempts` signed in | 200, real attempts with decisions, risk scores and signals |
+| Welfare import, first run | row 1 `Created`, row 2 `DuplicateInFile` |
+| Same file, second run | row 1 **`AlreadyExists`**, row 2 still `DuplicateInFile`; `duplicateCount` 2, both counted |
+| `?outcome=AlreadyExists` on the new route | returns only row 1 |
+| New `welfare-records/import-jobs` list | both jobs, `kind: Welfare`, no roster jobs |
+| Swagger route table | all three new welfare routes registered, no collision with the roster three |
+| Vocabulary round-trip | `GuardianRelationships` and `ActionsTaken` saved and read back |
+| `/feedback` rendered CSS | `--fe-accent` present, no `#8c2f52`, no 40px glow |
+
+**Not verified: rendering.** The Chrome extension reported not connected all session, so nothing
+above was seen on screen — this is API-level and served-HTML verification, the same fallback Phase
+65 had to use. The four pages touched (`StudentRoster`, `StudentWelfareTimeline`, `WelfareReports`,
+platform `Dashboard`) compile and their data paths are proven, but a click-through is still owed.
+
+### Left in the dev database
+
+A probe in the **Welfare Only School 135907** e2e tenant (branch `a805ba99-…`): one welfare record
+and its "Probe Behavior" category, which have no DELETE endpoint by design — a ledger does not
+delete — and the `IOP-001` student, deactivated. Its vocabulary lists were seeded with four
+relationships and four actions. Harmless, and useful if the import outcomes need re-testing.
+
+### Worth knowing next time
+
+- **`StudentWelfareTimeline` still needs `students.view` to be useful at all** — it loads the
+  student list to name the child, so a welfare-only user sees a blank page rather than a timeline.
+  Fixing the import history did not fix that; it is a separate, larger question about whether the
+  welfare module should be usable without roster access.
+- **A welfare record and a welfare category cannot be deleted through the API.** Deliberate, but it
+  means test data in the ledger is permanent short of SQL.
+- Everything else the 2026-09-04 late handover flagged still stands: `PUT /students/{id}` is a full
+  replace, `Branch.Settings` is read-modify-write, attendance is out of scope, and district lists
+  change by statute.
+
+---
+
+## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
 work it covers. **Nothing in this session has run in production yet.** A deployment package is built

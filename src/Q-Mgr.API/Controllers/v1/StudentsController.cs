@@ -964,16 +964,25 @@ public class StudentsController : ControllerBase
 
         var entries = await query.OrderBy(e => e.RowNumber).Take(Math.Clamp(limit, 1, 5000)).ToListAsync();
 
-        return Ok(entries.Select(e => new RosterImportJobEntryDto
-        {
-            RowNumber = e.RowNumber,
-            StudentCode = e.StudentCode,
-            StudentName = e.StudentName,
-            GuardianName = e.GuardianName,
-            Outcome = e.Outcome,
-            Message = e.Message
-        }).ToList());
+        return Ok(entries.Select(MapToDto).ToList());
     }
+
+    /// <summary>
+    /// Shared with WelfareController's welfare-scoped copies of these three reads (see
+    /// <see cref="WelfareController.GetImportJobs"/>) so the two never drift apart.
+    /// </summary>
+    internal static RosterImportJobEntryDto MapToDto(RosterImportJobEntry e) => new()
+    {
+        RowNumber = e.RowNumber,
+        StudentCode = e.StudentCode,
+        StudentName = e.StudentName,
+        GuardianName = e.GuardianName,
+        Outcome = e.Outcome,
+        Message = e.Message
+    };
+
+    /// <summary>The clamp both controllers apply to an entries page.</summary>
+    internal const int MaxImportEntriesPerPage = 5000;
 
     /// <summary>
     /// The ONE place that decides who sees what on a student. Three tiers, built on permissions

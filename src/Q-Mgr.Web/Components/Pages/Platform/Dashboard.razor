@@ -144,8 +144,18 @@
             </QCard>
         </div>
 
-        <!-- Subscription Plans Overview -->
-        <QCard Title="Subscription Plans" Icon="credit-card-fill">
+        @* Every row in this table is a module now — the four pricing tiers were retired on
+           2026-09-04 and the endpoint behind this card returns the module catalog. The card
+           was still headed "Subscription Plans" and offered no way to change any of it, which
+           is the read-only-catalog gap the handover kept carrying forward: with tiers gone
+           there is no separate tier editor to build, the module catalog editor already writes
+           every one of these rows. It just needed a way in from here. *@
+        <QCard Title="Modules" Icon="credit-card-fill">
+            <HeaderActions>
+                <QButton Text="Edit catalog" Icon="pencil" Size="sm" Variant="ghost"
+                         OnClick="@(() => Navigation.NavigateTo("/platform/module-catalog"))" />
+            </HeaderActions>
+            <ChildContent>
             <div class="plans-grid">
                 @foreach (var plan in plans)
                 {
@@ -189,6 +199,7 @@
                     </div>
                 }
             </div>
+            </ChildContent>
         </QCard>
 
         <!-- Recent Activity -->

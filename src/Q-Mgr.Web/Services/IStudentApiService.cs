@@ -43,8 +43,8 @@ public interface IStudentApiService
 
     /// <summary>Import history; pass <paramref name="kind"/> so each page lists only its own uploads (roster vs. welfare history share one job table).</summary>
     Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId, RosterImportKind? kind = null);
-    Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId);
-    Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId);
+    Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId, RosterImportKind? kind = null);
+    Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId, RosterImportKind? kind = null);
 
     /// <summary>The branch's configurable lists. Seeded from what students already hold on a branch that has never opened the editor.</summary>
     Task<BranchVocabulariesDto> GetVocabulariesAsync(Guid branchId);
@@ -307,12 +307,25 @@ public class StudentApiService : IStudentApiService
         return (await response.Content.ReadFromJsonAsync<RosterImportJobDto>(_jsonOptions))!;
     }
 
+    /// <summary>
+    /// Welfare imports read back through WelfareController's own copies of these three endpoints,
+    /// which are gated on welfare.view; the roster copies are gated on students.view. Calling the
+    /// roster ones for a welfare job is what left a welfare-reports user without students.view
+    /// staring at an empty history of imports they had just run themselves.
+    /// </summary>
+    private static string ImportJobsBase(Guid branchId, RosterImportKind? kind) =>
+        kind == RosterImportKind.Welfare
+            ? $"api/v1/branches/{branchId}/welfare-records/import-jobs"
+            : $"api/v1/branches/{branchId}/students/import-jobs";
+
     public async Task<List<RosterImportJobDto>> GetImportJobsAsync(Guid branchId, RosterImportKind? kind = null)
     {
         try
         {
-            var url = $"api/v1/branches/{branchId}/students/import-jobs";
-            if (kind.HasValue) url += $"?kind={kind.Value}";
+            var url = ImportJobsBase(branchId, kind);
+            // The welfare route is hard-filtered to welfare jobs server-side; only the roster route
+            // takes a kind filter, and only when one was asked for.
+            if (kind.HasValue && kind != RosterImportKind.Welfare) url += $"?kind={kind.Value}";
             return await _httpClient.GetFromJsonAsync<List<RosterImportJobDto>>(url, _jsonOptions) ?? new();
         }
         catch (Exception ex)
@@ -322,12 +335,12 @@ public class StudentApiService : IStudentApiService
         }
     }
 
-    public async Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId)
+    public async Task<RosterImportJobDto?> GetImportJobAsync(Guid branchId, Guid jobId, RosterImportKind? kind = null)
     {
         try
         {
             return await _httpClient.GetFromJsonAsync<RosterImportJobDto>(
-                $"api/v1/branches/{branchId}/students/import-jobs/{jobId}", _jsonOptions);
+                $"{ImportJobsBase(branchId, kind)}/{jobId}", _jsonOptions);
         }
         catch (Exception ex)
         {
@@ -336,12 +349,12 @@ public class StudentApiService : IStudentApiService
         }
     }
 
-    public async Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId)
+    public async Task<List<RosterImportJobEntryDto>> GetImportJobEntriesAsync(Guid branchId, Guid jobId, RosterImportKind? kind = null)
     {
         try
         {
             return await _httpClient.GetFromJsonAsync<List<RosterImportJobEntryDto>>(
-                $"api/v1/branches/{branchId}/students/import-jobs/{jobId}/entries", _jsonOptions) ?? new();
+                $"{ImportJobsBase(branchId, kind)}/{jobId}/entries", _jsonOptions) ?? new();
         }
         catch (Exception ex)
         {

@@ -430,7 +430,7 @@ public class RosterImportProcessorJob
             && r.Description == description);
         if (alreadyOnLedger)
         {
-            entry.Outcome = RosterImportRowOutcome.DuplicateInFile;
+            entry.Outcome = RosterImportRowOutcome.AlreadyExists;
             entry.Message = "An identical record (same student, case type, date and description) is already on the ledger — skipped.";
             job.DuplicateCount++;
             _context.RosterImportJobEntries.Add(entry);
