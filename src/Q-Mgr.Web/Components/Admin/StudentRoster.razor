@@ -84,10 +84,25 @@
                         <input type="checkbox" checked="@selectedStudentIds.Contains(s.Id)" @onchange="@(e => ToggleStudentSelection(s.Id, (bool)(e.Value ?? false)))" />
                     </span>
                     <span class="roster-name">
-                        <span class="roster-name-text">@s.FullName</span>
+                        @* The name is the way in to the student. It is what people aim at first,
+                           and making it the link removed an icon from the action cluster that did
+                           nothing else. *@
+                        @if (canViewWelfare)
+                        {
+                            <a class="roster-name-text roster-name-link" href="@($"/admin/students/{s.Id}/picture")"
+                               title="@($"Open {s.FullName}'s picture")">@s.FullName</a>
+                        }
+                        else
+                        {
+                            <span class="roster-name-text">@s.FullName</span>
+                        }
+                        @* A patch, not a shield. The shield is what a *restriction* looks like on
+                           this row (below, and on the flag chips), and one glyph meaning both
+                           "consent is on file" and "a guardian may not have contact" a centimetre
+                           apart is how somebody misreads a safeguarding row. *@
                         <span class="consent-icon @(s.DataConsentGivenAt.HasValue ? "consent-icon--given" : "")"
                               title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {s.DataConsentGivenAt.Value.ToLocalTime():MMM d, yyyy}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
-                            <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "shield-check" : "shield")" Size="sm" />
+                            <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-check-fill" : "patch-question")" Size="sm" />
                         </span>
 
                         @* A restriction is the one thing on this row somebody has to act on at the
@@ -142,25 +157,72 @@
                             <span class="roster-empty-guardians">None yet</span>
                         }
                     </span>
+                    @* Three actions on the row, the rest behind a menu that names them.
+                       There were eight identical ghost icons here and no way to tell them apart
+                       without hovering each one in turn — and two of them were the same glyph in
+                       outline and filled form (person-vcard for "open picture", person-vcard-fill
+                       for "print card"). What is inline is what a matron does every day; what is
+                       rare or consequential — a subject-access export, a consent withdrawal — is
+                       one deliberate click further away, where it also gets a written label. *@
                     <span class="roster-actions">
                         @if (canLogWelfare)
                         {
-                            <QButton Icon="journal-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
+                            <QButton Icon="journal-plus" Text="Log" Size="sm" Variant="primary" Class="roster-action"
+                                     OnClick="@(() => OpenQuickLogModal(s))" Title="Log achievement, behavior or welfare record" />
                         }
-                        @if (canViewWelfare)
-                        {
-                            <QButton Icon="person-vcard" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/picture"))" Title="Open the student picture" />
-                            <QButton Icon="clipboard2-pulse" Size="sm" Variant="ghost" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))" Title="View welfare timeline" />
-                            <QButton Icon="file-earmark-arrow-down" Size="sm" Variant="ghost" OnClick="@(() => ExportStudentData(s))" Title="Export data (SAR) — everything held about this student as one JSON file" />
-                        }
-                        @if (canManageStudents)
-                        {
-                            <QButton Icon="@(s.DataConsentGivenAt.HasValue ? "shield-slash" : "shield-check")" Size="sm" Variant="ghost" OnClick="@(() => OpenConsentModal(s))"
-                                     Title="@(s.DataConsentGivenAt.HasValue ? "Withdraw or re-record data consent" : "Record data consent")" />
-                        }
-                        <QButton Icon="person-vcard-fill" Size="sm" Variant="ghost" OnClick="@(() => PrintStudentIdCard(s))" Title="Print Student Visitation Card (all guardians)" />
-                        <QButton Icon="person-plus" Size="sm" Variant="ghost" OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
-                        <QButton Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenEditStudentModal(s))" Title="Edit" />
+                        <QButton Icon="person-plus" Text="Guardian" Size="sm" Variant="ghost" Class="roster-action"
+                                 OnClick="@(() => OpenAddGuardianModal(s))" Title="Add guardian" />
+                        <QButton Icon="pencil" Text="Edit" Size="sm" Variant="ghost" Class="roster-action"
+                                 OnClick="@(() => OpenEditStudentModal(s))" Title="Edit student" />
+
+                        <div class="dropdown roster-more">
+                            <QButton Icon="three-dots" Size="sm" Variant="ghost" Title="More actions"
+                                     data-bs-toggle="dropdown" aria-expanded="false" aria-label="@($"More actions for {s.FullName}")" />
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                @if (canViewWelfare)
+                                {
+                                    <li>
+                                        <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/picture"))">
+                                            <QIcon Name="person-vcard" /> Open student picture
+                                        </button>
+                                    </li>
+                                    <li>
+                                        <button type="button" class="dropdown-item" @onclick="@(() => Navigation.NavigateTo($"/admin/students/{s.Id}/welfare"))">
+                                            <QIcon Name="clipboard2-pulse" /> Welfare timeline
+                                        </button>
+                                    </li>
+                                }
+                                <li>
+                                    <button type="button" class="dropdown-item" @onclick="@(() => PrintStudentIdCard(s))">
+                                        <QIcon Name="printer-fill" /> Print visitation card
+                                    </button>
+                                </li>
+
+                                @* Below the line: the two that carry legal weight rather than daily use. *@
+                                @if (canManageStudents || canViewWelfare)
+                                {
+                                    <li><hr class="dropdown-divider" /></li>
+                                }
+                                @if (canManageStudents)
+                                {
+                                    <li>
+                                        <button type="button" class="dropdown-item" @onclick="@(() => OpenConsentModal(s))">
+                                            <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-exclamation" : "patch-check")" />
+                                            @(s.DataConsentGivenAt.HasValue ? "Withdraw or re-record consent" : "Record data consent")
+                                        </button>
+                                    </li>
+                                }
+                                @if (canViewWelfare)
+                                {
+                                    <li>
+                                        <button type="button" class="dropdown-item" @onclick="@(() => ExportStudentData(s))"
+                                                title="Everything held about this student as one JSON file">
+                                            <QIcon Name="file-earmark-arrow-down" /> Export data (SAR)
+                                        </button>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
                     </span>
                 </div>
             }
@@ -1083,10 +1145,17 @@
         background: var(--qm-bg-card);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        overflow: hidden;
         display: grid;
         grid-template-columns: auto 2.4fr 0.8fr 0.8fr 1.9fr auto;
     }
+
+    /* No `overflow: hidden` here, deliberately: it used to clip the header background to the
+       rounded corners, but it would equally clip the row's actions menu, which has to escape the
+       table. The corners are rounded on the corner cells instead. */
+    .roster-row:first-child > *:first-child { border-top-left-radius: var(--qm-radius-lg); }
+    .roster-row:first-child > *:last-child { border-top-right-radius: var(--qm-radius-lg); }
+    .roster-row:last-child > *:first-child { border-bottom-left-radius: var(--qm-radius-lg); }
+    .roster-row:last-child > *:last-child { border-bottom-right-radius: var(--qm-radius-lg); }
 
     .roster-row { display: contents; }
 
@@ -1116,6 +1185,9 @@
     .roster-name { font-weight: 600; color: var(--qm-text-primary); display: flex; flex-wrap: wrap; align-items: center; gap: 5px; row-gap: 4px; }
     .roster-name > .roster-chip { margin-left: 0; }
     .roster-name-text { white-space: nowrap; }
+    .roster-name-link { color: inherit; text-decoration: none; }
+    .roster-name-link:hover { color: var(--qm-primary); text-decoration: underline; }
+    .roster-name-link:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 2px; border-radius: 2px; }
     .consent-icon { display: inline-flex; color: var(--qm-text-muted); opacity: 0.55; cursor: help; }
     .consent-icon--given { color: var(--qm-success, #3f7d58); opacity: 1; }
     .consent-status { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; color: var(--qm-text-muted); }
@@ -1131,7 +1203,47 @@
     .class-color-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
     .class-color-row:last-child { border-bottom: none; }
     .class-color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
-    .roster-actions { display: flex; gap: 4px; justify-self: end; }
+    .roster-actions { display: flex; gap: 6px; justify-self: end; align-items: center; }
+
+    /* Labels below 1500px would push the actions into the guardians column, so they collapse to
+       icons there and the title attribute carries the meaning — the menu keeps its written labels
+       at every width, which is where somebody goes when an icon is not obvious. */
+    @@media (max-width: 1500px) {
+        .roster-action .q-btn__text { display: none; }
+        .roster-action .q-btn__icon { margin-right: 0; }
+    }
+
+    /* The row's own menu. Bootstrap's dropdown is already loaded app-wide and drives the user menu
+       in MainLayout, so this needs no new component and no new script. */
+    .roster-more { display: inline-flex; }
+    .roster-more .dropdown-menu {
+        min-width: 232px;
+        padding: 6px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card);
+        box-shadow: var(--qm-shadow-md);
+    }
+
+    .roster-more .dropdown-item {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%;
+        padding: 8px 10px;
+        border: none; background: none;
+        border-radius: var(--qm-radius-sm);
+        font-size: 13px; text-align: left;
+        color: var(--qm-text-primary);
+        cursor: pointer;
+    }
+
+    .roster-more .dropdown-item:hover,
+    .roster-more .dropdown-item:focus-visible {
+        background: var(--qm-primary-light);
+        color: var(--qm-text-primary);
+    }
+
+    .roster-more .dropdown-item .q-icon { color: var(--qm-text-muted); flex: none; }
+    .roster-more .dropdown-divider { margin: 6px 4px; border-top-color: var(--qm-border); }
 
     .loading-state, .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); text-align: center; }
     .empty-state h3 { color: var(--qm-text-primary); margin: 0; }

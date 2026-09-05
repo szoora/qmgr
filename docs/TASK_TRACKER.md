@@ -668,6 +668,64 @@ mobile breakpoint gives the row its box back (`display: block`) since it stacks 
 
 ---
 
+### Addendum 9, same day — the roster's eight identical icons, and the alignment confirmed on screen
+
+Follow-on from Addendum 8, and the first thing this session has actually been **seen working** —
+the Chrome extension connected, and the user signed in (a password is never typed by the model).
+
+#### What the row looked like
+
+Eight `Variant="ghost"` icon buttons, same size, same colour, evenly spaced. Three defects, not
+preferences:
+
+- **Two were the same glyph.** `person-vcard` opened the student picture; `person-vcard-fill`
+  printed the visitation card. Outline versus filled, at 16px, one navigating and one printing.
+- **The shield meant two things a centimetre apart.** A `shield`/`shield-check` sat beside the name
+  as a consent *status*, while `shield-check`/`shield-slash` sat in the actions as the consent
+  *toggle* — on a row whose other shield (`shield-exclamation`) means a guardian contact
+  restriction. Three shields, three meanings.
+- **No hierarchy**, so every visit was a linear scan of eight lookalikes, and the rare and
+  consequential ones (a subject-access export, a consent withdrawal) sat between "add guardian" and
+  "edit".
+
+#### What it is now
+
+- **The student's name is the link** to their picture page. That is what people aim at first, and
+  it retired an icon that did nothing else.
+- **Three actions inline** — Log (primary, filled), Guardian, Edit — carrying text labels above
+  1500px and collapsing to icons below, since labels there would push into the guardians column.
+- **The rest behind a `⋯` menu that names them in words**: open picture, welfare timeline, print
+  visitation card, then a divider, then record/withdraw consent and export data (SAR). A tooltip
+  makes you hover eight things one at a time; a menu shows all of them at once, which is the
+  actual answer to "the icons are hard to interpret".
+- **Collisions resolved**: print now uses `printer-fill`, the same glyph the guardian chips beside
+  it already use for printing; consent status is a `patch-check-fill`/`patch-question`, leaving the
+  shield to mean restriction and nothing else.
+
+Bootstrap's dropdown already drives the user menu in MainLayout, so the menu needed no new
+component and no new script. It did need `overflow: hidden` off `.roster-table` — it was clipping
+the header background to the rounded corners, and would equally have clipped the menu; the corners
+are rounded on the corner cells instead.
+
+**Deliberately not done: hover-to-reveal.** It is the standard way to de-clutter a dense row and it
+is wrong here — this is used on tablets at a school gate, where there is no hover and
+discoverability matters more than tidiness.
+
+#### Seen working
+
+Signed in on localhost against the Welfare Only School tenant with three seeded students:
+
+- Every heading now sits over its own column — STUDENT, CODE, CLASS and GUARDIANS all line up with
+  their data, at 1568px and again at 930px.
+- The `⋯` menu opens, reads clearly, keeps its divider, and **escapes the table** rather than being
+  clipped.
+- Below 1500px the three inline actions collapse to icons on their own, as designed.
+- Clicking a student's name opens their picture page.
+
+The three seeded students were deactivated afterwards.
+
+---
+
 ## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
