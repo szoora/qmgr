@@ -99,6 +99,7 @@ public class CreateTokenCommandHandler : IRequestHandler<CreateTokenCommand, Tok
             Id = token.Id,
             TokenNumber = token.TokenNumber,
             DisplayNumber = token.DisplayNumber,
+            Notes = token.Notes,
             Status = token.Status,
             Priority = token.Priority,
             Source = token.Source,

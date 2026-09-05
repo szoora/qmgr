@@ -68,7 +68,12 @@ public class QueueController : ControllerBase
     private const int SmsLimitPerWindow = 3;
     private const int MaxSmsPerToken = 3;
     private static readonly TimeSpan SmsTicketMaxAge = TimeSpan.FromHours(4);
-    private const string SmsCountMetadataKey = "ticketSmsCount";
+    /// <summary>
+    /// Internal, and named here so <see cref="TokensController"/> can refuse to let an integrator
+    /// write it: setting this counter through the metadata PATCH would reset the SMS cap it
+    /// enforces, which is the whole reason the cap is stored rather than derived.
+    /// </summary>
+    internal const string SmsCountMetadataKey = "ticketSmsCount";
 
     public QueueController(
         IMediator mediator,

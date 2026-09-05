@@ -466,12 +466,75 @@ the button is honest today and becomes fully functional the moment credentials a
 phone dialog, the QR downloads and the print preview have not been seen on screen — the QR and
 print paths in particular are browser-side and deserve a click-through before a pilot.
 
-#### Found while doing this, not fixed
+#### Found while doing this — fixed straight after, see Addendum 5 below
 
 `PATCH api/v1/branches/{branchId}/tokens/{tokenId}` is a stub of the same family: it validates the
 branch, fetches the token, and returns it unchanged under a comment reading `// Update logic here`.
-Nothing calls it. It was left alone rather than quietly given behaviour nobody asked for, but it is
-a no-op endpoint that reads as a working one.
+Nothing calls it. It was reported rather than quietly given behaviour nobody asked for; the user then asked for it,
+and Addendum 5 covers what it does now and the read bug it turned up.
+
+---
+
+### Addendum 5, same day — the PATCH token stub, and the read bug it exposed
+
+`PATCH api/v1/branches/{branchId}/tokens/{tokenId}` verified the branch, fetched the token and
+returned it unchanged under a comment reading `// Update logic here`. Nothing in this repository
+called it, but it is part of the public integration surface, where a silent 200 that writes nothing
+is worse than a 501.
+
+It now updates `Notes` and `Metadata`. Four decisions worth keeping:
+
+- **Metadata merges; it does not replace.** That is not a style preference. The SMS cap added
+  earlier today counts sends in `ticketSmsCount` **inside this same blob**, so a wholesale replace
+  would have let any caller reset that cap by writing an unrelated key. The key is also refused
+  outright, case-insensitively, and `QueueController.SmsCountMetadataKey` is now `internal` so the
+  two ends cannot drift. A key sent with a null value is removed.
+- **The permission moved from `tokens.view` to `tokens.create`.** A mutating endpoint behind a read
+  permission was the real defect, latent only for as long as the method did nothing. There is no
+  `tokens.edit`, and adding one would mean re-seeding permissions and re-granting five roles for no
+  behavioural difference — the reasoning `AppointmentsController` already records for the same
+  choice — so whoever may issue a ticket may annotate one.
+- **PATCH means PATCH**: an omitted field is untouched. `Notes` sent as an empty string clears it,
+  which is the only way to tell "clear this" from "don't touch it" for a plain nullable string.
+- **`BranchId` is in the predicate, not just the route.** A token id is a global GUID, so without it
+  a caller could edit another tenant's token by supplying their own branch id — the same guard
+  `GetToken` documents next door.
+
+#### The bug this uncovered: `TokenDto.Notes` was never mapped, anywhere
+
+The first test wrote a note, got 200, and read back `"notes": null`. The write was fine — **not one
+of the ten `new TokenDto` sites in this codebase populated `Notes`**. The field existed on the DTO
+and was dead on every read path in the app.
+
+That is not only cosmetic. `CallNextTokenCommandHandler` writes `token.Notes` when a staff member
+completes a service, so **completion notes have been written to the database and been unreadable by
+anything ever since**. Exactly the hand-written-mapper drift CLAUDE.md warns about, with no
+auto-mapper to catch it.
+
+Fixed at all ten sites across four files. The structural fix — one shared projection, the way
+`AppointmentsController.Projection` already solves this for appointments and says so in its own
+comment — was **not** done here: the ten sites have genuinely different shapes (some carry the
+counter, some the queue position), and rewriting the queue's core write path was well outside
+"fix the PATCH stub". It is the right follow-up, and it is now the only remaining place in this
+area where one field is mapped in ten hand-written copies.
+
+#### Verified live
+
+| Case | Result |
+| --- | --- |
+| Set notes | Written **and now readable** — the mapping fix, proven by the same call failing before it |
+| Omit `Notes`, send metadata | Notes untouched, `ward` A→B→C |
+| Metadata key with a null value | Key removed, `caseRef` and the others survived |
+| `Notes: ""` | Cleared to null |
+| `{"ticketSmsCount": 0}` | 400 — *"'ticketSmsCount' is reserved and can't be set."* |
+| `{"TICKETSMSCOUNT": 0}` | 400 — the refusal is case-insensitive |
+| 1,100-character note | 400, capped at 1,000 |
+| Same token id under another tenant's branch | 404, not a leak |
+| **Account holding `tokens.view` only** | **GET 200, PATCH 403** — the permission change bites |
+
+That last row needed a throwaway role with `tokens.view` and `dashboard.view` in the clinic tenant;
+the SuperAdmin holds everything and would have proven nothing. Deleted afterwards, its role
+deactivated, and the probe token cancelled.
 
 ---
 

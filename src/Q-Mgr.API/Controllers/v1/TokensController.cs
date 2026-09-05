@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Mediator;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -210,29 +211,137 @@ public class TokensController : ControllerBase
     }
 
     /// <summary>
-    /// Updates token metadata
+    /// Updates a token's notes and integration metadata.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This was a stub until 2026-09-05: it verified the branch, fetched the token and returned it
+    /// unchanged under a comment reading "Update logic here", so every caller got a 200 and no
+    /// write. Nothing in this repository called it, but it is part of the public integration
+    /// surface, where a silent no-op is worse than a 501.
+    /// </para>
+    /// <para>
+    /// PATCH semantics: a field the caller omits is left alone. <c>Notes</c> sent as an empty
+    /// string clears it, which is the only way to distinguish "clear this" from "don't touch it"
+    /// when the field is a plain nullable string.
+    /// </para>
+    /// <para>
+    /// <c>Metadata</c> <b>merges</b> rather than replaces, and a key sent with a null value is
+    /// removed. That is not a style preference: <see cref="QueueController.SmsCountMetadataKey"/>
+    /// lives in this same blob and caps how many times one ticket may be texted, so a wholesale
+    /// replace would let any caller reset that cap by writing an unrelated key. The same key is
+    /// refused outright below for the same reason.
+    /// </para>
+    /// <para>
+    /// Gated on <c>tokens.create</c>, not <c>tokens.view</c>. It carried the view permission while
+    /// it did nothing, which was harmless only for as long as that was true — a mutating endpoint
+    /// behind a read permission is the actual defect here. There is no <c>tokens.edit</c>, and
+    /// adding one would mean re-seeding permissions and re-granting five roles for no behavioural
+    /// difference (the reasoning AppointmentsController already records for the same choice), so
+    /// whoever may issue a ticket may annotate one.
+    /// </para>
+    /// </remarks>
     [HttpPatch("{tokenId:guid}")]
-    [RequirePermission(Permissions.TokensView)]
+    [RequirePermission(Permissions.TokensCreate)]
     [ProducesResponseType(typeof(TokenDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateToken(
         Guid branchId,
         Guid tokenId,
-        [FromBody] UpdateTokenRequest request)
+        [FromBody] UpdateTokenRequest request,
+        CancellationToken cancellationToken = default)
     {
         // SECURITY: Verify branch belongs to organization
         var verifyResult = await VerifyBranchOwnership(branchId);
         if (verifyResult != null) return verifyResult;
 
-        // Implementation for updating token metadata
-        // SECURITY: same cross-tenant guard as GetToken above — BranchId enforced in the handler.
-        var token = await _mediator.Send(new GetTokenQuery { TokenId = tokenId, BranchId = branchId });
+        if (request == null)
+            return BadRequest(new ProblemDetails { Title = "A request body is required.", Status = StatusCodes.Status400BadRequest });
+
+        if (request.Notes is { Length: > MaxNotesLength })
+            return BadRequest(new ProblemDetails { Title = $"Notes must be {MaxNotesLength} characters or fewer.", Status = StatusCodes.Status400BadRequest });
+
+        if (request.Metadata != null)
+        {
+            if (request.Metadata.Count > MaxMetadataKeys)
+                return BadRequest(new ProblemDetails { Title = $"At most {MaxMetadataKeys} metadata keys can be set at once.", Status = StatusCodes.Status400BadRequest });
+
+            var reserved = request.Metadata.Keys.FirstOrDefault(k =>
+                string.Equals(k, QueueController.SmsCountMetadataKey, StringComparison.OrdinalIgnoreCase));
+            if (reserved != null)
+                return BadRequest(new ProblemDetails { Title = $"'{reserved}' is reserved and can't be set.", Status = StatusCodes.Status400BadRequest });
+        }
+
+        // SECURITY: BranchId in the predicate, not just the route — a token id is a global GUID,
+        // so without it any caller could edit another tenant's token by supplying their own
+        // branchId. Same guard GetToken above documents.
+        var token = await _dbContext.Tokens
+            .FirstOrDefaultAsync(t => t.Id == tokenId && t.BranchId == branchId, cancellationToken);
         if (token == null)
             return NotFound();
 
-        // Update logic here
-        return Ok(token);
+        var changed = false;
+
+        if (request.Notes != null)
+        {
+            var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+            if (token.Notes != notes)
+            {
+                token.Notes = notes;
+                changed = true;
+            }
+        }
+
+        if (request.Metadata is { Count: > 0 })
+        {
+            token.Metadata = MergeMetadata(token.Metadata, request.Metadata);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Token {TokenId} updated on branch {BranchId}", tokenId, branchId);
+        }
+
+        // Re-read through the query so the response is the same TokenDto shape every other read
+        // here returns, rather than a second hand-written mapping of the same entity.
+        var dto = await _mediator.Send(new GetTokenQuery { TokenId = tokenId, BranchId = branchId });
+        return dto == null ? NotFound() : Ok(dto);
+    }
+
+    private const int MaxNotesLength = 1000;
+    private const int MaxMetadataKeys = 50;
+
+    /// <summary>
+    /// Merges the supplied keys into the token's existing metadata. A key whose value is null is
+    /// removed; every other key is set. Unparseable existing metadata is replaced rather than
+    /// allowed to fail the request — it is an opaque integration blob this app does not own, and
+    /// refusing every future write because of one bad row helps nobody.
+    /// </summary>
+    private static string MergeMetadata(string? existingJson, Dictionary<string, object> updates)
+    {
+        Dictionary<string, object> merged;
+        try
+        {
+            merged = string.IsNullOrWhiteSpace(existingJson)
+                ? new Dictionary<string, object>()
+                : (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(existingJson) ?? new())
+                    .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        }
+        catch (JsonException)
+        {
+            merged = new Dictionary<string, object>();
+        }
+
+        foreach (var (key, value) in updates)
+        {
+            if (value is null) merged.Remove(key);
+            else merged[key] = value;
+        }
+
+        return JsonSerializer.Serialize(merged);
     }
 
     /// <summary>
