@@ -997,20 +997,22 @@ while undo worked correctly from the real values underneath. Fixed in the same p
    permission and no extra feature flag in the admin UI.
 4. **PDF** — print-to-PDF, no jsPDF. The component's interface does not change if that is revisited.
 
-#### What is NOT done yet
+#### What was NOT done yet at the time this addendum was written
 
-Being explicit, because the request was "all appropriate sites":
+**Superseded the same day by Addendum 12 below, which finished the first two.** Kept as written
+rather than edited, so the order the work actually happened in is still readable.
 
-- **The resolver, API and undo support all twelve operations**, and the roster's UI drives four of
-  them. **The batch *bar* is only on the roster.** Welfare reports, visitor management, users and
-  appointments each still need their own selection checkboxes and bar — the server work is done and
-  each page is now a small addition rather than a feature.
-- **Export is wired on three pages** — roster, welfare reports, visitor management. Users,
+- ~~**The batch *bar* is only on the roster.**~~ The resolver, API and undo supported all twelve
+  operations and the roster's UI drove four of them. Welfare reports, visitor management, users and
+  appointments each still needed their own selection checkboxes and bar. **Done in Addendum 12**,
+  which also added the queue board.
+- ~~**Export is wired on three pages**~~ — roster, welfare reports, visitor management. Users,
   appointments, campaign impressions, counter performance, customer feedback and the visitor report
-  still have their old bespoke exports or none.
-- **Nothing has been seen on screen.** The Web app restart during testing cleared the signed-in
-  session, and a password is never typed by the model. Everything above is API-level and
-  compile-level verification.
+  still had their old bespoke exports or none. **Done in Addendum 12**, though the four gated report
+  exports keep fetching from the API rather than rendering local rows — see the reasoning there.
+- **Nothing has been seen on screen.** Still true at the end of the day. The Web app restart during
+  testing cleared the signed-in session, and a password is never typed by the model. Everything
+  above is API-level and compile-level verification.
 
 
 ### Addendum 12, same day — the remaining pages, and a real gap in undo that only showed up once they existed
@@ -1090,7 +1092,7 @@ quoted commas, doubled quotes, a newline inside a field, a short row (padded, no
 a header-only file, a missing trailing newline, a blank line between records, and an unnamed header
 column. Fifteen checks, all passing, run against the shipped source lifted verbatim.
 
-#### Still not done
+#### What got verified after the fact, and the one thing that did not
 
 - **`SetWelfareReviewDate`'s undo is now exercised live too**, on two dummy records created for it:
   one that already had a review date and one that had none, so both branches of the revert ran. The
@@ -1113,7 +1115,7 @@ column. Fifteen checks, all passing, run against the shipped source lifted verba
 
 ---
 
-## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 entry above; still the authoritative record of the product state and the undeployed package)
+## 🧭 SESSION HANDOVER (written 2026-09-04, late) — tiers retired, welfare background shipped (superseded as "read first" by the 2026-09-05 late entry above; still the authoritative record of the product state and the undeployed package)
 
 Supersedes the earlier 2026-09-04 handover below, which remains accurate for the price-grandfathering
 work it covers. **Nothing in this session has run in production yet.** A deployment package is built
