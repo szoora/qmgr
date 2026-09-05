@@ -455,6 +455,8 @@ Against the Core Queue test clinic, using the anonymous kiosk path end to end.
 | Valid number, no SMS gateway configured | 200, `sent: false`, `phoneStored: true`, *"No text-message service is set up here yet… Your number is saved against the ticket."* |
 | Token read back afterwards | `"phone":"0771234567"`, `"metadata":{"ticketSmsCount":3}` — **the number is stored and the per-ticket counter is real** |
 | 4th attempt inside the window | 429 `RATE_LIMITED` with `retryAfterSeconds` |
+| 4th attempt *after* the window expired | 400 `SMS_LIMIT` — the per-ticket cap, behind the rate limit as intended |
+| Ticket cancelled, then another attempt | 400 `TICKET_CLOSED` |
 
 The "no gateway configured" answer is this environment's actual truth, and it is the useful part:
 the button is honest today and becomes fully functional the moment credentials are set, where
