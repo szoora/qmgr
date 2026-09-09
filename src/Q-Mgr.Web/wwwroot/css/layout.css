@@ -111,7 +111,6 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    box-shadow: 0 0 20px rgba(var(--qm-primary-rgb), 0.3);
     transition: all 0.3s ease;
 }
 
@@ -135,7 +134,6 @@
 }
 
 .brand:hover .brand-logo {
-    box-shadow: 0 0 25px rgba(var(--qm-primary-rgb), 0.5);
     transform: scale(1.05);
 }
 
@@ -149,7 +147,6 @@
     justify-content: center;
     font-size: 20px;
     color: var(--qm-text-on-primary);
-    box-shadow: 0 0 20px rgba(var(--qm-primary-rgb), 0.3);
 }
 
 .brand-text {
@@ -565,7 +562,6 @@
 [data-theme="dark"] .nav-link.active {
     background: var(--qm-gradient-primary);
     color: var(--qm-text-on-primary);
-    box-shadow: 0 0 20px rgba(var(--qm-primary-rgb), 0.3);
 }
 
 [data-theme="light"] .nav-link {
@@ -580,7 +576,6 @@
 [data-theme="light"] .nav-link.active {
     background: var(--qm-gradient-primary);
     color: var(--qm-text-on-primary);
-    box-shadow: 0 0 15px rgba(var(--qm-primary-rgb), 0.3);
 }
 
 /* Modules-available badge — the only nav-level "more modules exist" signal (an unpurchased
@@ -1666,4 +1661,110 @@
 
 [data-theme="light"] .sidebar-nav::-webkit-scrollbar-thumb:hover {
     background: rgba(var(--qm-primary-rgb), 0.3);
+}
+
+/* ==========================================================================
+   MOBILE OVERFLOW — the page must never scroll sideways
+   --------------------------------------------------------------------------
+   Reported as "overlapping items" on a phone: on the welfare timeline the
+   heading, the points chips, the buttons and the record cards were all clipped
+   on the LEFT, and "Notify Guardian" sat outside its own card.
+
+   Nothing was overlapping. One row was wider than the phone, so the document
+   itself grew past the viewport and the browser scrolled right — moving every
+   other element with it. The row was .timeline-card-actions: four buttons in a
+   `display:flex` with no `flex-wrap`.
+
+   Three layers, because the bug needed all three to happen:
+
+     1. min-width:0 — a flex/grid child defaults to min-width:auto, so it
+        REFUSES to shrink below its content. That is what let one row widen the
+        whole page instead of just itself. This is the actual root cause and
+        the reason the symptom appeared page-wide rather than in one card.
+     2. overflow-x:clip on the scroll container, so a row that still manages to
+        be too wide is contained rather than moving the layout. `clip` rather
+        than `hidden` because `hidden` creates a scroll container and would
+        break `position:sticky` inside it.
+     3. flex-wrap on the recurring row families below.
+
+   Wide tables keep their own .table-scroll / overflow-x:auto wrappers: the aim
+   is that THE PAGE never scrolls sideways, not that content gets cut off.
+   ========================================================================== */
+
+.qm-main {
+    min-width: 0;
+    overflow-x: clip;
+}
+
+/* Long unbroken strings — a pasted URL, a badge code, an email address — are
+   the other way a child outgrows its column. */
+.qm-main,
+.admin-page,
+.q-card,
+.q-modal__body {
+    overflow-wrap: break-word;
+}
+
+/* Direct children of a page or card can shrink. Without this every rule below
+   is cosmetic: the row wraps, and the grid track it sits in stays too wide. */
+.admin-page > *,
+.q-card > *,
+.page-header > *,
+.filter-row > *,
+.stats-grid > *,
+.report-columns > * {
+    min-width: 0;
+}
+
+@media (max-width: 768px) {
+    /* Action and control rows wrap. Named by the families that actually recur
+       across this codebase rather than by a blanket `div { flex-wrap: wrap }`,
+       which would also wrap things that must not (see tabs below). */
+    [class$="-actions"],
+    [class*="-actions "],
+    [class$="-footer"],
+    [class$="-controls"],
+    [class$="-toolbar"],
+    .header-actions,
+    .filter-row,
+    .filter-actions,
+    .form-actions,
+    .card-actions,
+    .modal-actions,
+    .batch-bar,
+    .points-summary {
+        flex-wrap: wrap !important;
+    }
+
+    /* Tabs scroll, they do not wrap. A wrapped tab strip reads as broken in a
+       way a wrapped button row does not. */
+    .report-tabs,
+    .tabs,
+    .filter-bar,
+    .nav-tabs {
+        flex-wrap: nowrap !important;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+    .report-tabs > *,
+    .tabs > *,
+    .filter-bar > *,
+    .nav-tabs > * {
+        flex-shrink: 0;
+    }
+
+    /* A button in a wrapped row should shrink its label, not push the row. */
+    .q-btn {
+        max-width: 100%;
+    }
+
+    /* Multi-column grids collapse rather than forcing a minimum track wider
+       than the screen — minmax(320px, 1fr) on a 360px phone leaves no room for
+       the page's own padding. */
+    .report-columns,
+    .form-row,
+    .settings-grid {
+        grid-template-columns: 1fr !important;
+    }
 }

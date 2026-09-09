@@ -451,8 +451,9 @@ public class RosterImportProcessorJob
             Status = status,
             ActionTaken = string.IsNullOrWhiteSpace(row.ActionTaken) ? null : row.ActionTaken.Trim(),
             // SECURITY: server-forced, exactly as CreateRecord does — a safeguarding concern is
-            // confidential regardless of what the spreadsheet says (it has no column for it).
-            Confidential = caseType == WelfareCaseType.Welfare,
+            // confidential regardless of what the spreadsheet says (it has no column for it, and
+            // deliberately never will: a bulk upload is not the place to grant a visibility tier).
+            Visibility = caseType == WelfareCaseType.Welfare ? WelfareVisibility.Confidential : WelfareVisibility.Standard,
             ReportedByUserId = job.CreatedByUserId!.Value,
             CreatedBy = job.CreatedByUserId
         };

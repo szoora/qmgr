@@ -55,6 +55,33 @@ public interface IVisitorApiService
     /// <summary>Point-in-time evacuation roll call — everyone on site right now. Null on failure.</summary>
     Task<EvacuationReportDto?> GetEvacuationReportAsync(Guid branchId);
 
+    // ---- Reporting -------------------------------------------------------------------------
+    // All four take the same VisitorReportFilter so the summary on screen and the CSV underneath
+    // it can never be answering different questions.
+
+    /// <summary>The filtered, branch-timezone-correct visitor report. Null on failure.</summary>
+    Task<VisitorReportDtoV2?> GetReportAsync(Guid branchId, VisitorReportFilter filter);
+
+    /// <summary>The same report across every branch in the organization, with a comparison table.</summary>
+    Task<VisitorReportDtoV2?> GetOrganizationReportAsync(Guid organizationId, VisitorReportFilter filter);
+
+    /// <summary>Rows that need somebody to do something. Open visits ignore the date range.</summary>
+    Task<VisitorExceptionsDto?> GetExceptionsAsync(Guid branchId, VisitorReportFilter filter);
+
+    /// <summary>Induction register, watchlist activity, consent gaps and retention evidence.</summary>
+    Task<VisitorComplianceDto?> GetComplianceAsync(Guid branchId, VisitorReportFilter filter);
+
+    /// <summary>The filtered visit log as raw CSV. Null when the caller lacks reports.export.</summary>
+    Task<string?> ExportReportCsvAsync(Guid branchId, VisitorReportFilter filter);
+
+    Task<VisitorReportingSettingsDto> GetReportingSettingsAsync(Guid branchId);
+
+    /// <summary>Throws InvalidOperationException with the API's message on a validation failure.</summary>
+    Task<VisitorReportingSettingsDto> UpdateReportingSettingsAsync(Guid branchId, VisitorReportingSettingsDto settings);
+
+    /// <summary>Emails the roll call. Throws InvalidOperationException with the API's message on failure.</summary>
+    Task<bool> EmailEvacuationReportAsync(Guid branchId, string? to = null);
+
     /// <summary>Books a party of expected arrivals. Throws InvalidOperationException with the API's ProblemDetails.Title on failure.</summary>
     Task<List<VisitorDto>> CreateExpectedVisitorsAsync(Guid branchId, CreateExpectedVisitorsRequest request);
 
@@ -419,6 +446,125 @@ public class VisitorApiService : IVisitorApiService
             _logger.LogError(ex, "Failed to export visitor report for branch {BranchId}", branchId);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Serializes the shared filter into the query string every reporting endpoint accepts. One
+    /// place, so a filter added later cannot reach the summary and miss the export.
+    /// </summary>
+    private static string FilterQuery(VisitorReportFilter filter)
+    {
+        var parts = new List<string>();
+        if (filter.From.HasValue) parts.Add($"from={filter.From.Value:yyyy-MM-dd}");
+        if (filter.To.HasValue) parts.Add($"to={filter.To.Value:yyyy-MM-dd}");
+        if (filter.VisitorType.HasValue) parts.Add($"visitorType={filter.VisitorType}");
+        if (filter.Status.HasValue) parts.Add($"status={filter.Status}");
+        if (!string.IsNullOrWhiteSpace(filter.HostName)) parts.Add($"host={Uri.EscapeDataString(filter.HostName)}");
+        if (!string.IsNullOrWhiteSpace(filter.Company)) parts.Add($"company={Uri.EscapeDataString(filter.Company)}");
+        if (filter.WatchlistOnly) parts.Add("watchlistOnly=true");
+        if (filter.RosterOnly) parts.Add("rosterOnly=true");
+        return parts.Count == 0 ? "" : "?" + string.Join("&", parts);
+    }
+
+    public async Task<VisitorReportDtoV2?> GetReportAsync(Guid branchId, VisitorReportFilter filter)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitorReportDtoV2>(
+                $"api/v1/branches/{branchId}/visitors/report/v2{FilterQuery(filter)}", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load the visitor report for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<VisitorReportDtoV2?> GetOrganizationReportAsync(Guid organizationId, VisitorReportFilter filter)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitorReportDtoV2>(
+                $"api/v1/organizations/{organizationId}/visitors/report{FilterQuery(filter)}", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load the organization visitor report for {OrganizationId}", organizationId);
+            return null;
+        }
+    }
+
+    public async Task<VisitorExceptionsDto?> GetExceptionsAsync(Guid branchId, VisitorReportFilter filter)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitorExceptionsDto>(
+                $"api/v1/branches/{branchId}/visitors/exceptions{FilterQuery(filter)}", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load visitor exceptions for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<VisitorComplianceDto?> GetComplianceAsync(Guid branchId, VisitorReportFilter filter)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitorComplianceDto>(
+                $"api/v1/branches/{branchId}/visitors/compliance{FilterQuery(filter)}", _jsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load visitor compliance for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<string?> ExportReportCsvAsync(Guid branchId, VisitorReportFilter filter)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync(
+                $"api/v1/branches/{branchId}/visitors/report/v2/export{FilterQuery(filter)}");
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to export the visitor log for branch {BranchId}", branchId);
+            return null;
+        }
+    }
+
+    public async Task<VisitorReportingSettingsDto> GetReportingSettingsAsync(Guid branchId)
+    {
+        try
+        {
+            return await _httpClient.GetFromJsonAsync<VisitorReportingSettingsDto>(
+                $"api/v1/branches/{branchId}/visitors/reporting-settings", _jsonOptions) ?? new VisitorReportingSettingsDto();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load reporting settings for branch {BranchId}", branchId);
+            return new VisitorReportingSettingsDto();
+        }
+    }
+
+    public async Task<VisitorReportingSettingsDto> UpdateReportingSettingsAsync(Guid branchId, VisitorReportingSettingsDto settings)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/v1/branches/{branchId}/visitors/reporting-settings", settings, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<VisitorReportingSettingsDto>(_jsonOptions))!;
+    }
+
+    public async Task<bool> EmailEvacuationReportAsync(Guid branchId, string? to = null)
+    {
+        var response = await _httpClient.PostAsJsonAsync(
+            $"api/v1/branches/{branchId}/visitors/evacuation/email", new EmailEvacuationRequest { To = to }, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return true;
     }
 
     public async Task<EvacuationReportDto?> GetEvacuationReportAsync(Guid branchId)

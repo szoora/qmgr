@@ -1,4 +1,5 @@
 using QMgr.Domain.Common;
+using QMgr.Domain.Enums;
 
 namespace QMgr.Domain.Entities.Identity;
 
@@ -42,6 +43,18 @@ public class Role : BaseAuditableEntity
     /// System roles cannot be deleted or have their core permissions modified
     /// </summary>
     public bool IsSystem { get; set; }
+
+    /// <summary>
+    /// How widely this role sees rows INSIDE a branch its permissions already reach — a second
+    /// axis to the permission table, not a replacement for it. Defaults to
+    /// <see cref="RoleDataScope.Organization"/>, which is what every role did before this column
+    /// existed, so an unmigrated row keeps behaving exactly as it did.
+    ///
+    /// Set to <see cref="RoleDataScope.AssignedClasses"/> on the seeded class-teacher role, and
+    /// settable on a tenant's own custom roles (a head of year, a house parent) through the role
+    /// editor. Enforced by StudentScopeService, which is the only place that reads it.
+    /// </summary>
+    public RoleDataScope DataScope { get; set; } = RoleDataScope.Organization;
 
     /// <summary>
     /// Display order in lists

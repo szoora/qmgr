@@ -206,8 +206,8 @@
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
-    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .summary-card { display: flex; align-items: center; gap: 14px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 18px; }
+    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
+    .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
     .summary-card.alert { border-color: var(--qm-danger); }
     .card-icon { width: 44px; height: 44px; border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
     .card-content { display: flex; flex-direction: column; }

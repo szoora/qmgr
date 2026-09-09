@@ -35,6 +35,35 @@ public class User : BaseAuditableEntity
     public DateTime? PhoneVerifiedAt { get; set; }
     public string? EmployeeNumber { get; set; }
 
+    // ---------------------------------------------------------------------------------------
+    // Staff contact detail. Added for the class-teacher card — "who do I call about this child,
+    // right now" — where Email/Phone/EmployeeNumber above were not quite enough. Columns on the
+    // User row rather than a TeacherContact side table: these are attributes of a person who
+    // already has a row, and a separate table would duplicate identity and immediately drift
+    // (this codebase's recurring failure). All nullable; nothing existing is affected.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>A second number — the staff-room landline, or a personal mobile for out-of-hours.</summary>
+    public string? AlternatePhone { get; set; }
+
+    /// <summary>Where to physically find them: "Staff room B", "Block C, office 4".</summary>
+    public string? OfficeLocation { get; set; }
+
+    /// <summary>Free text, e.g. "Head of Year 4" or "Senior Teacher". Distinct from the RBAC role, which is about permissions, not about what the school calls them.</summary>
+    public string? JobTitle { get; set; }
+
+    /// <summary>
+    /// Per-user notification channel overrides, as JSON. Null means "follow the organization
+    /// default" (<c>NotificationSettings</c>), which is the state every existing row is in.
+    ///
+    /// A jsonb column rather than a table because the matrix is small, fixed, and only ever read
+    /// one user at a time — the fan-out already has its recipient list before it asks about
+    /// preferences, so this is never queried ACROSS users and never needs an index. Same shape as
+    /// the existing <c>Branch.Settings</c> blob. Read and written only through
+    /// <c>NotificationPreferenceResolver</c>; do not parse it anywhere else.
+    /// </summary>
+    public string? NotificationPreferences { get; set; }
+
     /// <summary>
     /// Reference to the user's role (database-backed RBAC)
     /// </summary>

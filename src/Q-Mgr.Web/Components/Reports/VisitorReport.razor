@@ -1,212 +1,797 @@
 @page "/reports/visitors"
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
 @using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 @inject IVisitorApiService VisitorApi
 @inject IBranchStateService BranchState
 @inject IPermissionService PermissionService
 @inject IToastService NotificationService
+@inject IAuthService AuthService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
 <PageTitle>Visitor Report - Q-Mgr</PageTitle>
 
-<div class="page-header">
+<div class="page-header no-print">
     <h1>Visitor Report</h1>
     <div class="breadcrumb">
         <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Reports", "/reports"), new("Visitors") })" />
     </div>
 </div>
 
-@if (isLoading)
-{
-    <div class="loading-container"><QSpinner /> <span>Loading report...</span></div>
-}
-else if (report == null)
-{
-    <div class="empty-state"><QIcon Name="exclamation-triangle" /> <span>Couldn't load the visitor report.</span></div>
-}
-else
-{
-    <div class="visitor-report-page">
-        <!-- Date range -->
-        <QCard Class="filter-card">
-            <div class="filter-row">
-                <div class="filter-item">
-                    <label>From<input type="date" @bind="fromDate" /></label>
-                </div>
-                <div class="filter-item">
-                    <label>To<input type="date" @bind="toDate" /></label>
-                </div>
-                <div class="filter-item quick-ranges">
-                    <QButton Text="Today" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(0))" />
-                    <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(6))" />
-                    <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(29))" />
-                </div>
-                <div class="filter-item">
-                    <QButton Text="Apply" Icon="funnel-fill" Variant="primary" OnClick="@LoadReport" />
-                </div>
-                <div class="filter-item">
+@* ------------------------------------------------------------------------------------------
+   PRINT HEADER. Hidden on screen, the only thing above the figures on paper. A printed report
+   with no statement of what it covers is unusable the moment it leaves the printer — an
+   inspector cannot tell a branch's Tuesday from an organization's whole term.
+   ------------------------------------------------------------------------------------------ *@
+<div class="print-only print-header">
+    <h1>@TabTitle()</h1>
+    <p>
+        <strong>@(report?.ScopeName ?? BranchState.CurrentBranchName)</strong>
+        &middot; @fromDate.ToString("d MMMM yyyy") to @toDate.ToString("d MMMM yyyy")
+        &middot; @FilterSummary()
+    </p>
+    <p class="print-meta">
+        Generated @DateTime.Now.ToString("dddd d MMMM yyyy, HH:mm")
+        &middot; times shown in @(report?.TimeZoneId ?? "UTC")
+    </p>
+</div>
+
+<div class="visitor-report-page">
+
+    @* ---- Filters ---- *@
+    <QCard Class="filter-card no-print">
+        <div class="filter-row">
+            @* Was two raw date inputs plus a private preset list. Both are now the shared
+               control, so this report's idea of "Last 30 days" cannot drift from any other's. *@
+            <div class="filter-item filter-item--range">
+                <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Disabled="@isLoading" ShowCaption="false" />
+            </div>
+            <div class="filter-item">
+                <label>Visitor type
+                    <select @bind="filterVisitorType">
+                        <option value="">All types</option>
+                        @foreach (var t in Enum.GetValues<VisitorType>())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <div class="filter-item">
+                <label>Status
+                    <select @bind="filterStatus">
+                        <option value="">All statuses</option>
+                        @foreach (var st in Enum.GetValues<VisitorStatus>())
+                        {
+                            <option value="@st">@st</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <div class="filter-item">
+                <label>Host<input type="text" @bind="filterHost" placeholder="Any host" /></label>
+            </div>
+            <div class="filter-item">
+                <label>Company<input type="text" @bind="filterCompany" placeholder="Any company" /></label>
+            </div>
+            <div class="filter-item filter-checks">
+                <label class="inline-check"><input type="checkbox" @bind="filterWatchlistOnly" /> Watchlisted only</label>
+                <label class="inline-check"><input type="checkbox" @bind="filterRosterOnly" /> Visiting-day only</label>
+            </div>
+        </div>
+
+        <div class="filter-row filter-row--actions">
+            <p class="range-caption">Showing <strong>@range.Caption</strong></p>
+
+            <div class="filter-actions">
+                @if (branchCount > 1)
+                {
+                    <label class="inline-check" title="Aggregate every branch in the organization">
+                        <input type="checkbox" checked="@orgWide" @onchange="OnScopeChanged" /> All branches
+                    </label>
+                }
+                <QButton Text="Apply" Icon="funnel-fill" Variant="primary" OnClick="@ReloadActiveTab" />
+                <QButton Text="Clear" Icon="x-lg" Variant="ghost" OnClick="@ClearFilters" />
+                <QButton Text="Print" Icon="printer" Variant="secondary" OnClick="@PrintReport" />
+                @if (!orgWide)
+                {
                     @* Gated on ReportsExport server-side rather than VisitorsView — this is a bulk
                        PII export (a name, phone and email per row), not the on-screen summary. *@
                     <QDataExport TItem="string[]" Title="Visitor log" FileStem="visitor-log"
-                                 Subtitle="@($"{fromDate:d MMM yyyy} – {toDate:d MMM yyyy}")"
+                                 Subtitle="@($"{fromDate:d MMM yyyy} – {toDate:d MMM yyyy} · {FilterSummary()}")"
                                  SourceProvider="@ProvideExportSourceAsync" />
+                }
+            </div>
+        </div>
+    </QCard>
+
+    @* ---- Tabs ---- *@
+    <div class="report-tabs no-print">
+        @foreach (var tab in AllTabs)
+        {
+            <button type="button" class="report-tab @(activeTab == tab ? "active" : "")" @onclick="@(() => SwitchTab(tab))">
+                @TabLabel(tab)
+                @if (tab == ReportTab.Exceptions && exceptions is { TotalCount: > 0 })
+                {
+                    <span class="tab-badge">@exceptions.TotalCount</span>
+                }
+            </button>
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner /> <span>Loading report...</span></div>
+    }
+    else if (loadFailed)
+    {
+        <div class="empty-state">
+            <QIcon Name="exclamation-triangle" />
+            <span>Couldn't load this report. Check you still have access to this branch, then try again.</span>
+        </div>
+    }
+    else
+    {
+        @switch (activeTab)
+        {
+            case ReportTab.Overview:
+                @RenderOverview
+                break;
+            case ReportTab.Exceptions:
+                @RenderExceptions
+                break;
+            case ReportTab.Compliance:
+                @RenderCompliance
+                break;
+        }
+    }
+</div>
+
+@* ============================================================================================
+   OVERVIEW
+   ============================================================================================ *@
+@code {
+    private RenderFragment RenderOverview => __builder =>
+    {
+        if (report == null) return;
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">@report.TotalVisits.ToString("N0")</div>
+                <div class="stat-label">Total Visits</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@report.UniqueVisitors.ToString("N0")</div>
+                <div class="stat-label">Unique Visitors</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@report.RosterCheckIns.ToString("N0")</div>
+                <div class="stat-label">Visiting-Day Check-Ins</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@(report.DwellDenominator > 0 ? $"{report.AvgDwellMinutes:0} min" : "—")</div>
+                @* The denominator is on the tile on purpose. "42 min" over three completed visits
+                   and over three thousand are different claims, and only one of them is worth
+                   acting on. *@
+                <div class="stat-label">Avg. Dwell · @report.DwellDenominator completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@(report.ConsentDenominator > 0 ? $"{report.ConsentCompliancePercent:0.#}%" : "—")</div>
+                <div class="stat-label">Consent Captured · of @report.ConsentDenominator</div>
+            </div>
+            <div class="stat-card @(report.WatchlistIncidents > 0 ? "warn" : "")">
+                <div class="stat-value">@report.WatchlistIncidents.ToString("N0")</div>
+                <div class="stat-label">Watchlist Incidents</div>
+            </div>
+        </div>
+
+        @if (report.Branches.Any())
+        {
+            <QCard Title="Branch comparison" Class="report-block">
+                <div class="table-scroll">
+                    <table class="report-table">
+                        <thead>
+                            <tr><th>Branch</th><th class="num">Visits</th><th class="num">Unique</th><th class="num">On site now</th><th class="num">Avg dwell</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var b in report.Branches)
+                            {
+                                <tr>
+                                    <td>@b.BranchName</td>
+                                    <td class="num">@b.TotalVisits.ToString("N0")</td>
+                                    <td class="num">@b.UniqueVisitors.ToString("N0")</td>
+                                    <td class="num">@b.StillOnSite</td>
+                                    <td class="num">@(b.AvgDwellMinutes > 0 ? $"{b.AvgDwellMinutes:0} min" : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
+            </QCard>
+        }
+
+        <div class="report-columns">
+            <QCard Title="Visits per day" Class="report-block">
+                @if (report.VisitsByDay.Sum(d => d.Count) == 0)
+                {
+                    <p class="muted">No visits in this period.</p>
+                }
+                else
+                {
+                    <div class="bar-chart">
+                        @{ var dayMax = Math.Max(1, report.VisitsByDay.Max(d => d.Count)); }
+                        @foreach (var d in report.VisitsByDay)
+                        {
+                            <div class="bar-col" title="@($"{d.Day:ddd d MMM}: {d.Count} visit(s)")">
+                                <div class="bar" style="height:@(Math.Round(100.0 * d.Count / dayMax))%"></div>
+                                <span class="bar-label">@d.Day.ToString("d/M")</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </QCard>
+
+            <QCard Title="Busiest hours" Class="report-block">
+                @* The day × hour grid, not a flat 24-bin chart. Averaging every Saturday into the
+                   same bar as every Tuesday hid a school's single most distinctive pattern. *@
+                @if (!report.VisitsByDayHour.Any())
+                {
+                    <p class="muted">No visits in this period.</p>
+                }
+                else
+                {
+                    var grid = report.VisitsByDayHour.ToDictionary(c => (c.DayOfWeek, c.Hour), c => c.Count);
+                    var peak = Math.Max(1, report.VisitsByDayHour.Max(c => c.Count));
+                    <div class="heatmap">
+                        <div class="heat-row heat-head">
+                            <span class="heat-day"></span>
+                            @for (var h = 0; h < 24; h++)
+                            {
+                                <span class="heat-hour-label">@(h % 3 == 0 ? h.ToString("00") : "")</span>
+                            }
+                        </div>
+                        @foreach (var day in DayOrder)
+                        {
+                            <div class="heat-row">
+                                <span class="heat-day">@DayNames[day]</span>
+                                @for (var h = 0; h < 24; h++)
+                                {
+                                    var count = grid.GetValueOrDefault((day, h));
+                                    <span class="heat-cell @(count > 0 ? "on" : "")"
+                                          style="@(count > 0 ? $"opacity:{0.18 + 0.82 * count / peak:0.##}" : "")"
+                                          title="@($"{DayNames[day]} {h:00}:00 — {count} visit(s)")"></span>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <p class="heat-legend muted">Peak cell: @peak visit(s) · times in @report.TimeZoneId</p>
+                }
+            </QCard>
+        </div>
+
+        <div class="report-columns">
+            <QCard Title="Most-visited hosts" Class="report-block">
+                @if (!report.TopHosts.Any())
+                {
+                    <p class="muted">No host was recorded on any visit in this period.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        @foreach (var h in report.TopHosts)
+                        {
+                            <li><span class="rank-name">@h.HostName</span><span class="rank-count">@h.Count</span></li>
+                        }
+                    </ul>
+                }
+            </QCard>
+
+            <QCard Title="By visitor type" Class="report-block">
+                @if (!report.ByVisitorType.Any())
+                {
+                    <p class="muted">No visits in this period.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        @foreach (var t in report.ByVisitorType)
+                        {
+                            <li><span class="rank-name">@t.Label</span><span class="rank-count">@t.Count</span></li>
+                        }
+                    </ul>
+                }
+            </QCard>
+
+            <QCard Title="Top companies" Class="report-block">
+                @if (!report.ByCompany.Any())
+                {
+                    <p class="muted">No company was recorded on any visit in this period.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        @foreach (var c in report.ByCompany)
+                        {
+                            <li><span class="rank-name">@c.Label</span><span class="rank-count">@c.Count</span></li>
+                        }
+                    </ul>
+                }
+            </QCard>
+        </div>
+
+        <div class="report-columns">
+            <QCard Title="How long visits lasted" Class="report-block">
+                @if (report.DwellDenominator == 0)
+                {
+                    <p class="muted">No visit in this period has both a check-in and a check-out, so there is no dwell time to show.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        @foreach (var b in report.DwellDistribution)
+                        {
+                            <li><span class="rank-name">@b.Label</span><span class="rank-count">@b.Count</span></li>
+                        }
+                    </ul>
+                }
+            </QCard>
+
+            <QCard Title="Pre-registration" Class="report-block">
+                @if (report.PreRegistration.Booked == 0)
+                {
+                    <p class="muted">Nobody was booked in ahead of time in this period.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        <li><span class="rank-name">Booked</span><span class="rank-count">@report.PreRegistration.Booked</span></li>
+                        <li><span class="rank-name">Arrived</span><span class="rank-count">@report.PreRegistration.Arrived</span></li>
+                        <li><span class="rank-name">No-show</span><span class="rank-count">@report.PreRegistration.NoShow</span></li>
+                        <li><span class="rank-name">Cancelled</span><span class="rank-count">@report.PreRegistration.Cancelled</span></li>
+                    </ul>
+                    <p class="muted">@report.PreRegistration.NoShowRatePercent.ToString("0.#")% of bookings did not arrive.</p>
+                }
+            </QCard>
+
+            <QCard Title="New vs returning" Class="report-block">
+                @if (report.UniqueVisitors == 0)
+                {
+                    <p class="muted">No visitors in this period.</p>
+                }
+                else
+                {
+                    <ul class="rank-list">
+                        <li><span class="rank-name">First-time visitors</span><span class="rank-count">@report.Audience.NewVisitors</span></li>
+                        <li><span class="rank-name">Been before</span><span class="rank-count">@report.Audience.ReturningVisitors</span></li>
+                    </ul>
+                    <p class="muted">@report.Audience.ReturningPercent.ToString("0.#")% had visited before this period started.</p>
+                }
+            </QCard>
+        </div>
+
+        @if (report.FrequentVisitors.Any())
+        {
+            <QCard Title="Frequent visitors" Class="report-block">
+                <div class="table-scroll">
+                    <table class="report-table">
+                        <thead><tr><th>Name</th><th>Phone</th><th class="num">Visits</th></tr></thead>
+                        <tbody>
+                            @foreach (var f in report.FrequentVisitors)
+                            {
+                                <tr>
+                                    <td>
+                                        @f.FullName
+                                        @if (f.IsWatchlisted)
+                                        {
+                                            <WatchlistFlagIcon Name="@f.FullName" />
+                                        }
+                                    </td>
+                                    <td>@f.Phone</td>
+                                    <td class="num">@f.VisitCount</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+        }
+    };
+}
+
+@* ============================================================================================
+   EXCEPTIONS
+   ============================================================================================ *@
+@code {
+    private RenderFragment RenderExceptions => __builder =>
+    {
+        if (exceptions == null) return;
+
+        <div class="stats-grid">
+            <div class="stat-card @(exceptions.StillOnSite.Count > 0 ? "danger" : "")">
+                <div class="stat-value">@exceptions.StillOnSite.Count</div>
+                <div class="stat-label">Never Checked Out</div>
+            </div>
+            <div class="stat-card @(exceptions.Overstayed.Count > 0 ? "warn" : "")">
+                <div class="stat-value">@exceptions.Overstayed.Count</div>
+                <div class="stat-label">Overstayed (@exceptions.OverstayThresholdHours h)</div>
+            </div>
+            <div class="stat-card @(exceptions.NoHostRecorded.Count > 0 ? "warn" : "")">
+                <div class="stat-value">@exceptions.NoHostRecorded.Count</div>
+                <div class="stat-label">No Host Recorded</div>
+            </div>
+            <div class="stat-card @(exceptions.InductionLapsed.Count > 0 ? "danger" : "")">
+                <div class="stat-value">@exceptions.InductionLapsed.Count</div>
+                <div class="stat-label">Induction Lapsed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@exceptions.FrequentVisitors.Count</div>
+                <div class="stat-label">Frequent (@exceptions.FrequentVisitorThreshold+)</div>
+            </div>
+        </div>
+
+        @if (exceptions.TotalCount == 0)
+        {
+            <QCard Class="report-block">
+                <div class="all-clear">
+                    <QIcon Name="check-circle-fill" />
+                    <div>
+                        <strong>Nothing needs attention.</strong>
+                        <p class="muted">Everyone who checked in has checked out, every visit has a host, and no contractor was admitted on a lapsed induction.</p>
+                    </div>
+                </div>
+            </QCard>
+        }
+        else
+        {
+            @ExceptionBlock("Checked in on an earlier day and never checked out", exceptions.StillOnSite,
+                "These people are still recorded as on site. Either they are here, or somebody forgot to check them out — both need resolving before the next roll call.")
+            @ExceptionBlock($"On site longer than {Plural(exceptions.OverstayThresholdHours, "hour")}", exceptions.Overstayed,
+                "Still here today, but longer than expected for this kind of visit.")
+            @ExceptionBlock("Admitted with no host recorded", exceptions.NoHostRecorded,
+                "No member of staff is accountable for these visits.")
+            @ExceptionBlock("Contractors admitted without a valid induction", exceptions.InductionLapsed,
+                "Site induction had lapsed, or was never recorded, on the day of the visit.")
+            @ExceptionBlock($"Visited {Plural(exceptions.FrequentVisitorThreshold, "time")} or more", exceptions.FrequentVisitors,
+                "Not necessarily a problem — worth a second look.")
+        }
+    };
+
+    private RenderFragment ExceptionBlock(string title, List<VisitorExceptionDto> rows, string why) => __builder =>
+    {
+        if (rows.Count == 0) return;
+
+        <QCard Title="@title" Class="report-block">
+            <p class="muted block-why">@why</p>
+            <div class="table-scroll">
+                <table class="report-table">
+                    <thead>
+                        <tr><th>Name</th><th>Badge</th><th>Company</th><th>Host</th><th>What is wrong</th><th class="no-print"></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td>
+                                    @r.FullName
+                                    @if (r.IsWatchlisted)
+                                    {
+                                        <WatchlistFlagIcon Name="@r.FullName" />
+                                    }
+                                </td>
+                                <td class="mono">@r.BadgeCode</td>
+                                <td>@r.Company</td>
+                                <td>@r.HostName</td>
+                                <td>@r.Detail</td>
+                                <td class="no-print">
+                                    @if (r.Kind is VisitorExceptionKind.StillOnSite or VisitorExceptionKind.Overstayed && canCheckOut)
+                                    {
+                                        <QButton Text="Check Out" Icon="box-arrow-right" Size="sm" Variant="secondary"
+                                                 OnClick="@(() => CheckOutFromException(r))" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
         </QCard>
+    };
+}
 
-        <!-- Summary Stats -->
+@* ============================================================================================
+   COMPLIANCE
+   ============================================================================================ *@
+@code {
+    private RenderFragment RenderCompliance => __builder =>
+    {
+        if (compliance == null) return;
+
         <div class="stats-grid">
-            <QCard Class="stat-card">
-                <div class="stat-value">@report.TotalVisits</div>
-                <div class="stat-label">Total Visits</div>
-            </QCard>
-            <QCard Class="stat-card">
-                <div class="stat-value">@report.UniqueVisitors</div>
-                <div class="stat-label">Unique Visitors</div>
-            </QCard>
-            <QCard Class="stat-card">
-                <div class="stat-value">@report.RosterCheckIns</div>
-                <div class="stat-label">Visiting-Day Check-Ins</div>
-            </QCard>
-            <QCard Class="stat-card">
-                <div class="stat-value">@(report.AvgDwellMinutes.ToString("F0")) min</div>
-                <div class="stat-label">Avg. Dwell Time</div>
-            </QCard>
-            <QCard Class="stat-card">
-                <div class="stat-value">@(report.ConsentCompliancePercent.ToString("F0"))%</div>
-                <div class="stat-label">Consent Captured</div>
-            </QCard>
-            <QCard Class="@("stat-card" + (report.WatchlistIncidents > 0 ? " warn" : ""))">
-                <div class="stat-value">@report.WatchlistIncidents</div>
-                <div class="stat-label">Watchlist Incidents</div>
-            </QCard>
+            <div class="stat-card">
+                <div class="stat-value">@compliance.ContractorVisits</div>
+                <div class="stat-label">Contractor Visits</div>
+            </div>
+            <div class="stat-card @(compliance.ContractorVisits > 0 && compliance.InductionCompliancePercent < 100 ? "danger" : "")">
+                <div class="stat-value">@compliance.InductionCompliancePercent.ToString("0.#")%</div>
+                <div class="stat-label">Induction Valid On The Day</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">@(compliance.ConsentRequired ? $"{compliance.ConsentCompliancePercent:0.#}%" : "n/a")</div>
+                <div class="stat-label">@(compliance.ConsentRequired ? $"Consent Captured · of {compliance.ConsentRequiredVisits}" : "Consent Not Required Here")</div>
+            </div>
+            <div class="stat-card @(compliance.WatchlistActivity.Any(w => w.OverrideReason != null) ? "warn" : "")">
+                <div class="stat-value">@compliance.WatchlistActivity.Count(w => w.OverrideReason != null)</div>
+                <div class="stat-label">Manager Overrides</div>
+            </div>
         </div>
 
-        <!-- Charts -->
-        <div class="charts-row">
-            <QCard Class="chart-card">
-                <h4>Visits by Day</h4>
-                @if (report.VisitsByDay.Any())
-                {
-                    <RadzenChart Style="height: 260px;">
-                        <RadzenLineSeries Data="@visitsByDayChartData" CategoryProperty="Day" ValueProperty="Count" Title="Visits" Smooth="true" />
-                        <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
-                        <RadzenValueAxis>
-                            <RadzenGridLines Visible="true" />
-                        </RadzenValueAxis>
-                    </RadzenChart>
-                }
-                else
-                {
-                    <p class="chart-empty">No visits in this range.</p>
-                }
-            </QCard>
+        <QCard Title="Contractor induction register" Class="report-block">
+            @if (!compliance.InductionRegister.Any())
+            {
+                <p class="muted">No contractor visits in this period.</p>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="report-table">
+                        <thead><tr><th>Name</th><th>Company</th><th>Visit</th><th>Induction</th><th>Expires</th><th>Valid</th></tr></thead>
+                        <tbody>
+                            @foreach (var i in compliance.InductionRegister)
+                            {
+                                <tr class="@(i.ValidOnVisitDate ? "" : "row-bad")">
+                                    <td>@i.FullName</td>
+                                    <td>@i.Company</td>
+                                    <td>@(i.CheckedInAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</td>
+                                    <td>@(i.InductionCompletedAt?.ToLocalTime().ToString("d MMM yyyy") ?? "None recorded")</td>
+                                    <td>@(i.InductionExpiresAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</td>
+                                    <td>@(i.ValidOnVisitDate ? "Yes" : "No")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <p class="muted">Validity is judged against the date of each visit, not today — a contractor who was compliant in March stays compliant in this report even if their induction has since lapsed.</p>
+            }
+        </QCard>
 
-            <QCard Class="chart-card">
-                <h4>Peak Hours</h4>
-                <RadzenChart Style="height: 260px;">
-                    <RadzenColumnSeries Data="@report.VisitsByHour" CategoryProperty="Hour" ValueProperty="Count" Title="Visits" />
-                    <RadzenCategoryAxis Padding="10" />
-                    <RadzenValueAxis>
-                        <RadzenGridLines Visible="true" />
-                    </RadzenValueAxis>
-                </RadzenChart>
-            </QCard>
-        </div>
+        <QCard Title="Watchlist activity" Class="report-block">
+            @if (!compliance.WatchlistActivity.Any())
+            {
+                <p class="muted">No flagged visitor was on site in this period, and no manager override was used.</p>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="report-table">
+                        <thead><tr><th>Name</th><th>When</th><th>Event</th><th>Reason</th></tr></thead>
+                        <tbody>
+                            @foreach (var w in compliance.WatchlistActivity)
+                            {
+                                <tr class="@(w.OverrideReason != null ? "row-warn" : "")">
+                                    <td>@w.FullName</td>
+                                    <td>@(w.OccurredAt?.ToLocalTime().ToString("d MMM, HH:mm") ?? "—")</td>
+                                    <td>@w.Event</td>
+                                    <td>@(w.OverrideReason ?? w.Reason)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </QCard>
 
-        <!-- Tables -->
-        <div class="tables-row">
-            <QCard Class="table-card">
-                <h4>Top Hosts</h4>
-                @if (report.TopHosts.Any())
-                {
-                    <RadzenDataGrid Data="@report.TopHosts" TItem="HostVisitCountDto" AllowSorting="true">
-                        <Columns>
-                            <RadzenDataGridColumn TItem="HostVisitCountDto" Property="HostName" Title="Host" />
-                            <RadzenDataGridColumn TItem="HostVisitCountDto" Property="Count" Title="Visits" TextAlign="TextAlign.Center" Width="100px" />
-                        </Columns>
-                    </RadzenDataGrid>
-                }
-                else
-                {
-                    <p class="chart-empty">No hosted visits in this range.</p>
-                }
-            </QCard>
+        <QCard Title="Visits with no consent recorded" Class="report-block">
+            @if (!compliance.ConsentRequired)
+            {
+                <p class="muted">This branch does not require consent at check-in, so there is nothing to record. Turn it on in Visitor Settings if your policy needs it.</p>
+            }
+            else if (!compliance.ConsentGaps.Any())
+            {
+                <p class="muted">Every checked-in visit in this period has a consent record.</p>
+            }
+            else
+            {
+                <div class="table-scroll">
+                    <table class="report-table">
+                        <thead><tr><th>Name</th><th>Badge</th><th>Checked in</th><th>Purpose</th></tr></thead>
+                        <tbody>
+                            @foreach (var c in compliance.ConsentGaps)
+                            {
+                                <tr>
+                                    <td>@c.FullName</td>
+                                    <td class="mono">@c.BadgeCode</td>
+                                    <td>@(c.CheckedInAt?.ToLocalTime().ToString("d MMM, HH:mm") ?? "—")</td>
+                                    <td>@c.Purpose</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </QCard>
 
-            <QCard Class="table-card">
-                <h4>Worth a Second Look (3+ visits)</h4>
-                <p class="table-hint">Visitors with 3 or more visits in this range — the report-range equivalent of the live "checked in Nx today" flag.</p>
-                @if (report.FrequentVisitors.Any())
-                {
-                    <RadzenDataGrid Data="@report.FrequentVisitors" TItem="FrequentVisitorDto" AllowSorting="true">
-                        <Columns>
-                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="FullName" Title="Visitor">
-                                <Template Context="item">
-                                    @item.FullName
-                                    @if (item.IsWatchlisted)
-                                    {
-                                        <QIcon Name="shield-exclamation" Class="watchlist-flag" />
-                                    }
-                                </Template>
-                            </RadzenDataGridColumn>
-                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="Phone" Title="Phone" />
-                            <RadzenDataGridColumn TItem="FrequentVisitorDto" Property="VisitCount" Title="Visits" TextAlign="TextAlign.Center" Width="100px" />
-                        </Columns>
-                    </RadzenDataGrid>
-                }
-                else
-                {
-                    <p class="chart-empty">No repeat visitors past the threshold in this range.</p>
-                }
-            </QCard>
-        </div>
-    </div>
+        <QCard Title="Data retention" Class="report-block">
+            <ul class="rank-list">
+                <li><span class="rank-name">Policy</span><span class="rank-count">@compliance.Retention.RetentionDays days</span></li>
+                <li><span class="rank-name">Last purge</span><span class="rank-count">@(compliance.Retention.LastRunAt?.ToLocalTime().ToString("d MMM yyyy, HH:mm") ?? "Not recorded yet")</span></li>
+                <li><span class="rank-name">Removed in that run</span><span class="rank-count">@compliance.Retention.LastRunVisitsPurged visit(s)</span></li>
+                <li><span class="rank-name">Removed in total</span><span class="rank-count">@compliance.Retention.TotalVisitsPurged visit(s)</span></li>
+                <li><span class="rank-name">Oldest record still held</span><span class="rank-count">@(compliance.Retention.OldestRetainedVisitAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</span></li>
+            </ul>
+            @if (compliance.Retention.LastRunAt == null)
+            {
+                <p class="muted">The purge job records every run from now on, including runs that find nothing to remove. Runs before this feature existed were only written to the application log.</p>
+            }
+        </QCard>
+    };
 }
 
 <style>
-    .visitor-report-page { display: flex; flex-direction: column; gap: 20px; }
-    .loading-container, .empty-state { display: flex; align-items: center; gap: 10px; padding: 60px 20px; color: var(--qm-text-muted); justify-content: center; }
+    .visitor-report-page { display: flex; flex-direction: column; gap: 16px; }
 
-    .filter-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-    .filter-item { display: flex; flex-direction: column; gap: 4px; }
-    .filter-item label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--qm-text-muted); }
-    .filter-item input[type="date"] { padding: 8px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-input, var(--qm-bg-card)); color: var(--qm-text-primary); }
-    .quick-ranges { flex-direction: row; gap: 6px; }
+    .filter-card { padding: 14px 16px; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+    .filter-row--actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); justify-content: space-between; }
+    .filter-item label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--qm-text-muted); }
+    .filter-item input[type=date], .filter-item input[type=text], .filter-item select {
+        padding: 6px 9px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px; min-width: 130px;
+    }
+    .filter-checks { display: flex; flex-direction: column; gap: 4px; }
+    .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-primary); }
+    .filter-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
-    .stat-card { padding: 18px; text-align: center; }
-    .stat-card.warn { border: 1px solid rgba(var(--qm-warning-rgb), 0.4); }
-    .stat-value { font-size: 28px; font-weight: 700; color: var(--qm-text-primary); }
-    .stat-card.warn .stat-value { color: var(--qm-accent-orange); }
-    .stat-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 4px; }
+    .filter-item--range { flex: 1 1 100%; min-width: 0; }
+    .range-caption { margin: 0; font-size: 12.5px; color: var(--qm-text-muted); }
+    .range-caption strong { color: var(--qm-text-primary); font-weight: 600; }
 
-    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .tables-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .chart-card, .table-card { padding: 20px; }
-    .chart-card h4, .table-card h4 { margin: 0 0 12px; font-size: 15px; color: var(--qm-text-primary); }
-    .chart-empty, .table-hint { font-size: 13px; color: var(--qm-text-muted); }
-    .table-hint { margin: -6px 0 12px; }
-    .watchlist-flag { color: var(--qm-danger); margin-left: 6px; }
+    .report-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); }
+    .report-tab {
+        padding: 9px 16px; border: 0; background: none; font: inherit; font-size: 14px; font-weight: 600;
+        color: var(--qm-text-muted); cursor: pointer; border-bottom: 2px solid transparent;
+        display: inline-flex; align-items: center; gap: 7px;
+    }
+    .report-tab.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); }
+    .tab-badge {
+        background: var(--qm-danger); color: #fff; border-radius: 999px;
+        font-size: 11px; font-weight: 700; padding: 1px 7px; font-variant-numeric: tabular-nums;
+    }
 
-    @@media (max-width: 900px) {
-        .charts-row, .tables-row { grid-template-columns: 1fr; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); }
+    .stat-card {
+        padding: var(--qm-statcard-pad); text-align: left; background: var(--qm-bg-card);
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+    }
+    .stat-card.warn { border-color: var(--qm-warning); }
+    .stat-card.danger { border-color: var(--qm-danger); }
+    .stat-value { font-size: var(--qm-statcard-value); font-weight: 700; line-height: 1.1; color: var(--qm-text-primary); }
+    .stat-card.danger .stat-value { color: var(--qm-danger); }
+    .stat-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); margin-top: 2px; }
+
+    .report-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .report-block { padding: 4px 0; }
+    .block-why { margin: 0 0 10px; }
+    .muted { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0 0; }
+
+    .table-scroll { overflow-x: auto; }
+    .report-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .report-table th {
+        text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--qm-border);
+        font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); white-space: nowrap;
+    }
+    .report-table td { padding: 8px 10px; border-bottom: 1px solid var(--qm-border); vertical-align: top; }
+    .report-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .report-table .mono { font-family: var(--qm-font-mono); font-size: 12px; }
+    .report-table tr.row-bad td { background: rgba(var(--qm-danger-rgb), 0.07); }
+    .report-table tr.row-warn td { background: rgba(var(--qm-warning-rgb), 0.09); }
+
+    .rank-list { list-style: none; margin: 0; padding: 0; }
+    .rank-list li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .rank-list li:last-child { border-bottom: 0; }
+    .rank-name { color: var(--qm-text-primary); }
+    .rank-count { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--qm-text-primary); }
+
+    .bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding-top: 8px; }
+    .bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; gap: 4px; min-width: 0; }
+    .bar { width: 100%; max-width: 34px; background: var(--qm-primary); border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0; min-height: 2px; }
+    .bar-label { font-size: 10px; color: var(--qm-text-muted); white-space: nowrap; }
+
+    .heatmap { display: flex; flex-direction: column; gap: 3px; overflow-x: auto; padding-top: 6px; }
+    .heat-row { display: flex; gap: 3px; align-items: center; }
+    .heat-day { width: 32px; flex-shrink: 0; font-size: 11px; color: var(--qm-text-muted); }
+    .heat-hour-label { flex: 1; min-width: 12px; font-size: 9px; color: var(--qm-text-muted); text-align: center; }
+    .heat-cell { flex: 1; min-width: 12px; height: 15px; border-radius: 2px; background: var(--qm-bg-secondary); }
+    .heat-cell.on { background: var(--qm-primary); }
+    .heat-legend { margin-top: 8px; }
+
+    .all-clear { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; }
+    .all-clear .q-icon { color: var(--qm-success); font-size: 22px; }
+    .all-clear p { margin: 4px 0 0; }
+
+    .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+
+    .print-only { display: none; }
+
+    /* ---------------------------------------------------------------------------------------
+       PRINT. The app's global print stylesheet only hides the sidebar and header — it was never
+       written for a report. Everything below is what makes a printed page usable: the range and
+       filters stated at the top, controls gone, tables that repeat their headers across pages
+       and never break a row in half, and colours that survive a mono printer.
+       --------------------------------------------------------------------------------------- */
+    @@media print {
+        .no-print { display: none !important; }
+        .print-only { display: block !important; }
+
+        .print-header { margin-bottom: 14px; padding-bottom: 8px; border-bottom: 2px solid #000; }
+        .print-header h1 { font-size: 18pt; margin: 0 0 4px; }
+        .print-header p { margin: 0; font-size: 10pt; }
+        .print-header .print-meta { color: #555; font-size: 9pt; margin-top: 3px; }
+
+        .visitor-report-page { gap: 10px; }
+        .report-columns { display: block; }
+        .report-block { break-inside: avoid; page-break-inside: avoid; margin-bottom: 10px; }
+
+        .stats-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+        .stat-card { border: 1px solid #999 !important; padding: 6px 9px; min-width: 110px; }
+        .stat-value { font-size: 14pt; }
+        .stat-label { font-size: 7.5pt; }
+
+        .report-table { font-size: 8.5pt; }
+        .report-table thead { display: table-header-group; }
+        .report-table tr { break-inside: avoid; page-break-inside: avoid; }
+        .report-table th, .report-table td { border-bottom: 1px solid #bbb; padding: 4px 6px; }
+        .table-scroll { overflow: visible !important; }
+
+        /* Severity has to survive a mono printer, so it is carried by a rule and a weight rather
+           than by a background tint that prints as an indistinguishable grey. */
+        .report-table tr.row-bad td { background: none !important; border-left: 3px solid #000; font-weight: 600; }
+        .report-table tr.row-warn td { background: none !important; border-left: 3px solid #777; }
+
+        .heat-cell { border: 1px solid #ddd; }
+        .heat-cell.on { background: #444 !important; }
+        .bar { background: #444 !important; }
     }
 </style>
 
 @code {
-    private Guid branchId;
-    private bool isLoading = true;
-    private VisitorReportDto? report;
-    private DateOnly fromDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-6);
-    private DateOnly toDate = DateOnly.FromDateTime(DateTime.UtcNow);
+    private enum ReportTab { Overview, Exceptions, Compliance }
 
-    // RadzenChart's category axis needs a DateTime to format/order against reliably — DayCountDto
-    // carries a DateOnly (the natural type for "which calendar day"), so this is a thin
-    // charting-only projection, not a second source of truth.
-    private record DayChartPoint(DateTime Day, int Count);
-    private List<DayChartPoint> visitsByDayChartData = new();
+    private static readonly ReportTab[] AllTabs = { ReportTab.Overview, ReportTab.Exceptions, ReportTab.Compliance };
+    private static readonly int[] DayOrder = { 1, 2, 3, 4, 5, 6, 0 }; // Monday-first, Sunday last
+    private static readonly string[] DayNames = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+
+    private static DateOnly Today() => DateOnly.FromDateTime(DateTime.Now);
+
+    private Guid branchId;
+    private Guid organizationId;
+    private int branchCount = 1;
+    private bool orgWide;
+
+    private bool isLoading = true;
+    private bool loadFailed;
+    private bool canCheckOut;
+
+    private ReportTab activeTab = ReportTab.Overview;
+    private VisitorReportDtoV2? report;
+    private VisitorExceptionsDto? exceptions;
+    private VisitorComplianceDto? compliance;
+
+    private DateRange range = DateRange.LastDays(7);
+
+    // fromDate/toDate remain as the bridge to this page's existing filter and export plumbing;
+    // the range above is what the shared control binds to and what the caption reports.
+    private DateOnly fromDate = Today().AddDays(-6);
+    private DateOnly toDate = Today();
+
+    private VisitorType? filterVisitorType;
+    private VisitorStatus? filterStatus;
+    private string filterHost = "";
+    private string filterCompany = "";
+    private bool filterWatchlistOnly;
+    private bool filterRosterOnly;
 
     protected override async Task OnInitializedAsync()
     {
@@ -216,36 +801,166 @@ else
             return;
         }
 
+        canCheckOut = await PermissionService.HasPermissionAsync(Permissions.VisitorsCheckOut);
+
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        await LoadReport();
+        branchCount = BranchState.BranchCount;
+
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user != null) organizationId = user.OrganizationId;
+
+        await ReloadActiveTab();
     }
 
-    private void ApplyQuickRange(int daysBack)
+    private VisitorReportFilter CurrentFilter() => new()
     {
-        toDate = DateOnly.FromDateTime(DateTime.UtcNow);
-        fromDate = toDate.AddDays(-daysBack);
-        _ = LoadReport();
+        From = fromDate,
+        To = toDate,
+        VisitorType = filterVisitorType,
+        Status = filterStatus,
+        HostName = string.IsNullOrWhiteSpace(filterHost) ? null : filterHost,
+        Company = string.IsNullOrWhiteSpace(filterCompany) ? null : filterCompany,
+        WatchlistOnly = filterWatchlistOnly,
+        RosterOnly = filterRosterOnly
+    };
+
+    private string FilterSummary() => CurrentFilter().Describe();
+
+    private static string Plural(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
+
+    private static string TabLabel(ReportTab tab) => tab switch
+    {
+        ReportTab.Overview => "Overview",
+        ReportTab.Exceptions => "Exceptions",
+        ReportTab.Compliance => "Compliance",
+        _ => tab.ToString()
+    };
+
+    private string TabTitle() => activeTab switch
+    {
+        ReportTab.Exceptions => "Visitor exceptions",
+        ReportTab.Compliance => "Visitor compliance report",
+        _ => "Visitor report"
+    };
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        fromDate = next.From;
+        toDate = next.To;
+        await ReloadActiveTab();
     }
 
-    private async Task LoadReport()
+    private async Task SwitchTab(ReportTab tab)
     {
+        activeTab = tab;
+        await ReloadActiveTab();
+    }
+
+    private async Task OnScopeChanged(ChangeEventArgs e)
+    {
+        orgWide = (bool)(e.Value ?? false);
+
+        // Exceptions and compliance are branch-scoped: an overstay threshold and a consent
+        // requirement are both branch settings, so aggregating them across branches would apply
+        // one branch's rules to another's visitors. Fall back to the tab that does aggregate.
+        if (orgWide && activeTab != ReportTab.Overview)
+        {
+            activeTab = ReportTab.Overview;
+            NotificationService.Notify(ToastSeverity.Info, "Showing the overview",
+                "Exceptions and compliance use each branch's own thresholds and consent settings, so they stay per-branch.");
+        }
+
+        await ReloadActiveTab();
+    }
+
+    private void ClearFilters()
+    {
+        filterVisitorType = null;
+        filterStatus = null;
+        filterHost = "";
+        filterCompany = "";
+        filterWatchlistOnly = false;
+        filterRosterOnly = false;
+        _ = ReloadActiveTab();
+    }
+
+    private async Task ReloadActiveTab()
+    {
+        if (fromDate > toDate) (fromDate, toDate) = (toDate, fromDate);
+
         isLoading = true;
+        loadFailed = false;
         StateHasChanged();
-        report = await VisitorApi.GetVisitorReportAsync(branchId, fromDate, toDate);
-        visitsByDayChartData = report?.VisitsByDay
-            .Select(d => new DayChartPoint(d.Day.ToDateTime(TimeOnly.MinValue), d.Count))
-            .ToList() ?? new();
+
+        var filter = CurrentFilter();
+
+        switch (activeTab)
+        {
+            case ReportTab.Exceptions:
+                exceptions = await VisitorApi.GetExceptionsAsync(branchId, filter);
+                loadFailed = exceptions == null;
+                break;
+
+            case ReportTab.Compliance:
+                compliance = await VisitorApi.GetComplianceAsync(branchId, filter);
+                loadFailed = compliance == null;
+                break;
+
+            default:
+                report = orgWide && organizationId != Guid.Empty
+                    ? await VisitorApi.GetOrganizationReportAsync(organizationId, filter)
+                    : await VisitorApi.GetReportAsync(branchId, filter);
+                loadFailed = report == null;
+                break;
+        }
+
+        // The exception count drives a badge on the tab, so it is worth having even while another
+        // tab is open — but only fetch it once, and never let its failure break the page.
+        if (activeTab != ReportTab.Exceptions && exceptions == null && !orgWide)
+            exceptions = await VisitorApi.GetExceptionsAsync(branchId, filter);
+
         isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task CheckOutFromException(VisitorExceptionDto row)
+    {
+        var result = await VisitorApi.CheckOutAsync(branchId, row.VisitorId);
+        if (result == null)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't check out",
+                $"{row.FullName} is still recorded as on site. Nothing was changed.");
+            return;
+        }
+
+        NotificationService.Notify(ToastSeverity.Success, "Checked out", $"{row.FullName} is no longer on site.");
+        exceptions = null;
+        await ReloadActiveTab();
+    }
+
+    private async Task PrintReport()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("window.print");
+        }
+        catch (Exception)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't open the print dialog",
+                "Use your browser's own print command instead.");
+        }
     }
 
     /// <summary>
     /// The log comes from the gated export endpoint, not from the summary this page already holds:
-    /// ReportsExport and the plan's export feature are both checked API-side only.
+    /// ReportsExport and the plan's export feature are both checked API-side only. It carries the
+    /// same filters as the figures above it, so the download can never be wider than the report.
     /// </summary>
     private async Task<(IReadOnlyList<ExportColumn<string[]>> Columns, ExportRows<string[]> Rows)> ProvideExportSourceAsync()
     {
-        var csv = await VisitorApi.ExportVisitorReportCsvAsync(branchId, fromDate, toDate);
+        var csv = await VisitorApi.ExportReportCsvAsync(branchId, CurrentFilter());
         if (csv == null)
             throw new InvalidOperationException(
                 "Couldn't export the visitor log. Exporting reports needs the reports.export permission and a plan that includes exports.");

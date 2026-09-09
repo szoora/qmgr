@@ -72,6 +72,20 @@ public class Visitor : BaseEntity
 
     public string? Notes { get; set; }
 
+    /// <summary>
+    /// Why a Manager admitted this visitor despite a watchlist flag.
+    ///
+    /// The reason is ALSO composed into Notes (see ComposeCheckInNotes) and that stays, because
+    /// Notes is where anyone reading the visit itself will look. This column exists because the
+    /// compliance report has to ANSWER "show me every override in March", and answering that from
+    /// free text means string-matching a "[Watchlist override]" prefix — which breaks the first
+    /// time somebody types that phrase into a note by hand, and cannot be indexed. A nullable
+    /// column on a table that already exists is the cheap half of that trade.
+    ///
+    /// Null on every visit admitted normally, which is almost all of them.
+    /// </summary>
+    public string? WatchlistOverrideReason { get; set; }
+
     // Set only when the branch requires visitor consent (Branch.Settings, "VisitorConsent" key)
     // and the visitor accepted it at check-in — the timestamp itself is the record that consent
     // was actually given, not just that it was required.

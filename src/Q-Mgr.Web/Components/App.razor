@@ -1,7 +1,24 @@
 @using Microsoft.AspNetCore.Components.Web
+@using QMgr.Web.Services
+@inject NavigationManager Navigation
+@inject IOrganizationApiService OrganizationApi
 
 <!DOCTYPE html>
-<html lang="en">
+@*
+    data-theme is stamped here, on the host document, for the public display screens.
+
+    It has to be here rather than only on DisplayLayout/KioskLayout because prerendering is off
+    (see <Routes> below): with no prerender, nothing a layout renders reaches the first paint, so
+    a display screen would show the default dark chrome until the circuit connects — the
+    first-paint flash Phase 62 fixed. App.razor is server-rendered on every request regardless of
+    render mode, so this is the one place that survives it.
+
+    The layouts still set data-theme on their own wrapper. That is not redundant: this covers the
+    window before the circuit connects, theirs covers everything after, and the inner value wins
+    for its subtree. Null renders no attribute at all, so admin pages are untouched and keep
+    setting their own theme from localStorage.
+*@
+<html lang="en" data-theme="@_publicDisplayTheme">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -49,7 +66,30 @@
     <HeadOutlet @rendermode="RenderMode.InteractiveServer" />
 </head>
 <body>
-    <Routes @rendermode="RenderMode.InteractiveServer" />
+    @*
+        Prerendering is OFF (2026-09-06), and the reason is the login page.
+
+        With it on, Blazor server-renders the login form as a REAL native <form method="post">
+        with live inputs, before the circuit exists. Anything typed into that form in that window
+        is discarded the moment Blazor takes over and re-renders from an empty model, and pressing
+        Enter submits it natively — a full page load. That is the long-standing "the login page
+        reloads while I am typing" report, root-caused here. Measured: static POST forms on /login
+        went 1 -> 0 and served <input> elements 10 -> 0 with this flag.
+
+        Login.razor and its three siblings each declared prerender:false themselves for exactly
+        this reason and it never did anything — a page-level @rendermode inside an
+        already-interactive subtree is silently ignored, and the mode was fixed here at the root.
+        Putting the mode on the LAYOUTS instead is not an option either: a layout takes its page
+        as a RenderFragment in Body, and the framework refuses to pass a delegate across a
+        render-mode boundary ("Cannot pass the parameter 'Body' ... cannot be serialized").
+        Per-page modes with a static <Routes> would work, but then MainLayout renders statically
+        and the whole admin shell — sidebar, notifications, branch switcher — goes dead.
+
+        The cost of turning it off is the first-paint flash on the public display screens, which
+        is why data-theme is stamped on <html> above: that path is server-rendered regardless of
+        render mode, so those screens keep a correct first paint without prerendering.
+    *@
+    <Routes @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
 
     <div id="blazor-error-ui" data-nosnippet>
         An unhandled error has occurred.
@@ -88,3 +128,37 @@
     <script src="@Assets["js/pwa.js"]"></script>
 </body>
 </html>
+
+@code {
+    /// <summary>
+    /// "dark"/"light" for a public display screen, else null (which renders no attribute).
+    /// </summary>
+    private string? _publicDisplayTheme;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(Navigation.Uri);
+
+        // Gated on the route allowlist, not merely on "the path contains a GUID": this runs for
+        // every request in the app, and /admin/students/{studentId}/picture would otherwise fetch
+        // branding for a student id on every admin page load.
+        if (!PublicDisplayRoute.IsPublicDisplay(uri.AbsolutePath))
+            return;
+
+        var branchId = PublicDisplayRoute.BranchIdFromUri(uri);
+        if (branchId is null)
+            return;
+
+        try
+        {
+            var branding = await OrganizationApi.GetBranchBrandingAsync(branchId.Value);
+            _publicDisplayTheme = branding.DisplayTheme is "light" ? "light" : "dark";
+        }
+        catch
+        {
+            // The host document must render even if the API is unreachable. Leaving this null
+            // falls back to the app's dark-first default, which is what the screen showed before
+            // this existed — a themed screen is worth a round-trip, never worth a blank page.
+        }
+    }
+}

@@ -191,7 +191,7 @@ public class BatchController : ControllerBase
             return Ok(new BatchUndoResultDto
             {
                 Success = false,
-                Message = $"{conflicts.Count} of {entries.Count} records have changed since this batch ran, so reversing it would overwrite somebody else's work. Nothing was undone.",
+                Message = $"{conflicts.Count} of {entries.Count} record{(entries.Count == 1 ? "" : "s")} {(conflicts.Count == 1 ? "has" : "have")} changed since this batch ran, so reversing it would overwrite somebody else's work. Nothing was undone.",
                 ConflictedRows = conflicts.Take(25).ToList()
             });
         }
@@ -212,7 +212,7 @@ public class BatchController : ControllerBase
         {
             Success = true,
             RevertedRows = reverted,
-            Message = $"{reverted:N0} record{(reverted == 1 ? "" : "s")} put back to what they were."
+            Message = $"{reverted:N0} record{(reverted == 1 ? "" : "s")} put back to what {(reverted == 1 ? "it was" : "they were")}."
         });
     }
 

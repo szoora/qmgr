@@ -640,24 +640,24 @@
     /* Summary Cards */
     .summary-cards {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
-        margin-bottom: 24px;
+        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+        gap: var(--qm-statcard-gap);
+        margin-bottom: 18px;
     }
 
     .summary-card {
         background: var(--qm-bg-card);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-xl);
-        padding: 20px;
+        padding: var(--qm-statcard-pad);
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 10px;
     }
 
     .card-icon {
-        width: 56px;
-        height: 56px;
+        width: var(--qm-statcard-icon);
+        height: var(--qm-statcard-icon);
         border-radius: var(--qm-radius-xl);
         display: flex;
         align-items: center;
@@ -1479,6 +1479,11 @@
                 {
                     responseTexts[f.Id] = string.Empty;
                 }
+            }
+            else
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not load more feedback",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The next page could not be loaded."));
             }
         }
         catch { }

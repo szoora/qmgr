@@ -23,6 +23,13 @@
         <QButton Icon="arrow-left" Text="Back" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
         <div class="evac-bar-actions">
             <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@Refresh" />
+            @if (canEmail)
+            {
+                @* The marshal is in the car park, not at this screen. Printing assumes a printer
+                   between here and the assembly point; emailing assumes a phone, which they have. *@
+                <QButton Icon="envelope-fill" Text="@(isEmailing ? "Sending..." : "Email Roll Call")"
+                         Variant="secondary" Disabled="@isEmailing" OnClick="@EmailRollCall" />
+            }
             <QButton Icon="printer-fill" Text="Print Roll Call" Variant="primary" OnClick="@PrintRollCall" />
         </div>
     </div>
@@ -228,6 +235,9 @@
     // the honest trade, and Refresh is the only thing that clears them.
     private readonly HashSet<Guid> safeIds = new();
 
+    private bool canEmail;
+    private bool isEmailing;
+
     private bool AllAccountedFor => report != null && report.People.Count > 0 && safeIds.Count >= report.People.Count;
 
     protected override async Task OnInitializedAsync()
@@ -244,6 +254,8 @@
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
         }
+
+        canEmail = await PermissionService.HasPermissionAsync(Permissions.ReportsExport);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
@@ -396,5 +408,30 @@
     {
         public bool Success { get; init; }
         public string? Message { get; init; }
+    }
+    /// <summary>
+    /// Sends the roll call to the branch's configured evacuation address. Deliberately does NOT
+    /// prompt for a recipient: at the moment somebody presses this, asking them to type an email
+    /// address is the wrong interaction. If none is configured the server says so plainly and the
+    /// address gets set once, in Visitor Settings, on a calm day.
+    /// </summary>
+    private async Task EmailRollCall()
+    {
+        if (isEmailing) return;
+        isEmailing = true;
+        try
+        {
+            await VisitorApi.EmailEvacuationReportAsync(branchId);
+            NotificationService.Notify(ToastSeverity.Success, "Roll call sent",
+                "The list of everyone on site has been emailed. The screen here stays live.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Couldn't send the roll call", ex.Message);
+        }
+        finally
+        {
+            isEmailing = false;
+        }
     }
 }

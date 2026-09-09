@@ -1,6 +1,13 @@
 @namespace QMgr.Web.Components.Shared.UI
 
-<i class="q-icon @GetIconClass() @GetSizeClass() @Class" @attributes="AdditionalAttributes"></i>
+@*
+    aria-hidden by default: this renders an empty <i> whose glyph comes from a font, so it carries
+    no text a screen reader can read and announcing it adds noise beside the label it decorates.
+    Where an icon is the ONLY content of a control, the accessible name belongs on that control
+    (aria-label on the button), not here. @attributes is splatted last on purpose, so a caller that
+    genuinely needs aria-hidden="false" can still override it.
+*@
+<i class="q-icon @GetIconClass() @GetSizeClass() @Class" aria-hidden="true" @attributes="AdditionalAttributes"></i>
 
 @code {
     /// <summary>

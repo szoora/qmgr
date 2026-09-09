@@ -59,15 +59,21 @@
 
         @if (Type == "password" && ShowPasswordToggle)
         {
-            <button type="button" class="q-input__toggle" @onclick="TogglePasswordVisibility" tabindex="-1">
-                <i class="bi @(showPassword ? "bi-eye-slash" : "bi-eye")"></i>
+            @* Icon-only, so the name lives here. It states the action the click performs, not the
+               current state, and aria-pressed exposes that state separately. *@
+            <button type="button" class="q-input__toggle" aria-label="@(showPassword ? "Hide password" : "Show password")"
+                    aria-pressed="@(showPassword ? "true" : "false")" @onclick="TogglePasswordVisibility" tabindex="-1">
+                <i class="bi @(showPassword ? "bi-eye-slash" : "bi-eye")" aria-hidden="true"></i>
             </button>
         }
 
         @if (Clearable && !string.IsNullOrEmpty(Value?.ToString()))
         {
-            <button type="button" class="q-input__clear" @onclick="Clear" tabindex="-1">
-                <i class="bi bi-x"></i>
+            @* Names the field it clears where one is known — "Clear" alone is ambiguous on a form
+               with several clearable inputs. *@
+            <button type="button" class="q-input__clear" aria-label="@(string.IsNullOrWhiteSpace(Label) ? "Clear field" : $"Clear {Label}")"
+                    @onclick="Clear" tabindex="-1">
+                <i class="bi bi-x" aria-hidden="true"></i>
             </button>
         }
     </div>

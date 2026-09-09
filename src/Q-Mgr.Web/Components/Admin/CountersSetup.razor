@@ -564,6 +564,14 @@
                     counter.IsActive ? "Counter disabled" : "Counter enabled");
                 await LoadData();
             }
+            else
+            {
+                // Same silent-4xx gap as the delete below: the server refuses to disable a counter
+                // that still has a customer at it, and that reason has to be shown.
+                NotificationService.Notify(ToastSeverity.Error,
+                    counter.IsActive ? "Could not disable counter" : "Could not enable counter",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The counter could not be updated."));
+            }
         }
         catch
         {
@@ -593,6 +601,15 @@
                 {
                     NotificationService.Notify(ToastSeverity.Success, "Success", "Counter deleted");
                     await LoadData();
+                }
+                else
+                {
+                    // A non-success status used to do nothing at all — no toast, no message —
+                    // because DeleteAsync does not throw on a 4xx and only the catch reported
+                    // anything. The server refuses this delete while a customer is still at the
+                    // counter, and that reason has to reach the person who clicked.
+                    NotificationService.Notify(ToastSeverity.Error, "Could not delete counter",
+                        await ApiErrorService.GetErrorMessageAsync(response, "The counter could not be deleted."));
                 }
             }
             catch

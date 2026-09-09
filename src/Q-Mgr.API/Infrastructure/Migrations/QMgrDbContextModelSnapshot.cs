@@ -1384,6 +1384,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("DataScope")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Description")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
@@ -1451,6 +1454,9 @@ namespace QMgr.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AlternatePhone")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("AssignedBranchId")
                         .HasColumnType("uuid");
 
@@ -1482,6 +1488,9 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("JobTitle")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("LastLogin")
                         .HasColumnType("timestamp with time zone");
 
@@ -1500,6 +1509,12 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<string>("NormalizedPhone")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
+
+                    b.Property<string>("NotificationPreferences")
+                        .HasColumnType("text");
+
+                    b.Property<string>("OfficeLocation")
+                        .HasColumnType("text");
 
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
@@ -2309,6 +2324,12 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<string>("SmtpUsername")
                         .HasColumnType("text");
+
+                    b.Property<bool>("StaffNotifyEmail")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("StaffNotifySms")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("TelegramBotToken")
                         .HasColumnType("text");
@@ -3483,6 +3504,10 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<int>("VisitorType")
                         .HasColumnType("integer");
 
+                    b.Property<string>("WatchlistOverrideReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("HostUserId");
@@ -3688,6 +3713,80 @@ namespace QMgr.Infrastructure.Migrations
                         .HasFilter("\"NormalizedPhone\" IS NOT NULL AND \"DeletedAt\" IS NULL");
 
                     b.ToTable("visitor_profiles", "qmgr");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.ClassTeacherAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AssignedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("AssignedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("BranchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClassName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EndReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EndedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("idx_class_teacher_user_live")
+                        .HasFilter("\"EndedAt\" IS NULL");
+
+                    b.HasIndex("BranchId", "ClassName")
+                        .HasDatabaseName("idx_class_teacher_branch_class_live")
+                        .HasFilter("\"EndedAt\" IS NULL");
+
+                    b.HasIndex("BranchId", "ClassName", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("ux_class_teacher_one_primary_per_class")
+                        .HasFilter("\"EndedAt\" IS NULL AND \"Role\" = 0");
+
+                    b.ToTable("ClassTeacherAssignments", "qmgr");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Welfare.RosterImportJob", b =>
@@ -3940,6 +4039,16 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<int?>("Residency")
                         .HasColumnType("integer");
 
+                    b.Property<string>("RestrictedNotes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<DateTime?>("RestrictedNotesUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RestrictedNotesUpdatedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<int?>("Sex")
                         .HasColumnType("integer");
 
@@ -4031,6 +4140,9 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<Guid?>("UpdatedBy")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("Visibility")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -4314,9 +4426,6 @@ namespace QMgr.Infrastructure.Migrations
                     b.Property<Guid>("CategoryId")
                         .HasColumnType("uuid");
 
-                    b.Property<bool>("Confidential")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4368,6 +4477,9 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<Guid?>("UpdatedBy")
                         .HasColumnType("uuid");
+
+                    b.Property<int>("Visibility")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -5108,6 +5220,33 @@ namespace QMgr.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("QMgr.Domain.Entities.Welfare.ClassTeacherAssignment", b =>
+                {
+                    b.HasOne("QMgr.Domain.Entities.Organization.Branch", "Branch")
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Organization.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("QMgr.Domain.Entities.Identity.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Branch");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("QMgr.Domain.Entities.Welfare.RosterImportJob", b =>

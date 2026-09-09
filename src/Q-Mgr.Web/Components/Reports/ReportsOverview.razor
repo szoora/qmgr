@@ -7,6 +7,7 @@
 @inject IToastService NotificationService
 @inject IBranchStateService BranchState
 @inject IJSRuntime JS
+@using QMgr.Web.Services
 
 <PageTitle>Reports &amp; Analytics - Q-Mgr</PageTitle>
 
@@ -21,22 +22,17 @@
     <!-- Date Range — drives every figure on this page AND the CSV export below -->
     <QCard Class="filter-card">
         <div class="filter-row">
-            <div class="filter-item">
-                <QDatePicker Label="From Date" Value="@fromDate" ValueChanged="@OnFromDateChanged" />
-            </div>
-            <div class="filter-item">
-                <QDatePicker Label="To Date" Value="@toDate" ValueChanged="@OnToDateChanged" />
-            </div>
-            <div class="filter-item quick-ranges">
-                <QButton Text="Today" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(0))" />
-                <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(6))" />
-                <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyQuickRange(29))" />
+            @* One shared control, so "Last 30 days" means here exactly what it means on every
+               other report — this page used to offer three quick ranges of its own while the
+               visitor report offered seven different ones. *@
+            <div class="filter-item filter-item--range">
+                <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Disabled="@isLoading" ShowCaption="false" />
             </div>
             <div class="filter-item">
                 <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadData" Disabled="@isLoading" />
             </div>
         </div>
-        <p class="range-caption">Showing @RangeCaption</p>
+        <p class="range-caption">Showing @range.Caption</p>
     </QCard>
 
     @if (!string.IsNullOrEmpty(loadError))
@@ -183,7 +179,7 @@
                 <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="secondary" OnClick="@PrintSummary" />
             </div>
         </div>
-        <p class="range-caption">The download covers exactly the range shown above — @RangeCaption.</p>
+        <p class="range-caption">The download covers exactly the range shown above — @range.Caption.</p>
     </QCard>
 </div>
 
@@ -385,6 +381,10 @@
     private bool isForbidden;
     private string? loadError;
 
+    private DateRange range = DateRange.LastDays(7);
+
+    // Kept as the bridge to the existing ResolveRange()/load code below rather than rewriting this
+    // page's whole data path for a control swap.
     private DateTime? fromDate = DateTime.Today.AddDays(-6);
     private DateTime? toDate = DateTime.Today;
     private string selectedReportType = "summary";
@@ -410,15 +410,12 @@
         public string Value { get; set; } = "";
     }
 
-    private string RangeCaption
+    private async Task OnRangeChanged(DateRange next)
     {
-        get
-        {
-            var (from, to) = ResolveRange();
-            return from == to
-                ? from.ToString("MMM d, yyyy")
-                : $"{from:MMM d, yyyy} – {to:MMM d, yyyy}";
-        }
+        range = next;
+        fromDate = next.From.ToDateTime(TimeOnly.MinValue);
+        toDate = next.To.ToDateTime(TimeOnly.MinValue);
+        await LoadData();
     }
 
     private string ServedSubLabel => overview is null
@@ -454,24 +451,8 @@
         await LoadData();
     }
 
-    private async Task OnFromDateChanged(DateTime? value)
-    {
-        fromDate = value;
-        await LoadData();
-    }
 
-    private async Task OnToDateChanged(DateTime? value)
-    {
-        toDate = value;
-        await LoadData();
-    }
 
-    private async Task ApplyQuickRange(int daysBack)
-    {
-        toDate = DateTime.Today;
-        fromDate = DateTime.Today.AddDays(-daysBack);
-        await LoadData();
-    }
 
     private async Task LoadData()
     {

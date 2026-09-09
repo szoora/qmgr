@@ -582,11 +582,49 @@ html, body {
 
 /* Print Styles */
 @media print {
+    /* The app shell.
+       This block used to name only Radzen's own classes (.rz-sidebar, .rz-layout-header,
+       .rz-layout-footer) — none of which this app renders. Its shell is .qm-sidebar /
+       .qm-header / .qm-footer, so every printed page carried the whole navigation down the
+       left-hand side and the report itself started a third of the way across the paper.
+       The Radzen selectors are kept for any Radzen-rendered surface that still uses them. */
     .no-print,
+    .qm-sidebar,
+    .qm-header,
+    .qm-footer,
     .rz-sidebar,
     .rz-layout-header,
     .rz-layout-footer {
         display: none !important;
+    }
+
+    /* .qm-main is offset by the sidebar's width, which no longer exists on paper. */
+    .qm-main,
+    .qm-main.expanded {
+        margin-left: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    .qm-app {
+        display: block !important;
+    }
+
+    /* Cards and panels are screen furniture. On paper the shadow prints as a grey smudge and the
+       fill wastes toner; the border alone is enough to keep a block legible. */
+    .q-card,
+    .qm-card {
+        box-shadow: none !important;
+        border: 1px solid #999 !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    a[href]::after { content: ""; }
+
+    @page {
+        size: A4 portrait;
+        margin: 14mm;
     }
 
     body {
@@ -976,15 +1014,15 @@ html, body {
     }
 
     .stats-grid .stat-card {
-        padding: 16px;
+        padding: var(--qm-statcard-pad);
     }
 
     .stats-grid .stat-value {
-        font-size: 24px;
+        font-size: var(--qm-statcard-value);
     }
 
     .stats-grid .stat-label {
-        font-size: 12px;
+        font-size: var(--qm-statcard-label);
     }
 }
 

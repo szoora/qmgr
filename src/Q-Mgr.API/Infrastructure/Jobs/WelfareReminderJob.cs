@@ -1,9 +1,11 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.Infrastructure.Jobs;
 
@@ -19,12 +21,18 @@ public class WelfareReminderJob
 {
     private readonly QMgrDbContext _context;
     private readonly INotificationService _notificationService;
+    private readonly IWelfareAlertService _alerts;
     private readonly ILogger<WelfareReminderJob> _logger;
 
-    public WelfareReminderJob(QMgrDbContext context, INotificationService notificationService, ILogger<WelfareReminderJob> logger)
+    public WelfareReminderJob(
+        QMgrDbContext context,
+        INotificationService notificationService,
+        IWelfareAlertService alerts,
+        ILogger<WelfareReminderJob> logger)
     {
         _context = context;
         _notificationService = notificationService;
+        _alerts = alerts;
         _logger = logger;
     }
 
@@ -66,10 +74,41 @@ public class WelfareReminderJob
                     Message = $"The follow-up for {studentName} ({categoryName}) was due {daysOverdue} day{(daysOverdue == 1 ? "" : "s")} ago and is still marked \"{record.Status}\".",
                     Type = NotificationType.SystemAlert,
                     Priority = NotificationPriority.High,
-                    Channels = NotificationChannel.InApp,
+                    // Email as well as the bell now: an overdue follow-up that only exists inside
+                    // the app is one the assignee sees when they next happen to log in, which for
+                    // a part-time member of staff can be days. The recipient can still turn email
+                    // off for this category — that is what the event key is for.
+                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                    EventKey = NotificationEventKeys.WelfareActionOverdue,
                     ActionUrl = $"/admin/students/{record.StudentId}/welfare",
                     IconClass = "clock-history"
                 });
+
+                // The class teacher too, for a Standard record about one of their students — an
+                // overdue follow-up on a child in your form is your business even when somebody
+                // else owns the action. Suppressed for Confidential/Restricted inside the alert
+                // service, and the assignee is excluded so nobody is told twice.
+                if (record.Visibility == WelfareVisibility.Standard)
+                {
+                    var exclude = new[] { record.AssignedToUserId!.Value, record.ReportedByUserId };
+                    foreach (var teacher in await _alerts.GetClassTeachersForStudentAsync(record.StudentId, exclude))
+                    {
+                        await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
+                        {
+                            UserId = teacher.UserId,
+                            OrganizationId = record.OrganizationId,
+                            BranchId = record.BranchId,
+                            Title = $"Overdue follow-up — {teacher.ClassName}",
+                            Message = $"The follow-up for {studentName} ({categoryName}) was due {daysOverdue} day{(daysOverdue == 1 ? "" : "s")} ago and is still open.",
+                            Type = NotificationType.SystemAlert,
+                            Priority = NotificationPriority.Normal,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                            EventKey = NotificationEventKeys.WelfareActionOverdue,
+                            ActionUrl = $"/admin/students/{record.StudentId}/welfare",
+                            IconClass = "clock-history"
+                        });
+                    }
+                }
 
                 record.ReminderSentAt = now;
                 sent++;
@@ -133,7 +172,8 @@ public class WelfareReminderJob
                     Message = $"The \"{flagName}\" flag on {studentName} was due for review {daysOverdue} day{(daysOverdue == 1 ? "" : "s")} ago. Confirm it still applies, or end it.",
                     Type = NotificationType.SystemAlert,
                     Priority = NotificationPriority.High,
-                    Channels = NotificationChannel.InApp,
+                    Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                    EventKey = NotificationEventKeys.WelfareFlagReviewOverdue,
                     ActionUrl = $"/admin/students/{flag.StudentId}/picture",
                     IconClass = "flag"
                 });

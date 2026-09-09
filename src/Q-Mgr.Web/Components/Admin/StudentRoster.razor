@@ -1355,7 +1355,7 @@
     .class-color-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
     .class-color-row:last-child { border-bottom: none; }
     .class-color-row input[type="color"] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
-    .roster-actions { display: flex; gap: 6px; justify-self: end; align-items: center; }
+    .roster-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-self: end; align-items: center; }
 
     /* The label stays visible at every width, phone included. There is only one inline action now,
        so it costs almost nothing horizontally — and an unlabelled icon is the thing this whole
@@ -2842,6 +2842,11 @@
             var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
             if (response.IsSuccessStatusCode)
                 quickLogCategories = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+            else
+                // Category is required on this form, so an empty list does not merely look odd:
+                // it makes the dialog impossible to submit, with nothing on screen saying why.
+                NotificationService.Notify(ToastSeverity.Error, "Could not load welfare categories",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The category list could not be loaded."));
         }
 
         showQuickLogModal = true;

@@ -7,6 +7,7 @@
 @inject NavigationManager Navigation
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
+@using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 
 <PageTitle>Visitor Activity Board - Q-Mgr</PageTitle>
@@ -56,7 +57,7 @@
                                 <span class="onsite-badge">@v.BadgeCode</span>
                                 @if (v.IsWatchlisted)
                                 {
-                                    <QIcon Name="shield-exclamation" title="@v.WatchlistReason" />
+                                    <WatchlistFlagIcon Name="@v.FullName" Reason="@v.WatchlistReason" FlaggedAt="@v.WatchlistAddedAt" />
                                 }
                             </span>
                             <span class="onsite-meta">
@@ -87,7 +88,8 @@
                                 <strong>@entry.Visitor.FullName</strong> @LabelFor(entry.Kind)
                                 @if (entry.Kind == VisitorActivityKind.Flagged)
                                 {
-                                    <span class="feed-danger"> — @entry.Visitor.WatchlistReason</span>
+                                    <span class="feed-danger"> — @(string.IsNullOrWhiteSpace(entry.Visitor.WatchlistReason) ? "no reason recorded" : entry.Visitor.WatchlistReason)</span>
+                                    <WatchlistFlagIcon Name="@entry.Visitor.FullName" Reason="@entry.Visitor.WatchlistReason" FlaggedAt="@entry.Visitor.WatchlistAddedAt" />
                                 }
                             </span>
                             <span class="feed-time">@entry.OccurredAt.ToLocalTime().ToString("HH:mm:ss")</span>
@@ -111,11 +113,11 @@
     .live-indicator.on { color: var(--qm-success); }
     .live-indicator.off { color: var(--qm-text-muted); }
 
-    .board-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .board-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 20px; display: flex; flex-direction: column; gap: 4px; }
+    .board-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
+    .board-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); display: flex; flex-direction: column; gap: 2px; }
     .board-card.watchlist { border-color: var(--qm-danger); }
-    .board-value { font-size: 32px; font-weight: 700; color: var(--qm-text-primary); }
-    .board-label { font-size: 13px; color: var(--qm-text-muted); }
+    .board-value { font-size: var(--qm-statcard-value); font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
+    .board-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); }
 
     .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     @@media (max-width: 900px) { .board-grid { grid-template-columns: 1fr; } }
@@ -216,10 +218,25 @@
     /// a connection that happened to be mid-reconnect at the exact moment this page loaded stayed
     /// stuck showing "Reconnecting..." indefinitely even after it genuinely reconnected, since
     /// nothing here was listening for that.
+    ///
+    /// It also re-syncs on the way back up. Anything that happened while the connection was down
+    /// was pushed to nobody, so without a re-read the board would keep claiming "Live" over a list
+    /// that silently missed a check-in — worse than admitting it was disconnected. The re-join of
+    /// the branch group is handled by NotificationClientService itself, which replays its wanted
+    /// memberships on every successful connect.
     /// </summary>
     private async void HandleConnectionStateChanged()
     {
-        isLive = NotificationClient.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
+        var nowLive = NotificationClient.State == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
+        var cameBack = nowLive && !isLive;
+        isLive = nowLive;
+
+        if (cameBack)
+        {
+            try { currentlyOnSite = await VisitorApi.GetVisitorsAsync(branchId, VisitorStatus.CheckedIn); }
+            catch { /* the indicator already tells the truth; a failed resync is not worth a toast on a wall display */ }
+        }
+
         await InvokeAsync(StateHasChanged);
     }
 

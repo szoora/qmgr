@@ -94,10 +94,14 @@ public class CallNextTokenCommandHandler : IRequestHandler<CallNextTokenCommand,
             if (token == null)
                 return;
 
-            // Update token status
+            // Update token status. Calling a customer starts their service clock — see the
+            // "calling is the start of service" note on ServiceStartedAt in Token.cs. Nothing
+            // set this before, so ServiceDurationMinutes never populated and every
+            // average-service-time figure in the product read blank.
             token.Status = TokenStatus.Called;
             token.CounterId = request.CounterId;
             token.CalledAt = DateTime.UtcNow;
+            token.ServiceStartedAt = DateTime.UtcNow;
             token.ActualWaitMinutes = (int)(DateTime.UtcNow - token.CreatedAt).TotalMinutes;
 
             // Add history
@@ -264,6 +268,8 @@ public class CallSpecificTokenCommandHandler : IRequestHandler<CallSpecificToken
             token.Status = TokenStatus.Called;
             token.CounterId = request.CounterId;
             token.CalledAt = DateTime.UtcNow;
+            // Same rule as CallNextToken: calling starts the service clock.
+            token.ServiceStartedAt = DateTime.UtcNow;
             token.ActualWaitMinutes = (int)(DateTime.UtcNow - token.CreatedAt).TotalMinutes;
 
             await _unitOfWork.Tokens.AddHistoryAsync(new TokenHistory
@@ -303,7 +309,7 @@ public class CallSpecificTokenCommandHandler : IRequestHandler<CallSpecificToken
 /// call" bug as CallSpecificTokenCommand, also reachable from the real staff UI
 /// (CounterTerminal.razor's "Mark No-Show" button + confirmation dialog).
 /// </summary>
-public class MarkNoShowCommandHandler : IRequestHandler<MarkNoShowCommand, bool>
+public class MarkNoShowCommandHandler : IRequestHandler<MarkNoShowCommand, TokenDto?>
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITenantContextAccessor _tenantContextAccessor;
@@ -319,7 +325,7 @@ public class MarkNoShowCommandHandler : IRequestHandler<MarkNoShowCommand, bool>
         _queueHubService = queueHubService;
     }
 
-    public async ValueTask<bool> Handle(MarkNoShowCommand request, CancellationToken cancellationToken)
+    public async ValueTask<TokenDto?> Handle(MarkNoShowCommand request, CancellationToken cancellationToken)
     {
         var success = false;
         Token? token = null;
@@ -365,7 +371,11 @@ public class MarkNoShowCommandHandler : IRequestHandler<MarkNoShowCommand, bool>
             await _queueHubService.NotifyQueueUpdatedAsync(token.BranchId, cancellationToken);
         }
 
-        return success;
+        // Returns the updated token rather than a bare bool so the endpoint can answer with the
+        // same TokenDto that complete and transfer already do. A staff UI that had to refetch
+        // after a no-show, while repainting straight from the response after a completion, was
+        // carrying that inconsistency for no reason.
+        return success && token != null ? TokenMapper.ToDto(token) : null;
     }
 }
 
@@ -387,15 +397,17 @@ public class MarkNoShowCommandHandler : IRequestHandler<MarkNoShowCommand, bool>
 /// - Same branch only: the destination counter must belong to the same branch as the token.
 ///   A customer physically queued at one branch location cannot be moved to a counter at a
 ///   different branch — this is a physical/logical constraint, not a preference.
-/// - No auto-serve: transfer always lands the token in `Called` status at the destination
-///   (mirroring CallSpecificToken), never `Serving` — the destination counter's staff must
-///   explicitly begin service, the same as calling any other customer. This avoids assuming
-///   the new counter is mid-conversation with a customer it never interacted with.
+/// - Transfer lands the token in `Called` status at the destination (mirroring CallSpecificToken).
+///   `TokenStatus.Serving` is never assigned by anything in this codebase — see the note on
+///   Token.ServiceStartedAt. This bullet previously said the destination's staff "must explicitly
+///   begin service"; there has never been an action that does that, which is exactly how the
+///   service clock came to be never started at all.
 /// - Destination must be `Active`: transferring into a Closed/OnBreak/Inactive counter would
 ///   silently strand the customer with no one to serve them.
-/// - `ServiceStartedAt` is cleared and `ActualWaitMinutes` is recomputed from the token's
-///   original `CreatedAt` (not reset) — the customer's total wait time is preserved for
-///   fairness/reporting; only the in-progress service session at the old counter is ended.
+/// - `ServiceStartedAt` is RESTARTED at the moment of transfer (2026-09-06; it used to be cleared),
+///   so the duration eventually recorded measures the service the destination counter actually
+///   gave. `ActualWaitMinutes` is still recomputed from the token's original `CreatedAt` (not
+///   reset) — the customer's total wait is preserved for fairness and reporting.
 /// </summary>
 public class TransferTokenCommandHandler : IRequestHandler<TransferTokenCommand, TokenDto?>
 {
@@ -461,7 +473,13 @@ public class TransferTokenCommandHandler : IRequestHandler<TransferTokenCommand,
             token.Status = TokenStatus.Called;
             token.CounterId = destCounter.Id;
             token.CalledAt = DateTime.UtcNow;
-            token.ServiceStartedAt = null;
+            // Restarts the service clock rather than clearing it. Under "calling is the start of
+            // service" a transfer is the destination counter calling the customer, so the duration
+            // that eventually lands on this token measures the service that actually happened
+            // there — not the abandoned attempt at the counter it came from. Clearing it (what
+            // this line used to do) would leave the token with no start at all, which is the state
+            // that made every service-time figure blank.
+            token.ServiceStartedAt = DateTime.UtcNow;
             token.ActualWaitMinutes = (int)(DateTime.UtcNow - token.CreatedAt).TotalMinutes;
 
             await _unitOfWork.Tokens.AddHistoryAsync(new TokenHistory

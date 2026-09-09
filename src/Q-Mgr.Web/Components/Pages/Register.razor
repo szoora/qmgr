@@ -36,7 +36,7 @@
                     <strong>Registration failed</strong>
                     <p>@errorMessage</p>
                 </div>
-                <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
+                <button type="button" class="auth-alert-close" aria-label="Dismiss error" @onclick="@(() => errorMessage = null)">
                     <QIcon Name="x" />
                 </button>
             </div>
@@ -256,7 +256,7 @@
                                 <input type="@(showPassword ? "text" : "password")" id="password"
                                        @bind="formData.Password" @oninput="OnPasswordChanged"
                                        placeholder="Create a strong password" class="form-control" />
-                                <button type="button" class="input-toggle" @onclick="TogglePasswordVisibility" tabindex="-1">
+                                <button type="button" class="input-toggle" aria-label="@(showPassword ? "Hide password" : "Show password")" aria-pressed="@(showPassword ? "true" : "false")" @onclick="TogglePasswordVisibility" tabindex="-1">
                                     <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
                                 </button>
                             </div>
@@ -516,12 +516,12 @@
 
     .step.active .step-number {
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .step.completed .step-number {
         background: var(--qm-success);
-        color: white;
+        color: var(--qm-text-on-primary);
     }
 
     .step-label {

@@ -790,6 +790,13 @@
                 var paged = await response.Content.ReadFromJsonAsync<PagedResultDto<TenantSummaryDto>>(JsonOptions);
                 orgOptions = paged?.Items.Select(o => new OrgOption { Id = o.Id, Name = o.Name }).ToList() ?? new();
             }
+            else
+            {
+                // An empty picker reads as "this account has no organizations", which is a
+                // different and much more alarming statement than "the list failed to load".
+                NotificationService.Notify(ToastSeverity.Error, "Could not load organizations",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The organization list could not be loaded."));
+            }
         }
         catch
         {
@@ -812,6 +819,13 @@
             {
                 var apiBranches = await response.Content.ReadFromJsonAsync<List<BranchDto>>(JsonOptions) ?? new();
                 branchOptions = apiBranches.Select(b => new BranchOption { Id = b.Id, Name = b.Name }).ToList();
+            }
+            else
+            {
+                // Same reasoning as LoadOrganizations: an empty branch picker is a claim about
+                // the organization, not an admission that the request failed.
+                NotificationService.Notify(ToastSeverity.Error, "Could not load branches",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The branch list could not be loaded."));
             }
         }
         catch

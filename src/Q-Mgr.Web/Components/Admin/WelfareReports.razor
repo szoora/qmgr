@@ -44,8 +44,7 @@
     @if (activeTab == "dashboard")
     {
         <div class="filter-bar">
-            <QDatePicker @bind-Value="@dashboardFrom" Label="From" />
-            <QDatePicker @bind-Value="@dashboardTo" Label="To" />
+            <QDateRangePicker Range="@dashboardRange" RangeChanged="@OnDashboardRangeChanged" ShowCaption="false" />
             <QButton Text="Apply" Icon="funnel-fill" Variant="secondary" OnClick="@LoadSummary" />
         </div>
 
@@ -110,8 +109,7 @@
     {
         <div class="filter-bar filter-bar--wrap">
             <input class="search-input" value="@searchKeyword" @oninput="@(e => searchKeyword = e.Value?.ToString() ?? "")" placeholder="Search description or action taken..." />
-            <QDatePicker @bind-Value="@searchFrom" Label="From" />
-            <QDatePicker @bind-Value="@searchTo" Label="To" />
+            <QDateRangePicker Range="@searchRange" RangeChanged="@OnSearchRangeChanged" ShowCaption="false" ShowPresets="false" />
             <QSelect TValue="WelfareCaseType?" TItem="(string Label, WelfareCaseType? Value)" Value="@searchCaseType" Items="@caseTypeFilterOptions"
                      TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Case Type" ValueChanged="@(v => searchCaseType = v)" />
             <QSelect TValue="WelfareStatus?" TItem="(string Label, WelfareStatus? Value)" Value="@searchStatus" Items="@statusFilterOptions"
@@ -567,10 +565,10 @@
     .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
     .empty-state p { margin: 0; }
 
-    .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
-    .stat-card { display: flex; flex-direction: column; gap: 4px; padding: 18px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); }
-    .stat-value { font-size: 28px; font-weight: 700; color: var(--qm-text-primary); }
-    .stat-label { font-size: 12px; color: var(--qm-text-muted); text-transform: uppercase; letter-spacing: .03em; }
+    .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
+    .stat-card { display: flex; flex-direction: column; gap: 2px; padding: var(--qm-statcard-pad); background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); }
+    .stat-value { font-size: var(--qm-statcard-value); line-height: 1.1; font-weight: 700; color: var(--qm-text-primary); }
+    .stat-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); text-transform: uppercase; letter-spacing: .03em; }
     .stat-card--danger .stat-value { color: var(--qm-danger, #dc2626); }
 
     .report-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
@@ -603,7 +601,7 @@
     .results-row:last-child { border-bottom: none; }
     .results-header { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); background: var(--qm-bg-secondary); font-weight: 600; }
     .results-student { font-weight: 600; color: var(--qm-text-primary); }
-    .results-actions { display: flex; gap: 4px; justify-self: end; }
+    .results-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-self: end; }
 
     .tier-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
     .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
@@ -613,7 +611,7 @@
     .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); justify-self: start; }
     .status-chip--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
     .status-chip--underreview { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
-    .status-chip--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-chip--actiontaken { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
     .status-chip--resolved { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
 
     @@media (max-width: 900px) {
@@ -674,6 +672,10 @@
 
     // ---------------- Dashboard ----------------
     private bool isLoadingSummary;
+    private DateRange dashboardRange = DateRange.LastDays(30);
+
+    // The existing query path takes nullable DateTimes; the range above is what the shared control
+    // binds to and both stay in step through OnDashboardRangeChanged.
     private DateTime? dashboardFrom;
     private DateTime? dashboardTo;
     private WelfareSummaryDto? summary;
@@ -783,8 +785,23 @@
     // ---------------- Search ----------------
     private bool isLoadingSearch;
     private string searchKeyword = "";
+    private DateRange searchRange = DateRange.LastDays(90);
     private DateTime? searchFrom;
     private DateTime? searchTo;
+
+    private void OnDashboardRangeChanged(DateRange next)
+    {
+        dashboardRange = next;
+        dashboardFrom = next.From.ToDateTime(TimeOnly.MinValue);
+        dashboardTo = next.To.ToDateTime(TimeOnly.MinValue);
+    }
+
+    private void OnSearchRangeChanged(DateRange next)
+    {
+        searchRange = next;
+        searchFrom = next.From.ToDateTime(TimeOnly.MinValue);
+        searchTo = next.To.ToDateTime(TimeOnly.MinValue);
+    }
     private WelfareCaseType? searchCaseType;
     private WelfareStatus? searchStatus;
     private List<WelfareRecordDto> searchResults = new();

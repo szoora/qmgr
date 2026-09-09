@@ -42,7 +42,7 @@
                         <strong>Error</strong>
                         <p>@errorMessage</p>
                     </div>
-                    <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
+                    <button type="button" class="auth-alert-close" aria-label="Dismiss error" @onclick="@(() => errorMessage = null)">
                         <QIcon Name="x" />
                     </button>
                 </div>
@@ -78,7 +78,7 @@
                                    disabled="@isLoading" />
                         @if (!string.IsNullOrEmpty(emailModel.Email))
                         {
-                            <button type="button" class="input-clear" @onclick="@(() => emailModel.Email = string.Empty)" tabindex="-1">
+                            <button type="button" class="input-clear" aria-label="Clear email" @onclick="@(() => emailModel.Email = string.Empty)" tabindex="-1">
                                 <QIcon Name="x-circle-fill" />
                             </button>
                         }
@@ -104,7 +104,7 @@
         {
             <!-- Step 2: Password Input -->
             <div class="login-header">
-                <button type="button" class="btn-back" @onclick="@GoBackToEmail">
+                <button type="button" class="btn-back" aria-label="Back to email entry" @onclick="@GoBackToEmail">
                     <QIcon Name="arrow-left" Size="20" />
                 </button>
                 <div class="user-avatar">
@@ -127,7 +127,7 @@
                         <strong>Authentication Failed</strong>
                         <p>@errorMessage</p>
                     </div>
-                    <button type="button" class="auth-alert-close" @onclick="@(() => errorMessage = null)">
+                    <button type="button" class="auth-alert-close" aria-label="Dismiss error" @onclick="@(() => errorMessage = null)">
                         <QIcon Name="x" />
                     </button>
                 </div>
@@ -161,7 +161,7 @@
                                    placeholder="Enter your password"
                                    autocomplete="current-password"
                                    disabled="@isLoading" />
-                        <button type="button" class="input-toggle" @onclick="@(() => showPassword = !showPassword)" tabindex="-1">
+                        <button type="button" class="input-toggle" aria-label="@(showPassword ? "Hide password" : "Show password")" aria-pressed="@(showPassword ? "true" : "false")" @onclick="@(() => showPassword = !showPassword)" tabindex="-1">
                             <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
                         </button>
                     </div>

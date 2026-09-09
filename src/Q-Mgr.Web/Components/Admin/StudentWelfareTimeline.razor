@@ -48,6 +48,9 @@
                     <span class="points-summary__item points-summary__item--positive"><QIcon Name="arrow-up-circle-fill" /> +@AchievementPoints achievement</span>
                     <span class="points-summary__item points-summary__item--negative"><QIcon Name="arrow-down-circle-fill" /> @BehaviorPoints behavior</span>
                     <span class="points-summary__item points-summary__item--net">Net @(NetPoints > 0 ? "+" : "")@NetPoints</span>
+                    @* A total that quietly changed meaning when somebody moved the filter would be
+                       worse than no total, so the scope is stated on the chips themselves. *@
+                    <span class="points-summary__scope">@(range.IsAllTime ? "all time" : $"in {range.Caption}")</span>
                 </div>
             }
         </div>
@@ -65,6 +68,23 @@
         </div>
     </div>
 
+    @* Defaults to All time: opening a child's welfare record and being shown only the last week
+       by default would hide exactly the history somebody came here to read. The filter exists for
+       students whose timeline runs to years, not to shorten everyone's by default. *@
+    <QCard Class="timeline-filter-card">
+        <div class="timeline-filter">
+            <QDateRangePicker Range="@range"
+                              RangeChanged="@OnRangeChanged"
+                              Presets="@DateRangePresets.WithAllTime"
+                              CaptionPrefix="Showing"
+                              Disabled="@isLoading" />
+            <div class="timeline-filter__actions">
+                <QButton Text="Printable report" Icon="printer" Variant="secondary" OnClick="@OpenPrintableReport"
+                         Title="Open the A4 welfare report for this period, ready to print or save as PDF" />
+            </div>
+        </div>
+    </QCard>
+
     @if (isLoading)
     {
         <div class="loading-container">
@@ -74,6 +94,8 @@
     }
     else if (!records.Any())
     {
+        @RenderRestrictedNotes()
+
         <div class="empty-state">
             <QIcon Name="journal-richtext" Size="xl" />
             <h3>No Records Yet</h3>
@@ -86,6 +108,8 @@
     }
     else
     {
+        @RenderRestrictedNotes()
+
         <div class="timeline">
             @foreach (var record in records)
             {
@@ -104,9 +128,23 @@
                                         @(record.Points.Value > 0 ? "+" : "")@record.Points
                                     </span>
                                 }
-                                @if (record.Confidential)
+                                @if (record.Visibility == WelfareVisibility.Confidential)
                                 {
                                     <span class="confidential-badge"><QIcon Name="lock-fill" /> Confidential</span>
+                                }
+                                else if (record.Visibility == WelfareVisibility.Restricted)
+                                {
+                                    <span class="restricted-badge"><QIcon Name="shield-lock-fill" /> Restricted</span>
+                                }
+                                @* Only rendered for a holder of welfare.restricted.view. The control
+                                   is cosmetic either way — the API re-checks the permission and
+                                   refuses a move to a level the caller could not then read. *@
+                                @if (canSetRestricted && record.Status != WelfareStatus.Draft)
+                                {
+                                    <QSelect TValue="WelfareVisibility" TItem="VisibilityOption"
+                                             Value="@record.Visibility" Items="@visibilityOptions"
+                                             TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Class="status-select"
+                                             ValueChanged="@(v => ChangeVisibility(record, v))" />
                                 }
                                 @if (record.Status == WelfareStatus.Draft)
                                 {
@@ -216,6 +254,18 @@
                             {
                                 <QButton Text="Finalize" Icon="check2-circle" Size="sm" Variant="primary" OnClick="@(() => FinalizeRecord(record))" />
                             }
+                            @if (canEdit)
+                            {
+                                @* Grading is available on drafts too — a draft is the author's own
+                                   unfinished note, and "what did we do about it" is usually known
+                                   later than the incident itself. Labelled by state so a record
+                                   that has never been graded advertises the gap rather than
+                                   hiding it behind a generic verb. *@
+                                <QButton Text="@(record.ResponseStage == null ? "Set response" : "Interpretation")"
+                                         Icon="list-ol" Size="sm"
+                                         Variant="@(record.ResponseStage == null ? "secondary" : "ghost")"
+                                         OnClick="@(() => ShowResponseDialog(record))" />
+                            }
                             @if (record.Status != WelfareStatus.Draft && canEdit)
                             {
                                 <QButton Text="Add Note" Icon="chat-left-text" Size="sm" Variant="ghost" OnClick="@(() => ShowNoteDialog(record))" />
@@ -301,7 +351,7 @@
                emergency must not be argued with by a form. *@
             @if (escalationCheck?.WouldPrompt == true && createModel.ResponseStage == WelfareResponseStage.Punitive)
             {
-                <div class="escalation-prompt" role="alert">
+                <div class="escalation-prompt" role="alert" id="wf-warn-escalation">
                     <div class="ep-head"><strong>Nothing softer tried yet</strong></div>
                     <p>@escalationCheck.Message</p>
                     <QCheckbox @bind-Value="@createModel.EscalationAcknowledged"
@@ -350,12 +400,27 @@
                 </div>
             </div>
         }
+        @* Each of these carries an id so SaveRecord can scroll it into view when it is what
+           blocked the save. A confirmation the user cannot see is a Save button that looks
+           broken — see ScrollToBlockerAsync. *@
         @if (lateEntryWarning)
         {
-            <div class="warning-banner">
+            <div class="warning-banner" id="wf-warn-late">
                 <QIcon Name="exclamation-triangle-fill" />
                 <span>This date is more than 14 days ago. Confirm this is correct before saving.</span>
                 <QCheckbox @bind-Value="@acknowledgeLateEntry" Label="Yes, this is a late entry" />
+            </div>
+        }
+        @if (ungradedWarning)
+        {
+            <div class="warning-banner" id="wf-warn-ungraded">
+                <QIcon Name="exclamation-triangle-fill" />
+                <span>
+                    No response set, so this record won't count towards
+                    &ldquo;What has been tried&rdquo;. You can set it now above, or later from the
+                    record's <strong>Set response</strong> action.
+                </span>
+                <QCheckbox @bind-Value="@acknowledgeUngraded" Label="Save without a response for now" />
             </div>
         }
     </ChildContent>
@@ -439,6 +504,51 @@
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showActionDialog = false)" />
         <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveAction" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Grade the response ----------------
+   Records logged before 2026-09-06 could never be graded: ResponseStage was settable only on the
+   create form, and optional there. Anything saved without one sat outside "What has been tried"
+   permanently, which is the one question that panel exists to answer. *@
+<QModal @bind-Visible="showResponseDialog" Title="How this record is read" Size="md">
+    <ChildContent>
+        @if (responseTargetRecord != null)
+        {
+            <p class="response-dialog-subject">
+                <strong>@responseTargetRecord.CategoryName</strong>
+                · @responseTargetRecord.OccurredAt.ToLocalTime().ToString("MMM d, yyyy")
+            </p>
+        }
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@interpretationAntecedent" Label="What happened just before"
+                    Placeholder="e.g., Told to put the phone away" />
+            <p class="form-hint">Feeds the &ldquo;share the same trigger&rdquo; pattern insight.</p>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="WelfarePerceivedFunction?" TItem="FunctionOption" @bind-Value="@interpretationFunction"
+                     Items="@functionOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="What did it get them" Placeholder="Unclear" AllowClear="true" />
+            <p class="form-hint">Your read, not a diagnosis.</p>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@responseStageValue"
+                     ValueChanged="@(v => responseStageValue = v)"
+                     Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                     Label="Response" Placeholder="Not decided yet" AllowClear="true" />
+            <p class="form-hint">
+                This is what feeds the student's &ldquo;What has been tried&rdquo; ladder. Clearing it
+                removes this record from that view.
+            </p>
+        </div>
+        <p class="form-hint">
+            Only how this record is <em>read</em> can be changed. What happened — the account, date,
+            category and tier — is part of the ledger and stays as first written.
+        </p>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showResponseDialog = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveResponseStage" />
     </FooterContent>
 </QModal>
 
@@ -549,7 +659,14 @@
     }
 
     .admin-page { padding: 0; }
+    .timeline-filter-card { margin-bottom: 16px; }
+    .timeline-filter { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+    .timeline-filter__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .points-summary__scope { font-size: 12px; color: var(--qm-text-muted); }
+
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-content { min-width: 0; flex: 1 1 260px; }
+    .header-content h1 { overflow-wrap: break-word; }
     .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -587,7 +704,31 @@
     .points-badge--positive { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .points-badge--negative { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
 
-    .confidential-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .confidential-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
+
+    /* Restricted has to read as a step ABOVE confidential at a glance, so it takes a solid fill
+       rather than the tint. rgba(var(--qm-primary-rgb), …) above is themed already — see the
+       CLAUDE.md note on tokenizing a tint so it follows the theme with no override. */
+    .restricted-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--qm-primary); color: var(--qm-text-on-primary); }
+
+    .restricted-panel {
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-primary);
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card);
+        padding: 14px 16px;
+        margin-bottom: 18px;
+    }
+    .restricted-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+    .restricted-panel-head h3 { margin: 0; font-family: var(--qm-font-display); font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 7px; color: var(--qm-primary); }
+    .restricted-panel-meta { font-size: 11.5px; color: var(--qm-text-muted); }
+    .restricted-panel textarea { width: 100%; min-height: 84px; resize: vertical; padding: 9px 11px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-input); color: var(--qm-text-primary); font-family: var(--qm-font-primary); font-size: 13px; line-height: 1.55; }
+    .restricted-panel-body { font-size: 13px; color: var(--qm-text-secondary); line-height: 1.6; white-space: pre-wrap; margin: 0; }
+    .restricted-panel-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+
+    /* Shown to the pastoral tier when a note EXISTS but they may not read it. Somebody handling
+       the child needs to know an administrator holds something, or they cannot know to ask. */
+    .restricted-hint { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--qm-text-muted); padding: 10px 14px; border: 1px dashed var(--qm-border); border-radius: var(--qm-radius-md); margin-bottom: 18px; }
 
     .timeline-description { margin: 8px 0; color: var(--qm-text-primary); font-size: 14px; line-height: 1.5; }
     .timeline-meta { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; color: var(--qm-text-muted); }
@@ -607,11 +748,16 @@
     .notification-item--success { color: var(--qm-accent-green, #16a34a); }
     .notification-item--failed { color: var(--qm-danger, #dc2626); }
 
-    .timeline-card-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
+    /* flex-wrap is the fix for the reported mobile bug: four buttons (Set response, Add Note,
+       Assign Action, Notify Guardian) were wider than a phone, and because a flex child will not
+       shrink below its content by default, the overflow widened the whole PAGE rather than this
+       row — which is why the heading and the chips appeared clipped too. */
+    .timeline-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
 
     .form-group { margin-bottom: 16px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
+    .response-dialog-subject { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 16px; }
     /* Informational, not a warning — nothing is wrong, this account simply holds welfare access
        without roster access. Muted so it reads as a note rather than an error. */
     .roster-notice { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 0; font-size: 13px; color: var(--qm-text-muted); max-width: 70ch; }
@@ -621,10 +767,10 @@
     .timeline-card--draft { border-style: dashed; opacity: 0.85; }
 
     .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
-    .status-badge--draft { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-badge--draft { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
     .status-badge--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
     .status-badge--underreview { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
-    .status-badge--actiontaken { background: rgba(140, 47, 82, 0.12); color: var(--qm-primary); }
+    .status-badge--actiontaken { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
     .status-badge--resolved { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .status-select { display: inline-block; width: auto; min-width: 140px; }
 
@@ -657,7 +803,15 @@
     private StudentDto? student;
     private bool isLoading = true;
     private bool canCreate, canEdit, canNotify, canViewRoster, isExporting;
+
+    /// <summary>welfare.restricted.view — gates the visibility control and the restricted-notes panel. Cosmetic only; the API re-checks both.</summary>
+    private bool canSetRestricted;
     private List<WelfareRecordDto> records = new();
+
+    /// <summary>
+    /// The period the timeline covers. All time by default — see the filter card above.
+    /// </summary>
+    private DateRange range = DateRange.AllTime();
     private List<WelfareCategoryDto> categories = new();
     private List<StudentDto> otherStudents = new();
     private List<StaffOption> staffOptions = new();
@@ -752,10 +906,35 @@
         new(WelfareStatus.Resolved, "Resolved")
     };
 
+    /// <summary>
+    /// The visibility ladder, offered only to a holder of welfare.restricted.view. A Welfare
+    /// (safeguarding) record cannot be lowered to Standard at all — the API refuses it, and the
+    /// error is shown rather than the option being hidden, because "why is this greyed out" is a
+    /// worse experience than being told the rule.
+    /// </summary>
+    private readonly List<VisibilityOption> visibilityOptions = new()
+    {
+        new(WelfareVisibility.Standard, "Standard"),
+        new(WelfareVisibility.Confidential, "Confidential"),
+        new(WelfareVisibility.Restricted, "Restricted - admin only")
+    };
+
     private readonly string[] notifyChannels = { "Sms", "Email" };
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // Scroll to whatever blocked the last save, now that the banner it refers to has actually
+        // been rendered. This CANNOT be done inline in SaveRecord: StateHasChanged() only marks
+        // the component for re-render, it does not await one, so a JS call made straight after it
+        // runs against a DOM that does not contain the banner yet — getElementById returns null
+        // and the scroll silently does nothing. That was the original bug's second layer, found
+        // by watching scrollTop stay at 0 with the element demonstrably present a moment later.
+        if (_pendingScrollTo is { } pendingId)
+        {
+            _pendingScrollTo = null;
+            await ScrollToBlockerAsync(pendingId);
+        }
+
         if (firstRender)
         {
             if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
@@ -774,6 +953,7 @@
             canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCreate);
             canEdit = await PermissionService.HasPermissionAsync(Permissions.WelfareEdit);
             canNotify = await PermissionService.HasPermissionAsync(Permissions.WelfareNotify);
+            canSetRestricted = await PermissionService.HasPermissionAsync(Permissions.WelfareRestrictedView);
             // Roster access, which this page can now do without. It gates the three things that
             // genuinely need the roster: the guardian list (to notify one), the branch's other
             // students (to log one incident against several), and the SAR export — whose endpoint
@@ -787,6 +967,24 @@
             await LoadData();
             StateHasChanged();
         }
+    }
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        await LoadData();
+    }
+
+    /// <summary>
+    /// Opens the A4 report on its own route, carrying the period in the query string so the link
+    /// is shareable and the printed sheet states the same period the screen was showing.
+    /// </summary>
+    private void OpenPrintableReport()
+    {
+        var query = range.IsAllTime
+            ? ""
+            : $"?from={QDateFormat.Iso8601(range.From)}&to={QDateFormat.Iso8601(range.To)}";
+        Navigation.NavigateTo($"/admin/students/{StudentId}/welfare/report{query}");
     }
 
     private async Task LoadData()
@@ -814,6 +1012,10 @@
                 otherStudents = allStudents.Where(s => s.Id != StudentId && s.IsActive).ToList();
             }
 
+            // Its own gated request, not read off the student payload above — see the comment on
+            // LoadRestrictedNotesAsync.
+            await LoadRestrictedNotesAsync();
+
             var categoriesResponse = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
             if (categoriesResponse.IsSuccessStatusCode)
                 categories = await categoriesResponse.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
@@ -828,7 +1030,12 @@
                 }
             }
 
-            var recordsResponse = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-records");
+            // All time sends no bounds at all rather than a year-2000 lower bound, so the common
+            // case stays the exact query it was before this filter existed.
+            var rangeQuery = range.IsAllTime
+                ? ""
+                : $"?from={QDateFormat.Iso8601(range.From)}&to={QDateFormat.Iso8601(range.To)}";
+            var recordsResponse = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-records{rangeQuery}");
             if (recordsResponse.IsSuccessStatusCode)
             {
                 records = await recordsResponse.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
@@ -860,6 +1067,7 @@
     private DateTime? occurredDateValue = DateTime.Today;
     private DateTime? occurredTimeValue = DateTime.Now;
     private bool categoryError, pointsError, descriptionError, lateEntryWarning, acknowledgeLateEntry;
+    private bool ungradedWarning, acknowledgeUngraded;
     private string pointsErrorText = "", descriptionErrorText = "";
 
     private bool showAttachDialog;
@@ -871,6 +1079,7 @@
         occurredDateValue = DateTime.Today;
         occurredTimeValue = DateTime.Now;
         categoryError = pointsError = descriptionError = lateEntryWarning = acknowledgeLateEntry = false;
+        ungradedWarning = acknowledgeUngraded = false;
         showCreateDialog = true;
     }
 
@@ -897,6 +1106,37 @@
             createModel.AdditionalStudentIds.Add(studentId);
         else
             createModel.AdditionalStudentIds.Remove(studentId);
+    }
+
+    /// <summary>
+    /// The id of a banner to scroll to on the next render, or null. Set by SaveRecord when it
+    /// refuses, consumed by OnAfterRenderAsync — see the comment there for why the scroll cannot
+    /// simply follow StateHasChanged().
+    /// </summary>
+    private string? _pendingScrollTo;
+
+    /// <summary>
+    /// Brings the thing that blocked the save into view.
+    ///
+    /// The welfare log form refuses to save until a confirmation checkbox is ticked, and those
+    /// confirmations sit at the BOTTOM of a scrollable dialog. Before this, pressing Save with an
+    /// unticked box fired a toast saying "tick the box" while the box was off-screen — so the
+    /// button read as simply not working, which is exactly what the live e2e reported.
+    ///
+    /// Never throws: a form must not fail to save because a cosmetic scroll failed. If the JS
+    /// helper is missing (an old cached layout.js) the toast still explains what to do.
+    /// </summary>
+    private async Task ScrollToBlockerAsync(string elementId)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("qmgrLayout.scrollIntoView", elementId);
+        }
+        catch
+        {
+            // Swallowed deliberately and with no logger dependency: the scroll is a courtesy, the
+            // toast is the actual message, and neither is worth failing a save over.
+        }
     }
 
     private async Task SaveRecord(bool asDraft)
@@ -930,7 +1170,19 @@
         planDateError = !asDraft && createModel.CaseType == WelfareCaseType.SupportPlan
                         && createModel.ActionDueDate is null;
 
-        if (categoryError || descriptionError || pointsError || lateEntryWarning || planOwnerError || planDateError)
+        // The late-entry banner is a CONFIRMATION, not a field error, and it is rendered at the
+        // bottom of the dialog — so it needs the same scroll-to treatment as the ungraded one
+        // below rather than being lumped in with "fix the highlighted fields", which points at
+        // nothing the user can see.
+        if (lateEntryWarning)
+        {
+            _pendingScrollTo = "wf-warn-late";
+            NotificationService.Notify(ToastSeverity.Warning, "This looks like a late entry",
+                "Confirm the date is right — there's a checkbox at the bottom of the form.");
+            return;
+        }
+
+        if (categoryError || descriptionError || pointsError || planOwnerError || planDateError)
         {
             NotificationService.Notify(ToastSeverity.Warning, "Validation", "Please fix the highlighted fields");
             return;
@@ -942,8 +1194,27 @@
         if (!asDraft && createModel.ResponseStage == WelfareResponseStage.Punitive
             && escalationCheck?.WouldPrompt == true && !createModel.EscalationAcknowledged)
         {
+            _pendingScrollTo = "wf-warn-escalation";
             NotificationService.Notify(ToastSeverity.Warning, "Nothing softer has been tried",
                 "Tick the box to confirm a punishment is still the right response.");
+            return;
+        }
+
+        // Same shape as the escalation prompt above: asks once, never refuses. Saving without a
+        // response used to be completely silent, and the record then sat outside the student's
+        // "What has been tried" ladder for good — there was no way to grade it afterwards, and
+        // nothing on the form said so. Now there is a way (the Set response action on each card),
+        // so this is a nudge rather than a last chance; "Not decided yet" stays a legitimate
+        // answer for staff logging an incident before anyone has decided what to do about it.
+        ungradedWarning = !asDraft && createModel.ResponseStage == null && !acknowledgeUngraded;
+        if (ungradedWarning)
+        {
+            // Setting ungradedWarning above is what RENDERS the banner, so the scroll has to wait
+            // for that render — hence the deferred flag rather than an inline JS call.
+            _pendingScrollTo = "wf-warn-ungraded";
+
+            NotificationService.Notify(ToastSeverity.Warning, "No response recorded",
+                "This record won't appear in \"What has been tried\". Set one above, or tick the confirmation now shown at the bottom of the form.");
             return;
         }
 
@@ -1056,7 +1327,233 @@
         }
     }
 
+    // ---------------- Grade the response ----------------
+
+    private bool showResponseDialog;
+    private WelfareRecordDto? responseTargetRecord;
+    private WelfareResponseStage? responseStageValue;
+    private string? interpretationAntecedent;
+    private WelfarePerceivedFunction? interpretationFunction;
+
+    private void ShowResponseDialog(WelfareRecordDto record)
+    {
+        responseTargetRecord = record;
+        // Pre-filled from the record because the PATCH is a full replace of all three: posting a
+        // blank field back must mean "clear it", which is only safe if the user was shown what is
+        // there now.
+        responseStageValue = record.ResponseStage;
+        interpretationAntecedent = record.Antecedent;
+        interpretationFunction = record.PerceivedFunction;
+        showResponseDialog = true;
+    }
+
+    private async Task SaveResponseStage()
+    {
+        if (responseTargetRecord == null) return;
+
+        // Nothing to send. Closing quietly beats a success toast for a save that did not happen.
+        var antecedent = string.IsNullOrWhiteSpace(interpretationAntecedent) ? null : interpretationAntecedent.Trim();
+        if (responseStageValue == responseTargetRecord.ResponseStage
+            && interpretationFunction == responseTargetRecord.PerceivedFunction
+            && antecedent == responseTargetRecord.Antecedent)
+        {
+            showResponseDialog = false;
+            return;
+        }
+
+        try
+        {
+            var response = await Http.PatchAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{responseTargetRecord.Id}/interpretation",
+                new UpdateWelfareInterpretationRequest
+                {
+                    ResponseStage = responseStageValue,
+                    Antecedent = antecedent,
+                    PerceivedFunction = interpretationFunction
+                }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                showResponseDialog = false;
+                NotificationService.Notify(ToastSeverity.Success, "Saved",
+                    responseStageValue == null
+                        ? "Interpretation updated."
+                        : $"Response recorded as {responseStageValue}.");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save the interpretation: {ex.Message}");
+        }
+    }
+
     // ---------------- Status, Finalize, Action Assignment ----------------
+
+    // ── Restricted student note ─────────────────────────────────────────────────────────────
+    // Administrator only (welfare.restricted.view). Fetched from its own endpoint rather than
+    // read off the student payload, so an access to genuinely restricted content is a distinct
+    // request in the logs rather than a side effect of opening the page.
+
+    private string? restrictedNotes;
+    private string restrictedDraft = string.Empty;
+    private string? restrictedUpdatedBy;
+    private DateTime? restrictedUpdatedAt;
+    private bool restrictedEditing;
+    private bool restrictedSaving;
+
+    /// <summary>True when a note exists but this caller may not read it — shown to the pastoral tier.</summary>
+    private bool HasRestrictedButCannotRead => !canSetRestricted && (student?.HasRestrictedNotes ?? false);
+
+    private RenderFragment RenderRestrictedNotes() => @<text>
+        @if (canSetRestricted)
+        {
+            <div class="restricted-panel">
+                <div class="restricted-panel-head">
+                    <h3><QIcon Name="shield-lock-fill" /> Restricted notes — administrators only</h3>
+                    @if (!restrictedEditing)
+                    {
+                        <QButton Text="@(string.IsNullOrWhiteSpace(restrictedNotes) ? "Add" : "Edit")" Icon="pencil" Variant="ghost" Size="sm"
+                                 OnClick="@(() => { restrictedDraft = restrictedNotes ?? string.Empty; restrictedEditing = true; })" />
+                    }
+                </div>
+
+                @if (restrictedEditing)
+                {
+                    <textarea @bind="restrictedDraft" maxlength="4000"
+                              placeholder="Something staff must not see. Leave empty to clear the note."></textarea>
+                    <div class="restricted-panel-actions">
+                        <QButton Text="Cancel" Variant="ghost" Size="sm" OnClick="@(() => restrictedEditing = false)" />
+                        <QButton Text="Save" Icon="check-lg" Variant="primary" Size="sm" OnClick="@SaveRestrictedNotes" Disabled="@restrictedSaving" />
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(restrictedNotes))
+                {
+                    <p class="restricted-panel-body">@restrictedNotes</p>
+                    <div class="restricted-panel-meta">
+                        Last updated @(restrictedUpdatedAt?.ToLocalTime().ToString("MMM d, yyyy · h:mm tt") ?? "—")
+                        @(string.IsNullOrWhiteSpace(restrictedUpdatedBy) ? "" : $" by {restrictedUpdatedBy}")
+                    </div>
+                }
+                else
+                {
+                    <p class="restricted-panel-body"><em>No restricted notes for this student.</em></p>
+                }
+            </div>
+        }
+        else if (HasRestrictedButCannotRead)
+        {
+            <div class="restricted-hint">
+                <QIcon Name="shield-lock" />
+                <span>An administrator holds restricted information about this student. Ask them if you need it.</span>
+            </div>
+        }
+    </text>;
+
+    private async Task LoadRestrictedNotesAsync()
+    {
+        if (!canSetRestricted) return;
+        try
+        {
+            var dto = await Http.GetFromJsonAsync<StudentDto>(
+                $"api/v1/branches/{branchId}/students/{StudentId}/restricted-notes", JsonOptions);
+            restrictedNotes = dto?.RestrictedNotes;
+            restrictedUpdatedAt = dto?.RestrictedNotesUpdatedAt;
+            restrictedUpdatedBy = dto?.RestrictedNotesUpdatedByName;
+        }
+        catch
+        {
+            // Not fatal to the page. The panel simply shows "no restricted notes" rather than the
+            // whole timeline failing because one gated read did.
+            restrictedNotes = null;
+        }
+    }
+
+    private async Task SaveRestrictedNotes()
+    {
+        restrictedSaving = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync(
+                $"api/v1/branches/{branchId}/students/{StudentId}/restricted-notes",
+                new UpdateStudentRestrictedNotesRequest { Notes = restrictedDraft }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Saved",
+                    string.IsNullOrWhiteSpace(restrictedDraft) ? "Restricted note cleared." : "Restricted note saved.");
+                restrictedEditing = false;
+                await LoadRestrictedNotesAsync();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save: {ex.Message}");
+        }
+        finally
+        {
+            restrictedSaving = false;
+        }
+    }
+
+    /// <summary>
+    /// Moves a record between visibility rungs. Lowering widens who can read it, so the API
+    /// demands a reason — collected here rather than silently sending an empty one, which would
+    /// just bounce back as a 400 the user could not act on.
+    /// </summary>
+    private async Task ChangeVisibility(WelfareRecordDto record, WelfareVisibility next)
+    {
+        if (next == record.Visibility) return;
+
+        string? reason = null;
+        if (next < record.Visibility)
+        {
+            reason = await JS.InvokeAsync<string?>("prompt",
+                $"Lowering this record from {record.Visibility} to {next} lets more people read it.\n\nWhy?");
+            // Cancelled, or an empty reason — do nothing rather than send a request that will fail.
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                await LoadData(); // put the select back where it was
+                return;
+            }
+        }
+
+        try
+        {
+            var response = await Http.PatchAsJsonAsync(
+                $"api/v1/branches/{branchId}/welfare-records/{record.Id}/visibility",
+                new UpdateWelfareVisibilityRequest { Visibility = next, Reason = reason }, JsonOptions);
+
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Visibility changed",
+                    next == WelfareVisibility.Restricted
+                        ? "This record is now visible to administrators only."
+                        : $"This record is now {next}.");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+                await LoadData();
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to change visibility: {ex.Message}");
+        }
+    }
 
     private async Task ChangeStatus(WelfareRecordDto record, WelfareStatus newStatus)
     {
@@ -1299,6 +1796,7 @@
     private record CaseTypeOption(WelfareCaseType Value, string Label);
     private record TierOption(WelfareTier Value, string Label);
     private record StatusOption(WelfareStatus Value, string Label);
+    private record VisibilityOption(WelfareVisibility Value, string Label);
     private record StageOption(WelfareResponseStage? Value, string Label);
     private record FunctionOption(WelfarePerceivedFunction? Value, string Label);
     private record StaffOption(Guid Id, string Name);

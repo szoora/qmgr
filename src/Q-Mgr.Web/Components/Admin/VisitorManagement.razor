@@ -152,7 +152,7 @@
                                 @visitor.FullName
                                 @if (visitor.IsWatchlisted)
                                 {
-                                    <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                    <WatchlistFlagIcon Name="@visitor.FullName" Reason="@visitor.WatchlistReason" FlaggedAt="@visitor.WatchlistAddedAt" />
                                 }
                             </span>
                             @if (!string.IsNullOrEmpty(visitor.Company))
@@ -234,7 +234,7 @@
     <ChildContent>
         @RenderReturningVisitorSearch(checkInSelectedProfile, checkInSelectedRoster, p => ApplyProfileToCheckIn(p), r => ApplyRosterToCheckIn(r))
         <div class="form-grid">
-            <label>Full Name *<input @bind="checkInModel.FullName" placeholder="Jane Doe" /></label>
+            <label>Full Name *<input @bind="checkInModel.FullName" @bind:event="oninput" @bind:after="@(() => OnNameTyped(checkInModel.FullName, checkInModel.VisitorProfileId))" placeholder="Jane Doe" /></label>
             <label>Company<input @bind="checkInModel.Company" placeholder="SACC Software Limited" /></label>
             <label>Phone<input @bind="checkInModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="checkInModel.Email" placeholder="support@getsacc.com" /></label>
@@ -244,6 +244,7 @@
             <label>Host Name<input @bind="checkInModel.HostName" placeholder="Who are they visiting?" /></label>
             <label class="full-width">Notes<textarea @bind="checkInModel.Notes" rows="2"></textarea></label>
         </div>
+        @RenderDuplicateWarning(p => ApplyProfileToCheckIn(p))
         @RenderPhotoCapture("checkin-photo", url => checkInModel.PhotoUrl = url, checkInModel.PhotoUrl)
         @if (consentRequired)
         {
@@ -296,7 +297,7 @@
     <ChildContent>
         @RenderReturningVisitorSearch(preRegisterSelectedProfile, preRegisterSelectedRoster, p => ApplyProfileToPreRegister(p), r => ApplyRosterToPreRegister(r))
         <div class="form-grid">
-            <label>Full Name *<input @bind="preRegisterModel.FullName" placeholder="Jane Doe" /></label>
+            <label>Full Name *<input @bind="preRegisterModel.FullName" @bind:event="oninput" @bind:after="@(() => OnNameTyped(preRegisterModel.FullName, preRegisterModel.VisitorProfileId))" placeholder="Jane Doe" /></label>
             <label>Company<input @bind="preRegisterModel.Company" placeholder="SACC Software Limited" /></label>
             <label>Phone<input @bind="preRegisterModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="preRegisterModel.Email" placeholder="support@getsacc.com" /></label>
@@ -306,11 +307,51 @@
             <label>Host Name<input @bind="preRegisterModel.HostName" placeholder="Who are they visiting?" /></label>
             <label class="full-width">Notes<textarea @bind="preRegisterModel.Notes" rows="2"></textarea></label>
         </div>
+        @RenderDuplicateWarning(p => ApplyProfileToPreRegister(p))
     </ChildContent>
     <FooterContent>
         <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showPreRegisterModal = false)" />
         <QButton Text="Pre-Register" Icon="calendar-plus" Variant="primary" OnClick="@SubmitPreRegister"
                  Disabled="@(string.IsNullOrWhiteSpace(preRegisterModel.FullName) || string.IsNullOrWhiteSpace(preRegisterModel.Purpose))" />
+    </FooterContent>
+</QModal>
+
+@*
+    Duplicate confirmation. AGGRESSIVE but NEVER blocking, by explicit product decision: two
+    people really can share a name, and a front desk that cannot admit the second one is worse
+    than a register with a duplicate in it. So this interrupts, names the existing record, and
+    makes "use the existing person" the easy default — but "different person" is always there and
+    always works.
+*@
+<QModal @bind-Visible="showDuplicateConfirm" Title="This name is already on file" Icon="exclamation-triangle-fill" Size="sm">
+    <ChildContent>
+        <p class="confirm-message">
+            <strong>@duplicatePendingName</strong> already exists as a visitor record.
+            Checking in again as a new person creates a second record for the same name.
+        </p>
+        <div class="dup-list">
+            @foreach (var d in ExactDuplicates())
+            {
+                <div class="dup-row">
+                    <span class="dup-row__name">
+                        @d.FullName
+                        @if (d.IsWatchlisted)
+                        {
+                            <WatchlistFlagIcon Name="@d.FullName" Reason="@d.WatchlistReason" />
+                        }
+                        @if (d.HasActiveVisit)
+                        {
+                            <span class="dup-row__onsite">On site now</span>
+                        }
+                    </span>
+                    <span class="dup-row__meta">@DuplicateMeta(d)</span>
+                </div>
+            }
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Use the existing record" Icon="person-check-fill" Variant="primary" OnClick="@UseFirstDuplicate" />
+        <QButton Text="Different person — continue" Icon="person-plus" Variant="ghost" OnClick="@ContinueDespiteDuplicate" />
     </FooterContent>
 </QModal>
 
@@ -377,6 +418,96 @@
                 Retention period (days)
                 <input type="number" min="30" max="3650" @bind="retentionSettingsModel.RetentionDays" />
             </label>
+        </div>
+
+        <div class="settings-section">
+            <h3>Reporting Thresholds</h3>
+            <p class="settings-hint">
+                What counts as an exception on the Visitors report. A visit still open past these
+                hours is listed as an overstay; a visitor reaching the visit count is listed as
+                unusually frequent. Neither blocks anything — they decide what gets surfaced.
+            </p>
+            <label>
+                Overstay after (hours)
+                <input type="number" min="1" max="168" @bind="reportingSettingsModel.OverstayThresholdHours" />
+            </label>
+            <label>
+                Contractor overstay after (hours)
+                <input type="number" min="1" max="168" @bind="contractorOverstayHours" />
+            </label>
+            <p class="settings-hint">Contractors on a day permit legitimately stay far longer than a parent on a twenty-minute visit, so they get their own threshold.</p>
+            <label>
+                Frequent visitor from (visits in the report range)
+                <input type="number" min="2" max="100" @bind="reportingSettingsModel.FrequentVisitorThreshold" />
+            </label>
+        </div>
+
+        <div class="settings-section">
+            <h3>Evacuation &amp; Scheduled Reports</h3>
+            <p class="settings-hint">
+                Where the roll call is emailed from the evacuation screen, and which reports go out
+                on their own. A scheduled report is an export that leaves the building on a timer,
+                so editing this needs the same permission as downloading the log by hand.
+            </p>
+            <label class="full-width-label">
+                Evacuation roll call goes to
+                <input type="email" @bind="reportingSettingsModel.EvacuationEmail" placeholder="fire.marshal@yourschool.ac.ug" />
+            </label>
+
+            @if (!canExportReports)
+            {
+                <p class="settings-hint">You do not have the reports.export permission, so scheduled reports are read-only here.</p>
+            }
+
+            @foreach (var sub in reportingSettingsModel.Subscriptions)
+            {
+                <div class="subscription-row">
+                    <div class="subscription-head">
+                        <label class="settings-toggle">
+                            <input type="checkbox" @bind="sub.Enabled" disabled="@(!canExportReports)" />
+                            <span>Enabled</span>
+                        </label>
+                        <QButton Icon="trash" Size="sm" Variant="ghost" Disabled="@(!canExportReports)"
+                                 OnClick="@(() => reportingSettingsModel.Subscriptions.Remove(sub))" />
+                    </div>
+                    <div class="subscription-grid">
+                        <label>
+                            Report
+                            <select @bind="sub.Kind" disabled="@(!canExportReports)">
+                                <option value="@ReportSubscriptionKind.Exceptions">Exceptions — needs attention</option>
+                                <option value="@ReportSubscriptionKind.Summary">Summary — headline figures</option>
+                                <option value="@ReportSubscriptionKind.VisitorLog">Visitor log</option>
+                                <option value="@ReportSubscriptionKind.Compliance">Compliance</option>
+                            </select>
+                        </label>
+                        <label>
+                            How often
+                            <select @bind="sub.Cadence" disabled="@(!canExportReports)">
+                                <option value="@ReportSubscriptionCadence.Daily">Daily</option>
+                                <option value="@ReportSubscriptionCadence.Weekly">Weekly</option>
+                                <option value="@ReportSubscriptionCadence.Monthly">Monthly</option>
+                            </select>
+                        </label>
+                        <label>
+                            Send at (branch time)
+                            <input type="number" min="0" max="23" @bind="sub.SendAtHour" disabled="@(!canExportReports)" />
+                        </label>
+                    </div>
+                    <label class="full-width-label">
+                        Send to
+                        <input type="text" @bind="sub.Recipients" placeholder="one@school.ac.ug, another@school.ac.ug" disabled="@(!canExportReports)" />
+                    </label>
+                    @if (sub.LastSentAt.HasValue)
+                    {
+                        <p class="settings-hint">Last sent @sub.LastSentAt.Value.ToLocalTime().ToString("d MMM yyyy, HH:mm").</p>
+                    }
+                </div>
+            }
+
+            @if (canExportReports)
+            {
+                <QButton Text="Add a scheduled report" Icon="plus-lg" Size="sm" Variant="secondary" OnClick="@AddSubscription" />
+            }
         </div>
     </ChildContent>
     <FooterContent>
@@ -470,14 +601,36 @@
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
-    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-    .summary-card { display: flex; align-items: center; gap: 14px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 18px; }
+    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
+    .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
     .summary-card.alert { border-color: var(--qm-danger); }
-    .card-icon { width: 44px; height: 44px; border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
+    .card-icon { width: var(--qm-statcard-icon); height: var(--qm-statcard-icon); border-radius: var(--qm-radius-full, 50%); display: flex; align-items: center; justify-content: center; font-size: var(--qm-statcard-icon-font); background: var(--qm-primary-light); color: var(--qm-primary); flex-shrink: 0; }
     .card-icon.watchlist { background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); }
     .card-content { display: flex; flex-direction: column; }
-    .card-value { font-size: 24px; font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
-    .card-label { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
+    .card-value { font-size: var(--qm-statcard-value); font-weight: 700; color: var(--qm-text-primary); line-height: 1.1; }
+    .card-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); margin-top: 1px; }
+
+    /* Duplicate-visitor warning — see the RenderDuplicateWarning / duplicate-confirm comments.
+       Amber, not red: this is "look at this before you continue", not "you cannot continue". */
+    .dup-warning { border: 1px solid rgba(var(--qm-warning-rgb), 0.45); background: rgba(var(--qm-warning-rgb), 0.08); border-radius: var(--qm-radius-md); padding: 12px 14px; margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .dup-warning--strong { border-color: var(--qm-warning); background: rgba(var(--qm-warning-rgb), 0.14); }
+    .dup-warning__head { margin: 0; font-size: 13px; font-weight: 600; color: var(--qm-text-primary); display: flex; align-items: flex-start; gap: 8px; }
+    .dup-warning__head .q-icon { color: var(--qm-warning); flex-shrink: 0; margin-top: 1px; }
+
+    .dup-list { display: flex; flex-direction: column; gap: 8px; }
+    .dup-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 8px 10px; }
+    .dup-row__name { font-weight: 600; font-size: 13px; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
+    .dup-row__meta { font-size: 12px; color: var(--qm-text-muted); flex: 1; min-width: 120px; }
+    .dup-row__onsite { font-size: 11px; font-weight: 600; color: var(--qm-success); border: 1px solid var(--qm-success); border-radius: var(--qm-radius-full, 999px); padding: 1px 8px; }
+
+    .subscription-row { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 12px; margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .subscription-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .subscription-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .subscription-grid label, .subscription-row .full-width-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--qm-text-muted); }
+    .subscription-grid select, .subscription-grid input, .subscription-row .full-width-label input {
+        padding: 6px 9px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px;
+    }
 
     .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .filter-tab { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--qm-border); background: var(--qm-bg-card); color: var(--qm-text-muted); font-size: 13px; cursor: pointer; }
@@ -710,6 +863,26 @@
     private List<VisitorProfileSearchResultDto> searchResults = new();
     private CancellationTokenSource? searchDebounce;
 
+    // ---- Duplicate visitor detection -------------------------------------------------------
+    // The server already merges a repeat visitor onto their existing profile when the form
+    // carries an email, a phone or an ID number (VisitorsController.FindOrCreateProfileAsync).
+    // What it deliberately will NOT do is match on name — a name is not an identity, and merging
+    // two different people who happen to share one is unrecoverable. The consequence is that a
+    // name-only walk-in creates a brand-new profile EVERY time, which is how four separate
+    // "Mucunguzi" records ended up on one branch, two of them simultaneously on site.
+    //
+    // The fix belongs here rather than in the matcher: show the operator — who can actually tell
+    // the two apart — what already exists, and make reusing it one click. Warning only, never a
+    // block; see the duplicate-confirmation modal above for why.
+    private List<VisitorProfileSearchResultDto> duplicateCandidates = new();
+    private CancellationTokenSource? duplicateDebounce;
+    private string duplicatePendingName = "";
+    /// <summary>The name the operator has already said belongs to a different person.</summary>
+    private string? duplicateAcknowledgedFor;
+    private bool showDuplicateConfirm;
+    private Action<VisitorProfileSearchResultDto>? duplicateApply;
+    private Func<Task>? duplicatePendingSubmit;
+
     // Which modal (by idPrefix) currently has its camera live, if any — only one at a time.
     private string? photoCapturingFor;
 
@@ -722,6 +895,15 @@
     private VisitorConsentSettingsDto consentSettingsModel = new();
     private VisitorRetentionSettingsDto retentionSettingsModel = new();
     private VisitingDaySettingsDto visitingDaySettingsModel = new();
+    private VisitorReportingSettingsDto reportingSettingsModel = new();
+    private bool canExportReports;
+
+    /// <summary>
+    /// Bound separately because the DTO's field is nullable ("use the general threshold") and a
+    /// number input cannot express null. Reconciled on save.
+    /// </summary>
+    private int contractorOverstayHours = 12;
+
     private Guid organizationId;
 
     private bool showPassesModal;
@@ -738,6 +920,7 @@
         }
 
         canCheckOut = await PermissionService.HasPermissionAsync(Permissions.VisitorsCheckOut);
+        canExportReports = await PermissionService.HasPermissionAsync(Permissions.ReportsExport);
 
         await ModuleState.LoadAsync(ModuleApi);
         if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))
@@ -798,6 +981,7 @@
         checkInSelectedRoster = null;
         checkInConsentGiven = false;
         ClearSearch();
+        ResetDuplicateState();
         showCheckInModal = true;
     }
 
@@ -815,6 +999,7 @@
         preRegisterSelectedRoster = null;
         ClearSearch();
         scheduledAtLocal = DateTime.Now.AddMinutes(30);
+        ResetDuplicateState();
         showPreRegisterModal = true;
     }
 
@@ -834,6 +1019,8 @@
         checkInModel.Email = p.Email;
         checkInModel.Company = p.Company;
         checkInModel.IdNumber = p.IdNumber;
+        duplicatePendingName = p.FullName;
+        duplicateCandidates = new();
         ClearSearch();
     }
 
@@ -876,8 +1063,174 @@
         preRegisterModel.Email = p.Email;
         preRegisterModel.Company = p.Company;
         preRegisterModel.IdNumber = p.IdNumber;
+        duplicatePendingName = p.FullName;
+        duplicateCandidates = new();
         ClearSearch();
     }
+
+    /// <summary>
+    /// Collapses a name to the form two spellings of the same person share: case-folded, outer
+    /// whitespace gone, runs of inner whitespace flattened to one space. Deliberately NOT a fuzzy
+    /// match — this drives a warning the operator reads, and a warning that fires on merely
+    /// similar names is one they learn to click through without reading.
+    /// </summary>
+    private static string NormalizeName(string? name) =>
+        string.Join(" ", (name ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+
+    /// <summary>Candidates whose name is, character for character, the one being typed.</summary>
+    private List<VisitorProfileSearchResultDto> ExactDuplicates()
+    {
+        var typed = NormalizeName(duplicatePendingName);
+        if (typed.Length == 0) return new();
+        return duplicateCandidates.Where(c => NormalizeName(c.FullName) == typed).ToList();
+    }
+
+    /// <summary>Candidates the name search matched but which are not a straight match.</summary>
+    private List<VisitorProfileSearchResultDto> SimilarDuplicates()
+    {
+        var typed = NormalizeName(duplicatePendingName);
+        if (typed.Length == 0) return new();
+        return duplicateCandidates.Where(c => NormalizeName(c.FullName) != typed).ToList();
+    }
+
+    private static string DuplicateMeta(VisitorProfileSearchResultDto d)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(d.Company)) parts.Add(d.Company!);
+        var contact = d.Phone ?? d.Email;
+        if (!string.IsNullOrWhiteSpace(contact)) parts.Add(contact!);
+        parts.Add(d.TotalVisits == 1 ? "1 visit" : $"{d.TotalVisits} visits");
+        if (d.LastVisitAt.HasValue) parts.Add($"last {d.LastVisitAt.Value:MMM dd}");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Runs as the operator types in either modal’s Full Name field. Skipped entirely once a
+    /// profile has been picked from the search box — at that point they have already told us which
+    /// person this is, and warning them about the very record they chose would be noise.
+    /// </summary>
+    private async Task OnNameTyped(string? name, Guid? selectedProfileId)
+    {
+        duplicatePendingName = name ?? "";
+        // The name changed, so an earlier "different person" decision no longer applies to it.
+        if (duplicateAcknowledgedFor != null && NormalizeName(duplicateAcknowledgedFor) != NormalizeName(duplicatePendingName))
+            duplicateAcknowledgedFor = null;
+
+        duplicateDebounce?.Cancel();
+
+        if (selectedProfileId.HasValue || NormalizeName(duplicatePendingName).Length < 3)
+        {
+            duplicateCandidates = new();
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        duplicateDebounce = cts;
+        try
+        {
+            await Task.Delay(400, cts.Token);
+            var matches = await VisitorApi.SearchVisitorProfilesAsync(branchId, duplicatePendingName.Trim());
+            cts.Token.ThrowIfCancellationRequested();
+            duplicateCandidates = matches;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException) { /* superseded by a newer keystroke */ }
+        catch (OperationCanceledException) { /* superseded by a newer keystroke */ }
+        catch { /* a duplicate hint is an assist, not a gate — never surface its own failure */ }
+    }
+
+    private void ResetDuplicateState()
+    {
+        duplicateDebounce?.Cancel();
+        duplicateCandidates = new();
+        duplicatePendingName = "";
+        duplicateAcknowledgedFor = null;
+        showDuplicateConfirm = false;
+        duplicateApply = null;
+        duplicatePendingSubmit = null;
+    }
+
+    private void UseFirstDuplicate()
+    {
+        var first = ExactDuplicates().FirstOrDefault();
+        showDuplicateConfirm = false;
+        duplicatePendingSubmit = null;
+        if (first == null || duplicateApply == null) return;
+        duplicateApply(first);
+        duplicateCandidates = new();
+    }
+
+    private async Task ContinueDespiteDuplicate()
+    {
+        duplicateAcknowledgedFor = duplicatePendingName;
+        showDuplicateConfirm = false;
+        var submit = duplicatePendingSubmit;
+        duplicatePendingSubmit = null;
+        if (submit != null) await submit();
+    }
+
+    /// <summary>
+    /// True when the operator should be interrupted: an existing record carries exactly this
+    /// name, they did not pick it from the search box, and they have not already said this is
+    /// somebody else.
+    /// </summary>
+    private bool NeedsDuplicateConfirmation(Guid? selectedProfileId) =>
+        !selectedProfileId.HasValue
+        && ExactDuplicates().Any()
+        && NormalizeName(duplicateAcknowledgedFor) != NormalizeName(duplicatePendingName);
+
+    /// <summary>
+    /// The inline banner. Visible the whole time matches exist — this is the part that stops the
+    /// duplicate being created at all, rather than asking about it once at the end.
+    /// </summary>
+    private RenderFragment RenderDuplicateWarning(Action<VisitorProfileSearchResultDto> onUse) => __builder =>
+    {
+        var exact = ExactDuplicates();
+        var similar = SimilarDuplicates();
+        if (!exact.Any() && !similar.Any()) return;
+
+        <div class="dup-warning @(exact.Any() ? "dup-warning--strong" : "")">
+            <p class="dup-warning__head">
+                <QIcon Name="exclamation-triangle-fill" />
+                @if (exact.Any())
+                {
+                    <text>@DuplicateHeadline(exact.Count, true)</text>
+                }
+                else
+                {
+                    <text>@DuplicateHeadline(similar.Count, false)</text>
+                }
+            </p>
+            <div class="dup-list">
+                @foreach (var d in exact.Concat(similar))
+                {
+                    <div class="dup-row">
+                        <span class="dup-row__name">
+                            @d.FullName
+                            @if (d.IsWatchlisted)
+                            {
+                                <WatchlistFlagIcon Name="@d.FullName" Reason="@d.WatchlistReason" />
+                            }
+                            @if (d.HasActiveVisit)
+                            {
+                                <span class="dup-row__onsite">On site now</span>
+                            }
+                        </span>
+                        <span class="dup-row__meta">@DuplicateMeta(d)</span>
+                        <QButton Text="Use this person" Icon="person-check-fill" Size="sm" Variant="secondary" OnClick="@(() => { onUse(d); duplicateCandidates = new(); })" />
+                    </div>
+                }
+            </div>
+        </div>
+    };
+
+    private static string DuplicateHeadline(int count, bool exact) => exact
+        ? (count == 1
+            ? "An existing record already uses this exact name. Reuse it instead of creating a duplicate."
+            : $"{count} existing records already use this exact name. Reuse one instead of creating a duplicate.")
+        : (count == 1
+            ? "A similar name is already on file — check this is not the same person."
+            : $"{count} similar names are already on file — check this is not the same person.");
 
     private async Task OnSearchInput(ChangeEventArgs e)
     {
@@ -983,7 +1336,7 @@
                                     @p.FullName
                                     @if (p.IsWatchlisted)
                                     {
-                                        <QIcon Name="shield-exclamation" Class="watchlist-flag" />
+                                        <WatchlistFlagIcon Name="@p.FullName" Reason="@p.WatchlistReason" />
                                     }
                                     @if (p.HasActiveVisit)
                                     {
@@ -1040,6 +1393,14 @@
 
     private async Task SubmitCheckIn()
     {
+        if (NeedsDuplicateConfirmation(checkInModel.VisitorProfileId))
+        {
+            duplicateApply = p => ApplyProfileToCheckIn(p);
+            duplicatePendingSubmit = SubmitCheckIn;
+            showDuplicateConfirm = true;
+            return;
+        }
+
         try
         {
             if (CardNeedsOverride(checkInSelectedRoster))
@@ -1053,6 +1414,7 @@
             await StopPhotoCamera();
             showCheckInModal = false;
             checkInOverrideReason = "";
+            ResetDuplicateState();
             await LoadData();
             await ShowBadge(result);
         }
@@ -1064,12 +1426,21 @@
 
     private async Task SubmitPreRegister()
     {
+        if (NeedsDuplicateConfirmation(preRegisterModel.VisitorProfileId))
+        {
+            duplicateApply = p => ApplyProfileToPreRegister(p);
+            duplicatePendingSubmit = SubmitPreRegister;
+            showDuplicateConfirm = true;
+            return;
+        }
+
         try
         {
             var request = preRegisterModel with { ScheduledAt = scheduledAtLocal?.ToUniversalTime() };
             var result = await VisitorApi.PreRegisterAsync(branchId, request);
             NotificationService.Notify(ToastSeverity.Success, "Success", $"{result.FullName} pre-registered — badge {result.BadgeCode}");
             showPreRegisterModal = false;
+            ResetDuplicateState();
             await LoadData();
         }
         catch (InvalidOperationException ex)
@@ -1197,6 +1568,22 @@
         }
     }
 
+    /// <summary>
+    /// New subscriptions default to the daily exceptions digest at 18:00, because that is the one
+    /// worth having: "who is still on site as the building closes" is the question this whole
+    /// module exists to answer, and it is useless if somebody has to remember to go and look.
+    /// </summary>
+    private void AddSubscription()
+    {
+        reportingSettingsModel.Subscriptions.Add(new ReportSubscriptionDto
+        {
+            Kind = ReportSubscriptionKind.Exceptions,
+            Cadence = ReportSubscriptionCadence.Daily,
+            SendAtHour = 18,
+            Enabled = true
+        });
+    }
+
     private async Task OpenSettingsModal()
     {
         consentSettingsModel = await VisitorApi.GetConsentSettingsAsync(branchId);
@@ -1208,6 +1595,8 @@
             CardCheckInWarningThreshold = visitingDaySettings.CardCheckInWarningThreshold,
             NotifyGuardianOnCheckIn = visitingDaySettings.NotifyGuardianOnCheckIn
         };
+        reportingSettingsModel = await VisitorApi.GetReportingSettingsAsync(branchId);
+        contractorOverstayHours = reportingSettingsModel.ContractorOverstayThresholdHours ?? reportingSettingsModel.OverstayThresholdHours;
         showSettingsModal = true;
     }
 
@@ -1227,6 +1616,23 @@
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", "Card check-in threshold must be at least 1");
             return;
+        }
+
+        reportingSettingsModel.ContractorOverstayThresholdHours = contractorOverstayHours;
+
+        if (canExportReports)
+        {
+            try
+            {
+                reportingSettingsModel = await VisitorApi.UpdateReportingSettingsAsync(branchId, reportingSettingsModel);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Surfaced rather than swallowed: a bad recipient address discovered by a 3am
+                // background job is a silent failure nobody sees.
+                NotificationService.Notify(ToastSeverity.Error, "Couldn't save the reporting settings", ex.Message);
+                return;
+            }
         }
 
         var consentResult = await VisitorApi.UpdateConsentSettingsAsync(branchId, consentSettingsModel);

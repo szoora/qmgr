@@ -19,7 +19,7 @@
         <div class="header-actions">
             @if (canEdit)
             {
-                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@isSaving" />
+                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || loadFailed)" />
             }
         </div>
     </div>
@@ -331,6 +331,8 @@
 @code {
     private bool isLoading = true;
     private bool isSaving = false;
+    /// <summary>Latched when a settings load fails. Blocks Save so defaults cannot silently overwrite real settings — see LoadSettings.</summary>
+    private bool loadFailed = false;
     private bool canEdit = false;
     private Guid BranchId => BranchState.CurrentBranchId;
 
@@ -370,10 +372,23 @@
                         AutoPrintBeforeRedirect = dto.AutoPrintBeforeRedirect
                     };
                 }
+                loadFailed = false;
+            }
+            else
+            {
+                // A failed load used to be completely silent, which is dangerous rather than
+                // merely untidy: the form stays on its defaults, which is indistinguishable from
+                // "nothing configured yet" — and pressing Save then overwrites the branch's real
+                // settings with those defaults. So the failure is both announced and latched, and
+                // Save is disabled until a load succeeds.
+                loadFailed = true;
+                NotificationService.Notify(ToastSeverity.Error, "Could not load kiosk settings",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The saved settings could not be read."));
             }
         }
         catch (Exception ex)
         {
+            loadFailed = true;
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
         }
         finally

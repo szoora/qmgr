@@ -210,7 +210,9 @@
                         {
                             <span class="attachment-selected">
                                 <QIcon Name="paperclip" /> @f.Name (@FormatFileSize(f.Size))
-                                <button type="button" class="attachment-remove" @onclick="@(() => selectedAttachmentFiles.Remove(f))"><QIcon Name="x-circle-fill" /></button>
+                                @* Names the file: a row of identical "Remove" buttons is unusable
+                                   when the only thing telling them apart is position on screen. *@
+                                <button type="button" class="attachment-remove" aria-label="@($"Remove attachment {f.Name}")" @onclick="@(() => selectedAttachmentFiles.Remove(f))"><QIcon Name="x-circle-fill" /></button>
                             </span>
                         }
                     </div>
@@ -261,7 +263,7 @@
     .tab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border: none; background: none; color: var(--qm-text-muted); font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; }
     .tab.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); font-weight: 600; }
 
-    .section-actions { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+    .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 16px; }
 
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .empty-state .q-icon { font-size: 40px; opacity: 0.5; }

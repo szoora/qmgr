@@ -120,6 +120,25 @@ public class Student : BaseEntity
     [MaxLength(500)]
     public string? DataConsentNotes { get; set; }
 
+    // ---------------------------------------------------------------------------------------
+    // Restricted note — administrator only, gated behind welfare.restricted.view and blanked
+    // server-side for everyone else (never merely hidden in the markup).
+    //
+    // "This child's living situation is confidential", "do not discuss the father's case in front
+    // of staff" — current-state knowledge that is neither an incident nor a standing flag, and had
+    // nowhere to live. Three nullable columns on a row that already exists, the same shape the
+    // welfare-background fields above already use, rather than a fourth welfare table.
+    //
+    // Deliberately no history: it is current state, and anything needing a chronology belongs in
+    // the ledger, which is append-only precisely so it can carry one.
+    // ---------------------------------------------------------------------------------------
+
+    [MaxLength(4000)]
+    public string? RestrictedNotes { get; set; }
+
+    public DateTime? RestrictedNotesUpdatedAt { get; set; }
+    public Guid? RestrictedNotesUpdatedByUserId { get; set; }
+
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }
     public virtual ICollection<StudentGuardian> Guardians { get; set; } = new List<StudentGuardian>();

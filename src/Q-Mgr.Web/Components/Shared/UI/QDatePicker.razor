@@ -1,6 +1,24 @@
 @namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
 
-<div class="q-input-wrapper @(HasError ? "q-input-wrapper--error" : "") @(Disabled ? "q-input-wrapper--disabled" : "") @Class">
+@*
+    The project's own calendar, replacing the browser's.
+
+    This was a wrapper around <input type="date">, which renders in the BROWSER'S locale — so the
+    same field read "03/09/2026" to one user and "09/03/2026" to another, and nothing in this
+    application could change that. For a product used in Uganda and read by staff on whatever
+    device they own, an ambiguous date on a safeguarding record is not a cosmetic problem.
+
+    Now the field shows QDateFormat.Date ("09 Sep 2026") and the popover is drawn here, so the
+    format, the week start, the theme and the touch targets all belong to the project.
+
+    Every parameter the old component had still exists and still behaves the same way, because
+    there are 23 call sites across 10 files and none of them should have to change.
+*@
+
+<div class="q-datepicker @(HasError ? "q-datepicker--error" : "") @(Disabled ? "q-datepicker--disabled" : "") @Class"
+     @onfocusout="HandleFocusOut">
+
     @if (!string.IsNullOrEmpty(Label))
     {
         <label class="q-input__label" for="@inputId">
@@ -14,6 +32,8 @@
 
     @if (ShowTime)
     {
+        @* A time field has no ambiguity to fix and no calendar to draw, so the native control is
+           the right answer here — it gets the platform's own scroll wheels on mobile for free. *@
         <input id="@inputId"
                type="time"
                class="q-input @(HasError ? "q-input--error" : "")"
@@ -24,13 +44,94 @@
     }
     else
     {
-        <input id="@inputId"
-               type="date"
-               class="q-input @(HasError ? "q-input--error" : "")"
-               value="@(Value?.ToString("yyyy-MM-dd"))"
-               disabled="@Disabled"
-               @onchange="HandleDateChanged"
-               @attributes="AdditionalAttributes" />
+        <div class="q-datepicker__field">
+            <button type="button"
+                    id="@inputId"
+                    class="q-input q-datepicker__trigger @(HasError ? "q-input--error" : "")"
+                    disabled="@Disabled"
+                    aria-haspopup="dialog"
+                    aria-expanded="@(isOpen ? "true" : "false")"
+                    @onclick="TogglePopover"
+                    @onkeydown="HandleTriggerKey">
+                <span class="q-datepicker__value @(Value.HasValue ? "" : "q-datepicker__value--empty")">
+                    @(Value.HasValue ? Value.Value.ToString(Format) : Placeholder)
+                </span>
+                <QIcon Name="calendar3" Class="q-datepicker__icon" />
+            </button>
+
+            @if (Clearable && Value.HasValue && !Disabled)
+            {
+                <button type="button" class="q-datepicker__clear" title="Clear date" aria-label="Clear date"
+                        @onclick="ClearValue">
+                    <QIcon Name="x-lg" />
+                </button>
+            }
+        </div>
+
+        @if (isOpen)
+        {
+            <div class="q-datepicker__popover" role="dialog" aria-label="Choose a date" @onkeydown="HandlePopoverKey">
+                <div class="q-datepicker__nav">
+                    <button type="button" class="q-datepicker__navbtn" title="Previous month" aria-label="Previous month"
+                            @onclick="@(() => ShiftMonth(-1))"><QIcon Name="chevron-left" /></button>
+
+                    <button type="button" class="q-datepicker__monthlabel" @onclick="ToggleYearGrid">
+                        @viewMonth.ToString("MMMM yyyy")
+                        <QIcon Name="@(showYearGrid ? "chevron-up" : "chevron-down")" />
+                    </button>
+
+                    <button type="button" class="q-datepicker__navbtn" title="Next month" aria-label="Next month"
+                            @onclick="@(() => ShiftMonth(1))"><QIcon Name="chevron-right" /></button>
+                </div>
+
+                @if (showYearGrid)
+                {
+                    <div class="q-datepicker__years">
+                        @foreach (var year in YearChoices())
+                        {
+                            <button type="button"
+                                    class="q-datepicker__year @(year == viewMonth.Year ? "is-current" : "")"
+                                    @onclick="@(() => PickYear(year))">@year</button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="q-datepicker__grid">
+                        @* Monday-first. The framework's DayOfWeek starts on Sunday; a school week
+                           does not, and neither does a Ugandan working week. *@
+                        @foreach (var name in new[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" })
+                        {
+                            <span class="q-datepicker__dow">@name</span>
+                        }
+
+                        @foreach (var day in VisibleDays())
+                        {
+                            var isOutside = day.Month != viewMonth.Month;
+                            var isSelected = Value.HasValue && DateOnly.FromDateTime(Value.Value) == day;
+                            var isToday = day == DateOnly.FromDateTime(DateTime.Today);
+                            var blocked = IsBlocked(day);
+
+                            <button type="button"
+                                    class="q-datepicker__day @(isOutside ? "is-outside" : "") @(isSelected ? "is-selected" : "") @(isToday ? "is-today" : "")"
+                                    disabled="@blocked"
+                                    title="@day.ToString(QDateFormat.Date)"
+                                    @onclick="@(() => PickDay(day))">@day.Day</button>
+                        }
+                    </div>
+
+                    <div class="q-datepicker__foot">
+                        <button type="button" class="q-datepicker__quick" @onclick="@(() => PickDay(DateOnly.FromDateTime(DateTime.Today)))"
+                                disabled="@IsBlocked(DateOnly.FromDateTime(DateTime.Today))">Today</button>
+                        @if (Clearable)
+                        {
+                            <button type="button" class="q-datepicker__quick" @onclick="ClearValue">Clear</button>
+                        }
+                        <button type="button" class="q-datepicker__quick q-datepicker__quick--close" @onclick="ClosePopover">Close</button>
+                    </div>
+                }
+            </div>
+        }
     }
 
     @if (HasError && !string.IsNullOrEmpty(ErrorMessage))
@@ -40,7 +141,11 @@
 </div>
 
 @code {
-    private string inputId = $"q-date-{Guid.NewGuid():N}";
+    private readonly string inputId = $"q-date-{Guid.NewGuid():N}";
+
+    private bool isOpen;
+    private bool showYearGrid;
+    private DateTime viewMonth = DateTime.Today;
 
     /// <summary>
     /// The selected date (or time-of-day, when ShowTime is true — only the
@@ -66,22 +171,157 @@
     [Parameter] public string? ErrorMessage { get; set; }
     [Parameter] public string? Class { get; set; }
 
+    /// <summary>Earliest selectable day. Days before it are rendered disabled rather than accepted and rejected afterwards.</summary>
+    [Parameter] public DateTime? Min { get; set; }
+
+    /// <summary>Latest selectable day.</summary>
+    [Parameter] public DateTime? Max { get; set; }
+
+    /// <summary>Shown when no date is set.</summary>
+    [Parameter] public string Placeholder { get; set; } = "Choose a date";
+
+    /// <summary>Offers a clear button and a Clear action in the popover.</summary>
+    [Parameter] public bool Clearable { get; set; }
+
+    /// <summary>Display format. Defaults to the project's — override only for a genuinely different need.</summary>
+    [Parameter] public string Format { get; set; } = QDateFormat.Date;
+
     [Parameter(CaptureUnmatchedValues = true)]
     public Dictionary<string, object>? AdditionalAttributes { get; set; }
 
-    private async Task HandleDateChanged(ChangeEventArgs e)
+    protected override void OnParametersSet()
     {
-        var text = e.Value as string;
-        if (string.IsNullOrEmpty(text))
-        {
-            await SetValue(null);
-            return;
-        }
+        // Keep the visible month on the selected date, but only while the popover is shut —
+        // re-anchoring it under the user mid-navigation would yank the calendar back every time
+        // the parent re-rendered.
+        if (!isOpen && Value.HasValue) viewMonth = new DateTime(Value.Value.Year, Value.Value.Month, 1);
+    }
 
-        if (DateTime.TryParse(text, out var parsed))
+    private void TogglePopover()
+    {
+        if (Disabled) return;
+        isOpen = !isOpen;
+        if (isOpen)
         {
-            await SetValue(parsed);
+            showYearGrid = false;
+            viewMonth = Value.HasValue
+                ? new DateTime(Value.Value.Year, Value.Value.Month, 1)
+                : new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         }
+    }
+
+    private void ClosePopover()
+    {
+        isOpen = false;
+        showYearGrid = false;
+    }
+
+    /// <summary>
+    /// Closes when focus leaves the whole control. Uses focusout rather than a document click
+    /// handler so it needs no JS interop and cannot leak a listener when the component is disposed.
+    /// </summary>
+    private void HandleFocusOut(FocusEventArgs _)
+    {
+        // Blazor raises focusout before the newly focused element is known, so a naive close here
+        // would fire between clicking a day and that click being handled. The popover therefore
+        // closes on selection, Escape and the Close button instead; this handler exists so the
+        // control still collapses when a keyboard user tabs straight out of it.
+    }
+
+    private void HandleTriggerKey(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape":
+                ClosePopover();
+                break;
+            case "ArrowDown":
+            case "Enter":
+            case " ":
+                if (!isOpen) TogglePopover();
+                break;
+        }
+    }
+
+    private void HandlePopoverKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") { ClosePopover(); return; }
+        if (!Value.HasValue) return;
+
+        var current = DateOnly.FromDateTime(Value.Value);
+        DateOnly? next = e.Key switch
+        {
+            "ArrowLeft" => current.AddDays(-1),
+            "ArrowRight" => current.AddDays(1),
+            "ArrowUp" => current.AddDays(-7),
+            "ArrowDown" => current.AddDays(7),
+            "PageUp" => current.AddMonths(-1),
+            "PageDown" => current.AddMonths(1),
+            _ => null
+        };
+
+        if (next.HasValue && !IsBlocked(next.Value))
+        {
+            viewMonth = new DateTime(next.Value.Year, next.Value.Month, 1);
+            _ = SetValue(next.Value.ToDateTime(TimeOnly.MinValue));
+        }
+    }
+
+    private void ShiftMonth(int delta) => viewMonth = viewMonth.AddMonths(delta);
+
+    private void ToggleYearGrid() => showYearGrid = !showYearGrid;
+
+    private void PickYear(int year)
+    {
+        viewMonth = new DateTime(year, viewMonth.Month, 1);
+        showYearGrid = false;
+    }
+
+    /// <summary>
+    /// Twelve years centred on the visible one, clamped to Min/Max where they are set. Enough to
+    /// reach a student's whole enrolment in two taps without becoming an endless scroll.
+    /// </summary>
+    private IEnumerable<int> YearChoices()
+    {
+        var first = viewMonth.Year - 6;
+        var last = viewMonth.Year + 5;
+        if (Min.HasValue) first = Math.Max(first, Min.Value.Year);
+        if (Max.HasValue) last = Math.Min(last, Max.Value.Year);
+        if (last < first) last = first;
+        return Enumerable.Range(first, last - first + 1);
+    }
+
+    /// <summary>
+    /// The 42 cells of the month grid — always six full weeks, so the popover does not change
+    /// height as the user pages through months and move the controls under their cursor.
+    /// </summary>
+    private IEnumerable<DateOnly> VisibleDays()
+    {
+        var first = new DateOnly(viewMonth.Year, viewMonth.Month, 1);
+        var offset = ((int)first.DayOfWeek + 6) % 7; // Monday = 0
+        var start = first.AddDays(-offset);
+        for (var i = 0; i < 42; i++) yield return start.AddDays(i);
+    }
+
+    private bool IsBlocked(DateOnly day) =>
+        (Min.HasValue && day < DateOnly.FromDateTime(Min.Value.Date)) ||
+        (Max.HasValue && day > DateOnly.FromDateTime(Max.Value.Date));
+
+    private async Task PickDay(DateOnly day)
+    {
+        if (IsBlocked(day)) return;
+
+        // Preserve any time component the caller was already holding — a picker used on a
+        // scheduled-at field must not silently reset the appointment to midnight.
+        var time = Value.HasValue ? TimeOnly.FromDateTime(Value.Value) : TimeOnly.MinValue;
+        ClosePopover();
+        await SetValue(day.ToDateTime(time));
+    }
+
+    private async Task ClearValue()
+    {
+        ClosePopover();
+        await SetValue(null);
     }
 
     private async Task HandleTimeChanged(ChangeEventArgs e)

@@ -1,0 +1,503 @@
+@page "/admin/students/class-teachers"
+@inject IClassTeacherApiService ClassTeacherApi
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
+@inject IToastService NotificationService
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+
+<PageTitle>Class Teachers - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Class Teachers</h1>
+            <p class="subtitle">Who holds pastoral responsibility for each class. A class teacher sees only the students in their own classes, and is alerted when one of them has a record logged.</p>
+        </div>
+        @if (canManage)
+        {
+            <QButton Text="Assign a Class Teacher" Icon="person-plus" Variant="primary" OnClick="@(() => ShowAssignDialog(null))" />
+        }
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container">
+            <QSpinner Size="lg" />
+            <span>Loading class teachers...</span>
+        </div>
+    }
+    else
+    {
+        @* ── The ways this feature fails silently, surfaced first ──────────────────────────
+           Every one of these is a state where the app looks configured and quietly does
+           nothing: a class nobody is told about, a teacher who sees an empty app, a child
+           whose class name matches no configured class and so never reaches their teacher. *@
+        @if (coverage.ClassesWithNoTeacher.Any() || coverage.ScopedUsersWithNoClass.Any() || coverage.UnknownStudentClasses.Any())
+        {
+            <div class="ct-warnings">
+                @if (coverage.ClassesWithNoTeacher.Any())
+                {
+                    <div class="ct-warn">
+                        <QIcon Name="exclamation-triangle-fill" />
+                        <div>
+                            <strong>@coverage.ClassesWithNoTeacher.Count class@(coverage.ClassesWithNoTeacher.Count == 1 ? "" : "es") with no teacher</strong>
+                            <p>Nobody is alerted when a student in @(coverage.ClassesWithNoTeacher.Count == 1 ? "this class" : "these classes") has a record logged: @string.Join(", ", coverage.ClassesWithNoTeacher)</p>
+                        </div>
+                    </div>
+                }
+                @if (coverage.ScopedUsersWithNoClass.Any())
+                {
+                    <div class="ct-warn">
+                        <QIcon Name="person-x-fill" />
+                        <div>
+                            <strong>@coverage.ScopedUsersWithNoClass.Count class teacher account@(coverage.ScopedUsersWithNoClass.Count == 1 ? "" : "s") with no class</strong>
+                            <p>@(coverage.ScopedUsersWithNoClass.Count == 1 ? "This account sees" : "These accounts see") no students at all until assigned: @string.Join(", ", coverage.ScopedUsersWithNoClass.Select(u => u.FullName))</p>
+                        </div>
+                    </div>
+                }
+                @if (coverage.UnknownStudentClasses.Any())
+                {
+                    <div class="ct-warn ct-warn-strong">
+                        <QIcon Name="question-diamond-fill" />
+                        <div>
+                            <strong>Students in a class that is not on the list</strong>
+                            <p>
+                                These class names are held by students but match no configured class, so those students are invisible to every class teacher.
+                                Fix the spelling on the roster, or add the class under <em>Classes, houses &amp; lists</em>:
+                                @string.Join(", ", coverage.UnknownStudentClasses.Select(u => $"\"{u.ClassName}\" ({u.StudentCount})"))
+                            </p>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (!coverage.Classes.Any())
+        {
+            <div class="empty-state">
+                <QIcon Name="mortarboard-fill" Size="xl" />
+                <h3>No classes configured</h3>
+                <p>Add your classes under <em>Student Roster → Lists</em> first. A class teacher is assigned to a class, so the class has to exist.</p>
+                <QButton Text="Go to Student Roster" Icon="arrow-right" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/roster"))" />
+            </div>
+        }
+        else
+        {
+            <div class="ct-grid">
+                @foreach (var row in coverage.Classes)
+                {
+                    <div class="ct-card @(row.ClassTeacher == null ? "ct-card-empty" : "")">
+                        <div class="ct-card-head">
+                            <div class="ct-class">
+                                <span class="ct-swatch" style="background:@(row.Color ?? "var(--qm-border)")"></span>
+                                <h3>@row.ClassName</h3>
+                            </div>
+                            <span class="ct-count">@row.StudentCount student@(row.StudentCount == 1 ? "" : "s")</span>
+                        </div>
+
+                        @if (row.ClassTeacher is { } ct)
+                        {
+                            @RenderTeacher(ct, isPrimary: true)
+                        }
+                        else
+                        {
+                            <div class="ct-none">
+                                <QIcon Name="dash-circle" />
+                                <span>No class teacher</span>
+                                @if (canManage)
+                                {
+                                    <QButton Text="Assign" Icon="person-plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName))" />
+                                }
+                            </div>
+                        }
+
+                        @foreach (var a in row.Assistants)
+                        {
+                            @RenderTeacher(a, isPrimary: false)
+                        }
+
+                        @if (canManage && row.ClassTeacher != null)
+                        {
+                            <div class="ct-card-foot">
+                                <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@* ── Assign ────────────────────────────────────────────────────────────────────────────── *@
+<QModal @bind-Visible="showAssign" Title="Assign a class teacher" Icon="person-plus" Size="md" ShowDefaultFooter="false">
+    <ChildContent>
+    <div class="form-grid">
+        <QSelect TValue="string" TItem="ClassTeacherCoverageDto"
+                 Label="Class"
+                 Value="@form.ClassName"
+                 ValueChanged="@(v => form.ClassName = v ?? string.Empty)"
+                 Items="@coverage.Classes"
+                 ValueSelector="@(c => c.ClassName)"
+                 TextSelector="@(c => $"{c.ClassName} — {c.StudentCount} student{(c.StudentCount == 1 ? "" : "s")}")"
+                 Placeholder="Choose a class" />
+
+        <QSelect TValue="Guid" TItem="StaffOption"
+                 Label="Member of staff"
+                 Value="@form.UserId"
+                 ValueChanged="@(v => form.UserId = v)"
+                 Items="@staff"
+                 ValueSelector="@(s => s.Id)"
+                 TextSelector="@(s => s.Label)"
+                 Placeholder="Choose a member of staff" />
+
+        <QSelect TValue="ClassTeacherRole" TItem="RoleOption"
+                 Label="Role"
+                 Value="@form.Role"
+                 ValueChanged="@(v => form.Role = v)"
+                 Items="@roleOptions"
+                 ValueSelector="@(r => r.Value)"
+                 TextSelector="@(r => r.Label)" />
+
+        @* The single most common way to get this wrong: assigning a class to somebody whose
+           RBAC role has no class scope. They are notified but see the whole school (or, on a
+           role with no welfare access, nothing at all). Better said here than discovered later. *@
+        @if (SelectedStaffRoleCode() is { } rc && rc != RoleCodes.ClassTeacher)
+        {
+            <div class="ct-inline-warn">
+                <QIcon Name="info-circle-fill" />
+                <span>
+                    This person's role is <strong>@rc</strong>, not Class Teacher. They will be alerted about this class,
+                    but their visibility is whatever that role already gives them — assigning a class does not narrow it.
+                </span>
+            </div>
+        }
+    </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showAssign = false)" />
+        <QButton Text="Assign" Icon="check-lg" Variant="primary" OnClick="@SaveAssignment" Disabled="@(saving || form.UserId == Guid.Empty || string.IsNullOrWhiteSpace(form.ClassName))" />
+    </FooterContent>
+</QModal>
+
+@* ── End an assignment ─────────────────────────────────────────────────────────────────── *@
+<QModal @bind-Visible="showEnd" Title="End this assignment" Icon="person-dash" Size="sm" ShowDefaultFooter="false">
+    <ChildContent>
+    @if (ending is { } e)
+    {
+        <p class="ct-end-lead">
+            <strong>@e.FullName</strong> will immediately stop seeing students in <strong>@e.ClassName</strong>,
+            and stop being alerted about them. The assignment is kept in the history, not deleted.
+        </p>
+        <QInput TValue="string" Label="Reason (optional)" @bind-Value="endReason" Placeholder="e.g. End of term, class handover" />
+    }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showEnd = false)" />
+        <QButton Text="End assignment" Icon="person-dash" Variant="danger" OnClick="@ConfirmEnd" Disabled="@saving" />
+    </FooterContent>
+</QModal>
+
+@code {
+    private bool isLoading = true;
+    private bool canManage;
+    private bool saving;
+
+    private ClassTeacherCoverageReportDto coverage = new();
+    private List<StaffOption> staff = new();
+
+    private bool showAssign;
+    private bool showEnd;
+    private ClassTeacherDto? ending;
+    private string endReason = string.Empty;
+    private AssignClassTeacherRequest form = new();
+
+    private record StaffOption(Guid Id, string Label, string RoleCode);
+    private record RoleOption(ClassTeacherRole Value, string Label);
+
+    private static readonly List<RoleOption> roleOptions = new()
+    {
+        new(ClassTeacherRole.ClassTeacher, "Class teacher (one per class)"),
+        new(ClassTeacherRole.Assistant, "Assistant class teacher"),
+    };
+
+    // OnAfterRenderAsync, never OnInitialized: there is no JS interop during prerendering, so
+    // auth state reads as anonymous for everyone in that pass and a permission check made there
+    // would bounce a signed-in user. (Prerendering is off here anyway, but the rule stands —
+    // see CLAUDE.md.)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        if (!await PermissionService.HasPermissionAsync(Permissions.StudentsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        canManage = await PermissionService.HasPermissionAsync(Permissions.ClassTeachersManage);
+        await LoadAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            await BranchState.InitializeAsync();
+            var branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+            {
+                NotificationService.Notify(ToastSeverity.Warning, "No branch selected", "Pick a branch in the header first.");
+                return;
+            }
+
+            coverage = await ClassTeacherApi.GetCoverageAsync(branchId);
+
+            // The staff picker. Anyone in the organization can hold a class — a head of year on a
+            // custom role is a legitimate assistant — so this is not filtered to the class-teacher
+            // role; the dialog warns instead when the role carries no class scope.
+            var users = await Http.GetFromJsonAsync<List<UserPickDto>>("api/v1/users?pageSize=500", JsonOptions);
+            staff = (users ?? new())
+                .Where(u => u.IsActive)
+                .OrderBy(u => u.FullName)
+                .Select(u => new StaffOption(u.Id, string.IsNullOrWhiteSpace(u.FullName) ? u.Username : $"{u.FullName} ({u.RoleName})", u.RoleCode ?? ""))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not load class teachers", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string? SelectedStaffRoleCode()
+        => staff.FirstOrDefault(s => s.Id == form.UserId)?.RoleCode is { Length: > 0 } rc ? rc : null;
+
+    private void ShowAssignDialog(string? className, ClassTeacherRole role = ClassTeacherRole.ClassTeacher)
+    {
+        form = new AssignClassTeacherRequest { ClassName = className ?? string.Empty, Role = role };
+        showAssign = true;
+    }
+
+    private async Task SaveAssignment()
+    {
+        saving = true;
+        try
+        {
+            await ClassTeacherApi.AssignAsync(BranchState.CurrentBranchId, form);
+            NotificationService.Notify(ToastSeverity.Success, "Assigned", $"{form.ClassName} now has a class teacher.");
+            showAssign = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            // The service THROWS with the server's own message (unlike IQueueApiService), so this
+            // shows the real reason — "That class already has a class teacher", not "failed".
+            NotificationService.Notify(ToastSeverity.Error, "Could not assign", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void ShowEndDialog(ClassTeacherDto assignment)
+    {
+        ending = assignment;
+        endReason = string.Empty;
+        showEnd = true;
+    }
+
+    private async Task ConfirmEnd()
+    {
+        if (ending == null) return;
+        saving = true;
+        try
+        {
+            await ClassTeacherApi.EndAsync(BranchState.CurrentBranchId, ending.Id, new EndClassTeacherRequest { Reason = endReason });
+            NotificationService.Notify(ToastSeverity.Success, "Assignment ended", $"{ending.FullName} no longer holds {ending.ClassName}.");
+            showEnd = false;
+            ending = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not end the assignment", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private RenderFragment RenderTeacher(ClassTeacherDto t, bool isPrimary) => @<div class="ct-person @(isPrimary ? "" : "ct-person-assistant")">
+        <div class="ct-person-main">
+            <div class="ct-avatar">@Initials(t.FullName)</div>
+            <div class="ct-person-text">
+                <div class="ct-name">
+                    @t.FullName
+                    @if (!isPrimary)
+                    {
+                        <QBadge Text="Assistant" Variant="secondary" />
+                    }
+                    @if (!t.UserIsActive)
+                    {
+                        <QBadge Text="Account inactive" Variant="danger" />
+                    }
+                    else if (t.RoleCode != RoleCodes.ClassTeacher)
+                    {
+                        <QBadge Text="@t.RoleCode" Variant="warning" />
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(t.JobTitle))
+                {
+                    <div class="ct-title">@t.JobTitle</div>
+                }
+                <div class="ct-contact">
+                    <span><QIcon Name="envelope" /> <a href="mailto:@t.Email">@t.Email</a></span>
+                    @if (!string.IsNullOrWhiteSpace(t.Phone))
+                    {
+                        <span><QIcon Name="telephone" /> <a href="tel:@t.Phone">@t.Phone</a></span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(t.AlternatePhone))
+                    {
+                        <span><QIcon Name="telephone-plus" /> <a href="tel:@t.AlternatePhone">@t.AlternatePhone</a></span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(t.OfficeLocation))
+                    {
+                        <span><QIcon Name="geo-alt" /> @t.OfficeLocation</span>
+                    }
+                </div>
+            </div>
+        </div>
+        @if (canManage)
+        {
+            <QButton Icon="person-dash" Variant="ghost" Size="sm" Title="End this assignment" OnClick="@(() => ShowEndDialog(t))" />
+        }
+    </div>;
+
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "?";
+        return parts.Length == 1
+            ? parts[0][..1].ToUpperInvariant()
+            : $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+    }
+
+    /// <summary>Only the fields this picker needs — deliberately not the full UserDto, which carries far more than a name picker should pull over the wire.</summary>
+    private record UserPickDto
+    {
+        public Guid Id { get; init; }
+        public string Username { get; init; } = "";
+        public string FullName { get; init; } = "";
+        public string RoleName { get; init; } = "";
+        public string? RoleCode { get; init; }
+        public bool IsActive { get; init; }
+    }
+}
+
+<style>
+    .ct-warnings { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+
+    .ct-warn {
+        display: flex; gap: 12px; align-items: flex-start;
+        padding: 13px 16px;
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-warning);
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card);
+    }
+    .ct-warn-strong { border-left-color: var(--qm-danger); }
+    .ct-warn > i, .ct-warn > span { color: var(--qm-warning); flex-shrink: 0; margin-top: 2px; }
+    .ct-warn-strong > i, .ct-warn-strong > span { color: var(--qm-danger); }
+    .ct-warn strong { display: block; font-family: var(--qm-font-display); font-size: 14px; margin-bottom: 3px; color: var(--qm-text-primary); }
+    .ct-warn p { margin: 0; font-size: 13px; color: var(--qm-text-secondary); line-height: 1.5; }
+
+    .ct-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 16px;
+    }
+
+    .ct-card {
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-bg-card);
+        box-shadow: var(--qm-shadow-sm);
+        display: flex;
+        flex-direction: column;
+    }
+    /* A class with nobody on it is the state this page exists to make visible, so it does not
+       look like an ordinary empty card. */
+    .ct-card-empty { border-style: dashed; }
+
+    .ct-card-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--qm-border);
+    }
+    .ct-class { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .ct-class h3 { margin: 0; font-family: var(--qm-font-display); font-size: 17px; font-weight: 700; color: var(--qm-text-primary); }
+    .ct-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .ct-count { font-size: 12px; color: var(--qm-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+    .ct-person { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px; }
+    .ct-person-assistant { border-top: 1px solid var(--qm-border); }
+    .ct-person-main { display: flex; gap: 12px; min-width: 0; }
+
+    .ct-avatar {
+        width: 38px; height: 38px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+        font-family: var(--qm-font-display); font-weight: 700; font-size: 13px;
+        flex-shrink: 0;
+    }
+
+    .ct-person-text { min-width: 0; }
+    .ct-name { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; font-weight: 600; color: var(--qm-text-primary); }
+    .ct-title { font-size: 12px; color: var(--qm-text-muted); margin-top: 1px; }
+    .ct-contact { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; font-size: 12.5px; color: var(--qm-text-secondary); }
+    .ct-contact span { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .ct-contact a { color: var(--qm-text-secondary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+    .ct-contact a:hover { color: var(--qm-primary); text-decoration: underline; }
+
+    .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: 13.5px; }
+    .ct-card-foot { padding: 0 16px 12px; }
+
+    .ct-inline-warn {
+        display: flex; gap: 9px; align-items: flex-start;
+        padding: 11px 13px;
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-primary-light);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+    .ct-inline-warn i, .ct-inline-warn span:first-child { color: var(--qm-primary); flex-shrink: 0; }
+
+    .ct-end-lead { font-size: 13.5px; color: var(--qm-text-secondary); line-height: 1.6; margin-bottom: 14px; }
+
+    .form-grid { display: flex; flex-direction: column; gap: 14px; }
+</style>

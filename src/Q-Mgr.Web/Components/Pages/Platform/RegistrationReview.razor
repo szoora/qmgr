@@ -218,9 +218,9 @@
 <style>
     .summary-strip {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 1rem;
-        margin-bottom: 1.5rem;
+        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+        gap: var(--qm-statcard-gap);
+        margin-bottom: 18px;
     }
 
     .summary-card {
@@ -229,13 +229,14 @@
 
     .summary-value {
         font-family: var(--qm-font-display);
-        font-size: 2rem;
+        font-size: var(--qm-statcard-value);
         font-weight: 700;
+        line-height: 1.1;
         color: var(--qm-text-primary);
     }
 
     .summary-label {
-        font-size: 0.8125rem;
+        font-size: var(--qm-statcard-label);
         color: var(--qm-text-secondary);
     }
 

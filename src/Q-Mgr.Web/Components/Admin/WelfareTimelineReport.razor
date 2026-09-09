@@ -1,0 +1,502 @@
+@page "/admin/students/{StudentId:guid}/welfare/report"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    The A4 welfare report.
+
+    Its own route on MinimalLayout rather than a hidden block on the timeline, for three reasons:
+    the page IS the document so there is no app chrome to hide, the period travels in the query
+    string so the link can be sent to a colleague, and the timeline is already 1,465 lines without
+    carrying a second full copy of itself.
+
+    Printed by the browser. No PDF library on the server or in the page — "Save as PDF" in the
+    print dialog produces the file, which is also what the project's no-server-dependencies rule
+    requires.
+*@
+
+<PageTitle>Welfare Report - Q-Mgr</PageTitle>
+
+<div class="wr-toolbar no-print">
+    <QButton Text="Back to timeline" Icon="arrow-left" Variant="ghost"
+             OnClick="@(() => Navigation.NavigateTo($"/admin/students/{StudentId}/welfare"))" />
+    <div class="wr-toolbar__right">
+        <span class="wr-hint">Print, then choose <strong>Save as PDF</strong> as the destination.</span>
+        <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="primary" OnClick="@Print" Disabled="@isLoading" />
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="wr-state no-print"><QSpinner Size="lg" /><span>Building the report...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="wr-state no-print">
+        <QIcon Name="exclamation-triangle" />
+        <span>@loadError</span>
+    </div>
+}
+else
+{
+    <article class="wr-sheet">
+
+        @* ---------------- Branded header, repeated as the running head on later pages ---------------- *@
+        <header class="wr-head">
+            <div class="wr-head__brand">
+                @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl))
+                {
+                    <img class="wr-logo" src="@branding!.LogoUrl" alt="" />
+                }
+                <div>
+                    <div class="wr-org">@OrganizationName</div>
+                    <div class="wr-doc">Student Welfare Report</div>
+                </div>
+            </div>
+            <div class="wr-head__meta">
+                <div><span>Period</span><strong>@PeriodCaption</strong></div>
+                <div><span>Generated</span><strong>@QDateFormat.Long(DateTime.Now)</strong></div>
+                @if (!string.IsNullOrWhiteSpace(generatedBy))
+                {
+                    <div><span>By</span><strong>@generatedBy</strong></div>
+                }
+            </div>
+        </header>
+
+        @* ---------------- Who it is about ---------------- *@
+        <section class="wr-subject">
+            <h1>@SubjectName</h1>
+            <dl class="wr-facts">
+                <div><dt>Student code</dt><dd>@(context?.StudentCode ?? "—")</dd></div>
+                <div><dt>Class</dt><dd>@(context?.ClassName ?? "—")</dd></div>
+                <div><dt>Branch</dt><dd>@(BranchState.CurrentBranchName ?? "—")</dd></div>
+                <div><dt>Records in period</dt><dd>@FinalizedRecords.Count</dd></div>
+            </dl>
+        </section>
+
+        @* ---------------- Summary ---------------- *@
+        <section class="wr-summary">
+            <h2>Summary</h2>
+            <div class="wr-tiles">
+                <div class="wr-tile"><span class="wr-tile__n">@FinalizedRecords.Count</span><span class="wr-tile__l">Records</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">@AchievementCount</span><span class="wr-tile__l">Achievements</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">@BehaviorCount</span><span class="wr-tile__l">Behaviour</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">+@AchievementPoints</span><span class="wr-tile__l">Positive points</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">@BehaviorPoints</span><span class="wr-tile__l">Negative points</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">@(NetPoints > 0 ? "+" : "")@NetPoints</span><span class="wr-tile__l">Net</span></div>
+                <div class="wr-tile"><span class="wr-tile__n">@OpenActionCount</span><span class="wr-tile__l">Open actions</span></div>
+            </div>
+
+            @if (CategoryBreakdown.Any())
+            {
+                <table class="wr-table wr-table--compact">
+                    <thead><tr><th>Category</th><th>Type</th><th class="wr-num">Records</th><th class="wr-num">Points</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in CategoryBreakdown)
+                        {
+                            <tr>
+                                <td>@row.Name</td>
+                                <td>@row.CaseType</td>
+                                <td class="wr-num">@row.Count</td>
+                                <td class="wr-num">@(row.Points > 0 ? "+" : "")@row.Points</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        @* ---------------- The timeline ---------------- *@
+        <section class="wr-timeline">
+            <h2>Record of events</h2>
+
+            @if (!FinalizedRecords.Any())
+            {
+                <p class="wr-empty">No welfare records were logged for this student in this period.</p>
+            }
+            else
+            {
+                @foreach (var record in FinalizedRecords.OrderBy(r => r.OccurredAt))
+                {
+                    <article class="wr-record">
+                        <div class="wr-record__head">
+                            <div class="wr-record__when">
+                                <strong>@QDateFormat.D(record.OccurredAt)</strong>
+                                <span>@QDateFormat.T(record.OccurredAt)</span>
+                            </div>
+                            <div class="wr-record__what">
+                                <h3>@record.CategoryName</h3>
+                                <div class="wr-chips">
+                                    <span class="wr-chip">@record.CaseType</span>
+                                    <span class="wr-chip">@record.Tier</span>
+                                    <span class="wr-chip">@record.Status</span>
+                                    @if (record.Points.HasValue && record.Points.Value != 0)
+                                    {
+                                        <span class="wr-chip wr-chip--strong">@(record.Points.Value > 0 ? "+" : "")@record.Points.Value points</span>
+                                    }
+                                    @if (record.Confidential)
+                                    {
+                                        <span class="wr-chip wr-chip--strong">@record.Visibility</span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <p class="wr-record__body">@record.Description</p>
+
+                        <dl class="wr-record__meta">
+                            <div><dt>Reported by</dt><dd>@record.ReportedByName</dd></div>
+                            @if (!string.IsNullOrWhiteSpace(record.Location))
+                            {
+                                <div><dt>Location</dt><dd>@record.Location</dd></div>
+                            }
+                            @if (record.ResponseStage.HasValue)
+                            {
+                                <div><dt>Response stage</dt><dd>@record.ResponseStage</dd></div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(record.Antecedent))
+                            {
+                                <div><dt>What preceded it</dt><dd>@record.Antecedent</dd></div>
+                            }
+                            @if (record.PerceivedFunction.HasValue)
+                            {
+                                <div><dt>Perceived function</dt><dd>@record.PerceivedFunction</dd></div>
+                            }
+                            @if (record.AdditionalStudentNames.Any())
+                            {
+                                <div><dt>Also involved</dt><dd>@string.Join(", ", record.AdditionalStudentNames)</dd></div>
+                            }
+                        </dl>
+
+                        @if (!string.IsNullOrWhiteSpace(record.ActionTaken) || record.AssignedToUserId.HasValue)
+                        {
+                            <div class="wr-block">
+                                <h4>Action</h4>
+                                @if (!string.IsNullOrWhiteSpace(record.ActionTaken))
+                                {
+                                    <p>@record.ActionTaken</p>
+                                }
+                                <p class="wr-muted">
+                                    @if (!string.IsNullOrWhiteSpace(record.AssignedToName))
+                                    {
+                                        <text>Assigned to @record.AssignedToName. </text>
+                                    }
+                                    @if (record.ActionDueDate.HasValue)
+                                    {
+                                        <text>Due @QDateFormat.D(record.ActionDueDate.Value).</text>
+                                    }
+                                </p>
+                            </div>
+                        }
+
+                        @if (record.Notes.Any())
+                        {
+                            <div class="wr-block">
+                                <h4>Notes</h4>
+                                @foreach (var note in record.Notes.OrderBy(n => n.CreatedAt))
+                                {
+                                    <div class="wr-note">
+                                        <span class="wr-note__by">@note.AuthorName · @QDateFormat.LocalDT(note.CreatedAt)</span>
+                                        <p>@note.Body</p>
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (record.Notifications.Any())
+                        {
+                            <div class="wr-block">
+                                <h4>Guardian contact</h4>
+                                @foreach (var n in record.Notifications.OrderBy(x => x.CreatedAt))
+                                {
+                                    <p class="wr-muted">
+                                        @QDateFormat.LocalDT(n.CreatedAt) — @n.Channel to @n.GuardianName
+                                        (@(n.Success ? "delivered" : "not delivered"))
+                                    </p>
+                                }
+                            </div>
+                        }
+
+                        @if (record.Attachments.Any())
+                        {
+                            @* Filenames only. An attachment is a separate document with its own
+                               handling rules; listing it here records that it exists without
+                               copying its contents into a sheet that may be handed to a parent. *@
+                            <div class="wr-block">
+                                <h4>Attachments (held separately)</h4>
+                                <p class="wr-muted">@string.Join(" · ", record.Attachments.Select(a => a.FileName))</p>
+                            </div>
+                        }
+                    </article>
+                }
+            }
+        </section>
+
+        @* ---------------- Confidentiality footer ---------------- *@
+        <footer class="wr-foot">
+            <p>
+                <strong>Confidential.</strong> This report contains safeguarding and pastoral
+                information about a named child. Hold, share and dispose of it in line with your
+                organisation's data protection and safeguarding policies. It reflects the records
+                held at the moment it was generated and is not a substitute for the live record.
+            </p>
+            <p class="wr-muted">
+                @OrganizationName · @SubjectName · @PeriodCaption · generated @QDateFormat.DT(DateTime.Now)
+            </p>
+        </footer>
+    </article>
+}
+
+<style>
+    /* ------------------------------------------------------------------------------------------
+       Screen: an A4 page shown on a grey desk, so what you see is what prints.
+       ------------------------------------------------------------------------------------------ */
+    .wr-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--qm-bg-card); border-bottom: 1px solid var(--qm-border); position: sticky; top: 0; z-index: 10; }
+    .wr-toolbar__right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+    .wr-hint { font-size: 12.5px; color: var(--qm-text-muted); }
+    .wr-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+
+    .wr-sheet {
+        width: 210mm;
+        max-width: 100%;
+        margin: 20px auto;
+        padding: 16mm;
+        background: #fff;
+        color: #14110f;
+        border: 1px solid var(--qm-border);
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.10);
+        /* The sheet is a printed document, not a themed screen: it stays black-on-white in dark
+           mode too, because that is what comes out of the printer either way and previewing it in
+           dark grey would misrepresent the output. */
+        font-family: var(--qm-font-primary, system-ui), sans-serif;
+        font-size: 11pt;
+        line-height: 1.5;
+    }
+
+    .wr-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
+    .wr-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .wr-logo { height: 42px; width: auto; max-width: 150px; object-fit: contain; }
+    .wr-org { font-family: var(--qm-font-display, inherit); font-size: 15pt; font-weight: 700; line-height: 1.15; }
+    .wr-doc { font-size: 10pt; letter-spacing: .08em; text-transform: uppercase; color: #5b524d; }
+    .wr-head__meta { display: flex; flex-direction: column; gap: 2px; font-size: 9pt; text-align: right; }
+    .wr-head__meta span { color: #5b524d; margin-right: 6px; }
+
+    .wr-subject { margin-top: 16px; }
+    .wr-subject h1 { font-family: var(--qm-font-display, inherit); font-size: 20pt; margin: 0 0 8px; line-height: 1.1; }
+    .wr-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 16px; margin: 0; }
+    .wr-facts dt { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .wr-facts dd { margin: 0; font-size: 10.5pt; font-weight: 600; }
+
+    .wr-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 12pt; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
+
+    .wr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+    .wr-tile { border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
+    .wr-tile__n { display: block; font-size: 15pt; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .wr-tile__l { display: block; font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+
+    .wr-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 9.5pt; }
+    .wr-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
+    .wr-table td { border-bottom: 1px solid #e3dcd8; padding: 5px 7px; vertical-align: top; }
+    .wr-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .wr-record { border: 1px solid #d6cec9; border-radius: 3px; padding: 10px 12px; margin-top: 10px; }
+    .wr-record__head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+    .wr-record__when { min-width: 76px; font-size: 9.5pt; }
+    .wr-record__when strong { display: block; }
+    .wr-record__when span { color: #5b524d; }
+    .wr-record__what { flex: 1 1 220px; min-width: 0; }
+    .wr-record__what h3 { font-family: var(--qm-font-display, inherit); font-size: 11.5pt; margin: 0 0 4px; }
+    .wr-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .wr-chip { font-size: 7.5pt; letter-spacing: .04em; text-transform: uppercase; border: 1px solid #b7aca6; border-radius: 999px; padding: 1px 7px; color: #403834; }
+    .wr-chip--strong { border-color: #14110f; font-weight: 700; color: #14110f; }
+
+    .wr-record__body { margin: 8px 0 0; white-space: pre-wrap; }
+    .wr-record__meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; margin: 8px 0 0; }
+    .wr-record__meta dt { font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .wr-record__meta dd { margin: 0; font-size: 9.5pt; }
+
+    .wr-block { margin-top: 9px; padding-top: 7px; border-top: 1px dashed #d6cec9; }
+    .wr-block h4 { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0 0 4px; }
+    .wr-block p { margin: 0 0 4px; font-size: 9.5pt; }
+    .wr-note { margin-bottom: 6px; }
+    .wr-note__by { font-size: 8pt; color: #5b524d; }
+    .wr-note p { margin: 1px 0 0; white-space: pre-wrap; }
+    .wr-muted { color: #5b524d; }
+    .wr-empty { font-style: italic; color: #5b524d; }
+
+    .wr-foot { margin-top: 22px; padding-top: 10px; border-top: 2px solid #14110f; font-size: 8.5pt; }
+    .wr-foot p { margin: 0 0 4px; }
+
+    /* ------------------------------------------------------------------------------------------
+       Print. The document is already the page, so this mostly removes the desk it was sitting on.
+       ------------------------------------------------------------------------------------------ */
+    @@media print {
+        .no-print { display: none !important; }
+
+        @@page {
+            size: A4 portrait;
+            margin: 14mm;
+        }
+
+        .wr-sheet {
+            width: auto;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            box-shadow: none;
+        }
+
+        /* A record must not be split across a page break: half an incident on one sheet and half
+           on the next is how a reader draws the wrong conclusion from a file. */
+        .wr-record,
+        .wr-tile,
+        .wr-block { break-inside: avoid; page-break-inside: avoid; }
+
+        .wr-timeline h2,
+        .wr-summary h2 { break-after: avoid; page-break-after: avoid; }
+
+        .wr-foot { break-inside: avoid; page-break-inside: avoid; }
+
+        /* Severity and emphasis are carried by borders and weight, never fills — a tinted chip
+           prints as an indistinguishable grey on the mono printer in a school office. */
+        .wr-chip--strong { border-width: 2px; }
+    }
+
+    @@media (max-width: 480px) {
+        .wr-sheet { padding: 12px; margin: 8px; }
+        .wr-head__meta { text-align: left; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid StudentId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "from")] public string? FromQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToQuery { get; set; }
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private string? loadError;
+    private string? generatedBy;
+
+    private List<WelfareRecordDto> records = new();
+    private WelfareTimelineContextDto? context;
+    private OrganizationBrandingDto? branding;
+    private DateRange range = DateRange.AllTime();
+
+    private string SubjectName => context?.FullName ?? "Student";
+
+    private string OrganizationName =>
+        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
+        : "Welfare";
+
+    private string PeriodCaption => range.IsAllTime ? "Complete record" : range.Caption;
+
+    /// <summary>
+    /// Drafts are excluded, exactly as the timeline excludes them: an unfinished quick-log is not
+    /// yet a record of anything, and printing one into a document that may reach a parent would
+    /// give it a permanence nobody intended.
+    /// </summary>
+    private List<WelfareRecordDto> FinalizedRecords =>
+        records.Where(r => r.Status != WelfareStatus.Draft).ToList();
+
+    private int AchievementCount => FinalizedRecords.Count(r => r.CaseType == WelfareCaseType.Achievement);
+    private int BehaviorCount => FinalizedRecords.Count(r => r.CaseType == WelfareCaseType.Behavior);
+    private int AchievementPoints => FinalizedRecords.Where(r => r.Points > 0).Sum(r => r.Points ?? 0);
+    private int BehaviorPoints => FinalizedRecords.Where(r => r.Points < 0).Sum(r => r.Points ?? 0);
+    private int NetPoints => AchievementPoints + BehaviorPoints;
+    private int OpenActionCount => FinalizedRecords.Count(r => r.AssignedToUserId.HasValue && r.Status != WelfareStatus.Resolved);
+
+    private record CategoryRow(string Name, WelfareCaseType CaseType, int Count, int Points);
+
+    private List<CategoryRow> CategoryBreakdown =>
+        FinalizedRecords
+            .GroupBy(r => (r.CategoryName, r.CaseType))
+            .Select(g => new CategoryRow(g.Key.CategoryName, g.Key.CaseType, g.Count(), g.Sum(r => r.Points ?? 0)))
+            .OrderByDescending(c => c.Count).ThenBy(c => c.Name)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        // The period comes from the query string so the link carries it. A malformed value falls
+        // back to the complete record rather than erroring — a report is more useful showing
+        // everything than showing a parse failure.
+        if (DateOnly.TryParse(FromQuery, out var from) && DateOnly.TryParse(ToQuery, out var to))
+            range = new DateRange(from, to);
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+
+            if (user != null && user.OrganizationId != Guid.Empty)
+                branding = await OrganizationApi.GetOrganizationBrandingAsync(user.OrganizationId);
+
+            var contextResponse = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-context");
+            if (contextResponse.IsSuccessStatusCode)
+                context = await contextResponse.Content.ReadFromJsonAsync<WelfareTimelineContextDto>(JsonOptions);
+
+            var query = range.IsAllTime
+                ? ""
+                : $"?from={QDateFormat.Iso8601(range.From)}&to={QDateFormat.Iso8601(range.To)}";
+
+            var response = await Http.GetAsync($"api/v1/branches/{branchId}/students/{StudentId}/welfare-records{query}");
+            if (response.IsSuccessStatusCode)
+            {
+                records = await response.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                loadError = $"{title} — {detail}";
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the report: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// The browser's own print dialog, whose "Save as PDF" destination produces the file. No
+    /// rendering library is involved anywhere — see the project's no-third-party-dependency rule.
+    /// </summary>
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); }
+        catch (Exception) { /* the toolbar tells the reader to use the browser's own print command */ }
+    }
+}

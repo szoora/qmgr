@@ -88,6 +88,25 @@ public class NotificationSettings : BaseAuditableEntity
     /// <summary>Send the "you're being called to counter X" message.</summary>
     public bool QueueNotifyOnCalled { get; set; } = true;
 
+    // ── Staff notifications ─────────────────────────────────────────────────────────────────
+    // The organization-level ceiling for notifications sent to STAFF (as opposed to the
+    // QueueNotify* flags above, which are about messaging customers holding a ticket). A person's
+    // own per-event choices sit underneath these and can only narrow them further — see
+    // NotificationPreferenceResolver, which is the one place that reads any of this.
+    //
+    // Widening this existing settings row rather than adding a parallel one, which is the same
+    // decision the QueueNotify* block above already represents.
+
+    /// <summary>Send staff notifications by email (still requires <see cref="EmailEnabled"/>). On by default: an alert about a child that only exists inside the app is an alert nobody sees until they next log in.</summary>
+    public bool StaffNotifyEmail { get; set; } = true;
+
+    /// <summary>
+    /// Send staff notifications by SMS (still requires <see cref="SmsEnabled"/>). OFF by default,
+    /// unlike email: every SMS costs the tenant money, and a school with 40 class teachers can run
+    /// up a real bill before anyone notices. A tenant turns this on deliberately.
+    /// </summary>
+    public bool StaffNotifySms { get; set; } = false;
+
     // ── Notification Templates ──────────────────────────────────────────────────────────────
     // Placeholders (case-insensitive), all substituted by QueueCustomerNotifier:
     //   {TicketNumber}  {CounterNumber}  {Position}  {BranchName}  {OrganizationName}

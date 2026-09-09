@@ -86,12 +86,26 @@ public class WelfareRecord : BaseAuditableEntity
     public Guid[]? AdditionalStudentIds { get; set; }
 
     /// <summary>
-    /// SECURITY: for CaseType == Welfare this is always forced true server-side regardless of
-    /// what the client sends — see WelfareController.CreateRecord. A safeguarding concern and a
-    /// tardy slip do not belong to the same audience (the CPOMS/MyConcern lesson the whole
-    /// confidentiality-tier design is built around).
+    /// How widely this record may be seen. Replaced the old <c>Confidential</c> bool on
+    /// 2026-09-09; the migration mapped <c>true → Confidential</c>, <c>false → Standard</c>.
+    ///
+    /// SECURITY, unchanged from the bool it replaces: for <c>CaseType == Welfare</c> this is forced
+    /// to at least <see cref="WelfareVisibility.Confidential"/> server-side regardless of what the
+    /// client sends — see WelfareController.CreateRecord. A safeguarding concern and a tardy slip
+    /// do not belong to the same audience (the CPOMS/MyConcern lesson the whole confidentiality
+    /// design is built around).
+    ///
+    /// <see cref="WelfareVisibility.Restricted"/> is never forced: something reaches that rung only
+    /// because a holder of <c>welfare.restricted.view</c> put it there. It CAN be set on a Welfare
+    /// case — raising a safeguarding record to administrator-only is a legitimate act — but never
+    /// lowered below Confidential for one.
+    ///
+    /// Note this is the ONE mutable field on an otherwise append-only record, and deliberately so:
+    /// a record whose sensitivity is discovered later must be raisable in place. Every change goes
+    /// through WelfareController.UpdateVisibility, which writes a WelfareNote saying who changed it
+    /// and why — so the chronology still records it even though the field itself moved.
     /// </summary>
-    public bool Confidential { get; set; }
+    public WelfareVisibility Visibility { get; set; } = WelfareVisibility.Standard;
 
     public Guid ReportedByUserId { get; set; }
 

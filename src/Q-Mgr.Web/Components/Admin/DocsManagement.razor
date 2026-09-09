@@ -160,7 +160,7 @@
     }
     .doc-card-admin:hover { box-shadow: var(--qm-shadow-md); border-color: var(--qm-primary); }
     .doc-card-header { display: flex; align-items: center; gap: 8px; }
-    .doc-card-actions { margin-left: auto; display: flex; gap: 2px; }
+    .doc-card-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 2px; }
     .status-badge { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: var(--qm-radius-md); }
     .status-draft { background: var(--qm-bg-elevated); color: var(--qm-text-muted); }
     .status-published { background: rgba(var(--qm-success-rgb), 0.15); color: var(--qm-success); }
@@ -268,6 +268,15 @@
                         DisplayOrder = detail.DisplayOrder
                     };
                 }
+            }
+            else
+            {
+                // Opening the editor on a failed load would show the PREVIOUS article's form
+                // fields (formData is only replaced on success), and saving that would overwrite
+                // this article with another one's content. Refuse to open instead.
+                NotificationService.Notify(ToastSeverity.Error, "Could not open the article",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The article could not be loaded for editing."));
+                return;
             }
         }
         catch (Exception ex)

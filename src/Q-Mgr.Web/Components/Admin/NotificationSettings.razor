@@ -18,7 +18,7 @@
         @if (canManage)
         {
             <QButton Text="Save Settings" Icon="check-lg" Variant="primary"
-                          OnClick="@SaveSettings" Disabled="@isSaving" />
+                          OnClick="@SaveSettings" Disabled="@(isSaving || loadFailed)" />
         }
     </div>
 
@@ -597,6 +597,8 @@
 @code {
     private bool isLoading = true;
     private bool isSaving = false;
+    /// <summary>Latched when a settings load fails. Blocks Save so defaults cannot silently overwrite real settings.</summary>
+    private bool loadFailed = false;
     private bool canManage = false;
     private string activeSection = "sms";
     private NotificationSettingsModel settings = new();
@@ -715,10 +717,22 @@
                 {
                     settings = result;
                 }
+                loadFailed = false;
+            }
+            else
+            {
+                // Silent failure here is dangerous rather than untidy: the form stays on its
+                // defaults — indistinguishable from "nothing configured yet" — and Save would
+                // then overwrite the organisation's real notification settings with them,
+                // including switching channels off. Announced and latched; Save stays disabled.
+                loadFailed = true;
+                ToastService.Notify(NotificationSeverity.Error, "Could not load notification settings",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The saved settings could not be read."));
             }
         }
         catch (Exception ex)
         {
+            loadFailed = true;
             ToastService.Notify(NotificationSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
         }
         finally

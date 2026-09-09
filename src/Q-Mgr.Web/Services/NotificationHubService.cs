@@ -17,6 +17,18 @@ public class NotificationClientService : INotificationClientService
     private HubConnection? _hubConnection;
     private bool _isDisposed;
 
+    /// <summary>
+    /// The branch groups this circuit WANTS to be in, independent of whether the connection is
+    /// up right now. JoinBranchAsync used to be a bare "invoke if Connected" with a silent no-op
+    /// otherwise, which lost the membership in two ordinary situations: a page whose
+    /// OnInitializedAsync runs before MainLayout has finished starting the hub, and any
+    /// reconnect (SignalR groups do not survive one — the server rebuilds them from scratch).
+    /// Either way the visitor activity board sat there looking connected and never received a
+    /// single push. Recording the intent here and replaying it on every successful connect is
+    /// what makes "live" actually mean live.
+    /// </summary>
+    private readonly HashSet<Guid> _joinedBranches = new();
+
     public event Func<NotificationDto, Task>? OnNotificationReceived;
     public event Func<int, Task>? OnUnreadCountUpdated;
     public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
@@ -56,7 +68,16 @@ public class NotificationClientService : INotificationClientService
             _hubConnection = null;
         }
 
-        var apiBaseUrl = _configuration["ApiSettings:BaseUrl"] ?? "https://localhost:5001";
+        // "ApiBaseUrl" — the same key Program.cs, ISignalRService and every other outbound
+        // caller reads. This line asked for "ApiSettings:BaseUrl", which is defined in NO
+        // appsettings file in this repository, so it ALWAYS fell through to the hardcoded
+        // https://localhost:5001 default. On a dev machine that is coincidentally where the API
+        // listens, which is why it never showed up locally; in production the API listens on
+        // http://127.0.0.1:<ApiPort> behind nginx, so the notification hub connected to nothing,
+        // failed, and was swallowed by MainLayout's catch — leaving the visitor activity board
+        // stuck on "Reconnecting..." and every SignalR push (notifications, live board, roster
+        // import progress, permission changes) silently dead in the deployed app.
+        var apiBaseUrl = _configuration["ApiBaseUrl"] ?? "https://localhost:5001";
         // userId/branchId stay as routing hints for which groups to join, but
         // the hub no longer trusts them for identity — it derives the real
         // user from the JWT below and only honors userId if it matches.
@@ -132,11 +153,11 @@ public class NotificationClientService : INotificationClientService
             return Task.CompletedTask;
         };
 
-        _hubConnection.Reconnected += connectionId =>
+        _hubConnection.Reconnected += async connectionId =>
         {
             _logger.LogInformation("Notification hub reconnected: {ConnectionId}", connectionId);
+            await RejoinBranchesAsync();
             ConnectionStateChanged?.Invoke();
-            return Task.CompletedTask;
         };
 
         _hubConnection.Closed += error =>
@@ -150,6 +171,7 @@ public class NotificationClientService : INotificationClientService
         {
             await _hubConnection.StartAsync();
             _logger.LogInformation("Connected to notification hub for user {UserId}", userId);
+            await RejoinBranchesAsync();
             ConnectionStateChanged?.Invoke();
         }
         catch (Exception ex)
@@ -171,19 +193,50 @@ public class NotificationClientService : INotificationClientService
 
     public async Task JoinBranchAsync(Guid branchId)
     {
-        if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+        lock (_joinedBranches) _joinedBranches.Add(branchId);
+
+        if (_hubConnection is { State: HubConnectionState.Connected })
         {
             await _hubConnection.InvokeAsync("JoinBranch", branchId.ToString());
             _logger.LogDebug("Joined branch notification group: {BranchId}", branchId);
+        }
+        else
+        {
+            // Not a failure — the membership is recorded and RejoinBranchesAsync will send it
+            // the moment the connection comes up. Callers race hub startup all the time.
+            _logger.LogDebug("Deferred joining branch group {BranchId} until the hub connects", branchId);
         }
     }
 
     public async Task LeaveBranchAsync(Guid branchId)
     {
-        if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+        lock (_joinedBranches) _joinedBranches.Remove(branchId);
+
+        if (_hubConnection is { State: HubConnectionState.Connected })
         {
             await _hubConnection.InvokeAsync("LeaveBranch", branchId.ToString());
             _logger.LogDebug("Left branch notification group: {BranchId}", branchId);
+        }
+    }
+
+    /// <summary>Replays every wanted branch group onto a freshly established connection.</summary>
+    private async Task RejoinBranchesAsync()
+    {
+        Guid[] wanted;
+        lock (_joinedBranches) wanted = _joinedBranches.ToArray();
+        if (wanted.Length == 0 || _hubConnection is not { State: HubConnectionState.Connected }) return;
+
+        foreach (var branchId in wanted)
+        {
+            try
+            {
+                await _hubConnection.InvokeAsync("JoinBranch", branchId.ToString());
+                _logger.LogDebug("Re-joined branch notification group: {BranchId}", branchId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not re-join branch notification group {BranchId}", branchId);
+            }
         }
     }
 

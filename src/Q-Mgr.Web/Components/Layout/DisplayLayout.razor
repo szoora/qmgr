@@ -33,19 +33,11 @@
     // layout simply skips the branding fetch.
     private async Task<Guid?> ResolveBranchIdAsync()
     {
-        var uri = new Uri(Navigation.Uri);
-
-        foreach (var segment in uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (Guid.TryParse(segment, out var fromPath) && fromPath != Guid.Empty)
-                return fromPath;
-        }
-
-        var query = QueryHelpers.ParseQuery(uri.Query);
-        if (query.TryGetValue("branch", out var raw)
-            && Guid.TryParse(raw.ToString(), out var fromQuery)
-            && fromQuery != Guid.Empty)
-            return fromQuery;
+        // The URL half of this rule is shared with KioskLayout and with App.razor's server-side
+        // theme stamp — one home, in PublicDisplayRoute. It used to be copied out here verbatim.
+        var fromUrl = PublicDisplayRoute.BranchIdFromUri(new Uri(Navigation.Uri));
+        if (fromUrl is not null)
+            return fromUrl;
 
         // BranchStateService is the *admin's* selected branch (localStorage) — only
         // meaningful, and only trusted, when someone is actually signed in on this browser.

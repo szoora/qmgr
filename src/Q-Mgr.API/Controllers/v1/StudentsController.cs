@@ -15,6 +15,7 @@ using QMgr.Domain.Entities.Visitor;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 using QMgr.Infrastructure.Jobs;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -36,16 +37,36 @@ public class StudentsController : ControllerBase
 {
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
+    private readonly IStudentScopeService _scope;
 
     private const int SearchResultLimit = 10;
 
     private readonly ILogger<StudentsController> _logger;
 
-    public StudentsController(QMgrDbContext context, ITenantContextAccessor tenantAccessor, ILogger<StudentsController> logger)
+    public StudentsController(
+        QMgrDbContext context,
+        ITenantContextAccessor tenantAccessor,
+        IStudentScopeService scope,
+        ILogger<StudentsController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
+        _scope = scope;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Branch ownership AND the row-level student scope, in one call. Every action that reaches a
+    /// specific student uses this instead of <see cref="VerifyBranchOwnership"/> alone, so a new
+    /// endpoint gets both guards without having to remember the second one. Returns NotFound (never
+    /// Forbid) for an out-of-scope student: a 403 would confirm the student exists.
+    /// </summary>
+    private async Task<IActionResult?> VerifyStudentAccess(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        return await _scope.VerifyStudentAccessAsync(branchId, studentId);
     }
 
     private async Task<IActionResult?> VerifyBranchOwnership(Guid branchId)
@@ -182,11 +203,16 @@ public class StudentsController : ControllerBase
             .Where(s => s.BranchId == branchId);
         if (!includeInactive) query = query.Where(s => s.IsActive);
 
+        // Row-level scope: a class teacher's roster is their own classes and nothing else. Fails
+        // closed — no assignments means an empty list, never the whole branch.
+        query = await _scope.ApplyAsync(query, branchId);
+
         var students = await query.OrderBy(s => s.FullName).Take(Math.Clamp(limit, 1, 500)).ToListAsync();
 
         var pastoral = await CanViewPastoralAsync();
         var confidential = await CanViewConfidentialAsync();
-        return Ok(students.Select(s => MapToDto(s, pastoral, confidential)).ToList());
+        var restricted = await CanViewRestrictedAsync();
+        return Ok(students.Select(s => MapToDto(s, pastoral, confidential, restricted)).ToList());
     }
 
     /// <summary>
@@ -210,10 +236,18 @@ public class StudentsController : ControllerBase
         var normPhone = VisitorMatching.NormalizePhone(term);
         var normEmail = VisitorMatching.NormalizeEmail(term);
 
+        // Row-level scope. A class-scoped caller must not be able to find students outside their
+        // classes through the check-in search either — this endpoint returns the student's name,
+        // code and class alongside guardian contact details, so it is a full roster read by
+        // another name. Null means unscoped; an empty set means sees nothing.
+        var visibleStudentIds = await _scope.GetVisibleStudentIdsAsync(branchId);
+        if (visibleStudentIds is { Count: 0 }) return Ok(new List<StudentGuardianSearchResultDto>());
+
         var results = await _context.StudentGuardians
             .Include(g => g.Student)
             .Include(g => g.VisitorProfile)
             .Where(g => g.IsActive && g.Student!.BranchId == branchId && g.Student.IsActive)
+            .Where(g => visibleStudentIds == null || visibleStudentIds.Contains(g.StudentId))
             .Where(g =>
                 g.Student!.FullName.ToLower().Contains(lowerTerm) ||
                 (g.Student.StudentCode != null && g.Student.StudentCode.ToLower().Contains(lowerTerm)) ||
@@ -302,7 +336,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateStudent(Guid branchId, Guid studentId, [FromBody] UpdateStudentRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         if (string.IsNullOrWhiteSpace(request.FullName))
@@ -346,7 +380,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeactivateStudent(Guid branchId, Guid studentId)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
@@ -373,7 +407,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateConsent(Guid branchId, Guid studentId, [FromBody] UpdateStudentConsentRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var student = await _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
@@ -420,14 +454,15 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ExportStudentData(Guid branchId, Guid studentId)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
-        if (branchError != null) return branchError;
+        var accessError = await VerifyStudentAccess(branchId, studentId);
+        if (accessError != null) return accessError;
 
         var student = await _context.Students.Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
             .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
         if (student == null) return NotFound();
 
         var canViewConfidential = await CanViewConfidentialAsync();
+        var exportLevels = await VisibleLevelsAsync();
         var callerId = CurrentUserId();
 
         // Live and ended alike — see the note on the flags block below.
@@ -461,8 +496,7 @@ public class StudentsController : ControllerBase
             .Include(r => r.Notifications)
             .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft
                 && (r.StudentId == studentId || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Contains(studentId))));
-        if (!canViewConfidential)
-            recordsQuery = recordsQuery.Where(r => !r.Confidential);
+        recordsQuery = recordsQuery.Where(r => exportLevels.Contains(r.Visibility));
         var records = await recordsQuery.OrderBy(r => r.OccurredAt).ToListAsync();
 
         // Names for every user id referenced anywhere in the document, resolved in one query.
@@ -610,7 +644,7 @@ public class StudentsController : ControllerBase
                 r.Location,
                 r.OccurredAt,
                 status = r.Status.ToString(),
-                r.Confidential,
+                visibility = r.Visibility.ToString(),
                 reportedBy = NameOf(r.ReportedByUserId),
                 loggedAt = r.CreatedAt,
                 r.ActionTaken,
@@ -671,6 +705,36 @@ public class StudentsController : ControllerBase
     private async Task<bool> CanViewConfidentialAsync() => await HasPermissionAsync(Permissions.WelfareConfidentialView);
 
     /// <summary>
+    /// The administrator-only rung: a student's restricted note, and any flag or record marked
+    /// Restricted. Seeded to Tenant Admin and SuperAdmin only.
+    /// </summary>
+    private async Task<bool> CanViewRestrictedAsync() => await HasPermissionAsync(Permissions.WelfareRestrictedView);
+
+    /// <summary>
+    /// Which visibility levels this caller may see. Mirrors WelfareController's own helper — the
+    /// two controllers genuinely need the same rule and neither can reach the other's privates, so
+    /// the duplication is the same deliberate one the confidential check above already carries.
+    /// Written as a SET rather than a ceiling so that holding welfare.restricted.view without
+    /// welfare.confidential.view does not accidentally grant the rung below it.
+    /// </summary>
+    private async Task<List<WelfareVisibility>> VisibleLevelsAsync()
+    {
+        var levels = new List<WelfareVisibility> { WelfareVisibility.Standard };
+        if (await CanViewConfidentialAsync()) levels.Add(WelfareVisibility.Confidential);
+        if (await CanViewRestrictedAsync()) levels.Add(WelfareVisibility.Restricted);
+        return levels;
+    }
+
+    /// <summary>Whether this caller may see one specific level. Fails closed on an unrecognised value.</summary>
+    private async Task<bool> CanSeeLevelAsync(WelfareVisibility visibility) => visibility switch
+    {
+        WelfareVisibility.Standard => true,
+        WelfareVisibility.Confidential => await CanViewConfidentialAsync(),
+        WelfareVisibility.Restricted => await CanViewRestrictedAsync(),
+        _ => false
+    };
+
+    /// <summary>
     /// The pastoral tier — health summary, family context and flags. Built on the existing
     /// <c>welfare.view</c> permission rather than a new one: anyone trusted to read a child's
     /// welfare chronology is by definition trusted with the background that chronology is read
@@ -698,7 +762,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> AddGuardian(Guid branchId, Guid studentId, [FromBody] AddGuardianRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
@@ -774,7 +838,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateGuardianLink(Guid branchId, Guid studentId, Guid guardianLinkId, [FromBody] UpdateGuardianLinkRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         if (string.IsNullOrWhiteSpace(request.Relationship))
@@ -852,7 +916,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RemoveGuardian(Guid branchId, Guid studentId, Guid guardianLinkId)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var link = await _context.StudentGuardians.Include(g => g.Student)
@@ -921,6 +985,11 @@ public class StudentsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
+        // An import is a whole-roster operation. A class-scoped caller has no business reading the
+        // per-row log of a bulk upload that touched every student in the school, so they get an
+        // empty history rather than a filtered one — there is nothing here that is "theirs".
+        if (!await _scope.IsUnscopedAsync()) return Ok(new List<RosterImportJobDto>());
+
         var query = _context.RosterImportJobs.Where(j => j.BranchId == branchId);
         if (kind.HasValue) query = query.Where(j => j.Kind == kind.Value);
 
@@ -941,6 +1010,10 @@ public class StudentsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
+        // Same reasoning as the listing above, and a 404 rather than an empty result so a scoped
+        // caller cannot probe for which job IDs exist.
+        if (!await _scope.IsUnscopedAsync()) return NotFound();
+
         var job = await _context.RosterImportJobs.FirstOrDefaultAsync(j => j.Id == jobId && j.BranchId == branchId);
         if (job == null) return NotFound();
         return Ok(MapToDto(job));
@@ -955,6 +1028,10 @@ public class StudentsController : ControllerBase
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
+
+        // The per-row log names every student the upload touched — the widest roster read in this
+        // controller. Closed to a class-scoped caller entirely.
+        if (!await _scope.IsUnscopedAsync()) return NotFound();
 
         var jobExists = await _context.RosterImportJobs.AnyAsync(j => j.Id == jobId && j.BranchId == branchId);
         if (!jobExists) return NotFound();
@@ -995,13 +1072,26 @@ public class StudentsController : ControllerBase
     ///   Pastoral     (welfare.view)             health summary, family context, flags and their
     ///                                           notes. House parents, matrons, class teachers.
     ///   Confidential (welfare.confidential.view) restriction reasons and High-tier flag notes.
+    ///   Restricted   (welfare.restricted.view)  the administrator-only student note, and any flag
+    ///                                           marked Restricted (which is omitted entirely, not
+    ///                                           blanked — its existence is the sensitive part).
     ///
     /// Fields above a caller's tier are BLANKED rather than the type being different per audience
     /// — one DTO shape, one decision point. A second mapper that "forgets" a field is precisely
     /// the drift this codebase keeps rediscovering.
+    ///
+    /// The one thing deliberately NOT hidden from the pastoral tier is
+    /// <c>HasRestrictedNotes</c>: somebody handling this child needs to know an administrator
+    /// holds information about them, or they cannot know to ask. What that information IS stays
+    /// gated.
     /// </summary>
-    internal static StudentDto MapToDto(Student s, bool pastoral = true, bool confidential = true) => new()
+    internal static StudentDto MapToDto(Student s, bool pastoral = true, bool confidential = true, bool restricted = true) => new()
     {
+        // --- Restricted tier: administrator only.
+        RestrictedNotes = restricted ? s.RestrictedNotes : null,
+        RestrictedNotesUpdatedAt = restricted ? s.RestrictedNotesUpdatedAt : null,
+        HasRestrictedNotes = pastoral && !string.IsNullOrWhiteSpace(s.RestrictedNotes),
+
         Id = s.Id,
         BranchId = s.BranchId,
         FullName = s.FullName,
@@ -1038,7 +1128,7 @@ public class StudentsController : ControllerBase
         TransportMode = pastoral ? s.TransportMode : null,
         PreviousSchool = pastoral ? s.PreviousSchool : null,
 
-        Flags = MapFlags(s.Flags, pastoral, confidential),
+        Flags = MapFlags(s.Flags, pastoral, confidential, restricted),
 
         HasGuardianRestriction = s.Guardians?.Any(g => g.IsActive && g.ContactRestriction != GuardianContactRestriction.None) ?? false,
 
@@ -1067,13 +1157,30 @@ public class StudentsController : ControllerBase
             }).ToList() ?? new()
     };
 
-    /// <summary>Live flags only, most severe first. A High-tier flag's notes need the confidential tier; the chip itself does not, because staff need to know a flag exists to behave differently.</summary>
-    internal static List<StudentFlagDto> MapFlags(IEnumerable<StudentFlag>? flags, bool pastoral, bool confidential)
+    /// <summary>
+    /// Live flags only, most severe first. Two independent gates, on two different axes:
+    ///
+    ///  - <b>Visibility</b> (Standard/Confidential/Restricted) decides whether the flag is returned
+    ///    AT ALL. A flag above the caller's level is omitted from the list, not blanked — with a
+    ///    flag, its existence is the sensitive part, and a redacted chip saying "something is
+    ///    flagged here" would leak exactly what the level is protecting.
+    ///  - <b>Tier</b> (severity) still decides whether the flag's NOTES come back, because a
+    ///    High-tier flag's free text is where safeguarding detail tends to end up. The chip itself
+    ///    survives, because staff need to know a flag exists to behave differently.
+    /// </summary>
+    internal static List<StudentFlagDto> MapFlags(IEnumerable<StudentFlag>? flags, bool pastoral, bool confidential, bool restricted = true)
     {
         if (flags == null || !pastoral) return new();
         var now = DateTime.UtcNow;
 
         return flags.Where(f => f.EndedAt == null)
+            .Where(f => f.Visibility switch
+            {
+                WelfareVisibility.Standard => true,
+                WelfareVisibility.Confidential => confidential,
+                WelfareVisibility.Restricted => restricted,
+                _ => false // an unrecognised level fails closed
+            })
             .OrderByDescending(f => f.Tier)
             .ThenByDescending(f => f.RaisedAt)
             .Select(f => new StudentFlagDto
@@ -1084,6 +1191,7 @@ public class StudentsController : ControllerBase
                 CategoryName = f.Category?.Name ?? "",
                 CategoryColor = f.Category?.Color,
                 Tier = f.Tier,
+                Visibility = f.Visibility,
                 Notes = (f.Tier == WelfareTier.High && !confidential) ? null : f.Notes,
                 RaisedByUserId = f.RaisedByUserId,
                 RaisedAt = f.RaisedAt,
@@ -1216,6 +1324,85 @@ public class StudentsController : ControllerBase
     };
 
     // =========================================================================================
+    // Restricted note — administrator only.
+    //
+    // "This child's living situation is confidential", "do not discuss the father's case in front
+    // of staff": current-state knowledge that is neither an incident nor a standing flag, and had
+    // nowhere to live before this. Three nullable columns on the Student row rather than a fourth
+    // welfare table, per the project's enhance-before-add rule.
+    //
+    // Gated on welfare.restricted.view for BOTH reading and writing. Everyone with the pastoral
+    // tier still sees StudentDto.HasRestrictedNotes — somebody handling the child needs to know an
+    // administrator holds something about them, or they cannot know to ask.
+    // =========================================================================================
+
+    /// <summary>
+    /// Reads the note. A separate endpoint from the student read rather than just relying on the
+    /// blanking in MapToDto, so the panel can fetch it deliberately and an access to genuinely
+    /// restricted content is a distinct request in the logs rather than a side effect of opening
+    /// the roster.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/students/{studentId:guid}/restricted-notes")]
+    [RequirePermission(Permissions.WelfareRestrictedView)]
+    [ProducesResponseType(typeof(StudentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetRestrictedNotes(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyStudentAccess(branchId, studentId);
+        if (branchError != null) return branchError;
+
+        var student = await _context.Students
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        var dto = MapToDto(student, pastoral: true, confidential: true, restricted: true) with
+        {
+            RestrictedNotesUpdatedByName = student.RestrictedNotesUpdatedByUserId.HasValue
+                ? (await ResolveUserNamesAsync(new[] { student.RestrictedNotesUpdatedByUserId.Value }))
+                    .GetValueOrDefault(student.RestrictedNotesUpdatedByUserId.Value, "Unknown")
+                : null
+        };
+
+        return Ok(dto);
+    }
+
+    /// <summary>
+    /// Replaces the note. Empty or whitespace clears it along with both stamps — leaving a
+    /// "last updated by" on an empty note would say somebody wrote something and then imply it was
+    /// removed, which is a worse answer than nothing.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/students/{studentId:guid}/restricted-notes")]
+    [RequirePermission(Permissions.WelfareRestrictedView)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateRestrictedNotes(Guid branchId, Guid studentId, [FromBody] UpdateStudentRestrictedNotesRequest request)
+    {
+        var branchError = await VerifyStudentAccess(branchId, studentId);
+        if (branchError != null) return branchError;
+
+        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        if (notes is { Length: > 4000 })
+            return BadRequest(new ProblemDetails { Title = "Restricted notes cannot exceed 4000 characters", Status = StatusCodes.Status400BadRequest });
+
+        var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
+        if (student == null) return NotFound();
+
+        student.RestrictedNotes = notes;
+        student.RestrictedNotesUpdatedAt = notes == null ? null : DateTime.UtcNow;
+        student.RestrictedNotesUpdatedByUserId = notes == null ? null : CurrentUserId();
+        student.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Restricted notes {Action} for student {StudentId} by user {UserId}",
+            notes == null ? "cleared" : "updated", studentId, CurrentUserId());
+
+        return NoContent();
+    }
+
+    // =========================================================================================
     // Student flags — standing vulnerability markers. The lens a chronology entry is read
     // through: a late arrival from a child with no flags is a late arrival; the same lateness
     // from a child flagged as a young carer is a signal.
@@ -1230,7 +1417,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(typeof(List<StudentFlagDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStudentFlags(Guid branchId, Guid studentId, [FromQuery] bool includeEnded = false)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var exists = await _context.Students.AnyAsync(s => s.Id == studentId && s.BranchId == branchId);
@@ -1240,6 +1427,12 @@ public class StudentsController : ControllerBase
             .Include(f => f.Category)
             .Where(f => f.StudentId == studentId && f.BranchId == branchId);
         if (!includeEnded) query = query.Where(f => f.EndedAt == null);
+
+        // A flag above the caller's level is omitted entirely rather than blanked: with a flag its
+        // existence is the sensitive part, and a redacted chip saying "something is flagged here"
+        // would leak exactly what the level protects.
+        var flagLevels = await VisibleLevelsAsync();
+        query = query.Where(f => flagLevels.Contains(f.Visibility));
 
         var flags = await query.OrderByDescending(f => f.EndedAt == null)
             .ThenByDescending(f => f.Tier)
@@ -1260,6 +1453,7 @@ public class StudentsController : ControllerBase
             CategoryName = f.Category?.Name ?? "",
             CategoryColor = f.Category?.Color,
             Tier = f.Tier,
+            Visibility = f.Visibility,
             Notes = (f.Tier == WelfareTier.High && !confidential) ? null : f.Notes,
             RaisedByUserId = f.RaisedByUserId,
             RaisedByName = names.GetValueOrDefault(f.RaisedByUserId, "Unknown"),
@@ -1278,7 +1472,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(typeof(StudentFlagDto), StatusCodes.Status201Created)]
     public async Task<IActionResult> RaiseStudentFlag(Guid branchId, Guid studentId, [FromBody] CreateStudentFlagRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
@@ -1293,6 +1487,13 @@ public class StudentsController : ControllerBase
         // Raising a High-tier flag is a safeguarding act with the same audience as a confidential
         // record — someone who could not then read it back must not be able to create it.
         if (request.Tier == WelfareTier.High && !await CanViewConfidentialAsync())
+            return Forbid();
+
+        // The same rule on the visibility axis: you cannot file a flag into a level you could not
+        // then read, which would hide it from everyone including yourself.
+        if (!Enum.IsDefined(request.Visibility))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised visibility", Status = StatusCodes.Status400BadRequest });
+        if (!await CanSeeLevelAsync(request.Visibility))
             return Forbid();
 
         var category = await _context.WelfareCategories
@@ -1318,6 +1519,7 @@ public class StudentsController : ControllerBase
             StudentId = studentId,
             CategoryId = request.CategoryId,
             Tier = request.Tier,
+            Visibility = request.Visibility,
             Notes = Clean(request.Notes),
             RaisedByUserId = userId,
             RaisedAt = DateTime.UtcNow,
@@ -1355,7 +1557,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> UpdateStudentFlag(Guid branchId, Guid studentId, Guid flagId, [FromBody] UpdateStudentFlagRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         if (!Enum.IsDefined(request.Tier))
@@ -1371,10 +1573,19 @@ public class StudentsController : ControllerBase
         if ((flag.Tier == WelfareTier.High || request.Tier == WelfareTier.High) && !await CanViewConfidentialAsync())
             return Forbid();
 
+        // Both directions on the visibility axis. The CURRENT level matters as much as the
+        // requested one: without that check a caller who cannot see a Restricted flag could still
+        // downgrade it to Standard by guessing its ID, which is the whole protection undone.
+        if (!Enum.IsDefined(request.Visibility))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised visibility", Status = StatusCodes.Status400BadRequest });
+        if (!await CanSeeLevelAsync(flag.Visibility) || !await CanSeeLevelAsync(request.Visibility))
+            return Forbid();
+
         if (request.ReviewDueDate is { } due && due.Date < DateTime.UtcNow.Date)
             return BadRequest(new ProblemDetails { Title = "A review date in the past would be overdue the moment it is set", Status = StatusCodes.Status400BadRequest });
 
         flag.Tier = request.Tier;
+        flag.Visibility = request.Visibility;
         flag.Notes = Clean(request.Notes);
         flag.ReviewDueDate = request.ReviewDueDate;
         flag.ReminderSentAt = null;
@@ -1393,7 +1604,7 @@ public class StudentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> EndStudentFlag(Guid branchId, Guid studentId, Guid flagId, [FromBody] EndStudentFlagRequest request)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
+        var branchError = await VerifyStudentAccess(branchId, studentId);
         if (branchError != null) return branchError;
 
         if (string.IsNullOrWhiteSpace(request.EndReason))
@@ -1407,6 +1618,11 @@ public class StudentsController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "That flag has already been ended", Status = StatusCodes.Status400BadRequest });
 
         if (flag.Tier == WelfareTier.High && !await CanViewConfidentialAsync())
+            return Forbid();
+
+        // You cannot end a flag you could not see. Without this, a caller could clear a Restricted
+        // flag off a student by guessing its ID — the deletion path around the visibility gate.
+        if (!await CanSeeLevelAsync(flag.Visibility))
             return Forbid();
 
         flag.EndedAt = DateTime.UtcNow;
@@ -1587,6 +1803,14 @@ public class StudentsController : ControllerBase
         renamed += ApplyRenames(students, request.HouseRenames, s => s.House, (s, v) => s.House = v);
         renamed += ApplyRenames(students, request.DormitoryRenames, s => s.DormitoryOrStream, (s, v) => s.DormitoryOrStream = v);
 
+        // Class-teacher assignments reference a class BY NAME, so a rename has to move them too or
+        // the teacher silently stops matching their own students — no error, no alert, just a class
+        // that quietly stops reaching anybody. Same transaction as the student renames.
+        var assignments = await _context.ClassTeacherAssignments
+            .Where(a => a.BranchId == branchId && a.EndedAt == null)
+            .ToListAsync();
+        var assignmentsRenamed = ApplyAssignmentRenames(assignments, request.ClassRenames);
+
         // Guard AFTER renames: a value that was renamed is no longer held by anybody, so checking
         // first would refuse a perfectly ordinary rename-and-tidy in one save.
         var orphanError = FindOrphaned(students, s => s.ClassName, vocab.Classes, "class")
@@ -1594,6 +1818,22 @@ public class StudentsController : ControllerBase
                           ?? FindOrphaned(students, s => s.DormitoryOrStream, vocab.Dormitories, "dormitory");
         if (orphanError != null)
             return BadRequest(new ProblemDetails { Title = orphanError, Status = StatusCodes.Status400BadRequest });
+
+        // A class with a live class teacher counts as in use. The editor already refuses to remove
+        // a class students hold ("In-use entries cannot be removed — retire them"); removing one
+        // that a teacher holds would leave an assignment pointing at a class that no longer exists.
+        var vocabNames = vocab.Classes.Select(c => c.Name.Trim().ToLowerInvariant()).ToHashSet();
+        var strandedClass = assignments
+            .Select(a => a.ClassName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(n => !vocabNames.Contains(n.Trim().ToLowerInvariant()));
+        if (strandedClass != null)
+            return BadRequest(new ProblemDetails
+            {
+                Title = $"'{strandedClass}' still has a class teacher",
+                Detail = "End that class-teacher assignment before removing or renaming the class away.",
+                Status = StatusCodes.Status400BadRequest
+            });
 
         vocab.HomeLanguages = CleanSuggestions(vocab.HomeLanguages);
         vocab.Religions = CleanSuggestions(vocab.Religions);
@@ -1606,6 +1846,8 @@ public class StudentsController : ControllerBase
 
         if (renamed > 0)
             _logger.LogInformation("Branch {BranchId} vocabulary rename touched {Count} student row(s)", branchId, renamed);
+        if (assignmentsRenamed > 0)
+            _logger.LogInformation("Branch {BranchId} class rename moved {Count} class-teacher assignment(s)", branchId, assignmentsRenamed);
 
         return Ok(new UpdateBranchVocabulariesResultDto
         {
@@ -1662,6 +1904,35 @@ public class StudentsController : ControllerBase
 
     private static bool IsHexColor(string value) =>
         System.Text.RegularExpressions.Regex.IsMatch(value, "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$");
+
+    /// <summary>
+    /// The class-teacher half of a class rename. Deliberately its own method rather than a
+    /// generic over both types: <see cref="ApplyRenames"/> is written against <c>Student</c>, and
+    /// making it generic to save eight lines would obscure the one thing that matters here —
+    /// that an assignment renamed out of step with its students stops matching anybody, silently.
+    /// </summary>
+    private static int ApplyAssignmentRenames(
+        List<ClassTeacherAssignment> assignments,
+        Dictionary<string, string>? renames)
+    {
+        if (renames == null || renames.Count == 0) return 0;
+
+        var touched = 0;
+        foreach (var (oldName, newName) in renames)
+        {
+            if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName)) continue;
+            if (string.Equals(oldName, newName, StringComparison.Ordinal)) continue;
+
+            foreach (var a in assignments.Where(a => string.Equals(a.ClassName, oldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                a.ClassName = newName.Trim();
+                a.UpdatedAt = DateTime.UtcNow;
+                touched++;
+            }
+        }
+
+        return touched;
+    }
 
     private static int ApplyRenames(
         List<Student> students,

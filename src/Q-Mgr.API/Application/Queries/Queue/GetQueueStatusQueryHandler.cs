@@ -29,8 +29,19 @@ public class GetQueueStatusQueryHandler : IRequestHandler<GetQueueStatusQuery, Q
         var completedTokens = await _unitOfWork.Tokens.GetTokensByStatusAsync(
             request.BranchId, TokenStatus.Completed, today, cancellationToken);
 
+        // "Being served" is Called plus Serving, not Serving alone. Nothing in this codebase ever
+        // assigns TokenStatus.Serving — calling a customer leaves them Called until they are
+        // completed or marked no-show — so querying that status by itself returned an empty list
+        // every time and the dashboard's "Now Serving" tile read 0 with staff mid-service at every
+        // counter. Serving is still included so the count stays correct if that status is ever
+        // introduced by a real start-service step.
+        var calledTokens = await _unitOfWork.Tokens.GetTokensByStatusAsync(
+            request.BranchId, TokenStatus.Called, today, cancellationToken);
+
         var servingTokens = await _unitOfWork.Tokens.GetTokensByStatusAsync(
             request.BranchId, TokenStatus.Serving, today, cancellationToken);
+
+        var inServiceTokens = calledTokens.Concat(servingTokens).ToList();
 
         // Get service types
         var serviceTypes = await _unitOfWork.ServiceTypes.FindAsync(
@@ -60,7 +71,7 @@ public class GetQueueStatusQueryHandler : IRequestHandler<GetQueueStatusQuery, Q
             Summary = new QueueSummaryDto
             {
                 TotalWaiting = tokens.Count,
-                TotalServing = servingTokens.Count,
+                TotalServing = inServiceTokens.Count,
                 TotalCompletedToday = completedTokens.Count,
                 AverageWaitMinutes = avgWait,
                 AverageServiceMinutes = avgService

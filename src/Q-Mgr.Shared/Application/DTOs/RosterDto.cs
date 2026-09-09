@@ -75,6 +75,30 @@ public record StudentDto
     public DateTime? DataConsentGivenAt { get; init; }
     public Guid? DataConsentRecordedByUserId { get; init; }
     public string? DataConsentNotes { get; init; }
+
+    // --- Restricted tier: administrator only (welfare.restricted.view).
+    // Blanked SERVER-SIDE for every other caller rather than omitted from the type, exactly like
+    // the pastoral and confidential fields above — one DTO serves every audience and there is one
+    // place that decides who sees what. Never hidden only in the markup: a field the API still
+    // ships is one devtools click from being read.
+
+    public string? RestrictedNotes { get; init; }
+    public DateTime? RestrictedNotesUpdatedAt { get; init; }
+    public string? RestrictedNotesUpdatedByName { get; init; }
+
+    /// <summary>
+    /// True when a restricted note exists — and, unlike the note itself, sent to every caller with
+    /// the pastoral tier. Somebody handling this child needs to know that an administrator holds
+    /// information about them, or they cannot know to ask; what that information IS stays gated.
+    /// </summary>
+    public bool HasRestrictedNotes { get; init; }
+}
+
+/// <summary>PUT body for a student's administrator-only restricted note. An empty/whitespace value clears the note and its stamps.</summary>
+public record UpdateStudentRestrictedNotesRequest
+{
+    [MaxLength(4000, ErrorMessage = "Restricted notes cannot exceed 4000 characters")]
+    public string? Notes { get; set; }
 }
 
 /// <summary>PATCH body for a student's data-processing consent. Given=true stamps now + the caller; false clears the whole consent block.</summary>
@@ -367,6 +391,13 @@ public record StudentFlagDto
     public string? CategoryColor { get; init; }
     public WelfareTier Tier { get; init; }
 
+    /// <summary>
+    /// Standard / Confidential / Restricted — a DIFFERENT axis from <see cref="Tier"/>, which is
+    /// severity. A Restricted flag is never returned at all to a caller without
+    /// <c>welfare.restricted.view</c>; this field is here to label the chip, not to filter on.
+    /// </summary>
+    public WelfareVisibility Visibility { get; init; }
+
     /// <summary>Blanked for callers below this flag's tier — the chip stays, the detail does not.</summary>
     public string? Notes { get; init; }
 
@@ -390,6 +421,9 @@ public record CreateStudentFlagRequest
 
     public WelfareTier Tier { get; set; } = WelfareTier.Low;
 
+    /// <summary>Rejected server-side unless the caller holds the matching permission for the level asked for.</summary>
+    public WelfareVisibility Visibility { get; set; } = WelfareVisibility.Standard;
+
     [MaxLength(2000, ErrorMessage = "Notes cannot exceed 2000 characters")]
     public string? Notes { get; set; }
 
@@ -407,6 +441,9 @@ public record EndStudentFlagRequest
 public record UpdateStudentFlagRequest
 {
     public WelfareTier Tier { get; set; } = WelfareTier.Low;
+
+    /// <summary>Rejected server-side unless the caller holds the matching permission — both for the level being set AND the level already there, so a lower-tier user cannot silently downgrade a flag they cannot see.</summary>
+    public WelfareVisibility Visibility { get; set; } = WelfareVisibility.Standard;
 
     [MaxLength(2000, ErrorMessage = "Notes cannot exceed 2000 characters")]
     public string? Notes { get; set; }

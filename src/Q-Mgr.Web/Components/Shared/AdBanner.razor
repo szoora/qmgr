@@ -53,6 +53,19 @@
     .ad-banner-internal a:hover {
         text-decoration: underline;
     }
+
+    /* Light Theme Override
+       This component renders inside DisplayLayout's [data-theme] wrapper
+       (CustomerDisplay is its only host), so it follows the organization's
+       admin-selected Display Theme. The pairing above is white text on a
+       black scrim — correct on the dark display, but on the light one the
+       scrim lightens to near-nothing and white-on-near-white is unreadable.
+       The link colour needs no counterpart: it already resolves through
+       --display-accent / --qm-primary, both of which are themed. */
+    [data-theme="light"] .ad-banner-internal {
+        color: rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.05);
+    }
 </style>
 
 @code {

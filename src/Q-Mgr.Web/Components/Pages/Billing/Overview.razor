@@ -266,7 +266,7 @@ else
                                     <QBadge Variant="@GetInvoiceStatusVariant(invoice.Status)" Text="@invoice.Status" />
                                 </td>
                                 <td>
-                                    <QButton Icon="download" Variant="outline-primary" Size="sm" OnClick="@(() => DownloadInvoice(invoice.Id))" />
+                                    <QButton Icon="box-arrow-up-right" Variant="outline-primary" Size="sm" Title="Open in Invoices" OnClick="@(() => DownloadInvoice(invoice.Id))" />
                                 </td>
                             </tr>
                         }
@@ -448,15 +448,15 @@ else
         background: var(--qm-bg-card);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        padding: 20px;
+        padding: var(--qm-statcard-pad);
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 10px;
     }
 
     .stat-icon {
-        width: 48px;
-        height: 48px;
+        width: var(--qm-statcard-icon);
+        height: var(--qm-statcard-icon);
         border-radius: var(--qm-radius-lg);
         display: flex;
         align-items: center;
@@ -861,20 +861,20 @@ else
 
     private async Task DownloadInvoice(Guid invoiceId)
     {
-        try
-        {
-            var response = await Http.GetAsync($"api/v1/billing/invoices/{invoiceId}/download");
-            if (response.IsSuccessStatusCode)
-            {
-                // Handle PDF download
-                var bytes = await response.Content.ReadAsByteArrayAsync();
-                // Trigger download via JS
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error downloading invoice: {ex.Message}");
-        }
+        // This was dead three ways over and its silence is why nobody noticed (found 2026-09-06):
+        //   1. it called api/v1/billing/invoices/{id}/download, which does not exist on
+        //      BillingController and never has — every click was a 404;
+        //   2. on success it read the bytes and dropped them ("// Trigger download via JS" was
+        //      never written), so even a working endpoint would have downloaded nothing;
+        //   3. the failure went to Console.WriteLine, i.e. the server's stdout.
+        //
+        // Rather than invent an endpoint, this now sends the user to the Invoices page, which has
+        // a working download (it opens the invoice's PdfUrl). That page is also where the rest of
+        // invoice management lives, so it is where the button should have pointed anyway. This
+        // page's own InvoiceDto carries no PdfUrl, so it cannot do the download itself without a
+        // wider change.
+        Navigation.NavigateTo($"/billing/invoices?invoice={invoiceId}");
+        await Task.CompletedTask;
     }
 
     // DTOs

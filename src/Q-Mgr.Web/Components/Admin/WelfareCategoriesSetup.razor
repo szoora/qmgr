@@ -393,7 +393,12 @@
     {
         if (firstRender)
         {
-            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
+            // welfare.categories.manage, not welfare.view. This page exists to DEFINE the
+            // taxonomy; a caller who cannot edit it has nothing to do here, and gating entry on
+            // welfare.view meant every class teacher and front-line staff member could reach a
+            // page whose every control was disabled. The API's own [RequirePermission] is the
+            // real boundary — this just stops the pointless journey.
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareCategoriesManage))
             {
                 Navigation.NavigateTo("/unauthorized", forceLoad: true);
                 return;

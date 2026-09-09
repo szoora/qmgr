@@ -30,7 +30,26 @@ public class Token : BaseEntity
 
     // Timestamps
     public DateTime? CalledAt { get; set; }
+
+    /// <summary>
+    /// When service began. <b>Calling a customer starts the service clock</b> — this is set to the
+    /// same moment as <see cref="CalledAt"/> by call-next, call-specific and transfer, and is the
+    /// value <see cref="ServiceDurationMinutes"/> is measured from on completion.
+    ///
+    /// The alternative would be a separate "start service" action moving the token to
+    /// <c>TokenStatus.Serving</c>, which would exclude the walk from the waiting area. That action
+    /// has never existed: until 2026-09-06 nothing assigned this field at all, so
+    /// <see cref="ServiceDurationMinutes"/> never populated and every average-service-time figure
+    /// in the product — the dashboard tile, Counter Performance, Queue Analytics, Reports Overview
+    /// — rendered blank or zero. Calling-is-serving was chosen deliberately (user decision) as the
+    /// reading that makes those numbers real now; if a true start-service step is ever added, it
+    /// should move this later rather than reintroduce a null.
+    ///
+    /// A transfer RESTARTS this rather than clearing it, so the recorded duration belongs to the
+    /// counter that actually served the customer.
+    /// </summary>
     public DateTime? ServiceStartedAt { get; set; }
+
     public DateTime? ServiceCompletedAt { get; set; }
 
     // Metrics

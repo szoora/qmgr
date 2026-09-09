@@ -46,6 +46,18 @@ param(
 
     [string]$InstallRoot     = '/var/www/sites/qmgr',
     [string]$UploadsPath     = '/var/www/uploads/qmgr',  # persists across deploys; excluded from the package and from rsync --delete
+    # Data Protection key ring. MUST live outside $InstallRoot and MUST be in the API unit's
+    # ReadWritePaths. Two separate reasons, both found the hard way:
+    #   1. ProtectSystem=strict mounts the whole filesystem read-only except ReadWritePaths, and
+    #      the app's default key location is AppContext.BaseDirectory ($InstallRoot/api). So the
+    #      key ring could not be created at all, and IDataProtector.Protect() threw on every call
+    #      — which is a 500 on EVERY walk-in visitor check-in (the badge QR token is a protected
+    #      payload), returned AFTER the visit had already committed. 'It says error but the
+    #      visitor is checked in' was this, exactly.
+    #   2. Even writable, a path under $InstallRoot is replaced on every deploy, so anything
+    #      encrypted with the old ring (the platform Spotify OAuth tokens) would become
+    #      undecryptable after each upgrade. /var/lib survives.
+    [string]$DataProtectionPath = '/var/lib/qmgr/dataprotection-keys',
 
     [string]$PgHost          = 'localhost',
     [string]$PgPort          = '5432',
@@ -184,6 +196,11 @@ $apiAppSettingsProd = [ordered]@{
     }
     App = [ordered]@{
         PublicWebBaseUrl = "https://$HostName"
+    }
+    # See the -DataProtectionPath parameter for why this must be set explicitly rather than left
+    # to Program.cs's AppContext.BaseDirectory default.
+    DataProtection = [ordered]@{
+        KeyPath = $DataProtectionPath
     }
     Cors = [ordered]@{
         AllowedOrigins = @("https://$HostName")
@@ -440,7 +457,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=$InstallRoot/api/wwwroot/uploads $UploadsPath /var/log/qmgr
+ReadWritePaths=$InstallRoot/api/wwwroot/uploads $UploadsPath /var/log/qmgr $DataProtectionPath
 
 [Install]
 WantedBy=multi-user.target
@@ -619,6 +636,7 @@ NC='\033[0m'
 
 INSTALL_ROOT="__INSTALL_ROOT__"
 UPLOADS_PATH="__UPLOADS_PATH__"
+DP_KEYS_PATH="__DP_KEYS_PATH__"
 BACKUP_ROOT="$INSTALL_ROOT/.backups"
 LOG_DIR="/var/log/qmgr"
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -676,7 +694,7 @@ if { [ -n "$CURRENT_API_PORT" ] && [ "$CURRENT_API_PORT" != "$API_PORT" ]; } || 
     fi
 fi
 
-mkdir -p "$INSTALL_ROOT/api" "$INSTALL_ROOT/web" "$BACKUP_ROOT" "$UPLOADS_PATH" "$LOG_DIR"
+mkdir -p "$INSTALL_ROOT/api" "$INSTALL_ROOT/web" "$BACKUP_ROOT" "$UPLOADS_PATH" "$LOG_DIR" "$DP_KEYS_PATH"
 
 # ---- 1) stop services (idempotent — ok if they don't exist yet) ----
 echo -e "${YELLOW}==> [1/9] Stopping services (if running)${NC}"
@@ -766,7 +784,9 @@ PRESERVED_API_SETTINGS=""
 
 # ---- 5) permissions ----
 echo -e "${YELLOW}==> [5/9] Setting permissions${NC}"
-chown -R www-data:www-data "$INSTALL_ROOT/api" "$INSTALL_ROOT/web" "$UPLOADS_PATH" "$LOG_DIR"
+chown -R www-data:www-data "$INSTALL_ROOT/api" "$INSTALL_ROOT/web" "$UPLOADS_PATH" "$LOG_DIR" "$DP_KEYS_PATH"
+# The key ring holds private keys — nobody but the service account has any business reading it.
+chmod 700 "$DP_KEYS_PATH"
 chmod -R u+rwX,go+rX,go-w "$INSTALL_ROOT/api" "$INSTALL_ROOT/web"
 chmod +x "$INSTALL_ROOT/api/Q-Mgr.API" "$INSTALL_ROOT/web/Q-Mgr.Web"
 ln -sfn "$UPLOADS_PATH" "$INSTALL_ROOT/api/wwwroot/uploads"
@@ -856,6 +876,7 @@ $installSh = $installSh `
     -replace '__BUILD_VERSION__', $BuildVersion `
     -replace '__INSTALL_ROOT__', $InstallRoot `
     -replace '__UPLOADS_PATH__', $UploadsPath `
+    -replace '__DP_KEYS_PATH__', $DataProtectionPath `
     -replace '__PG_DATABASE__', $PgDatabase `
     -replace '__HOST_NAME__', $HostName `
     -replace '__API_PORT__', $ApiPort `

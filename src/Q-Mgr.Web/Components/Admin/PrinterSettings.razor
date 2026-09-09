@@ -21,7 +21,7 @@
             @if (canEdit)
             {
                 <QButton Text="Test Print" Icon="printer-fill" Variant="secondary" OnClick="@TestPrint" Disabled="@isTesting" />
-                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@isSaving" />
+                <QButton Text="Save Settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isSaving || loadFailed)" />
             }
         </div>
     </div>
@@ -524,6 +524,8 @@
 @code {
     private bool isLoading = true;
     private bool isSaving = false;
+    /// <summary>Latched when a settings load fails. Blocks Save so defaults cannot silently overwrite real settings.</summary>
+    private bool loadFailed = false;
     private bool isTesting = false;
     private bool canEdit = false;
     private Guid BranchId => BranchState.CurrentBranchId;
@@ -599,10 +601,22 @@
                         AutoPrintOnTokenCreate = dto.AutoPrintOnTokenCreate
                     };
                 }
+                loadFailed = false;
+            }
+            else
+            {
+                // Silent failure here is dangerous rather than untidy: the form stays on its
+                // defaults, which is indistinguishable from "nothing configured yet", and Save
+                // would then overwrite the branch's real printer settings with them. So the
+                // failure is announced and latched, and Save stays disabled until a load works.
+                loadFailed = true;
+                NotificationService.Notify(ToastSeverity.Error, "Could not load printer settings",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The saved settings could not be read."));
             }
         }
         catch (Exception ex)
         {
+            loadFailed = true;
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load settings: {ex.Message}");
         }
         finally

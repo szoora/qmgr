@@ -1,0 +1,83 @@
+@namespace QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+
+@*
+    The red shield next to a watchlisted person's name — clickable, everywhere it appears.
+
+    It used to carry the reason in a `title` attribute only. A native tooltip needs a mouse, needs
+    a hover held long enough for the browser to decide you meant it, and never appears at all on
+    the touch screens the front desk and the wall-mounted activity board actually run on — so the
+    single piece of information the flag exists to convey ("why is this person flagged?") was
+    effectively invisible on the surfaces where somebody has to act on it. Now it is a button, and
+    a click says who flagged them, when, and why.
+*@
+
+<button type="button" class="watchlist-flag-btn" @onclick="Open" @onclick:stopPropagation="true"
+        title="@($"{Name} is flagged — click for the reason")"
+        aria-label="@($"{Name} is flagged — show reason")">
+    <QIcon Name="shield-exclamation" />
+</button>
+
+<QModal @bind-Visible="showReason" Title="Watchlist flag" Icon="shield-exclamation" Size="sm">
+    <ChildContent>
+        <div class="watchlist-reason">
+            <p class="watchlist-reason__who"><strong>@Name</strong> is on the watchlist.</p>
+
+            <div class="watchlist-reason__block">
+                <span class="watchlist-reason__label">Reason</span>
+                <p class="watchlist-reason__text">
+                    @(string.IsNullOrWhiteSpace(Reason) ? "No reason was recorded when this person was flagged." : Reason)
+                </p>
+            </div>
+
+            @if (FlaggedAt.HasValue)
+            {
+                <div class="watchlist-reason__block">
+                    <span class="watchlist-reason__label">Flagged</span>
+                    <p class="watchlist-reason__text">@FlaggedAt.Value.ToLocalTime().ToString("MMM dd, yyyy 'at' HH:mm")</p>
+                </div>
+            }
+
+            <p class="watchlist-reason__note">
+                A flagged visitor cannot be checked in unless a Manager or Admin authorises it with an override reason.
+            </p>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="secondary" OnClick="@(() => showReason = false)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .watchlist-flag-btn {
+        background: none;
+        border: none;
+        padding: 0 2px;
+        margin: 0;
+        cursor: pointer;
+        color: var(--qm-danger);
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        border-radius: var(--qm-radius-sm);
+    }
+    .watchlist-flag-btn:hover { background: rgba(var(--qm-danger-rgb), 0.14); }
+    .watchlist-flag-btn:focus-visible { outline: 2px solid var(--qm-danger); outline-offset: 1px; }
+
+    .watchlist-reason { display: flex; flex-direction: column; gap: 14px; }
+    .watchlist-reason__who { margin: 0; color: var(--qm-text-primary); font-size: 14px; }
+    .watchlist-reason__block { display: flex; flex-direction: column; gap: 4px; }
+    .watchlist-reason__label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--qm-text-muted); font-weight: 600; }
+    .watchlist-reason__text { margin: 0; color: var(--qm-text-primary); font-size: 14px; white-space: pre-wrap; }
+    .watchlist-reason__note { margin: 0; font-size: 12px; color: var(--qm-text-muted); border-top: 1px solid var(--qm-border); padding-top: 12px; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter] public string? Reason { get; set; }
+    [Parameter] public DateTime? FlaggedAt { get; set; }
+
+    private bool showReason;
+
+    private void Open() => showReason = true;
+}

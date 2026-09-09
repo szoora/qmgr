@@ -1,8 +1,15 @@
+using QMgr.Domain.Enums;
+
 namespace QMgr.Domain.Constants;
 
 /// <summary>
 /// Permission constants for RBAC. These are used throughout the application
 /// for authorization checks and are seeded to the database.
+///
+/// NOTE: this is one of TWO permission catalogues — <c>RbacSeeder.AllPermissions</c> is the other,
+/// and <c>RbacSeeder</c> wins the startup race on a fresh install. A code added here and not there
+/// (or the reverse) produces a different result depending on which seeder runs first, which is how
+/// the seven welfare.* codes came to be missing from this file for weeks. Add to BOTH, always.
 /// </summary>
 public static class Permissions
 {
@@ -81,6 +88,21 @@ public static class Permissions
     public const string WelfareConfidentialView = "welfare.confidential.view"; // Welfare-tier (safeguarding) records — off for Manager by default, on for Admin
     public const string WelfareCategoriesManage = "welfare.categories.manage";
     public const string WelfareReportsView = "welfare.reports.view";
+
+    /// <summary>
+    /// The rung above Confidential: administrator-only welfare records, student flags, and the
+    /// student-level restricted note. Seeded to Tenant Admin and SuperAdmin ONLY — a tenant must
+    /// consciously grant it to a custom role (a DSL, a counsellor). Grants both reading restricted
+    /// content and raising something to that level; you cannot restrict what you could not then read.
+    /// </summary>
+    public const string WelfareRestrictedView = "welfare.restricted.view";
+
+    /// <summary>
+    /// Assign and end class-teacher assignments, and edit a teacher's contact details. Held by
+    /// Manager and above — a class teacher explicitly does NOT hold it, or they could assign
+    /// themselves to any class and defeat their own scope.
+    /// </summary>
+    public const string ClassTeachersManage = "classes.teachers.manage";
 
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
@@ -193,6 +215,21 @@ public static class Permissions
         // Student Rosters
         new("students.view", "View Student Rosters", "View students and their authorized guardians", "Student Rosters", 1),
         new("students.manage", "Manage Student Rosters", "Create/edit/delete students and guardians, bulk import a roster", "Student Rosters", 2),
+        new("classes.teachers.manage", "Manage Class Teachers", "Assign and end class-teacher assignments, and edit their contact details", "Student Rosters", 3),
+
+        // Student Welfare Ledger (achievements, behavior incidents, welfare concerns)
+        // These seven existed in RbacSeeder's own catalogue but were missing from this one until
+        // 2026-09-09 — harmless only because RbacSeeder wins the startup race on a fresh install.
+        // Two catalogues is the standing risk; a code added to one and not the other gives a
+        // different result depending on which seeder runs first. Both are updated together now.
+        new("welfare.view", "View Welfare Records", "View non-confidential achievement, behavior, and welfare records", "Student Welfare", 1),
+        new("welfare.create", "Log Welfare Records", "Log an achievement, behavior incident, or welfare concern", "Student Welfare", 2),
+        new("welfare.edit", "Add Welfare Follow-Up Notes", "Add a follow-up note to an existing record (records are never rewritten)", "Student Welfare", 3),
+        new("welfare.notify", "Notify Guardians", "Review and send a guardian notification for a welfare record", "Student Welfare", 4),
+        new("welfare.confidential.view", "View Confidential Welfare Records", "View safeguarding records — a smaller audience than general behavior records by design", "Student Welfare", 5),
+        new("welfare.restricted.view", "View Restricted Welfare Information", "View and set administrator-only restricted records, flags, and student notes", "Student Welfare", 6),
+        new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7),
+        new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8),
 
         // Marketing
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
@@ -281,7 +318,11 @@ public static class Permissions
                 ContentView, ContentCreate, ContentEdit, ContentDelete,
                 FeedbackView, FeedbackRespond, FeedbackAnalytics,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut, VisitorsManage,
-                StudentsView, StudentsManage,
+                StudentsView, StudentsManage, ClassTeachersManage,
+                // Welfare: full except the two confidentiality tiers. An Admin grants
+                // welfare.confidential.view to a DSL/counsellor custom role; welfare.restricted.view
+                // stays with Admin unless deliberately delegated.
+                WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsView,
                 MarketingView, MarketingManage, MarketingSend,
                 SettingsView,
                 NotificationsView,
@@ -304,7 +345,32 @@ public static class Permissions
                 FeedbackView,
                 VisitorsView, VisitorsCheckIn, VisitorsCheckOut,
                 StudentsView,
+                WelfareView, WelfareCreate, WelfareNotify,
             }
+        ),
+
+        // Pastoral responsibility for one or more classes. The permission set is narrow on purpose;
+        // what makes this role work is not what it may do but WHICH ROWS it may do it to — see
+        // DataScope below. Notably absent: students.manage (no roster editing, no bulk import),
+        // classes.teachers.manage (could otherwise self-assign to any class and defeat the scope),
+        // and both confidentiality tiers.
+        [RoleCodes.ClassTeacher] = new RoleDefinition(
+            "Class Teacher",
+            RoleCodes.ClassTeacher,
+            "Pastoral responsibility for assigned classes. Sees only students in those classes.",
+            "#E67E22",
+            "account-school",
+            4,
+            new[]
+            {
+                DashboardView,
+                NotificationsView,
+                StudentsView,
+                // Scoped by StudentScopeService to the caller's own classes, so
+                // welfare.reports.view answers "how is my class doing" and nothing wider.
+                WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsView,
+            },
+            RoleDataScope.AssignedClasses
         ),
 
         [RoleCodes.Viewer] = new RoleDefinition(
@@ -353,5 +419,6 @@ public record RoleDefinition(
     string Color,
     string Icon,
     int SortOrder,
-    string[] Permissions
+    string[] Permissions,
+    RoleDataScope DataScope = RoleDataScope.Organization
 );

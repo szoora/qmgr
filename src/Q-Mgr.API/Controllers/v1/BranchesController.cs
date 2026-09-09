@@ -599,25 +599,76 @@ public class BranchesController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
+        // Field-keyed rather than a bare Detail string: ValidationProblem puts the message under
+        // the property name, which is what the Web client needs to show it against the offending
+        // input instead of as a page-level banner. CreateTokenRequest already answers this shape.
         if (string.IsNullOrWhiteSpace(request.CounterNumber))
-            return BadRequest(new ProblemDetails
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
             {
-                Title = "Validation failed",
-                Detail = "Counter number is required.",
-                Status = StatusCodes.Status400BadRequest
-            });
-
-        // Check for duplicate counter number in branch
-        var exists = await _dbContext.Counters.AnyAsync(c => c.BranchId == branchId && c.CounterNumber == request.CounterNumber);
-        if (exists)
-            return BadRequest(new ProblemDetails
-            {
-                Title = "Duplicate counter number",
-                Detail = $"Counter number '{request.CounterNumber}' already exists in this branch.",
-                Status = StatusCodes.Status400BadRequest
-            });
+                [nameof(request.CounterNumber)] = new[] { "Counter number is required." }
+            })
+            { Title = "Validation failed", Status = StatusCodes.Status400BadRequest });
 
         var isEnabled = request.IsEnabled ?? true;
+
+        // Counter numbers are reusable after a delete. The delete is a SOFT one (IsActive = false)
+        // and this check used to ignore IsActive, so a deleted counter kept its number reserved
+        // for ever: recreating "3" answered "Counter number '3' already exists in this branch"
+        // about a counter the UI no longer shows anywhere. Found 2026-09-06 when it broke an e2e
+        // re-run, which is the only reason anyone noticed.
+        //
+        // The soft-deleted row is REVIVED rather than a second row created alongside it. A counter
+        // number names a physical window at a branch, so "Counter 3" coming back is the same
+        // Counter 3 — and every historical token, and the counter-performance report (which
+        // deliberately includes deleted counters), still points at that row. Creating a duplicate
+        // would split one window's history across two ids and show it twice in the report.
+        var existing = await _dbContext.Counters
+            .FirstOrDefaultAsync(c => c.BranchId == branchId && c.CounterNumber == request.CounterNumber);
+
+        if (existing is { IsActive: true })
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                [nameof(request.CounterNumber)] = new[] { $"Counter number '{request.CounterNumber}' already exists in this branch." }
+            })
+            { Title = "Duplicate counter number", Status = StatusCodes.Status400BadRequest });
+
+        if (existing is not null)
+        {
+            existing.DisplayName = request.DisplayName ?? $"Counter {request.CounterNumber}";
+            existing.IsActive = isEnabled;
+            existing.Status = isEnabled ? CounterStatus.Closed : CounterStatus.Inactive;
+            // Belt and braces: the delete already clears this, but a row soft-deleted before that
+            // fix (Phase 72) can still be carrying a pointer to a long-finished ticket, and
+            // reviving it with that intact would show the counter "serving" a stale customer.
+            existing.CurrentTokenId = null;
+            existing.UpdatedAt = DateTime.UtcNow;
+
+            // The revived counter takes the service types it was just asked for, not the ones it
+            // had before it was deleted — the caller stated an intent and it should win.
+            var oldLinks = await _dbContext.CounterServiceTypes.Where(cst => cst.CounterId == existing.Id).ToListAsync();
+            _dbContext.CounterServiceTypes.RemoveRange(oldLinks);
+            if (request.ServiceTypeIds?.Any() == true)
+            {
+                foreach (var serviceTypeId in request.ServiceTypeIds)
+                {
+                    _dbContext.CounterServiceTypes.Add(new CounterServiceType
+                    {
+                        Id = Guid.NewGuid(),
+                        CounterId = existing.Id,
+                        ServiceTypeId = serviceTypeId,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            await _dbContext.SaveChangesAsync();
+            _logger.LogInformation("Revived soft-deleted counter {CounterId} ({CounterNumber}) in branch {BranchId}",
+                existing.Id, existing.CounterNumber, branchId);
+
+            return Ok(await LoadCounterDtoAsync(existing.Id));
+        }
+
         var counter = new Counter
         {
             Id = Guid.NewGuid(),
@@ -761,9 +812,18 @@ public class BranchesController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
+        // Guard the disable direction only — the same stranding the delete has, through a button
+        // that gets pressed far more often. Enabling a counter can never strand anybody.
+        if (counter.IsActive)
+        {
+            var serving = await RefuseIfCounterIsServingAsync(counterId, "disable");
+            if (serving != null) return serving;
+        }
+
         counter.IsActive = !counter.IsActive;
         // Update Status based on IsActive: Closed (available) when enabled, Inactive when disabled
         counter.Status = counter.IsActive ? CounterStatus.Closed : CounterStatus.Inactive;
+        if (!counter.IsActive) counter.CurrentTokenId = null;
         counter.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
@@ -771,6 +831,45 @@ public class BranchesController : ControllerBase
         _logger.LogInformation("Toggled counter {CounterId} active status to {IsActive}", counterId, counter.IsActive);
 
         return Ok(await LoadCounterDtoAsync(counter.Id));
+    }
+
+    /// <summary>
+    /// Refuses an action that would take a counter out of service while a customer is still at it.
+    ///
+    /// Both the soft delete and the disable side of the toggle used to just flip <c>IsActive</c>,
+    /// leaving any token still <c>Called</c> at that counter pointing at a counter nobody can see.
+    /// That customer was stranded: absent from every counter view, not completable from the
+    /// terminal, and counted as "Now Serving" for ever once that figure started working
+    /// (2026-09-06, Phase 71 — a real row, P001, was found in exactly this state).
+    ///
+    /// Refusing rather than silently requeueing follows this codebase's existing convention for
+    /// "in use" deletes (a role with users, a class somebody is in): the person at the counter is
+    /// a real customer standing there, and quietly moving them back into the queue — losing their
+    /// place — is not a decision an administrator's click on "delete counter" should be making.
+    /// </summary>
+    private async Task<IActionResult?> RefuseIfCounterIsServingAsync(Guid counterId, string action)
+    {
+        var live = await _dbContext.Tokens
+            .Where(t => t.CounterId == counterId
+                        && (t.Status == TokenStatus.Called || t.Status == TokenStatus.Serving))
+            .OrderBy(t => t.CalledAt)
+            .Select(t => t.DisplayNumber)
+            .ToListAsync();
+
+        if (live.Count == 0) return null;
+
+        var subject = live.Count == 1
+            ? $"ticket {live[0]} is"
+            : $"tickets {string.Join(", ", live)} are";
+        var pronoun = live.Count == 1 ? "it" : "them";
+
+        return BadRequest(new ProblemDetails
+        {
+            Title = "Counter is still serving",
+            Detail = $"Cannot {action} this counter while {subject} still at it. "
+                   + $"Complete, transfer, or mark {pronoun} no-show first.",
+            Status = StatusCodes.Status400BadRequest
+        });
     }
 
     /// <summary>
@@ -811,8 +910,16 @@ public class BranchesController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
 
+        var serving = await RefuseIfCounterIsServingAsync(counterId, "delete");
+        if (serving != null) return serving;
+
         // Soft delete
         counter.IsActive = false;
+        counter.Status = CounterStatus.Inactive;
+        // Nothing is at the counter (the guard above proved it), so a lingering CurrentTokenId is
+        // a stale pointer to a finished ticket. Clearing it keeps a re-enabled counter from coming
+        // back claiming to serve somebody who left hours ago.
+        counter.CurrentTokenId = null;
         counter.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();

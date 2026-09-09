@@ -3,7 +3,11 @@
 @if (TotalPages > 1)
 {
     <nav class="q-pager" aria-label="Pagination">
-        <button type="button" class="q-pager__btn" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
+        @* The two arrows are icon-only, so the accessible name has to live on the button —
+           without it a screen reader announces them as bare "button". The numbered buttons read
+           out their own digit, but need aria-current so the active page is distinguishable by
+           something other than colour. *@
+        <button type="button" class="q-pager__btn" aria-label="Previous page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
             <QIcon Name="chevron-left" />
         </button>
 
@@ -11,12 +15,14 @@
         {
             <button type="button"
                     class="q-pager__btn @(page == PageIndex ? "q-pager__btn--active" : "")"
+                    aria-label="@($"Page {page + 1}")"
+                    aria-current="@(page == PageIndex ? "page" : null)"
                     @onclick="() => GoTo(page)">
                 @(page + 1)
             </button>
         }
 
-        <button type="button" class="q-pager__btn" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
+        <button type="button" class="q-pager__btn" aria-label="Next page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
             <QIcon Name="chevron-right" />
         </button>
     </nav>

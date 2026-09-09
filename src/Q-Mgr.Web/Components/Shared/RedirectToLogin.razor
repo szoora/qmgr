@@ -1,22 +1,66 @@
+@namespace QMgr.Web.Components.Shared
 @inject NavigationManager Navigation
+@inject IAppInitializationService AppInit
+@inject IAuthService AuthService
+
+@*
+    Sends an unauthenticated visitor to the login page, carrying where they were trying to go.
+
+    Routes.razor referenced <RedirectToLogin /> but the component never existed. Razor cannot
+    resolve an unknown tag to a component, so it emitted a literal <redirecttologin></redirecttologin>
+    element — inert markup that rendered nothing and redirected nobody. The compiler said so on
+    every build (warning RZ10012, Routes.razor line 11); the warning was never actioned.
+*@
 
 @code {
-    protected override void OnInitialized()
+    /// <summary>
+    /// Why this waits, and why it re-checks rather than trusting AuthorizeRouteView.
+    ///
+    /// This app's authentication state lives in localStorage. <c>AuthService.GetCurrentUserAsync</c>
+    /// checks an in-memory store first and otherwise falls back to a JS-interop read, and its
+    /// catch block returns null on failure. During PRERENDERING there is no JS interop, so that
+    /// read throws, null comes back, and <b>every visitor looks anonymous — signed in or not</b>.
+    /// AuthorizeRouteView therefore renders its NotAuthorized branch (this component) during the
+    /// prerender pass for authenticated users too.
+    ///
+    /// So redirecting on sight would bounce every signed-in user to /login on every page load —
+    /// worse than the dangling tag this replaced. Two guards prevent that:
+    ///
+    /// 1. The work happens in OnAfterRenderAsync, which never runs during prerendering.
+    /// 2. It awaits AppInit.InitializeAsync() BEFORE deciding, which is what loads the tokens out
+    ///    of localStorage into the in-memory store. Without it the interactive pass can still race
+    ///    an uninitialised store and read a signed-in user as anonymous. This is the same order
+    ///    MainLayout established for its own redirect; InitializeAsync is idempotent, so calling
+    ///    it here costs nothing when the layout already has.
+    ///
+    /// Navigation is soft, not forceLoad: a full page load would tear down the circuit and re-run
+    /// startup just to show a page the router can already render, and this app has a history of
+    /// that presenting to users as "the login page keeps reloading".
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Get the current URL to redirect back after login
-        var currentUri = Navigation.Uri;
-        var returnUrl = Navigation.ToBaseRelativePath(currentUri);
+        if (!firstRender) return;
 
-        // Don't include login/unauthorized pages in return URL
-        if (string.IsNullOrEmpty(returnUrl) ||
-            returnUrl.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
-            returnUrl.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
+        var currentPath = Navigation.ToBaseRelativePath(Navigation.Uri);
+
+        // Never redirect to login from login — that self-reload is the sibling bug fixed in
+        // MainLayout on the same day. Guarded here too rather than trusting the caller, since
+        // NotAuthorized can in principle render for any route.
+        if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
+            currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
         {
-            Navigation.NavigateTo("/login", forceLoad: true);
+            return;
         }
-        else
-        {
-            Navigation.NavigateTo($"/login?returnUrl={Uri.EscapeDataString("/" + returnUrl)}", forceLoad: true);
-        }
+
+        await AppInit.InitializeAsync();
+
+        // Genuinely signed in after all — the NotAuthorized branch was a prerender artefact.
+        if (await AuthService.GetCurrentUserAsync() != null) return;
+
+        var loginUrl = string.IsNullOrEmpty(currentPath)
+            ? "/login"
+            : $"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}";
+
+        Navigation.NavigateTo(loginUrl);
     }
 }

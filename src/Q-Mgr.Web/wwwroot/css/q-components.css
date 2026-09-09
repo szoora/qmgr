@@ -231,6 +231,18 @@
     overflow: hidden;
 }
 
+/* A card clips its children so its rounded corners stay clean — which also cut the date
+   picker's popover off halfway down, because the calendar is absolutely positioned inside the
+   filter card it sits in. Lift the clip only while a picker is actually open: :has() keeps this
+   to the moment it matters instead of making every card in the app non-clipping. Browsers
+   without :has() simply do not match this rule and get the old clipped behaviour, which is a
+   degraded calendar rather than a broken card. */
+.q-card:has(.q-datepicker__popover),
+.filter-card:has(.q-datepicker__popover),
+.q-modal__body:has(.q-datepicker__popover) {
+    overflow: visible;
+}
+
 .q-card--default {
     border: 1px solid var(--qm-border);
 }
@@ -417,6 +429,11 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    /* Wrap, don't overflow. Without this a footer whose buttons are wider than the modal (an "sm"
+       modal with two descriptive labels, e.g. the duplicate-visitor confirmation) pushed the
+       left-most button out past the modal's edge and clipped its label — the button was still
+       clickable but you could not read what it did. */
+    flex-wrap: wrap;
     gap: 0.75rem;
     padding: 1rem 1.25rem;
     border-top: 1px solid var(--qm-border);
@@ -1438,3 +1455,261 @@
     white-space: nowrap;
     border: 0;
 }
+
+/* ==========================================================================
+   QDatePicker — the project's own calendar
+   --------------------------------------------------------------------------
+   Lives here rather than in a component <style> block because QDatePicker is
+   used 23 times across 10 files and its popover is absolutely positioned: a
+   per-component copy of these rules would ship once per page that used it.
+   Everything is a --qm-* token, so both themes come for free.
+   ========================================================================== */
+.q-datepicker {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+}
+
+.q-datepicker__field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+/* The trigger is a <button> wearing .q-input, so it inherits the exact height,
+   padding, radius and focus ring every other field in the app has. */
+.q-datepicker__trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+    font: inherit;
+    font-size: var(--q-input-font-size);
+    cursor: pointer;
+    min-height: 38px;
+}
+
+.q-datepicker__trigger:disabled { cursor: not-allowed; opacity: 0.6; }
+.q-datepicker__trigger:hover:not(:disabled) { border-color: var(--qm-primary); }
+.q-datepicker__trigger:focus-visible {
+    outline: 2px solid var(--qm-primary);
+    outline-offset: 1px;
+}
+
+.q-datepicker__value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-datepicker__value--empty { color: var(--qm-text-muted); }
+.q-datepicker__icon { color: var(--qm-text-muted); flex-shrink: 0; }
+
+.q-datepicker__clear {
+    position: absolute;
+    right: 30px;
+    background: none;
+    border: 0;
+    padding: 2px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--qm-text-muted);
+    font-size: 11px;
+}
+.q-datepicker__clear:hover { color: var(--qm-danger); }
+
+.q-datepicker__popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 1200;
+    width: 268px;
+    max-width: calc(100vw - 24px);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-lg);
+    box-shadow: var(--qm-shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.18));
+    padding: 10px;
+}
+
+.q-datepicker__nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.q-datepicker__navbtn,
+.q-datepicker__monthlabel {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--qm-radius-sm);
+    color: var(--qm-text-primary);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 5px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.q-datepicker__monthlabel { font-weight: 600; flex: 1; justify-content: center; }
+.q-datepicker__navbtn:hover,
+.q-datepicker__monthlabel:hover { background: var(--qm-bg-secondary); border-color: var(--qm-border); }
+
+.q-datepicker__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.q-datepicker__dow {
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--qm-text-muted);
+    padding-bottom: 4px;
+}
+
+.q-datepicker__day {
+    /* 34px is a deliberate floor: this is tapped with a thumb on a phone at a
+       front desk, and a 24px cell is a mis-tap waiting to happen. */
+    min-height: 34px;
+    border: 1px solid transparent;
+    border-radius: var(--qm-radius-sm);
+    background: none;
+    color: var(--qm-text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+.q-datepicker__day:hover:not(:disabled) { background: var(--qm-bg-secondary); }
+.q-datepicker__day.is-outside { color: var(--qm-text-muted); opacity: 0.55; }
+.q-datepicker__day.is-today { border-color: var(--qm-primary); font-weight: 600; }
+.q-datepicker__day.is-selected {
+    background: var(--qm-primary);
+    border-color: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    font-weight: 600;
+}
+.q-datepicker__day:disabled { opacity: 0.28; cursor: not-allowed; }
+.q-datepicker__day:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: -1px; }
+
+.q-datepicker__years {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+}
+.q-datepicker__year {
+    padding: 8px 4px;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-sm);
+    background: var(--qm-bg-card);
+    color: var(--qm-text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+.q-datepicker__year:hover { border-color: var(--qm-primary); }
+.q-datepicker__year.is-current {
+    background: var(--qm-primary);
+    border-color: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    font-weight: 600;
+}
+
+.q-datepicker__foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--qm-border);
+}
+.q-datepicker__quick {
+    background: none;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-sm);
+    color: var(--qm-text-muted);
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+.q-datepicker__quick:hover:not(:disabled) { border-color: var(--qm-primary); color: var(--qm-text-primary); }
+.q-datepicker__quick:disabled { opacity: 0.45; cursor: not-allowed; }
+.q-datepicker__quick--close { margin-left: auto; }
+
+/* On a phone the popover is centred rather than anchored: 268px hanging off a
+   field near the right edge of a 360px screen is exactly the overflow this
+   release is fixing everywhere else. */
+@media (max-width: 480px) {
+    .q-datepicker__popover {
+        position: fixed;
+        top: auto;
+        bottom: 12px;
+        left: 12px;
+        right: 12px;
+        width: auto;
+        max-width: none;
+    }
+}
+
+/* ==========================================================================
+   QDateRangePicker
+   ========================================================================== */
+.q-daterange {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    min-width: 0;
+}
+
+.q-daterange__fields {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    min-width: 0;
+}
+.q-daterange__field { min-width: 150px; flex: 1 1 150px; }
+
+.q-daterange__presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.q-daterange__preset {
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--qm-border);
+    background: var(--qm-bg-card);
+    color: var(--qm-text-muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.q-daterange__preset:hover { border-color: var(--qm-primary); color: var(--qm-text-primary); }
+.q-daterange__preset.is-active {
+    background: var(--qm-primary);
+    border-color: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    font-weight: 600;
+}
+
+.q-daterange__caption {
+    font-size: 12.5px;
+    color: var(--qm-text-muted);
+    margin: 0;
+    flex-basis: 100%;
+}
+.q-daterange__caption strong { color: var(--qm-text-primary); font-weight: 600; }
+.q-daterange__warning { color: var(--qm-warning); }

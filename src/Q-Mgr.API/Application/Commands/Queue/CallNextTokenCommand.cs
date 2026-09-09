@@ -39,7 +39,7 @@ public record TransferTokenCommand : IRequest<TokenDto?>
     public string? Reason { get; init; }
 }
 
-public record MarkNoShowCommand : IRequest<bool>
+public record MarkNoShowCommand : IRequest<TokenDto?>
 {
     public Guid TokenId { get; init; }
     public Guid UserId { get; init; }

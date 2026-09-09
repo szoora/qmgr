@@ -44,11 +44,23 @@ public static class DependencyInjection
         services.AddScoped<IWebhookService, WebhookService>();
         services.AddSingleton<IVisitorBadgeTokenService, VisitorBadgeTokenService>();
         services.AddScoped<IVisitorActivityBroadcaster, VisitorActivityBroadcaster>();
+        services.AddScoped<QMgr.API.Application.Services.IVisitorReportingService, QMgr.API.Application.Services.VisitorReportingService>();
         services.AddScoped<IRosterImportBroadcaster, RosterImportBroadcaster>();
         services.AddScoped<IBatchOperationService, BatchOperationService>();
 
+        // Row-level student visibility (the second axis to the permission table — see the service's
+        // own doc comment). SCOPED and memoised per request on purpose: it must NOT ride the
+        // five-minute permission cache, or a teacher removed from a class keeps reading it.
+        services.AddScoped<IStudentScopeService, StudentScopeService>();
+
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();
+        // Per-user channel preferences, applied before anything leaves the building.
+        services.AddScoped<INotificationPreferenceResolver, NotificationPreferenceResolver>();
+        // Off-thread, retried, logged delivery. Resolved by Hangfire, not injected anywhere.
+        services.AddScoped<QMgr.Infrastructure.Jobs.NotificationDispatchJob>();
+        // Tells a class teacher when one of their students has a (non-confidential) case logged.
+        services.AddScoped<IWelfareAlertService, WelfareAlertService>();
         // Queue-side customer messaging: ticket issued, nearly your turn, called to counter.
         services.AddScoped<IQueueCustomerNotifier, QueueCustomerNotifier>();
         // Duplicate-registration detection and phone ownership proof.

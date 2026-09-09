@@ -88,7 +88,17 @@ public record WelfareRecordDto
     public string? Location { get; init; }
     public DateTime OccurredAt { get; init; }
     public WelfareStatus Status { get; init; }
-    public bool Confidential { get; init; }
+
+    /// <summary>
+    /// Standard / Confidential / Restricted. Replaced a <c>bool Confidential</c> on 2026-09-09.
+    /// A record is only ever returned to a caller who holds the matching permission, so this is
+    /// here to label the row in the UI, not to be trusted as a client-side filter.
+    /// </summary>
+    public WelfareVisibility Visibility { get; init; }
+
+    /// <summary>Kept as a convenience for anything that only wants "is this above Standard" — derived, never stored, so it can never disagree with <see cref="Visibility"/>.</summary>
+    public bool Confidential => Visibility != WelfareVisibility.Standard;
+
     public string ReportedByName { get; init; } = string.Empty;
     public DateTime CreatedAt { get; init; }
     public string? ActionTaken { get; init; }
@@ -119,6 +129,13 @@ public record CreateWelfareRecordRequest
     public string Description { get; set; } = string.Empty;
     public string? Location { get; set; }
     public DateTime OccurredAt { get; set; } = DateTime.Now;
+
+    /// <summary>
+    /// Optional. A Welfare case is forced to at least Confidential server-side whatever this says,
+    /// and asking for a rung the caller does not hold the permission for is rejected — you cannot
+    /// file a record into a tier you could not then read.
+    /// </summary>
+    public WelfareVisibility Visibility { get; set; } = WelfareVisibility.Standard;
 
     /// <summary>Other students this same incident also applies to, beyond StudentId above — see WelfareRecord.AdditionalStudentIds.</summary>
     public List<Guid> AdditionalStudentIds { get; set; } = new();
@@ -186,6 +203,35 @@ public record UpdateWelfareActionRequest
 public record UpdateWelfareStatusRequest
 {
     public WelfareStatus Status { get; set; }
+}
+
+/// <summary>
+/// Moves a record between visibility rungs — the ONE mutable field on an otherwise append-only
+/// record, because a record whose sensitivity is discovered later must be raisable in place.
+///
+/// The change is not silent: the endpoint writes a WelfareNote recording who changed it, from what
+/// to what, and why, so the chronology still carries it. A reason is required when LOWERING, since
+/// widening who can read a safeguarding record is the direction that needs justifying.
+/// </summary>
+public record UpdateWelfareVisibilityRequest
+{
+    public WelfareVisibility Visibility { get; set; }
+
+    [MaxLength(500, ErrorMessage = "Reason cannot exceed 500 characters")]
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Refines an existing record's interpretation — the trigger, staff's read of what it achieved,
+/// and what was done about it. A full replace of these three, never a merge: the caller posts all
+/// three, so null genuinely means "clear this" rather than "leave alone", matching the create
+/// form's clearable pickers. The factual account of the incident is not editable and is not here.
+/// </summary>
+public record UpdateWelfareInterpretationRequest
+{
+    public WelfareResponseStage? ResponseStage { get; set; }
+    public string? Antecedent { get; set; }
+    public WelfarePerceivedFunction? PerceivedFunction { get; set; }
 }
 
 /// <summary>Aggregate counts for a branch's Welfare Dashboard — category/tier mix and the per-staff category distribution the equity/consistency-audit case (see the welfare-plan §03) argues a school should be able to check on its own process, not just an individual student's history.</summary>

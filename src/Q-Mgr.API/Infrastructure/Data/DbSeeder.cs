@@ -505,6 +505,10 @@ public class DbSeeder
                     Icon = roleDef.Icon,
                     SortOrder = roleDef.SortOrder,
                     IsSystem = true,
+                    // Must be carried here too, not only in RbacSeeder — whichever seeder creates
+                    // the row wins, and a class-teacher role created without its scope would
+                    // silently see the whole school.
+                    DataScope = roleDef.DataScope,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };

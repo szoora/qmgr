@@ -91,7 +91,7 @@ public class CountersController : ControllerBase
         });
 
         if (result == null)
-            return NotFound();
+            return NotFound(new ProblemDetails { Title = "Token not found", Status = StatusCodes.Status404NotFound });
 
         _logger.LogInformation("Counter {CounterId} completed service for token {TokenId}", counterId, request.TokenId);
 
@@ -102,7 +102,7 @@ public class CountersController : ControllerBase
     /// Marks current token as no-show
     /// </summary>
     [HttpPost("{counterId:guid}/no-show")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(TokenDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> MarkNoShow(Guid counterId, [FromBody] NoShowRequest request)
     {
@@ -114,10 +114,14 @@ public class CountersController : ControllerBase
             UserId = userId
         });
 
-        if (!result)
-            return NotFound();
+        // 200 with the updated token, matching complete and transfer. This used to be 204, which
+        // made no-show the one action of the three whose caller had to refetch to repaint.
+        if (result == null)
+            return NotFound(new ProblemDetails { Title = "Token not found", Status = StatusCodes.Status404NotFound });
 
-        return NoContent();
+        _logger.LogInformation("Counter {CounterId} marked token {TokenId} as no-show", counterId, request.TokenId);
+
+        return Ok(result);
     }
 
     /// <summary>

@@ -10,7 +10,12 @@ public interface INotificationService
     // Channel-specific sending — organizationId selects whose SMS gateway/SMTP settings to use;
     // without it, callers processing more than one organization (e.g. billing jobs) would silently
     // send using an arbitrary organization's credentials (see NotificationService for detail).
-    Task<bool> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Returns a <see cref="ChannelSendResult"/>, not a bool, so a caller can tell "SMS is switched
+    /// off for this tenant" from "the gateway refused it" — the two used to be indistinguishable.
+    /// It converts implicitly to bool for the many call sites that only care whether it went out.
+    /// </summary>
+    Task<ChannelSendResult> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// attachments is optional — SMTP is the only channel here with no per-recipient size ceiling
@@ -19,7 +24,7 @@ public interface INotificationService
     /// the one channel where "several attachments" costs nothing extra — they all ride in the
     /// same message.
     /// </summary>
-    Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
+    Task<ChannelSendResult> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
     Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -130,6 +135,17 @@ public class CreateNotificationRequest
     public Guid? BranchId { get; set; }
     public Guid OrganizationId { get; set; }
 
+    /// <summary>
+    /// Which event category this is, from <c>NotificationEventKeys</c>. Supplying one makes the
+    /// send PREFERENCE-AWARE: the recipient's own per-event channel choices and the organization's
+    /// staff-notification defaults are applied before anything goes out.
+    ///
+    /// Null (the default) keeps the behaviour everything had before preferences existed — deliver
+    /// on exactly the channels the caller asked for — so no existing caller changes behaviour by
+    /// not knowing about this field.
+    /// </summary>
+    public string? EventKey { get; set; }
+
     public required string Title { get; set; }
     public required string Message { get; set; }
     public NotificationType Type { get; set; }
@@ -146,4 +162,40 @@ public class CreateNotificationRequest
     public string? EmailSubject { get; set; }
 
     public DateTime? ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// What actually happened on one channel. Replaces a bare <c>bool</c>, which conflated two
+/// completely different situations — "this organization has email switched off" and "the SMTP
+/// server refused the message" both returned false, so no caller could tell a configuration
+/// problem from an outage and nothing was ever surfaced to an administrator.
+/// </summary>
+public enum ChannelSendOutcome
+{
+    /// <summary>It went out.</summary>
+    Sent = 0,
+
+    /// <summary>Nothing was attempted: the channel is disabled for this tenant, has no credentials, or the recipient has no address on that channel. Not a failure, and not worth alarming anyone about.</summary>
+    Skipped = 1,
+
+    /// <summary>It was attempted and did not work. This is the one worth retrying and worth telling somebody about.</summary>
+    Failed = 2
+}
+
+/// <summary>
+/// The outcome of one channel send, with the reason attached. <c>Reason</c> is written to
+/// <c>NotificationLog.ErrorMessage</c> for a failure and shown to administrators, so keep it
+/// legible to a person and free of credentials.
+/// </summary>
+public readonly record struct ChannelSendResult(ChannelSendOutcome Outcome, string? Reason = null)
+{
+    public bool IsSent => Outcome == ChannelSendOutcome.Sent;
+    public bool IsFailure => Outcome == ChannelSendOutcome.Failed;
+
+    public static ChannelSendResult Sent() => new(ChannelSendOutcome.Sent);
+    public static ChannelSendResult Skipped(string reason) => new(ChannelSendOutcome.Skipped, reason);
+    public static ChannelSendResult Failed(string reason) => new(ChannelSendOutcome.Failed, reason);
+
+    /// <summary>For the many existing call sites that only care whether it went out.</summary>
+    public static implicit operator bool(ChannelSendResult r) => r.IsSent;
 }

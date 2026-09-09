@@ -8,6 +8,7 @@ using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.Controllers;
 
@@ -21,6 +22,7 @@ public class NotificationsController : ControllerBase
 {
     private readonly INotificationService _notificationService;
     private readonly INotificationSettingsService _settingsService;
+    private readonly INotificationPreferenceResolver _preferences;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly QMgrDbContext _dbContext;
     private readonly ILogger<NotificationsController> _logger;
@@ -28,15 +30,100 @@ public class NotificationsController : ControllerBase
     public NotificationsController(
         INotificationService notificationService,
         INotificationSettingsService settingsService,
+        INotificationPreferenceResolver preferences,
         ITenantContextAccessor tenantAccessor,
         QMgrDbContext dbContext,
         ILogger<NotificationsController> logger)
     {
         _notificationService = notificationService;
         _settingsService = settingsService;
+        _preferences = preferences;
         _tenantAccessor = tenantAccessor;
         _dbContext = dbContext;
         _logger = logger;
+    }
+
+    // =====================================================================================
+    // Per-user channel preferences.
+    //
+    // Deliberately NOT permission-gated beyond [Authorize]: these are the caller's OWN
+    // preferences, addressed as "me", and there is no endpoint here for reading or writing
+    // anybody else's. A permission would only stop somebody managing their own inbox.
+    // =====================================================================================
+
+    /// <summary>The catalogue of event categories a person can be reached about, with their defaults. Drives the preferences panel so a new category appears without a UI change.</summary>
+    [HttpGet("preferences/events")]
+    [ProducesResponseType(typeof(IReadOnlyList<NotificationEventDefinition>), StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<NotificationEventDefinition>> GetPreferenceEvents()
+        => Ok(NotificationEventKeys.All);
+
+    /// <summary>The caller's own channel preferences, with every known event filled in at its default.</summary>
+    [HttpGet("preferences")]
+    [ProducesResponseType(typeof(UserNotificationPreferencesDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UserNotificationPreferencesDto>> GetPreferences(CancellationToken cancellationToken = default)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        return Ok(await _preferences.GetAsync(userId.Value, cancellationToken));
+    }
+
+    [HttpPut("preferences")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> UpdatePreferences([FromBody] UserNotificationPreferencesDto request, CancellationToken cancellationToken = default)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        await _preferences.SaveAsync(userId.Value, request, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Delivery attempts, newest first — the answer to "was this actually delivered?", which
+    /// before 2026-09-09 had none: NotificationLog was a DbSet nothing ever wrote a row to.
+    ///
+    /// Gated on notifications.manage, and the recipient address is MASKED: an administrator needs
+    /// to see which address failed, not to harvest a staff directory out of the delivery log.
+    /// </summary>
+    [HttpGet("deliveries")]
+    [RequirePermission(Permissions.NotificationsManage)]
+    [ProducesResponseType(typeof(List<NotificationDeliveryDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<NotificationDeliveryDto>>> GetDeliveries(
+        [FromQuery] bool failuresOnly = false, [FromQuery] int limit = 100, CancellationToken cancellationToken = default)
+    {
+        var organizationId = _tenantAccessor.TenantContext?.OrganizationId;
+        if (organizationId == null) return Unauthorized();
+
+        // Joined to Notifications and filtered on THAT row's OrganizationId — NotificationLog
+        // carries no tenant column of its own, so without the join this would read every
+        // tenant's delivery log. Same cross-tenant shape as the IDOR class already fixed in
+        // Phases 11/13d/17.
+        var query = from log in _dbContext.NotificationLogs.AsNoTracking()
+                    join n in _dbContext.Notifications.AsNoTracking() on log.NotificationId equals n.Id
+                    where n.OrganizationId == organizationId
+                    select new { log, n.Title };
+
+        if (failuresOnly) query = query.Where(x => !x.log.Success);
+
+        var rows = await query
+            .OrderByDescending(x => x.log.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync(cancellationToken);
+
+        return Ok(rows.Select(x => new NotificationDeliveryDto
+        {
+            Id = x.log.Id,
+            NotificationId = x.log.NotificationId,
+            Channel = x.log.Channel.ToString(),
+            Recipient = QMgr.Infrastructure.Jobs.NotificationDispatchJob.Mask(x.log.Recipient),
+            Success = x.log.Success,
+            ErrorMessage = x.log.ErrorMessage,
+            RetryCount = x.log.RetryCount,
+            LastRetryAt = x.log.LastRetryAt,
+            CreatedAt = x.log.CreatedAt,
+            NotificationTitle = x.Title
+        }).ToList());
     }
 
     /// <summary>

@@ -656,9 +656,9 @@ else if (hasCoreQueue && queueStatus != null)
 
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 24px;
-        margin-bottom: 24px;
+        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+        gap: var(--qm-statcard-gap);
+        margin-bottom: 18px;
     }
 
     /* Every stat tile is an anchor. One without a destination — because this account can't open
@@ -700,7 +700,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     .stats-card .stats-number small {
-        font-size: 16px;
+        font-size: 13px;
         font-weight: 500;
         margin-left: 4px;
     }

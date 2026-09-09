@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Filters;
 using QMgr.Application.DTOs;
@@ -27,6 +28,7 @@ public class VisitorsController : ControllerBase
     private readonly IVisitorBadgeTokenService _badgeTokenService;
     private readonly IVisitorActivityBroadcaster _activityBroadcaster;
     private readonly IMediaStorageService _mediaStorage;
+    private readonly IVisitorReportingService _reporting;
     private readonly ILogger<VisitorsController> _logger;
 
     private const int SearchResultLimit = 10;
@@ -53,8 +55,10 @@ public class VisitorsController : ControllerBase
         IVisitorBadgeTokenService badgeTokenService,
         IVisitorActivityBroadcaster activityBroadcaster,
         IMediaStorageService mediaStorage,
+        IVisitorReportingService reporting,
         ILogger<VisitorsController> logger)
     {
+        _reporting = reporting;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notificationService = notificationService;
@@ -117,7 +121,7 @@ public class VisitorsController : ControllerBase
 
     private const string ConsentSettingsKey = "VisitorConsent";
 
-    private static VisitorConsentSettingsDto ReadConsentSettings(string? branchSettingsJson)
+    internal static VisitorConsentSettingsDto ReadConsentSettings(string? branchSettingsJson)
     {
         if (string.IsNullOrEmpty(branchSettingsJson)) return new VisitorConsentSettingsDto { Required = false };
         try
@@ -137,6 +141,37 @@ public class VisitorsController : ControllerBase
             : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson) ?? new())
                 .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
         merged[ConsentSettingsKey] = consent;
+        return System.Text.Json.JsonSerializer.Serialize(merged);
+    }
+
+    private const string ReportingSettingsKey = "VisitorReporting";
+
+    /// <summary>
+    /// Overstay thresholds, the evacuation recipient and the scheduled-report subscriptions, held
+    /// as one more key in the Branch.Settings JSON that already carries VisitorConsent and
+    /// VisitingDay. A new table for a short list nothing joins to would be the expensive way to
+    /// store the same thing — see the project's enhance-before-you-add convention.
+    /// </summary>
+    internal static VisitorReportingSettingsDto ReadReportingSettings(string? branchSettingsJson)
+    {
+        if (string.IsNullOrEmpty(branchSettingsJson)) return new VisitorReportingSettingsDto();
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson);
+            if (root != null && root.TryGetValue(ReportingSettingsKey, out var element))
+                return System.Text.Json.JsonSerializer.Deserialize<VisitorReportingSettingsDto>(element.GetRawText()) ?? new VisitorReportingSettingsDto();
+        }
+        catch (System.Text.Json.JsonException) { /* malformed settings blob — treat as not configured */ }
+        return new VisitorReportingSettingsDto();
+    }
+
+    internal static string WriteReportingSettings(string? branchSettingsJson, VisitorReportingSettingsDto settings)
+    {
+        var merged = string.IsNullOrEmpty(branchSettingsJson)
+            ? new Dictionary<string, object>()
+            : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(branchSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[ReportingSettingsKey] = settings;
         return System.Text.Json.JsonSerializer.Serialize(merged);
     }
 
@@ -293,6 +328,33 @@ public class VisitorsController : ControllerBase
         if (student == null) return (null, null, null, null); // stale/invalid reference — fail open to a plain walk-in rather than 400 the whole check-in
 
         return (student.Id, student.FullName, student.FullName, $"Visiting day — see {student.FullName}");
+    }
+
+    /// <summary>
+    /// Issues the badge QR token, but never at the cost of the request that asked for it.
+    ///
+    /// This is called AFTER the check-in transaction has committed — the visitor is on site and
+    /// the row is written — so letting it throw returns a 500 to a front desk whose visitor was in
+    /// fact checked in perfectly. That is exactly what happened in production: the badge token is
+    /// a Data Protection payload, the deployed systemd unit runs under `ProtectSystem=strict`, and
+    /// the key ring's default location (AppContext.BaseDirectory) is read-only there — so
+    /// Protect() threw "An error occurred while trying to encrypt the provided data" on every
+    /// walk-in check-in while the visit itself succeeded. The deployment fix (a writable
+    /// DataProtection:KeyPath listed in ReadWritePaths) is in scripts/deploy/build-linux.ps1; this
+    /// is the belt to that braces — a badge that can't be printed is a degraded check-in, not a
+    /// failed one, and the UI already handles a null token by saying so.
+    /// </summary>
+    private string? TryIssueVisitToken(Guid visitorId, Guid branchId)
+    {
+        try
+        {
+            return _badgeTokenService.IssueVisitToken(visitorId, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not issue a badge QR token for visitor {VisitorId} — the visit itself is unaffected", visitorId);
+            return null;
+        }
     }
 
     internal record ProfileStats(int Total, int Last24h);
@@ -763,6 +825,301 @@ public class VisitorsController : ControllerBase
         return File(bytes, "text/csv", $"visitor-log-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.csv");
     }
 
+    // =========================================================================================
+    // REPORTING v2 — analytics, exceptions, compliance and delivery.
+    //
+    // The original /report and /report/export endpoints above are untouched and still serve the
+    // shape their callers expect. Everything below takes the shared VisitorReportFilter so a
+    // figure on screen and the row in the CSV under it are answering the same question, and
+    // buckets days and hours in the BRANCH'S timezone rather than raw UTC.
+    // =========================================================================================
+
+    /// <summary>Resolves the report scope for a branch, carrying its own clock along with it.</summary>
+    private async Task<VisitorReportScope> BranchScopeAsync(Guid branchId)
+    {
+        var branch = await _context.Branches
+            .Where(b => b.Id == branchId)
+            .Select(b => new { b.Name, b.Timezone, b.OrganizationId })
+            .FirstAsync();
+        return new VisitorReportScope(branch.OrganizationId, branchId, branch.Name, branch.Timezone);
+    }
+
+    /// <summary>
+    /// Org-wide scope. Takes the clock of the organization's first branch: an organization does not
+    /// have a timezone of its own, and reporting a multi-branch roll-up in UTC would put every
+    /// branch's day boundary somewhere none of them recognise.
+    /// </summary>
+    private async Task<VisitorReportScope> OrganizationScopeAsync(Guid organizationId)
+    {
+        var org = await _context.Organizations
+            .Where(o => o.Id == organizationId)
+            .Select(o => o.Name)
+            .FirstOrDefaultAsync() ?? "Organization";
+
+        var timezone = await _context.Branches
+            .Where(b => b.OrganizationId == organizationId && b.IsActive)
+            .OrderBy(b => b.Name)
+            .Select(b => b.Timezone)
+            .FirstOrDefaultAsync() ?? "UTC";
+
+        return new VisitorReportScope(organizationId, null, org, timezone);
+    }
+
+    private static VisitorReportFilter FilterFrom(
+        DateOnly? from, DateOnly? to, VisitorType? visitorType, VisitorStatus? status,
+        string? host, string? company, bool watchlistOnly, bool rosterOnly) => new()
+    {
+        From = from,
+        To = to,
+        VisitorType = visitorType,
+        Status = status,
+        HostName = host,
+        Company = company,
+        WatchlistOnly = watchlistOnly,
+        RosterOnly = rosterOnly
+    };
+
+    /// <summary>
+    /// The filtered, timezone-correct visitor report for one branch.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/report/v2")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorReportDtoV2), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVisitorReportV2(
+        Guid branchId,
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
+        [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
+        [FromQuery] string? host = null, [FromQuery] string? company = null,
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var scope = await BranchScopeAsync(branchId);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        return Ok(await _reporting.BuildReportAsync(scope, filter));
+    }
+
+    /// <summary>
+    /// The same report across every branch in the organization, with a per-branch comparison.
+    /// Gated on the same permission as the branch report — it is the same data, aggregated.
+    /// </summary>
+    [HttpGet("organizations/{organizationId:guid}/visitors/report")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorReportDtoV2), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOrganizationVisitorReport(
+        Guid organizationId,
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
+        [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
+        [FromQuery] string? host = null, [FromQuery] string? company = null,
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (tenantContext == null || !tenantContext.IsResolved) return Unauthorized();
+        if (!RoleCodes.IsSuperAdmin(tenantContext.UserRole) && tenantContext.OrganizationId != organizationId) return Forbid();
+
+        var scope = await OrganizationScopeAsync(organizationId);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        return Ok(await _reporting.BuildReportAsync(scope, filter));
+    }
+
+    /// <summary>
+    /// The rows that need somebody to do something. Note that the two OPEN-visit lists ignore the
+    /// date range on purpose — a visitor checked in eight days ago and never checked out is the
+    /// most important row this module can produce, and a default seven-day window would hide
+    /// exactly that person.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/exceptions")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorExceptionsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVisitorExceptions(
+        Guid branchId,
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
+        [FromQuery] VisitorType? visitorType = null, [FromQuery] string? host = null,
+        [FromQuery] string? company = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var scope = await BranchScopeAsync(branchId);
+        var settings = ReadReportingSettings(await BranchSettingsJsonAsync(branchId));
+        var filter = FilterFrom(from, to, visitorType, null, host, company, false, false);
+        return Ok(await _reporting.BuildExceptionsAsync(scope, filter, settings));
+    }
+
+    /// <summary>Induction register, watchlist activity, consent gaps and retention evidence.</summary>
+    [HttpGet("branches/{branchId:guid}/visitors/compliance")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorComplianceDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVisitorCompliance(
+        Guid branchId, [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var scope = await BranchScopeAsync(branchId);
+        var branchSettings = await BranchSettingsJsonAsync(branchId);
+        var consentRequired = ReadConsentSettings(branchSettings).Required;
+
+        var orgSettings = await _context.Organizations
+            .Where(o => o.Id == scope.OrganizationId)
+            .Select(o => o.Settings)
+            .FirstOrDefaultAsync();
+
+        var filter = FilterFrom(from, to, null, null, null, null, false, false);
+        return Ok(await _reporting.BuildComplianceAsync(
+            scope, filter, consentRequired,
+            ReadRetentionSettings(orgSettings), ReadRetentionEvidence(orgSettings)));
+    }
+
+    /// <summary>
+    /// The filtered visit log as CSV. Gated on ReportsExport, not VisitorsView: a row here carries
+    /// a name, a phone number and an email, so this is a bulk PII export rather than an aggregate.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/visitors/report/v2/export")]
+    [RequirePermission(Permissions.ReportsExport)]
+    public async Task<IActionResult> ExportVisitorReportV2(
+        Guid branchId,
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
+        [FromQuery] VisitorType? visitorType = null, [FromQuery] VisitorStatus? status = null,
+        [FromQuery] string? host = null, [FromQuery] string? company = null,
+        [FromQuery] bool watchlistOnly = false, [FromQuery] bool rosterOnly = false)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var scope = await BranchScopeAsync(branchId);
+        var filter = FilterFrom(from, to, visitorType, status, host, company, watchlistOnly, rosterOnly);
+        var (rangeFrom, rangeTo, _, _) = _reporting.ResolveRange(filter, scope.TimeZoneId);
+        var csv = await _reporting.BuildLogCsvAsync(scope, filter);
+
+        return File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv",
+            $"visitor-log-{rangeFrom:yyyyMMdd}-{rangeTo:yyyyMMdd}.csv");
+    }
+
+    private async Task<string?> BranchSettingsJsonAsync(Guid branchId) =>
+        await _context.Branches.Where(b => b.Id == branchId).Select(b => b.Settings).FirstOrDefaultAsync();
+
+    [HttpGet("branches/{branchId:guid}/visitors/reporting-settings")]
+    [RequirePermission(Permissions.VisitorsView)]
+    [ProducesResponseType(typeof(VisitorReportingSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetReportingSettings(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        return Ok(ReadReportingSettings(await BranchSettingsJsonAsync(branchId)));
+    }
+
+    /// <summary>
+    /// Saves overstay thresholds, the evacuation recipient and the scheduled-report subscriptions.
+    ///
+    /// Gated on ReportsExport rather than VisitorsManage on purpose: a subscription is an export
+    /// that leaves the building on a timer, so whoever can create one needs the same permission as
+    /// whoever can download the file by hand.
+    /// </summary>
+    [HttpPut("branches/{branchId:guid}/visitors/reporting-settings")]
+    [RequirePermission(Permissions.ReportsExport)]
+    [ProducesResponseType(typeof(VisitorReportingSettingsDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UpdateReportingSettings(Guid branchId, [FromBody] VisitorReportingSettingsDto request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (request.OverstayThresholdHours is < 1 or > 168)
+            return BadRequest(new ProblemDetails { Title = "Overstay threshold must be between 1 and 168 hours", Status = StatusCodes.Status400BadRequest });
+        if (request.ContractorOverstayThresholdHours is < 1 or > 168)
+            return BadRequest(new ProblemDetails { Title = "Contractor overstay threshold must be between 1 and 168 hours", Status = StatusCodes.Status400BadRequest });
+        if (request.FrequentVisitorThreshold is < 2 or > 100)
+            return BadRequest(new ProblemDetails { Title = "Frequent-visitor threshold must be between 2 and 100 visits", Status = StatusCodes.Status400BadRequest });
+
+        foreach (var subscription in request.Subscriptions)
+        {
+            if (subscription.SendAtHour is < 0 or > 23)
+                return BadRequest(new ProblemDetails { Title = "A subscription's send hour must be between 0 and 23", Status = StatusCodes.Status400BadRequest });
+
+            var recipients = subscription.RecipientList().ToList();
+            if (recipients.Count == 0)
+                return BadRequest(new ProblemDetails { Title = "Every scheduled report needs at least one recipient", Status = StatusCodes.Status400BadRequest });
+
+            // Validate here rather than at send time: a malformed address discovered by a 3am
+            // background job is a silent failure nobody sees, whereas one rejected at save time is
+            // a message the person typing it is still looking at.
+            var bad = recipients.FirstOrDefault(r => !IsPlausibleEmail(r));
+            if (bad != null)
+                return BadRequest(new ProblemDetails { Title = $"'{bad}' is not a valid email address", Status = StatusCodes.Status400BadRequest });
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.EvacuationEmail) && !IsPlausibleEmail(request.EvacuationEmail.Trim()))
+            return BadRequest(new ProblemDetails { Title = "The evacuation email address is not valid", Status = StatusCodes.Status400BadRequest });
+
+        var settingsJson = await BranchSettingsJsonAsync(branchId);
+        var merged = WriteReportingSettings(settingsJson, request);
+        await _context.Branches.Where(b => b.Id == branchId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(b => b.Settings, merged));
+
+        return Ok(request);
+    }
+
+    private static bool IsPlausibleEmail(string value) =>
+        value.Contains('@') && value.IndexOf('@') > 0 && value.LastIndexOf('.') > value.IndexOf('@') + 1
+        && !value.EndsWith('.') && !value.Contains(' ');
+
+    /// <summary>
+    /// Emails the evacuation roll call. The live screen is the wrong artifact at an assembly point
+    /// — the marshal needs it on a phone, off the wall display, so this sends the same report the
+    /// screen shows as an HTML email plus a CSV attachment that can be ticked off on paper.
+    ///
+    /// ReportsExport: it is a named list of everyone on site, leaving the building.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/visitors/evacuation/email")]
+    [RequirePermission(Permissions.ReportsExport)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> EmailEvacuationReport(Guid branchId, [FromBody] EmailEvacuationRequest? request = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var settings = ReadReportingSettings(await BranchSettingsJsonAsync(branchId));
+        var to = !string.IsNullOrWhiteSpace(request?.To) ? request!.To!.Trim() : settings.EvacuationEmail?.Trim();
+
+        if (string.IsNullOrWhiteSpace(to))
+            return BadRequest(new ProblemDetails
+            {
+                Title = "No recipient configured",
+                Detail = "Set an evacuation email address in Visitor Settings, or supply one with this request.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        if (!IsPlausibleEmail(to))
+            return BadRequest(new ProblemDetails { Title = $"'{to}' is not a valid email address", Status = StatusCodes.Status400BadRequest });
+
+        var reportResult = await GetEvacuationReport(branchId);
+        if (reportResult is not OkObjectResult { Value: EvacuationReportDto report })
+            return reportResult;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        // Inline HTML, no attachment. NotificationAttachment addresses a file already in media
+        // storage, so attaching a roll call would mean writing a CSV into permanent storage on
+        // every send — during an evacuation, of all moments. A marshal reading this on a phone at
+        // the assembly point wants the names on the screen, not a download.
+        var sent = await _notificationService.SendEmailAsync(
+            organizationId, to,
+            $"EVACUATION ROLL CALL — {report.BranchName} — {report.TotalOnSite} on site",
+            VisitorReportEmail.RenderEvacuation(report),
+            isHtml: true);
+
+        if (!sent)
+            return StatusCode(StatusCodes.Status502BadGateway, new ProblemDetails
+            {
+                Title = "Could not send the roll call",
+                Detail = "Email is not configured for this organization, or the mail server rejected the message. The roll call on screen is still accurate.",
+                Status = StatusCodes.Status502BadGateway
+            });
+
+        return Ok(new { sent = true, to, onSite = report.TotalOnSite });
+    }
+
     private static (DateOnly From, DateOnly To, DateTime RangeStart, DateTime RangeEndExclusive) ResolveReportRange(DateOnly? from, DateOnly? to)
     {
         var toDate = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
@@ -875,6 +1232,37 @@ public class VisitorsController : ControllerBase
         }
         catch (System.Text.Json.JsonException) { /* malformed settings blob — fall back to default */ }
         return new VisitorRetentionSettingsDto();
+    }
+
+    private const string RetentionEvidenceKey = "VisitorRetentionEvidence";
+
+    /// <summary>
+    /// What the purge job has actually removed. Before this the job wrote one line to the
+    /// application log and nothing else, so an organization could state a retention policy and had
+    /// no way to demonstrate it had ever run — which is the half of a data-minimization control an
+    /// auditor actually asks to see. Internal so VisitorRetentionJob writes through the same shape.
+    /// </summary>
+    internal static RetentionEvidenceDto ReadRetentionEvidence(string? orgSettingsJson)
+    {
+        if (string.IsNullOrEmpty(orgSettingsJson)) return new RetentionEvidenceDto();
+        try
+        {
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(orgSettingsJson);
+            if (root != null && root.TryGetValue(RetentionEvidenceKey, out var element))
+                return System.Text.Json.JsonSerializer.Deserialize<RetentionEvidenceDto>(element.GetRawText()) ?? new RetentionEvidenceDto();
+        }
+        catch (System.Text.Json.JsonException) { /* malformed settings blob — treat as no runs recorded */ }
+        return new RetentionEvidenceDto();
+    }
+
+    internal static string WriteRetentionEvidence(string? orgSettingsJson, RetentionEvidenceDto evidence)
+    {
+        var merged = string.IsNullOrEmpty(orgSettingsJson)
+            ? new Dictionary<string, object>()
+            : (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(orgSettingsJson) ?? new())
+                .ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+        merged[RetentionEvidenceKey] = evidence;
+        return System.Text.Json.JsonSerializer.Serialize(merged);
     }
 
     private static string WriteRetentionSettings(string? orgSettingsJson, VisitorRetentionSettingsDto retention)
@@ -1049,8 +1437,16 @@ public class VisitorsController : ControllerBase
         if (visitor.Status != VisitorStatus.CheckedIn)
             return BadRequest(new ProblemDetails { Title = "Only an active (checked-in) visit has a badge", Status = StatusCodes.Status400BadRequest });
 
+        var qrToken = TryIssueVisitToken(visitor.Id, branchId);
+        if (qrToken == null)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ProblemDetails
+            {
+                Title = "Badge unavailable",
+                Detail = "The badge QR code could not be generated. The visit itself is fine — this is a server key-storage problem an administrator needs to look at.",
+                Status = StatusCodes.Status503ServiceUnavailable
+            });
+
         var stats = await GetStatsAsync(new[] { visitor.VisitorProfileId });
-        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
         return Ok(MapToDto(visitor, visitor.VisitorProfile!, stats.GetValueOrDefault(visitor.VisitorProfileId), qrToken));
     }
 
@@ -1431,7 +1827,13 @@ public class VisitorsController : ControllerBase
                 VisitorType = request.VisitorType ?? VisitorType.Guest,
                 CheckedInAt = DateTime.UtcNow,
                 ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null,
-                Notes = ComposeCheckInNotes(request.Notes, request.WatchlistOverrideReason, profile.IsWatchlisted)
+                Notes = ComposeCheckInNotes(request.Notes, request.WatchlistOverrideReason, profile.IsWatchlisted),
+                // Same value, two homes, on purpose — see Visitor.WatchlistOverrideReason. Notes is
+                // where a human reading this visit looks; the column is what the compliance report
+                // can actually query. Only set when an override genuinely applied.
+                WatchlistOverrideReason = profile.IsWatchlisted && !string.IsNullOrWhiteSpace(request.WatchlistOverrideReason)
+                    ? request.WatchlistOverrideReason
+                    : null
             };
             _context.Visitors.Add(visitor);
 
@@ -1451,7 +1853,7 @@ public class VisitorsController : ControllerBase
         await NotifyGuardianAsync(visitor, profile, organizationId, visitingDaySettings);
 
         var stats = await GetStatsAsync(new[] { profile.Id });
-        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        var qrToken = TryIssueVisitToken(visitor.Id, branchId);
         var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 
@@ -1567,6 +1969,8 @@ public class VisitorsController : ControllerBase
         visitor.CheckedInAt = DateTime.UtcNow;
         visitor.ConsentGivenAt = consentSettings.Required ? DateTime.UtcNow : null;
         visitor.Notes = ComposeCheckInNotes(visitor.Notes, request?.WatchlistOverrideReason, wasWatchlisted);
+        if (wasWatchlisted && !string.IsNullOrWhiteSpace(request?.WatchlistOverrideReason))
+            visitor.WatchlistOverrideReason = request.WatchlistOverrideReason;
         visitor.UpdatedAt = DateTime.UtcNow;
 
         if (!string.IsNullOrWhiteSpace(request?.CardFlagReason) && !wasWatchlisted)
@@ -1579,7 +1983,7 @@ public class VisitorsController : ControllerBase
         await NotifyGuardianAsync(visitor, profile, visitor.OrganizationId, visitingDaySettings);
 
         var stats = await GetStatsAsync(new[] { profile.Id });
-        var qrToken = _badgeTokenService.IssueVisitToken(visitor.Id, branchId, DateTime.UtcNow.Add(BadgeValidity));
+        var qrToken = TryIssueVisitToken(visitor.Id, branchId);
         var dto = MapToDto(visitor, profile, stats.GetValueOrDefault(profile.Id), qrToken, InductionWarning(visitor, profile));
         await _activityBroadcaster.BroadcastAsync(branchId, VisitorActivityKind.CheckedIn, dto);
 

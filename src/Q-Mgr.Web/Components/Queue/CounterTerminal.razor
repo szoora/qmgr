@@ -663,7 +663,7 @@
     }
 
     .priority-badge.high { background: var(--qm-warning); color: #333; }
-    .priority-badge.vip { background: var(--qm-danger); color: white; }
+    .priority-badge.vip { background: var(--qm-danger); color: var(--qm-text-on-primary); }
 
     .queue-details {
         flex: 1;
@@ -705,7 +705,7 @@
         border-radius: 50%;
         border: none;
         background: var(--qm-primary);
-        color: white;
+        color: var(--qm-text-on-primary);
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -1039,6 +1039,15 @@
             await LoadWaitingTokens();
             NotificationService.Notify(ToastSeverity.Success, "Token Called", $"Now serving {token.DisplayNumber}");
         }
+        else
+        {
+            // Previously a silent no-op: the button did nothing and said nothing, which reads as
+            // an unresponsive screen rather than a failed action. Most often this is a ticket
+            // somebody else just called, so the list is refreshed to show that.
+            await LoadWaitingTokens();
+            NotificationService.Notify(ToastSeverity.Error, "Could not call that ticket",
+                "It may have just been called or cancelled at another counter. The waiting list has been refreshed.");
+        }
     }
 
     private void CompleteService()
@@ -1052,7 +1061,19 @@
         showCompleteConfirm = false;
         if (confirmed && currentToken != null)
         {
-            await QueueApi.CompleteServiceAsync(selectedCounterId, currentToken.Id, null);
+            // The result decides what the operator is told. This used to clear the token, count a
+            // service and toast "Service Completed" whether or not the call succeeded — so a
+            // failed request looked exactly like a successful one, and the customer was dropped
+            // from the screen while still Called on the server. On failure the token stays put so
+            // the action can simply be retried.
+            var completed = await QueueApi.CompleteServiceAsync(selectedCounterId, currentToken.Id, null);
+            if (completed == null)
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not complete service",
+                    "The customer is still assigned to this counter. Please try again — if it keeps happening, contact support.");
+                return;
+            }
+
             currentToken = null;
             counterStatus = "Active";
             serviceStartTime = null;
@@ -1073,7 +1094,14 @@
         showNoShowConfirm = false;
         if (confirmed && currentToken != null)
         {
-            await QueueApi.MarkNoShowAsync(selectedCounterId, currentToken.Id);
+            // Same as CompleteService above: report what actually happened rather than assuming.
+            if (!await QueueApi.MarkNoShowAsync(selectedCounterId, currentToken.Id))
+            {
+                NotificationService.Notify(ToastSeverity.Error, "Could not mark no-show",
+                    "The customer is still assigned to this counter. Please try again — if it keeps happening, contact support.");
+                return;
+            }
+
             currentToken = null;
             counterStatus = "Active";
             serviceStartTime = null;

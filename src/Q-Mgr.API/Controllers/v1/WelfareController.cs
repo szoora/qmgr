@@ -15,6 +15,7 @@ using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 using QMgr.Infrastructure.Jobs;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -35,6 +36,8 @@ public class WelfareController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly INotificationService _notificationService;
     private readonly IMediaStorageService _mediaStorage;
+    private readonly IStudentScopeService _scope;
+    private readonly IWelfareAlertService _alerts;
     private readonly ILogger<WelfareController> _logger;
 
     // 25MB — bumped from the original 10MB to admit short video/audio evidence clips. Deliberately
@@ -58,12 +61,16 @@ public class WelfareController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         INotificationService notificationService,
         IMediaStorageService mediaStorage,
+        IStudentScopeService scope,
+        IWelfareAlertService alerts,
         ILogger<WelfareController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notificationService = notificationService;
         _mediaStorage = mediaStorage;
+        _scope = scope;
+        _alerts = alerts;
         _logger = logger;
     }
 
@@ -99,9 +106,12 @@ public class WelfareController : ControllerBase
 
     // Permissions aren't carried as JWT claims in this app (see PermissionAuthorizationHandler) —
     // resolved by role lookup, matching that handler's own shape rather than a second, drifting
-    // copy of it. No in-memory caching here (unlike the handler) since this runs at most a
-    // handful of times per request, not once per every [RequirePermission]-protected call.
-    private async Task<bool> CanViewConfidentialAsync()
+    // copy of it. Memoised per request (this is a scoped controller) because the visibility ceiling
+    // is now read on essentially every action rather than a handful of times.
+    private bool? _canViewConfidential;
+    private bool? _canViewRestricted;
+
+    private async Task<bool> HasPermissionAsync(string code)
     {
         if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
 
@@ -111,7 +121,90 @@ public class WelfareController : ControllerBase
         return await _context.Users
             .Where(u => u.Id == userId && u.IsActive)
             .SelectMany(u => u.Role.RolePermissions)
-            .AnyAsync(rp => rp.Permission.Code == Permissions.WelfareConfidentialView);
+            .AnyAsync(rp => rp.Permission.Code == code);
+    }
+
+    private async Task<bool> CanViewConfidentialAsync()
+        => _canViewConfidential ??= await HasPermissionAsync(Permissions.WelfareConfidentialView);
+
+    private async Task<bool> CanViewRestrictedAsync()
+        => _canViewRestricted ??= await HasPermissionAsync(Permissions.WelfareRestrictedView);
+
+    /// <summary>
+    /// The highest rung this caller may see. ONE place computes it, and every query and by-ID check
+    /// compares against it — rather than each site re-deriving "confidential OR restricted OR…",
+    /// which is how a fourth call site eventually gets the boolean algebra wrong.
+    ///
+    /// Note the rungs are NOT nested permissions: holding welfare.restricted.view without
+    /// welfare.confidential.view is a legitimate (if odd) configuration, and it must not
+    /// accidentally grant the rung below. Hence Max over what is actually held, not a ladder.
+    /// </summary>
+    private async Task<WelfareVisibility> MaxVisibilityAsync()
+    {
+        if (await CanViewRestrictedAsync()) return WelfareVisibility.Restricted;
+        if (await CanViewConfidentialAsync()) return WelfareVisibility.Confidential;
+        return WelfareVisibility.Standard;
+    }
+
+    /// <summary>
+    /// The set of levels this caller may see. Used instead of <c>&lt;= max</c> so the
+    /// "restricted but not confidential" configuration above behaves correctly rather than
+    /// silently widening.
+    /// </summary>
+    private async Task<List<WelfareVisibility>> VisibleLevelsAsync()
+    {
+        var levels = new List<WelfareVisibility> { WelfareVisibility.Standard };
+        if (await CanViewConfidentialAsync()) levels.Add(WelfareVisibility.Confidential);
+        if (await CanViewRestrictedAsync()) levels.Add(WelfareVisibility.Restricted);
+        return levels;
+    }
+
+    private async Task<bool> CanSeeAsync(WelfareVisibility visibility) => visibility switch
+    {
+        WelfareVisibility.Standard => true,
+        WelfareVisibility.Confidential => await CanViewConfidentialAsync(),
+        WelfareVisibility.Restricted => await CanViewRestrictedAsync(),
+        _ => false // an unrecognised level fails closed rather than defaulting to visible
+    };
+
+    /// <summary>
+    /// Combines the branch check with the row-level student scope. Every action that reaches a
+    /// student — directly or through a record — calls this rather than VerifyBranchOwnership alone,
+    /// so a new endpoint gets both guards from one call. Returns NotFound (never Forbid) for an
+    /// out-of-scope student: the 404-not-403 shape this controller already uses everywhere.
+    /// </summary>
+    private async Task<IActionResult?> VerifyStudentAccess(Guid branchId, Guid studentId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        return await _scope.VerifyStudentAccessAsync(branchId, studentId);
+    }
+
+    /// <summary>
+    /// Narrows a WelfareRecord query to the students the caller may see. The BRANCH-WIDE
+    /// counterpart to <see cref="VerifyStudentAccess"/>: that one guards a single student reached
+    /// by ID, this one guards a query that spans students.
+    ///
+    /// Every branch-wide read must call it — the reports list, the dashboard summary, the cohort
+    /// breakdown, my-actions. The live e2e on 2026-09-09 found all four unscoped while every
+    /// per-student read was correctly guarded, which is exactly the shape this helper exists to
+    /// stop recurring: the per-student paths are the obvious ones to remember.
+    ///
+    /// Also matches AdditionalStudentIds, so a record filed against another class but LINKED to
+    /// one of the caller's students still reaches them — the same rule the timeline already uses.
+    /// </summary>
+    private async Task<IQueryable<WelfareRecord>> ApplyStudentScopeAsync(IQueryable<WelfareRecord> query, Guid branchId)
+    {
+        var visible = await _scope.GetVisibleStudentIdsAsync(branchId);
+        if (visible == null) return query; // unscoped caller
+
+        // FAILS CLOSED: an empty set is an empty result, never an unfiltered one.
+        if (visible.Count == 0) return query.Where(_ => false);
+
+        var ids = visible.ToList();
+        return query.Where(r => ids.Contains(r.StudentId)
+            || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Any(a => ids.Contains(a))));
     }
 
     // ---------------------------------------------------------------------
@@ -225,6 +318,14 @@ public class WelfareController : ControllerBase
         return Ok(MapToDto(category));
     }
 
+    /// <summary>
+    /// "a" or "an" for a case-type name rendered into operator-facing copy. Vowel-initial is the
+    /// whole rule here because the values are a closed, known set (Achievement, Behavior, Welfare,
+    /// SupportPlan) with no "hour"/"union" style exceptions among them.
+    /// </summary>
+    private static string Article(WelfareCaseType caseType) =>
+        "AEIOU".Contains(caseType.ToString()[0]) ? "an" : "a";
+
     private static IActionResult? ValidatePointsSign(WelfareCaseType caseType, int? points)
     {
         var error = PointsSignError(caseType, points);
@@ -276,10 +377,12 @@ public class WelfareController : ControllerBase
     [RequirePermission(Permissions.WelfareView)]
     [ProducesResponseType(typeof(List<WelfareRecordDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetStudentRecords(Guid branchId, Guid studentId)
+    public async Task<IActionResult> GetStudentRecords(
+        Guid branchId, Guid studentId,
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
-        if (branchError != null) return branchError;
+        var accessError = await VerifyStudentAccess(branchId, studentId);
+        if (accessError != null) return accessError;
 
         var studentExists = await _context.Students.AnyAsync(s => s.Id == studentId && s.BranchId == branchId);
         if (!studentExists) return NotFound(new ProblemDetails { Title = "Student not found", Status = StatusCodes.Status404NotFound });
@@ -297,8 +400,34 @@ public class WelfareController : ControllerBase
             // other student's timeline too" (see WelfareRecord.AdditionalStudentIds).
             .Where(r => r.BranchId == branchId && (r.StudentId == studentId || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Contains(studentId))));
 
-        if (!await CanViewConfidentialAsync())
-            query = query.Where(r => !r.Confidential);
+        // Optional period filter, for a student whose timeline covers several years. Filtered here
+        // rather than in the browser so a six-year history is not shipped in full just to show one
+        // term of it — the whole reason this exists.
+        //
+        // Bounds are on OccurredAt (when the thing happened) rather than CreatedAt (when somebody
+        // typed it up). A concern logged three weeks late belongs in the week it happened, which is
+        // the week a reader is looking for it in.
+        //
+        // Npgsql rejects a Kind=Unspecified DateTime against a "timestamp with time zone" column,
+        // and DateOnly.ToDateTime always produces Unspecified — so both bounds are stamped Utc
+        // explicitly rather than compared raw.
+        if (from.HasValue)
+        {
+            var fromUtc = DateTime.SpecifyKind(from.Value.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+            query = query.Where(r => r.OccurredAt >= fromUtc);
+        }
+
+        if (to.HasValue)
+        {
+            // Exclusive upper bound on the NEXT day, so a record at 14:30 on the "to" date is
+            // included — an inclusive-looking range that silently drops its own last day is the
+            // classic off-by-one in date filtering.
+            var toUtc = DateTime.SpecifyKind(to.Value.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+            query = query.Where(r => r.OccurredAt < toUtc);
+        }
+
+        var levels = await VisibleLevelsAsync();
+        query = query.Where(r => levels.Contains(r.Visibility));
         // A draft is only visible to the person still writing it — see FinalizeRecord.
         if (!isSuperAdmin)
             query = query.Where(r => r.Status != WelfareStatus.Draft || r.ReportedByUserId == callerId);
@@ -329,9 +458,11 @@ public class WelfareController : ControllerBase
             .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
 
         var isSuperAdmin = RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole);
-        // Same 404-not-403 shape everywhere else in this app: a confidential record — or someone
-        // else's still-in-progress draft — reads identically to one that doesn't exist.
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()) ||
+        // Same 404-not-403 shape everywhere else in this app: a record above the caller's
+        // visibility ceiling, one for a student outside their class scope, or someone else's
+        // still-in-progress draft all read identically to a record that doesn't exist.
+        if (record == null || !await CanSeeAsync(record.Visibility) ||
+            !await _scope.CanSeeStudentAsync(branchId, record.StudentId) ||
             (record.Status == WelfareStatus.Draft && record.ReportedByUserId != CurrentUserId() && !isSuperAdmin))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
@@ -361,7 +492,9 @@ public class WelfareController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "Category not found", Detail = "The selected category does not exist, or is no longer active.", Status = StatusCodes.Status400BadRequest });
 
         if (category.CaseType != request.CaseType)
-            return BadRequest(new ProblemDetails { Title = "Category does not match case type", Detail = $"'{category.Name}' is a {category.CaseType} category and can't be used for a {request.CaseType} record.", Status = StatusCodes.Status400BadRequest });
+            // Article agreement matters here because the case-type names are shown verbatim and
+            // "a Achievement record" is what an operator sees on a validation they hit often.
+            return BadRequest(new ProblemDetails { Title = "Category does not match case type", Detail = $"'{category.Name}' is {Article(category.CaseType)} {category.CaseType} category and can't be used for {Article(request.CaseType)} {request.CaseType} record.", Status = StatusCodes.Status400BadRequest });
 
         // --- Additional linked students (optional) — a fight or a group incident that touches
         // several students at once. StudentId above stays "who this was primarily filed against";
@@ -432,8 +565,37 @@ public class WelfareController : ControllerBase
                 return BadRequest(new ProblemDetails { Title = "The assigned member of staff was not found", Status = StatusCodes.Status400BadRequest });
         }
 
-        // --- Confidentiality: server wins, never trusted from the client ---
-        var confidential = request.CaseType == WelfareCaseType.Welfare;
+        // --- Visibility: server wins, never trusted from the client ---
+        //
+        // A safeguarding case is forced to at least Confidential regardless of what was sent, which
+        // is exactly what the old Confidential bool did. What is NEW is that a caller may ASK for a
+        // higher rung — but only one they hold the permission for, otherwise they could file a
+        // record into a tier they cannot then read, which is a way to hide something from everyone
+        // including themselves.
+        var requested = request.Visibility;
+        if (!Enum.IsDefined(requested))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised visibility", Status = StatusCodes.Status400BadRequest });
+
+        if (requested == WelfareVisibility.Restricted && !await CanViewRestrictedAsync())
+            return BadRequest(new ProblemDetails
+            {
+                Title = "You cannot mark a record restricted",
+                Detail = "Restricted records are administrator-only. Log it normally and ask an administrator to restrict it.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        if (requested == WelfareVisibility.Confidential && !await CanViewConfidentialAsync()
+            && request.CaseType != WelfareCaseType.Welfare)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "You cannot mark a record confidential",
+                Detail = "Log it as a Welfare concern instead — those are made confidential automatically.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        var visibility = request.CaseType == WelfareCaseType.Welfare && requested < WelfareVisibility.Confidential
+            ? WelfareVisibility.Confidential
+            : requested;
 
         var record = new WelfareRecord
         {
@@ -450,7 +612,7 @@ public class WelfareController : ControllerBase
             // Phase 2: case workflow is real now — a finished record starts Open, not Resolved,
             // so staff can actually move it through Under review / Action taken / Resolved.
             Status = request.SaveAsDraft ? WelfareStatus.Draft : WelfareStatus.Open,
-            Confidential = confidential,
+            Visibility = visibility,
             AdditionalStudentIds = additionalStudentIds.Count > 0 ? additionalStudentIds.ToArray() : null,
             ReportedByUserId = CurrentUserId(),
             CreatedBy = CurrentUserId(),
@@ -467,6 +629,12 @@ public class WelfareController : ControllerBase
 
         _logger.LogInformation("Welfare record {RecordId} ({CaseType}/{Category}, {Status}) logged for student {StudentId} in branch {BranchId}",
             record.Id, record.CaseType, category.Name, record.Status, student.Id, branchId);
+
+        // Tell the class teacher. AFTER the commit, and by a service that never throws — this
+        // project's standing rule is that a side effect running after a committed transaction must
+        // not be able to fail the request (the ProtectSystem=strict badge-token bug). A draft
+        // alerts nobody; so does anything above Standard visibility. Both are decided inside.
+        await _alerts.NotifyRecordLoggedAsync(record.Id);
 
         record.Student = student;
         record.Category = category;
@@ -512,6 +680,10 @@ public class WelfareController : ControllerBase
         record.UpdatedBy = CurrentUserId();
         await _context.SaveChangesAsync();
 
+        // This is the moment a draft becomes a real record, so it is the moment the class teacher
+        // is told — CreateRecord deliberately alerts nobody for a draft.
+        await _alerts.NotifyRecordLoggedAsync(record.Id);
+
         var userNames = await ResolveUserNamesAsync(new[] { record });
         var studentNames = await ResolveStudentNamesAsync(new[] { record });
         return Ok(MapToDto(record, userNames, new Dictionary<Guid, string>(), studentNames));
@@ -536,7 +708,7 @@ public class WelfareController : ControllerBase
 
         var record = await _context.WelfareRecords.Include(r => r.Student).Include(r => r.Category)
             .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
@@ -603,7 +775,7 @@ public class WelfareController : ControllerBase
 
         var record = await _context.WelfareRecords.Include(r => r.Student).Include(r => r.Category)
             .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
         if (record.Status == WelfareStatus.Draft)
             return BadRequest(new ProblemDetails { Title = "This record is still a draft", Detail = "Finalize it first before changing its workflow status.", Status = StatusCodes.Status400BadRequest });
@@ -612,6 +784,163 @@ public class WelfareController : ControllerBase
         record.UpdatedAt = DateTime.UtcNow;
         record.UpdatedBy = CurrentUserId();
         await _context.SaveChangesAsync();
+
+        var userNames = await ResolveUserNamesAsync(new[] { record });
+        var studentNames = await ResolveStudentNamesAsync(new[] { record });
+        return Ok(MapToDto(record, userNames, new Dictionary<Guid, string>(), studentNames));
+    }
+
+    /// <summary>
+    /// Moves a record between visibility rungs — Standard / Confidential / Restricted.
+    ///
+    /// This is the ONE mutable field on an otherwise append-only record, and deliberately so: a
+    /// record whose sensitivity is only understood later must be raisable in place, and the
+    /// alternative (log a second record at the right level and leave the first one readable) would
+    /// be worse in every way.
+    ///
+    /// Three rules the endpoint enforces, each closing a hole:
+    ///  - You must be able to see the record's CURRENT level to change it. Otherwise a caller could
+    ///    guess an ID and downgrade a safeguarding record they cannot read.
+    ///  - You must hold the permission for the level you are moving it TO. Otherwise you could file
+    ///    something into a tier you cannot then read — hiding it from everyone including yourself.
+    ///  - A Welfare (safeguarding) case cannot be lowered below Confidential at all. That floor is
+    ///    forced at creation and this endpoint is not a way around it.
+    ///
+    /// Every change writes a WelfareNote saying who moved it, from what to what, and why — so the
+    /// chronology still records it even though the field itself moved.
+    /// </summary>
+    [HttpPatch("branches/{branchId:guid}/welfare-records/{recordId:guid}/visibility")]
+    [RequirePermission(Permissions.WelfareEdit)]
+    [ProducesResponseType(typeof(WelfareRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateVisibility(Guid branchId, Guid recordId, [FromBody] UpdateWelfareVisibilityRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        if (!Enum.IsDefined(request.Visibility))
+            return BadRequest(new ProblemDetails { Title = "Unrecognised visibility", Status = StatusCodes.Status400BadRequest });
+
+        var record = await _context.WelfareRecords.Include(r => r.Student).Include(r => r.Category)
+            .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
+
+        // Must be able to see it as it stands — a 404 either way, so guessing an ID tells you nothing.
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
+            return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
+
+        if (record.Visibility == request.Visibility)
+            return BadRequest(new ProblemDetails { Title = "No change", Detail = $"This record is already {request.Visibility}.", Status = StatusCodes.Status400BadRequest });
+
+        // ...and must hold the permission for where it is going.
+        if (!await CanSeeAsync(request.Visibility))
+            return BadRequest(new ProblemDetails
+            {
+                Title = $"You cannot move a record to {request.Visibility}",
+                Detail = "You would no longer be able to read it. Ask someone who holds that level to make the change.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        if (record.CaseType == WelfareCaseType.Welfare && request.Visibility < WelfareVisibility.Confidential)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "A safeguarding record cannot be made standard",
+                Detail = "Welfare concerns are confidential by design. It can be raised to Restricted, but not lowered.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        var lowering = request.Visibility < record.Visibility;
+        if (lowering && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Say why you are widening who can read this",
+                Detail = "Lowering a record's visibility lets more people read it. Give a reason for the record.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        var from = record.Visibility;
+        record.Visibility = request.Visibility;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = CurrentUserId();
+
+        // The chronology keeps carrying it even though the field itself moved.
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason!.Trim();
+        _context.WelfareNotes.Add(new WelfareNote
+        {
+            RecordId = record.Id,
+            AuthorUserId = CurrentUserId(),
+            Kind = WelfareNoteKind.Note,
+            Body = reason == null
+                ? $"Visibility changed from {from} to {request.Visibility}."
+                : $"Visibility changed from {from} to {request.Visibility}. Reason: {reason}"
+        });
+
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Welfare record {RecordId} visibility {From} → {To} by user {UserId}",
+            record.Id, from, request.Visibility, CurrentUserId());
+
+        var vUserNames = await ResolveUserNamesAsync(new[] { record });
+        var vStudentNames = await ResolveStudentNamesAsync(new[] { record });
+        return Ok(MapToDto(record, vUserNames, new Dictionary<Guid, string>(), vStudentNames));
+    }
+
+    /// <summary>
+    /// Refines a record's <b>interpretation</b>: what led up to it (<c>Antecedent</c>), what staff
+    /// read it as achieving (<c>PerceivedFunction</c>), and what was done about it
+    /// (<c>ResponseStage</c>).
+    ///
+    /// Until 2026-09-06 all three could be set only when the record was first created, and all
+    /// three are optional there. Anything logged without them was stuck that way — there was no
+    /// update endpoint on a welfare record at all — and that silently starved the two features
+    /// built on them: the Student Picture's "What has been tried" ladder (ResponseStage) and
+    /// GetPatterns' insights (Antecedent → "N share the same trigger", PerceivedFunction →
+    /// "Staff read N of these as …"). Staff logging an incident in the moment routinely do not
+    /// yet know any of this, so filling it in later is the normal case, not an edge one.
+    ///
+    /// <b>Why these three and nothing else.</b> The ledger is append-only by design — no DELETE,
+    /// and the record of what happened is not rewritable. These fields are not that record: they
+    /// are staff's reading of it, which is exactly the thing that legitimately changes as more is
+    /// understood. The form itself says so, labelling PerceivedFunction "Your read, not a
+    /// diagnosis." The factual account — Description, OccurredAt, Category, Tier, Points,
+    /// Location, Confidential — stays immutable, and no endpoint here should start changing it.
+    ///
+    /// This is a full replace of those three, not a merge: the dialog loads the current values and
+    /// posts all three back, so a save is always a complete statement of the interpretation and
+    /// null genuinely means "clear this", matching the create form's clearable pickers.
+    ///
+    /// Deliberately unlike the status PATCH above, a Draft is NOT rejected. Status excludes drafts
+    /// because leaving Draft is finalize's job alone; refining a draft is just the author working
+    /// on their own unfinished note, which is what a draft is for.
+    /// </summary>
+    [HttpPatch("branches/{branchId:guid}/welfare-records/{recordId:guid}/interpretation")]
+    [RequirePermission(Permissions.WelfareEdit)]
+    [ProducesResponseType(typeof(WelfareRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateInterpretation(Guid branchId, Guid recordId, [FromBody] UpdateWelfareInterpretationRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        // Same validation the create path applies to this field, so the two cannot disagree.
+        if (request.PerceivedFunction is { } fn && !Enum.IsDefined(fn))
+            return BadRequest(new ProblemDetails { Title = "Unknown perceived function", Status = StatusCodes.Status400BadRequest });
+
+        var record = await _context.WelfareRecords.Include(r => r.Student).Include(r => r.Category)
+            .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
+            return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
+
+        record.ResponseStage = request.ResponseStage;
+        record.Antecedent = string.IsNullOrWhiteSpace(request.Antecedent) ? null : request.Antecedent.Trim();
+        record.PerceivedFunction = request.PerceivedFunction;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = CurrentUserId();
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation("Welfare record {RecordId} interpretation updated: response {Stage}, function {Function}",
+            recordId, request.ResponseStage?.ToString() ?? "(cleared)", request.PerceivedFunction?.ToString() ?? "(cleared)");
 
         var userNames = await ResolveUserNamesAsync(new[] { record });
         var studentNames = await ResolveStudentNamesAsync(new[] { record });
@@ -628,10 +957,20 @@ public class WelfareController : ControllerBase
         if (branchError != null) return branchError;
 
         var callerId = CurrentUserId();
-        var records = await _context.WelfareRecords
+        var myActions = _context.WelfareRecords
             .Include(r => r.Student).Include(r => r.Category).Include(r => r.Notes).Include(r => r.Notifications)
             .Where(r => r.BranchId == branchId && r.AssignedToUserId == callerId
-                && r.Status != WelfareStatus.Resolved && r.Status != WelfareStatus.Draft)
+                && r.Status != WelfareStatus.Resolved && r.Status != WelfareStatus.Draft);
+
+        // Already narrowed to the caller's own assignments, so this is belt-and-braces — but a
+        // record can be assigned to someone whose scope no longer covers that student (a class
+        // handover mid-term), and this is the endpoint where that would still surface.
+        myActions = await ApplyStudentScopeAsync(myActions, branchId);
+
+        var visibleActionLevels = await VisibleLevelsAsync();
+        myActions = myActions.Where(r => visibleActionLevels.Contains(r.Visibility));
+
+        var records = await myActions
             .OrderBy(r => r.ActionDueDate ?? DateTime.MaxValue)
             .ToListAsync();
 
@@ -669,8 +1008,14 @@ public class WelfareController : ControllerBase
             .Include(r => r.Student).Include(r => r.Category).Include(r => r.Notes).Include(r => r.Notifications)
             .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft);
 
-        if (!await CanViewConfidentialAsync())
-            query = query.Where(r => !r.Confidential);
+        // Row-level scope. This endpoint returns FULL record detail for every student in the
+        // branch, so without this a class-scoped caller reads the whole school's chronology
+        // through the reports page — the widest leak in this controller. Found by the live e2e:
+        // the per-student reads were all scoped while the branch-wide ones were not.
+        query = await ApplyStudentScopeAsync(query, branchId);
+
+        var visibleLevels = await VisibleLevelsAsync();
+        query = query.Where(r => visibleLevels.Contains(r.Visibility));
         if (!string.IsNullOrWhiteSpace(keyword))
             query = query.Where(r => r.Description.Contains(keyword) || (r.ActionTaken != null && r.ActionTaken.Contains(keyword)));
         if (dateFrom.HasValue)
@@ -704,8 +1049,13 @@ public class WelfareController : ControllerBase
 
         var query = _context.WelfareRecords.Include(r => r.Category)
             .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft);
-        if (!await CanViewConfidentialAsync())
-            query = query.Where(r => !r.Confidential);
+
+        // Counts are data too. Unscoped, this told a class teacher how many incidents the whole
+        // school has and how they break down by category and by member of staff.
+        query = await ApplyStudentScopeAsync(query, branchId);
+
+        var visibleLevels = await VisibleLevelsAsync();
+        query = query.Where(r => visibleLevels.Contains(r.Visibility));
         if (dateFrom.HasValue)
             query = query.Where(r => r.OccurredAt >= dateFrom.Value.ToUniversalTime());
         if (dateTo.HasValue)
@@ -748,7 +1098,7 @@ public class WelfareController : ControllerBase
         if (branchError != null) return branchError;
 
         var record = await _context.WelfareRecords.FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
         var body = (request.Body ?? "").Trim();
@@ -982,7 +1332,7 @@ public class WelfareController : ControllerBase
         if (branchError != null) return branchError;
 
         var record = await _context.WelfareRecords.FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
         if (file == null || file.Length == 0)
@@ -1041,7 +1391,7 @@ public class WelfareController : ControllerBase
 
         var record = await _context.WelfareRecords.Include(r => r.Category).Include(r => r.Student).Include(r => r.Branch)
             .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
         var guardian = await _context.StudentGuardians.Include(g => g.VisitorProfile)
@@ -1083,7 +1433,7 @@ public class WelfareController : ControllerBase
         if (branchError != null) return branchError;
 
         var record = await _context.WelfareRecords.FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
-        if (record == null || (record.Confidential && !await CanViewConfidentialAsync()))
+        if (record == null || !await CanSeeAsync(record.Visibility) || !await _scope.CanSeeStudentAsync(branchId, record.StudentId))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
         var guardian = await _context.StudentGuardians.Include(g => g.VisitorProfile)
@@ -1207,7 +1557,7 @@ public class WelfareController : ControllerBase
         Location = r.Location,
         OccurredAt = r.OccurredAt,
         Status = r.Status,
-        Confidential = r.Confidential,
+        Visibility = r.Visibility,
         ReportedByName = userNames.GetValueOrDefault(r.ReportedByUserId, "Unknown"),
         CreatedAt = r.CreatedAt,
         ActionTaken = r.ActionTaken,
@@ -1341,9 +1691,14 @@ public class WelfareController : ControllerBase
             .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft && r.OccurredAt >= since);
 
         // The confidentiality gate applies to reports exactly as it does to the timeline —
-        // aggregate counts of safeguarding concerns are still safeguarding information.
-        if (!await CanViewConfidentialAsync())
-            q = q.Where(r => !r.Confidential);
+        // aggregate counts of safeguarding concerns are still safeguarding information. The same
+        // reasoning applies to the row-level class scope: a cohort breakdown by house, sex and
+        // fees status across the whole school is exactly the sort of thing a class-scoped role
+        // should not be able to assemble.
+        q = await ApplyStudentScopeAsync(q, branchId);
+
+        var reportLevels = await VisibleLevelsAsync();
+        q = q.Where(r => reportLevels.Contains(r.Visibility));
 
         var rows = await q.Select(r => new
         {
@@ -1405,8 +1760,13 @@ public class WelfareController : ControllerBase
     [ProducesResponseType(typeof(StudentPictureDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetStudentPicture(Guid branchId, Guid studentId)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
-        if (branchError != null) return branchError;
+        // VerifyStudentAccess, not VerifyBranchOwnership. This endpoint was the one per-student
+        // read that kept the branch-only guard through the first pass of the scope work, and the
+        // e2e caught it returning 200 for a student outside the caller's classes — the single
+        // widest leak available, since the Student Picture assembles the pastoral tier, the flags,
+        // the guardians and the recent chronology into one response.
+        var accessError = await VerifyStudentAccess(branchId, studentId);
+        if (accessError != null) return accessError;
 
         var student = await _context.Students
             .Include(s => s.Guardians).ThenInclude(g => g.VisitorProfile)
@@ -1415,13 +1775,15 @@ public class WelfareController : ControllerBase
         if (student == null) return NotFound();
 
         var confidential = await CanViewConfidentialAsync();
+        var restricted = await CanViewRestrictedAsync();
+        var pictureLevels = await VisibleLevelsAsync();
 
         var query = _context.WelfareRecords
             .Include(r => r.Category)
             .Where(r => r.BranchId == branchId && r.Status != WelfareStatus.Draft
                         && (r.StudentId == studentId || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Contains(studentId))));
 
-        if (!confidential) query = query.Where(r => !r.Confidential);
+        query = query.Where(r => pictureLevels.Contains(r.Visibility));
 
         var records = await query.OrderByDescending(r => r.OccurredAt).ToListAsync();
 
@@ -1457,7 +1819,7 @@ public class WelfareController : ControllerBase
 
         var dto = new StudentPictureDto
         {
-            Student = StudentsController.MapToDto(student, pastoral: true, confidential: confidential),
+            Student = StudentsController.MapToDto(student, pastoral: true, confidential: confidential, restricted: restricted),
             TotalRecords = records.Count,
             OpenActions = records.Count(r => openStatuses.Contains(r.Status) && r.AssignedToUserId.HasValue),
             OverdueActions = records.Count(r => openStatuses.Contains(r.Status) && r.ActionDueDate.HasValue && r.ActionDueDate.Value < now),

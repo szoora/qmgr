@@ -34,15 +34,31 @@ public static class RoleCodes
     public const string Staff = "staff";
 
     /// <summary>
+    /// Class Teacher - Pastoral responsibility for one or more classes.
+    ///
+    /// Unlike every other role here, this one carries a DATA SCOPE as well as a permission set: its
+    /// seeded role row has <see cref="QMgr.Domain.Enums.RoleDataScope.AssignedClasses"/>, so its
+    /// holder sees only students whose ClassName matches a live ClassTeacherAssignment of theirs.
+    /// See StudentScopeService — the scope is enforced there, never by comparing against this code.
+    /// </summary>
+    public const string ClassTeacher = "class-teacher";
+
+    /// <summary>
     /// Viewer - Read-only access and customer self-service.
     /// Can view dashboards, queue status, and submit feedback.
     /// </summary>
     public const string Viewer = "viewer";
 
     /// <summary>
-    /// All role codes for validation purposes
+    /// All role codes for validation purposes.
+    ///
+    /// ORDER IS LOAD-BEARING: <see cref="Rank"/> indexes into this array, so it is declared
+    /// most-privileged first and <see cref="IsManagerOrAbove"/> is computed from array position
+    /// rather than from any stored level. ClassTeacher sits between Staff and Viewer deliberately —
+    /// placing it above Manager would silently hand every class teacher the manager-tier override
+    /// checks, including the visiting-day repeat check-in bypass in VisitorsController.CheckIn.
     /// </summary>
-    public static readonly string[] All = { SuperAdmin, Admin, Manager, Staff, Viewer };
+    public static readonly string[] All = { SuperAdmin, Admin, Manager, Staff, ClassTeacher, Viewer };
 
     /// <summary>
     /// Checks if the given role code is a valid system role

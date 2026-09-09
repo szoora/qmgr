@@ -2,11 +2,13 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Mail;
 using System.Text.Json;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Jobs;
 
 namespace QMgr.Infrastructure.Services;
 
@@ -20,6 +22,7 @@ public class NotificationService : INotificationService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly INotificationHubService _hubService;
     private readonly IMediaStorageService _mediaStorageService;
+    private readonly INotificationPreferenceResolver _preferences;
     private readonly ILogger<NotificationService> _logger;
     // Keyed by OrganizationId — a single cached field previously returned whatever organization's
     // settings were fetched first for the lifetime of this (scoped) instance, meaning every other
@@ -33,12 +36,14 @@ public class NotificationService : INotificationService
         IHttpClientFactory httpClientFactory,
         INotificationHubService hubService,
         IMediaStorageService mediaStorageService,
+        INotificationPreferenceResolver preferences,
         ILogger<NotificationService> logger)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
         _hubService = hubService;
         _mediaStorageService = mediaStorageService;
+        _preferences = preferences;
         _logger = logger;
     }
 
@@ -59,14 +64,17 @@ public class NotificationService : INotificationService
 
     #region SMS
 
-    public async Task<bool> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default)
+    public async Task<ChannelSendResult> SendSmsAsync(Guid organizationId, string phoneNumber, string message, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.SmsEnabled)
         {
             _logger.LogInformation("SMS notifications disabled or not configured");
-            return false;
+            return ChannelSendResult.Skipped("SMS is not switched on for this organization.");
         }
+
+        if (string.IsNullOrWhiteSpace(phoneNumber))
+            return ChannelSendResult.Skipped("No phone number on file.");
 
         try
         {
@@ -95,17 +103,25 @@ public class NotificationService : INotificationService
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<SmsSendResponse>(cancellationToken: cancellationToken);
-                _logger.LogInformation("SMS sent successfully to {PhoneNumber}: {Message}", phoneNumber, result?.Message);
-                return result?.Success ?? false;
+                if (result?.Success == true)
+                {
+                    _logger.LogInformation("SMS sent successfully to {PhoneNumber}: {Message}", phoneNumber, result.Message);
+                    return ChannelSendResult.Sent();
+                }
+
+                // A 200 carrying Success=false is the gateway rejecting the message (bad number,
+                // no credit). It used to be indistinguishable from a transport failure.
+                _logger.LogWarning("SMS gateway accepted the request but reported failure: {Message}", result?.Message);
+                return ChannelSendResult.Failed(result?.Message ?? "The SMS gateway rejected the message.");
             }
 
             _logger.LogWarning("SMS send failed: {StatusCode}", response.StatusCode);
-            return false;
+            return ChannelSendResult.Failed($"The SMS gateway returned {(int)response.StatusCode} {response.StatusCode}.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send SMS to {PhoneNumber}", phoneNumber);
-            return false;
+            return ChannelSendResult.Failed(ex.Message);
         }
     }
 
@@ -127,20 +143,23 @@ public class NotificationService : INotificationService
 
     #region Email
 
-    public async Task<bool> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default)
+    public async Task<ChannelSendResult> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(organizationId, cancellationToken);
         if (settings == null || !settings.EmailEnabled)
         {
             _logger.LogInformation("Email notifications disabled or not configured");
-            return false;
+            return ChannelSendResult.Skipped("Email is not switched on for this organization.");
         }
 
         if (string.IsNullOrEmpty(settings.SmtpHost) || string.IsNullOrEmpty(settings.EmailFromAddress))
         {
             _logger.LogWarning("Email SMTP settings not configured");
-            return false;
+            return ChannelSendResult.Skipped("This organization has no SMTP host or from-address configured.");
         }
+
+        if (string.IsNullOrWhiteSpace(email))
+            return ChannelSendResult.Skipped("No email address on file.");
 
         try
         {
@@ -181,12 +200,12 @@ public class NotificationService : INotificationService
 
             await smtpClient.SendMailAsync(mailMessage, cancellationToken);
             _logger.LogInformation("Email sent successfully to {Email}", email);
-            return true;
+            return ChannelSendResult.Sent();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send email to {Email}", email);
-            return false;
+            return ChannelSendResult.Failed(ex.Message);
         }
     }
 
@@ -455,25 +474,41 @@ public class NotificationService : INotificationService
             await _hubService.SendToAllAsync(notification);
         }
 
-        // Send via additional channels if requested
-        if (request.Channels.HasFlag(NotificationChannel.Sms) && !string.IsNullOrEmpty(request.PhoneNumber))
+        // ── Out-of-band channels ────────────────────────────────────────────────────────────
+        //
+        // Until 2026-09-09 SMS and email were sent RIGHT HERE, awaited on the request thread, with
+        // no retry: a slow SMTP server stalled whatever HTTP request had triggered the notification,
+        // and a transient blip lost the message permanently. Now the row and the SignalR push above
+        // stay synchronous — the bell is what "instant" means — and the rest is handed to Hangfire,
+        // which in this project is backed by PostgreSQL (Hangfire.PostgreSql, see Program.cs) and
+        // therefore survives a restart. No broker, no new server-side dependency.
+
+        // Resolve the recipient's own contact details when the caller did not supply them. Every
+        // caller used to have to do this itself, and forgetting meant the channel silently no-opped.
+        var (phone, email) = await ResolveRecipientContactAsync(request, cancellationToken);
+
+        // Then narrow to what this person and this tenant actually want. A caller asking for SMS
+        // does not force SMS on somebody who has turned it off.
+        var channels = await _preferences.ResolveAsync(
+            request.UserId, request.OrganizationId, request.EventKey, request.Channels, cancellationToken);
+
+        var subject = request.EmailSubject ?? request.Title;
+
+        if (channels.HasFlag(NotificationChannel.Sms) && !string.IsNullOrWhiteSpace(phone))
         {
-            var smsSent = await SendSmsAsync(request.OrganizationId, request.PhoneNumber, request.Message, cancellationToken);
-            notification.SmsSent = smsSent;
-            notification.SmsSentAt = smsSent ? DateTime.UtcNow : null;
+            EnqueueDispatch(notification.Id, NotificationChannel.Sms, request.OrganizationId, phone!, subject, request.Message);
             notification.DeliveredVia |= NotificationChannel.Sms;
         }
 
-        if (request.Channels.HasFlag(NotificationChannel.Email) && !string.IsNullOrEmpty(request.Email))
+        if (channels.HasFlag(NotificationChannel.Email) && !string.IsNullOrWhiteSpace(email))
         {
-            var emailSubject = request.EmailSubject ?? request.Title;
-            var emailSent = await SendEmailAsync(request.OrganizationId, request.Email, emailSubject, request.Message, true, cancellationToken: cancellationToken);
-            notification.EmailSent = emailSent;
-            notification.EmailSentAt = emailSent ? DateTime.UtcNow : null;
+            EnqueueDispatch(notification.Id, NotificationChannel.Email, request.OrganizationId, email!, subject, request.Message);
             notification.DeliveredVia |= NotificationChannel.Email;
         }
 
-        if (request.Channels.HasFlag(NotificationChannel.Push) && !string.IsNullOrEmpty(request.DeviceToken))
+        // Push has no queue: there is no mobile app yet, so SendPushNotificationAsync is a stub and
+        // enqueueing a job to call a stub would only make the queue harder to read.
+        if (channels.HasFlag(NotificationChannel.Push) && !string.IsNullOrEmpty(request.DeviceToken))
         {
             var pushSent = await SendPushNotificationAsync(request.DeviceToken, request.Title, request.Message, null, cancellationToken);
             notification.PushSent = pushSent;
@@ -483,8 +518,60 @@ public class NotificationService : INotificationService
 
         await _context.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Created notification {NotificationId} for user {UserId}", notification.Id, request.UserId);
+        _logger.LogInformation("Created notification {NotificationId} for user {UserId} (channels: {Channels})",
+            notification.Id, request.UserId, notification.DeliveredVia);
         return notification;
+    }
+
+    /// <summary>
+    /// Where to reach the recipient. An explicitly-supplied address always wins — that is how the
+    /// queue notifier reaches a member of the public who has no user account — and otherwise the
+    /// target user's own row is read. Before this, the caller had to do the lookup itself and
+    /// forgetting silently dropped the channel.
+    /// </summary>
+    private async Task<(string? Phone, string? Email)> ResolveRecipientContactAsync(
+        CreateNotificationRequest request, CancellationToken cancellationToken)
+    {
+        var phone = request.PhoneNumber;
+        var email = request.Email;
+
+        if ((!string.IsNullOrWhiteSpace(phone) && !string.IsNullOrWhiteSpace(email)) || request.UserId == null)
+            return (phone, email);
+
+        var user = await _context.Users
+            .AsNoTracking()
+            .Where(u => u.Id == request.UserId)
+            .Select(u => new { u.Phone, u.AlternatePhone, u.Email })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (user == null) return (phone, email);
+
+        // AlternatePhone is a genuine fallback, not a second recipient — one message, to whichever
+        // number the school actually filled in.
+        return (
+            string.IsNullOrWhiteSpace(phone) ? (user.Phone ?? user.AlternatePhone) : phone,
+            string.IsNullOrWhiteSpace(email) ? user.Email : email
+        );
+    }
+
+    /// <summary>
+    /// Hands one channel send to Hangfire. Wrapped in try/catch because enqueueing runs AFTER the
+    /// notification row is already committed: if the job store is unreachable, the bell has still
+    /// rung and the request must not fail for it. Losing the email in that case is a degraded
+    /// success, and it is logged as one.
+    /// </summary>
+    private void EnqueueDispatch(Guid notificationId, NotificationChannel channel, Guid organizationId,
+        string recipient, string subject, string message)
+    {
+        try
+        {
+            BackgroundJob.Enqueue<NotificationDispatchJob>(job =>
+                job.DispatchAsync(notificationId, channel, organizationId, recipient, subject, message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not queue {Channel} delivery for notification {NotificationId}", channel, notificationId);
+        }
     }
 
     public async Task<IEnumerable<Notification>> GetUserNotificationsAsync(Guid userId, Guid organizationId, bool unreadOnly = false, int limit = 50, CancellationToken cancellationToken = default)

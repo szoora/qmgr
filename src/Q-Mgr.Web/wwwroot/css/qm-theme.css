@@ -123,6 +123,23 @@
     --qm-radius-xl: 8px;
     --qm-radius-full: 50px;
 
+    /* Summary / stat tile scale ------------------------------------------------
+       Every page that opens with a row of counters (Visitor Management, the
+       visitor activity board, Expected Visitors, Feedback, Registration Review,
+       Dashboard, the report pages...) had grown its own copy of the same card
+       CSS, each with its own padding and its own 24-32px number. The result was
+       a row of tiles taller than the content underneath them, and no single
+       place to change it. These tokens are that place: the tile families below
+       all reference them, so the whole app's counters resize together.
+       Deliberately compact — a counter is a glance, not the page. */
+    --qm-statcard-pad: 12px 14px;
+    --qm-statcard-gap: 12px;
+    --qm-statcard-min: 150px;
+    --qm-statcard-value: 20px;
+    --qm-statcard-label: 11px;
+    --qm-statcard-icon: 32px;
+    --qm-statcard-icon-font: 15px;
+
     /* Transitions */
     --qm-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     --qm-transition-fast: all 0.15s ease;
@@ -1140,7 +1157,7 @@ a:hover {
 .stats-card {
     background: var(--qm-gradient-card);
     border-radius: var(--qm-radius-lg);
-    padding: 24px;
+    padding: var(--qm-statcard-pad);
     box-shadow: var(--qm-shadow-sm);
     transition: var(--qm-transition);
     position: relative;
@@ -1186,13 +1203,13 @@ a:hover {
 .stats-card.secondary::before { background: var(--qm-secondary); }
 
 .stats-card .stats-icon {
-    width: 60px;
-    height: 60px;
+    width: var(--qm-statcard-icon);
+    height: var(--qm-statcard-icon);
     border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
+    font-size: var(--qm-statcard-icon-font);
     color: white;
     background: var(--qm-gradient-primary);
 }
@@ -1203,7 +1220,7 @@ a:hover {
 .stats-card.secondary .stats-icon { background: var(--qm-secondary); }
 
 .stats-card .stats-number {
-    font-size: 36px;
+    font-size: var(--qm-statcard-value);
     font-weight: 700;
     color: var(--qm-text-primary);
     line-height: 1.2;
@@ -1211,7 +1228,7 @@ a:hover {
 }
 
 .stats-card .stats-label {
-    font-size: 13px;
+    font-size: var(--qm-statcard-label);
     color: var(--qm-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -2082,14 +2099,6 @@ a:hover {
 }
 
 @media (max-width: 768px) {
-    .stats-card {
-        padding: 20px;
-    }
-
-    .stats-card .stats-number {
-        font-size: 28px;
-    }
-
     .kiosk-services {
         grid-template-columns: 1fr;
         padding: 20px;

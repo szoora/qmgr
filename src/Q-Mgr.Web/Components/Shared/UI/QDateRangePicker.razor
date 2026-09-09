@@ -1,0 +1,140 @@
+@namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Services
+
+@*
+    The one date-range control for the whole app.
+
+    Twelve pages filter by a date range and, before this, each one held two loose date fields plus
+    its own presets and its own caption. Three different preset sets existed — Reports Overview had
+    three buttons, Welfare Reports had none, the Visitor Report had seven chips of its own — so the
+    same period was described three different ways depending on which page you were on.
+
+    Composed from QDatePicker rather than written afresh: fixing the format or the calendar in one
+    place fixes it in both fields here and in every standalone picker in the app.
+
+    Emits ONE RangeChanged. Two loose fields meant a page reloaded twice for one edit, and briefly
+    queried a nonsense range in between (new From, old To) — which is also how "From after To"
+    silently returned nothing.
+*@
+
+<div class="q-daterange @Class">
+    <div class="q-daterange__fields">
+        <div class="q-daterange__field">
+            <QDatePicker Label="@FromLabel"
+                         Value="@fromValue"
+                         ValueChanged="@OnFromChanged"
+                         Min="@Min"
+                         Max="@Max"
+                         Disabled="@Disabled" />
+        </div>
+        <div class="q-daterange__field">
+            <QDatePicker Label="@ToLabel"
+                         Value="@toValue"
+                         ValueChanged="@OnToChanged"
+                         Min="@Min"
+                         Max="@Max"
+                         Disabled="@Disabled" />
+        </div>
+    </div>
+
+    @if (ShowPresets)
+    {
+        <div class="q-daterange__presets" role="group" aria-label="Quick date ranges">
+            @foreach (var preset in Presets)
+            {
+                <button type="button"
+                        class="q-daterange__preset @(activeLabel == preset.Label ? "is-active" : "")"
+                        disabled="@Disabled"
+                        @onclick="@(() => ApplyPreset(preset))">@preset.Label</button>
+            }
+        </div>
+    }
+
+    @if (ShowCaption)
+    {
+        <p class="q-daterange__caption">
+            @CaptionPrefix <strong>@Range.Caption</strong>
+            @if (!Range.IsAllTime)
+            {
+                <text> · @Range.Days day@(Range.Days == 1 ? "" : "s")</text>
+            }
+            @if (spanExceeded)
+            {
+                @* Warn rather than refuse. A range that is too wide is slow, not wrong, and a
+                   report that silently truncated the period somebody asked for would be worse
+                   than one that takes a moment. *@
+                <text> · </text><span class="q-daterange__warning">longer than the @MaxSpanDays-day limit this report is tuned for — it may be slow</span>
+            }
+        </p>
+    }
+</div>
+
+@code {
+    /// <summary>The selected period. Always normalized, so From is never after To.</summary>
+    [Parameter] public DateRange Range { get; set; } = DateRange.LastDays(7);
+
+    /// <summary>
+    /// Raised once per change, whether the user edited a field or picked a preset — so a page can
+    /// reload on it directly without debouncing two separate field callbacks.
+    /// </summary>
+    [Parameter] public EventCallback<DateRange> RangeChanged { get; set; }
+
+    /// <summary>Which shortcuts to offer. Defaults to the standard set; pass DateRangePresets.WithAllTime for a full-history view.</summary>
+    [Parameter] public IReadOnlyList<DateRangePreset> Presets { get; set; } = DateRangePresets.Standard;
+
+    [Parameter] public bool ShowPresets { get; set; } = true;
+    [Parameter] public bool ShowCaption { get; set; } = true;
+    [Parameter] public string CaptionPrefix { get; set; } = "Showing";
+    [Parameter] public string FromLabel { get; set; } = "From";
+    [Parameter] public string ToLabel { get; set; } = "To";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>Earliest selectable day, passed through to both fields.</summary>
+    [Parameter] public DateTime? Min { get; set; }
+
+    /// <summary>Latest selectable day. Defaults to today — no report in this product covers the future.</summary>
+    [Parameter] public DateTime? Max { get; set; } = DateTime.Today;
+
+    /// <summary>Advisory span the caption warns past. Zero disables the warning.</summary>
+    [Parameter] public int MaxSpanDays { get; set; }
+
+    private DateTime? fromValue;
+    private DateTime? toValue;
+    private string? activeLabel;
+    private bool spanExceeded;
+
+    protected override void OnParametersSet() => Sync();
+
+    private void Sync()
+    {
+        fromValue = Range.From.ToDateTime(TimeOnly.MinValue);
+        toValue = Range.To.ToDateTime(TimeOnly.MinValue);
+        activeLabel = DateRangePresets.LabelFor(Range, Presets);
+        spanExceeded = MaxSpanDays > 0 && Range.Days > MaxSpanDays;
+    }
+
+    private async Task OnFromChanged(DateTime? value)
+    {
+        if (!value.HasValue) return;
+        await Emit(new DateRange(DateOnly.FromDateTime(value.Value), Range.To));
+    }
+
+    private async Task OnToChanged(DateTime? value)
+    {
+        if (!value.HasValue) return;
+        await Emit(new DateRange(Range.From, DateOnly.FromDateTime(value.Value)));
+    }
+
+    private async Task ApplyPreset(DateRangePreset preset) => await Emit(preset.Resolve());
+
+    private async Task Emit(DateRange range)
+    {
+        // DateRange's constructor already swaps a reversed pair, so picking a From later than the
+        // current To widens the range backwards instead of producing an empty result nobody can
+        // explain.
+        Range = range;
+        Sync();
+        await RangeChanged.InvokeAsync(range);
+    }
+}

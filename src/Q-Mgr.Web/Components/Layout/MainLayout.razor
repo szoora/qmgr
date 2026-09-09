@@ -65,8 +65,11 @@ else
     <!-- Top Header -->
     <header class="qm-header">
         <div class="header-left">
-            <button class="sidebar-toggle" @onclick="ToggleSidebar">
-                <i class="bi bi-list"></i>
+            @* The app's primary navigation control and it was announced as a bare "button".
+               aria-expanded lets a screen reader say whether the sidebar is currently open. *@
+            <button class="sidebar-toggle" aria-label="Toggle navigation menu"
+                    aria-expanded="@(sidebarExpanded ? "true" : "false")" @onclick="ToggleSidebar">
+                <i class="bi bi-list" aria-hidden="true"></i>
             </button>
             <a href="/" @onclick="CollapseSidebarOnMobile" class="brand">
                 <span class="brand-logo">
@@ -194,9 +197,21 @@ else
                             {
                                 <li><a href="admin/students/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Student Roster</a></li>
                             }
-                            @if (canViewWelfare)
+                            @if (canManageClassTeachers)
+                            {
+                                <li><a href="admin/students/class-teachers" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/class-teachers") ? "active" : "")"><i class="bi bi-person-video3"></i>Class Teachers</a></li>
+                            }
+                            @* Defining the school's welfare taxonomy is an administrator's job, not
+                               a form tutor's. This was gated on welfare.view — which every welfare
+                               user holds — so a class teacher was shown a menu item leading to a
+                               page whose every control is disabled. Gate it on the permission that
+                               actually governs the page's purpose. *@
+                            @if (canManageWelfareCategories)
                             {
                                 <li><a href="admin/welfare-categories" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/welfare-categories") ? "active" : "")"><i class="bi bi-clipboard2-pulse"></i>Welfare Categories</a></li>
+                            }
+                            @if (canViewWelfare)
+                            {
                                 <li><a href="admin/welfare-my-actions" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/welfare-my-actions") ? "active" : "")"><i class="bi bi-check2-circle"></i>My Welfare Actions</a></li>
                             }
                             @if (canViewWelfareReports)
@@ -601,6 +616,8 @@ else
     private bool canViewFeedback = false;
     private bool canViewVisitors = false;
     private bool canViewStudents = false;
+    private bool canManageClassTeachers = false;
+    private bool canManageWelfareCategories = false;
     private bool canViewWelfare = false;
     private bool canViewWelfareReports = false;
     private bool canViewMarketing = false;
@@ -719,19 +736,32 @@ else
                 }
                 else
                 {
-                    // No auth found, redirect to login
-                    // Get the current path for return URL
+                    // No auth found, redirect to login.
                     var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
-                    if (string.IsNullOrEmpty(currentPath) ||
-                        currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
+
+                    // Already on login (or unauthorized): there is nowhere to redirect TO, and the
+                    // old code still called NavigateTo("/login", forceLoad: true) here — a FULL
+                    // PAGE RELOAD of the page the user is already looking at, which discarded
+                    // whatever they had typed into the login form. The condition was written to
+                    // keep "/login" out of the returnUrl, which is right, but it then fell into a
+                    // branch that navigated anyway. Do nothing instead: the login page owns this
+                    // state and does not need the layout to send it anywhere.
+                    //
+                    // Note this deliberately does NOT set authChecked — that gate is what keeps
+                    // the admin chrome hidden from someone who is not signed in, and flipping it
+                    // here to "finish" the check would reveal the shell to an anonymous visitor.
+                    if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
                         currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
                     {
-                        NavigationManager.NavigateTo("/login", forceLoad: true);
+                        return;
                     }
-                    else
-                    {
-                        NavigationManager.NavigateTo($"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}", forceLoad: true);
-                    }
+
+                    // An empty path is the root ("/") — a real protected page, so it still
+                    // redirects; it just has no meaningful returnUrl to carry.
+                    var loginUrl = string.IsNullOrEmpty(currentPath)
+                        ? "/login"
+                        : $"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}";
+                    NavigationManager.NavigateTo(loginUrl, forceLoad: true);
                 }
             }
             catch (Exception ex)
@@ -882,6 +912,8 @@ else
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
         canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
+        canManageClassTeachers = await PermissionService.HasPermissionAsync(Permissions.ClassTeachersManage);
+        canManageWelfareCategories = await PermissionService.HasPermissionAsync(Permissions.WelfareCategoriesManage);
         canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
         canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
         canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
@@ -1181,6 +1213,13 @@ else
                 var paged = await response.Content.ReadFromJsonAsync<PagedResultDto<TenantSummaryDto>>(JsonOptions);
                 superAdminOrgOptions = paged?.Items.Select(o => new OrgOption { Id = o.Id, Name = o.Name }).ToList() ?? new();
             }
+            else
+            {
+                // The platform administrator's tenant switcher. Empty reads as "there are no
+                // tenants", which for this control is an alarming and wrong statement.
+                ToastService.Notify(ToastSeverity.Error, "Could not load organizations",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The tenant list could not be loaded."));
+            }
         }
         catch
         {
@@ -1206,6 +1245,14 @@ else
                     Name = b.Name,
                     Address = b.Address ?? ""
                 }).ToList() ?? new();
+            }
+            else
+            {
+                // Feeds SetBranchAvailability below, so a silent failure does not just blank the
+                // picker — it tells the whole app this organization has no branches, which is
+                // what drives the "create your first branch" onboarding state.
+                ToastService.Notify(ToastSeverity.Error, "Could not load branches",
+                    await ApiErrorService.GetErrorMessageAsync(response, "The branch list could not be loaded."));
             }
         }
         catch

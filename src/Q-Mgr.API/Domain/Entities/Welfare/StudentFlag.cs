@@ -48,6 +48,19 @@ public class StudentFlag : BaseAuditableEntity
     /// </summary>
     public WelfareTier Tier { get; set; } = WelfareTier.Low;
 
+    /// <summary>
+    /// How widely this flag may be seen — a DIFFERENT AXIS from <see cref="Tier"/>, which is
+    /// severity. Before this existed the two were conflated: <c>Tier == High</c> was read as if it
+    /// meant "confidential", so a high-severity but perfectly shareable flag ("severe nut allergy")
+    /// was gated like a safeguarding one, and a low-severity but genuinely sensitive flag had no
+    /// way to be protected at all.
+    ///
+    /// Tier still gates the flag's NOTES at the confidential rung (a High-tier flag's free text is
+    /// where safeguarding detail ends up), which is why both are read. This field gates the whole
+    /// flag, including its existence.
+    /// </summary>
+    public WelfareVisibility Visibility { get; set; } = WelfareVisibility.Standard;
+
     [MaxLength(2000)]
     public string? Notes { get; set; }
 

@@ -150,6 +150,7 @@ public class RbacSeeder
         // ============================================
         new("students.view", "View Student Rosters", "View students and their authorized guardians", "Student Rosters", 1, true),
         new("students.manage", "Manage Student Rosters", "Create/edit/delete students and guardians, bulk import a roster", "Student Rosters", 2, true),
+        new("classes.teachers.manage", "Manage Class Teachers", "Assign and end class-teacher assignments, and edit their contact details", "Student Rosters", 3, true),
 
         // ============================================
         // STUDENT WELFARE LEDGER
@@ -159,8 +160,9 @@ public class RbacSeeder
         new("welfare.edit", "Add Welfare Follow-Up Notes", "Add a follow-up note to an existing record (records are never rewritten)", "Student Welfare", 3, true),
         new("welfare.notify", "Notify Guardians", "Review and send a guardian notification for a welfare record", "Student Welfare", 4, true),
         new("welfare.confidential.view", "View Confidential Welfare Records", "View Welfare-tier (safeguarding) records — a smaller audience than general behavior records by design", "Student Welfare", 5, true),
-        new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 6, true),
-        new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 7, true),
+        new("welfare.restricted.view", "View Restricted Welfare Information", "View and set administrator-only restricted records, flags, and student notes", "Student Welfare", 6, true),
+        new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7, true),
+        new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8, true),
 
         // ============================================
         // MARKETING (contacts + broadcast campaigns)
@@ -283,7 +285,7 @@ public class RbacSeeder
                 // Visitor Management (full)
                 "visitors.view", "visitors.checkin", "visitors.checkout", "visitors.manage",
                 // Student Rosters (full)
-                "students.view", "students.manage",
+                "students.view", "students.manage", "classes.teachers.manage",
                 // Student Welfare Ledger (full, except confidential-tier — see the welfare-plan's
                 // "configurable, off by default" note: an Admin can grant welfare.confidential.view
                 // to a custom role, e.g. a "Counselor" role, via the existing custom-roles feature)
@@ -329,6 +331,43 @@ public class RbacSeeder
                 // view, no editing categories, no reports)
                 "welfare.view", "welfare.create", "welfare.notify",
             }
+        ),
+
+        // ============================================
+        // CLASS TEACHER
+        // Pastoral responsibility for one or more classes.
+        //
+        // The permission set is deliberately narrow, but what actually defines this role is not
+        // what it may do — it is WHICH ROWS it may do it to. DataScope.AssignedClasses narrows
+        // every roster and welfare read to students whose ClassName matches one of the caller's
+        // live ClassTeacherAssignment rows, enforced in StudentScopeService.
+        //
+        // Notably absent, each for a reason:
+        //   students.manage            — a class teacher does not edit the roll or bulk-import it
+        //   classes.teachers.manage    — could otherwise self-assign to any class, defeating the scope
+        //   welfare.confidential.view  — safeguarding stays with the DSL/administrator (KCSIE
+        //                                need-to-know; user decision 2026-09-09)
+        //   welfare.restricted.view    — administrator only
+        // ============================================
+        [RoleCodes.ClassTeacher] = new RoleDefinition(
+            Name: "Class Teacher",
+            Code: RoleCodes.ClassTeacher,
+            Description: "Pastoral responsibility for assigned classes. Sees only the students in those classes.",
+            Color: "#E67E22",
+            Icon: "person-video3",
+            SortOrder: 4,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view",
+                "notifications.view",
+                // Scoped to the caller's own classes by StudentScopeService.
+                "students.view",
+                "welfare.view", "welfare.create", "welfare.edit", "welfare.notify",
+                // Scoped too, so this answers "how is my class doing" and nothing wider.
+                "welfare.reports.view",
+            },
+            DataScope: RoleDataScope.AssignedClasses
         ),
 
         // ============================================
@@ -402,16 +441,15 @@ public class RbacSeeder
 
     private async Task SeedSystemRolesAsync()
     {
-        var existingCodes = await _context.Roles
+        var existing = await _context.Roles
             .Where(r => r.OrganizationId == null) // System roles only
-            .Select(r => r.Code)
-            .ToHashSetAsync();
+            .ToDictionaryAsync(r => r.Code);
 
         var rolesToAdd = new List<Role>();
 
         foreach (var (code, roleDef) in SystemRoles)
         {
-            if (!existingCodes.Contains(code))
+            if (!existing.ContainsKey(code))
             {
                 rolesToAdd.Add(new Role
                 {
@@ -424,6 +462,7 @@ public class RbacSeeder
                     Icon = roleDef.Icon,
                     SortOrder = roleDef.SortOrder,
                     IsSystem = roleDef.IsSystemRole,
+                    DataScope = roleDef.DataScope,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -435,6 +474,27 @@ public class RbacSeeder
             _context.Roles.AddRange(rolesToAdd);
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seeded {Count} new system roles", rolesToAdd.Count);
+        }
+
+        // A SYSTEM role's data scope is not a tenant's to change, so unlike name/colour it is
+        // repaired rather than left alone. Without this, a class-teacher row created before the
+        // column existed (or edited by hand) would keep DataScope=Organization and silently see
+        // the whole school — the exact fail-open this feature exists to prevent. Permissions are
+        // already repaired the same way by SeedRolePermissionsAsync.
+        var repaired = 0;
+        foreach (var (code, roleDef) in SystemRoles)
+        {
+            if (existing.TryGetValue(code, out var role) && role.DataScope != roleDef.DataScope)
+            {
+                role.DataScope = roleDef.DataScope;
+                repaired++;
+            }
+        }
+
+        if (repaired > 0)
+        {
+            await _context.SaveChangesAsync();
+            _logger.LogWarning("Repaired DataScope on {Count} system role(s)", repaired);
         }
     }
 
@@ -584,7 +644,8 @@ public class RbacSeeder
         string Icon,
         int SortOrder,
         bool IsSystemRole,
-        string[] Permissions
+        string[] Permissions,
+        RoleDataScope DataScope = RoleDataScope.Organization
     );
 
     #endregion

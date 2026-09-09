@@ -1,5 +1,15 @@
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Authorization
+@* Both of these are needed for the two tags below to resolve to real components. Without them
+   Razor treats <RedirectToLogin /> and <Pages.Unauthorized /> as unknown HTML elements and emits
+   them literally — they render nothing and do nothing, which is exactly what was happening until
+   2026-09-06 (build warning RZ10012 on the two lines below). _Imports.razor pulls in
+   QMgr.Web.Components, but a partial namespace prefix like "Pages." does not resolve a component
+   tag, and Shared is not imported globally, so both are declared here explicitly rather than
+   widening _Imports — putting every page component (Login, Register, Docs …) into global tag
+   scope would invite name collisions across the whole app. *@
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Pages
 
 <CascadingAuthenticationState>
     <Router AppAssembly="typeof(Program).Assembly">
@@ -12,7 +22,7 @@
                     }
                     else
                     {
-                        <Pages.Unauthorized />
+                        <Unauthorized />
                     }
                 </NotAuthorized>
             </AuthorizeRouteView>

@@ -59,19 +59,22 @@
     @if (ShowControls)
     {
         <div class="player-controls">
-            <button class="control-btn" @onclick="PreviousItem" disabled="@(playlist.Count <= 1)">
+            @* Every control here is icon-only, so each needs its own accessible name. The four
+               that toggle name their CURRENT action rather than their state, which is what a
+               screen-reader user is choosing between. *@
+            <button class="control-btn" aria-label="Previous item" @onclick="PreviousItem" disabled="@(playlist.Count <= 1)">
                 <QIcon Name="skip-start-fill" />
             </button>
-            <button class="control-btn play-pause" @onclick="TogglePlayPause">
+            <button class="control-btn play-pause" aria-label="@(isPlaying ? "Pause" : "Play")" @onclick="TogglePlayPause">
                 <QIcon Name="@(isPlaying ? "pause-fill" : "play-fill")" />
             </button>
-            <button class="control-btn" @onclick="NextItem" disabled="@(playlist.Count <= 1)">
+            <button class="control-btn" aria-label="Next item" @onclick="NextItem" disabled="@(playlist.Count <= 1)">
                 <QIcon Name="skip-end-fill" />
             </button>
-            <button class="control-btn" @onclick="ToggleMute">
+            <button class="control-btn" aria-label="@(Muted ? "Unmute" : "Mute")" @onclick="ToggleMute">
                 <QIcon Name="@(Muted ? "volume-mute-fill" : "volume-up-fill")" />
             </button>
-            <button class="control-btn" @onclick="ToggleFullscreen">
+            <button class="control-btn" aria-label="@(IsFullscreen ? "Exit full screen" : "Full screen")" @onclick="ToggleFullscreen">
                 <QIcon Name="@(IsFullscreen ? "fullscreen-exit" : "fullscreen")" />
             </button>
         </div>
@@ -259,7 +262,6 @@
 
     .control-btn.play-pause:hover {
         transform: scale(1.1);
-        box-shadow: 0 0 30px rgba(140, 47, 82, 0.5);
     }
 
     /* Now Playing */

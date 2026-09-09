@@ -487,24 +487,24 @@ else
 
     .metrics-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 16px;
-        margin-top: 24px;
+        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+        gap: var(--qm-statcard-gap);
+        margin-top: 18px;
     }
 
     .metric-card {
         display: flex;
         align-items: center;
-        gap: 16px;
+        gap: 10px;
         background: var(--qm-bg-elevated);
         border: 1px solid var(--qm-border);
         border-radius: var(--qm-radius-lg);
-        padding: 20px;
+        padding: var(--qm-statcard-pad);
     }
 
     .metric-icon {
-        width: 56px;
-        height: 56px;
+        width: var(--qm-statcard-icon);
+        height: var(--qm-statcard-icon);
         border-radius: var(--qm-radius-xl);
         display: flex;
         align-items: center;

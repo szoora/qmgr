@@ -252,12 +252,19 @@ public static class Permissions
     public const string StudentsView = "students.view";
     public const string StudentsManage = "students.manage";
 
+    /// <summary>Assign and end class-teacher assignments, and edit their contact details.</summary>
+    public const string ClassTeachersManage = "classes.teachers.manage";
+
     // Student Welfare Ledger
     public const string WelfareView = "welfare.view";
     public const string WelfareCreate = "welfare.create";
     public const string WelfareEdit = "welfare.edit";
     public const string WelfareNotify = "welfare.notify";
     public const string WelfareConfidentialView = "welfare.confidential.view";
+
+    /// <summary>The administrator-only rung above Confidential — restricted records, flags, and the student note.</summary>
+    public const string WelfareRestrictedView = "welfare.restricted.view";
+
     public const string WelfareCategoriesManage = "welfare.categories.manage";
     public const string WelfareReportsView = "welfare.reports.view";
 
@@ -329,6 +336,12 @@ public static class RoleCodes
     public const string Staff = "staff";
 
     /// <summary>
+    /// Class Teacher - Pastoral responsibility for one or more classes. Sees only the students in
+    /// those classes; the narrowing lives on the role's DataScope server-side, never here.
+    /// </summary>
+    public const string ClassTeacher = "class-teacher";
+
+    /// <summary>
     /// Viewer - Read-only access and customer self-service.
     /// </summary>
     public const string Viewer = "viewer";
@@ -349,7 +362,9 @@ public static class RoleCodes
         return IsSuperAdmin(roleCode) || string.Equals(roleCode, Admin, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static readonly string[] TierOrder = { SuperAdmin, Admin, Manager, Staff, Viewer };
+    // Mirrors the API RoleCodes.All ordering, which is load-bearing there: ClassTeacher sits
+    // between Staff and Viewer so IsManagerOrAbove keeps meaning what it meant.
+    private static readonly string[] TierOrder = { SuperAdmin, Admin, Manager, Staff, ClassTeacher, Viewer };
 
     /// <summary>
     /// Checks if the role is Manager, Admin, or SuperAdmin — mirrors
