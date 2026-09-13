@@ -70,6 +70,9 @@ public static class DependencyInjection
 
         // Platform-level email (org-less context, e.g. pre-verification signup email)
         services.AddScoped<IEmailSender, EmailSender>();
+        // One home for "which SMTP account does this organization send through?" — used by the
+        // tenant send, the tenant test-send and the platform sender alike.
+        services.AddScoped<ISmtpProfileResolver, SmtpProfileResolver>();
 
         // Billing Services
         services.AddScoped<IBillingService, BillingService>();

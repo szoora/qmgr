@@ -12,19 +12,23 @@ namespace QMgr.Infrastructure.Services;
 /// </summary>
 public class EmailSender : IEmailSender
 {
-    private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly ISmtpProfileResolver _smtp;
     private readonly ILogger<EmailSender> _logger;
 
-    public EmailSender(IPlatformSettingsService platformSettingsService, ILogger<EmailSender> logger)
+    public EmailSender(ISmtpProfileResolver smtp, ILogger<EmailSender> logger)
     {
-        _platformSettingsService = platformSettingsService;
+        _smtp = smtp;
         _logger = logger;
     }
 
     public async Task<bool> SendAsync(string toEmail, string subject, string htmlBody, CancellationToken cancellationToken = default)
     {
-        var settings = await _platformSettingsService.GetSettingsAsync<EmailSettings>("Email");
-        if (settings == null || string.IsNullOrEmpty(settings.SmtpHost) || string.IsNullOrEmpty(settings.FromEmail))
+        // Null tenant settings == the platform account. This mail (password resets, invitations)
+        // belongs to no organization, so there is nothing to fall back FROM — but it resolves
+        // through the same one place as tenant mail so there is a single answer to "which account
+        // does Q-Mgr send through?".
+        var profile = await _smtp.ResolveAsync(null);
+        if (profile == null)
         {
             _logger.LogWarning("Platform email settings not configured — cannot send to {Email}", toEmail);
             return false;
@@ -32,17 +36,17 @@ public class EmailSender : IEmailSender
 
         try
         {
-            using var smtpClient = new SmtpClient(settings.SmtpHost, settings.SmtpPort)
+            using var smtpClient = new SmtpClient(profile.Host, profile.Port)
             {
-                EnableSsl = settings.UseSsl,
-                Credentials = !string.IsNullOrEmpty(settings.SmtpUsername)
-                    ? new NetworkCredential(settings.SmtpUsername, settings.SmtpPassword)
+                EnableSsl = profile.UseSsl,
+                Credentials = !string.IsNullOrEmpty(profile.Username)
+                    ? new NetworkCredential(profile.Username, profile.Password)
                     : null
             };
 
             var mailMessage = new MailMessage
             {
-                From = new MailAddress(settings.FromEmail, settings.FromName ?? "Q-Mgr"),
+                From = new MailAddress(profile.FromEmail, profile.FromName),
                 Subject = subject,
                 Body = htmlBody,
                 IsBodyHtml = true

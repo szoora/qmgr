@@ -14,3 +14,6 @@ build-version.txt
 src/Q-Mgr.Shared/BuildInfo.cs
 .erp_bridge_token
 .qmgr_admin_token
+
+# Build-time secrets for scripts/deploy/build-linux.ps1 (SMTP password, etc.)
+scripts/deploy/secrets.local.json

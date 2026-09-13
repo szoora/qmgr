@@ -23,6 +23,7 @@ public class NotificationService : INotificationService
     private readonly INotificationHubService _hubService;
     private readonly IMediaStorageService _mediaStorageService;
     private readonly INotificationPreferenceResolver _preferences;
+    private readonly ISmtpProfileResolver _smtp;
     private readonly ILogger<NotificationService> _logger;
     // Keyed by OrganizationId — a single cached field previously returned whatever organization's
     // settings were fetched first for the lifetime of this (scoped) instance, meaning every other
@@ -37,6 +38,7 @@ public class NotificationService : INotificationService
         INotificationHubService hubService,
         IMediaStorageService mediaStorageService,
         INotificationPreferenceResolver preferences,
+        ISmtpProfileResolver smtp,
         ILogger<NotificationService> logger)
     {
         _context = context;
@@ -44,6 +46,7 @@ public class NotificationService : INotificationService
         _hubService = hubService;
         _mediaStorageService = mediaStorageService;
         _preferences = preferences;
+        _smtp = smtp;
         _logger = logger;
     }
 
@@ -152,10 +155,14 @@ public class NotificationService : INotificationService
             return ChannelSendResult.Skipped("Email is not switched on for this organization.");
         }
 
-        if (string.IsNullOrEmpty(settings.SmtpHost) || string.IsNullOrEmpty(settings.EmailFromAddress))
+        // Falls back to the platform account when this organization has not configured its own —
+        // see ISmtpProfileResolver. Before that fallback existed, "email is on" plus "no SMTP host"
+        // meant every message was silently skipped, which is the state every tenant starts in.
+        var profile = await _smtp.ResolveAsync(settings);
+        if (profile == null)
         {
             _logger.LogWarning("Email SMTP settings not configured");
-            return ChannelSendResult.Skipped("This organization has no SMTP host or from-address configured.");
+            return ChannelSendResult.Skipped("Neither this organization nor the platform has an SMTP host and from-address configured.");
         }
 
         if (string.IsNullOrWhiteSpace(email))
@@ -163,17 +170,17 @@ public class NotificationService : INotificationService
 
         try
         {
-            using var smtpClient = new SmtpClient(settings.SmtpHost, settings.SmtpPort)
+            using var smtpClient = new SmtpClient(profile.Host, profile.Port)
             {
-                EnableSsl = settings.SmtpUseSsl,
-                Credentials = !string.IsNullOrEmpty(settings.SmtpUsername)
-                    ? new NetworkCredential(settings.SmtpUsername, settings.SmtpPassword)
+                EnableSsl = profile.UseSsl,
+                Credentials = !string.IsNullOrEmpty(profile.Username)
+                    ? new NetworkCredential(profile.Username, profile.Password)
                     : null
             };
 
             using var mailMessage = new MailMessage
             {
-                From = new MailAddress(settings.EmailFromAddress, settings.EmailFromName ?? "Q-Mgr"),
+                From = new MailAddress(profile.FromEmail, profile.FromName),
                 Subject = subject,
                 Body = body,
                 IsBodyHtml = isHtml

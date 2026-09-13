@@ -78,6 +78,27 @@ param(
     [string]$PgPassword      = '__SET_ON_SERVER__',
 
     [string]$JwtSecret       = '',   # blank -> auto-generate a random 64-byte secret for this build
+
+    # ---- Platform email -------------------------------------------------------------------------
+    # The mailbox every tenant falls back to when it has not configured its own SMTP (see
+    # ISmtpProfileResolver). These land in qmgr-api.service as Environment=Email__* rather than in
+    # appsettings.Production.json, for the same reason MediaStorage__PublicBaseUrl does: install.sh
+    # PRESERVES the API's appsettings.Production.json on every upgrade, so a key added there never
+    # reaches a server that already exists. The unit is replaced on every install, so it does.
+    #
+    # The PASSWORD is never a committed default. Order of resolution:
+    #   1. -SmtpPassword on the command line
+    #   2. scripts/deploy/secrets.local.json  { "SmtpPassword": "..." }   <- untracked, .gitignored
+    #   3. nothing -> no Email__SmtpPassword line, PlatformEmailDefaults treats the section as
+    #      unconfigured, and mail is SKIPPED rather than failing. The build warns.
+    [string]$SmtpHost        = 'smtp.ionos.com',
+    [int]$SmtpPort           = 587,
+    [bool]$SmtpUseSsl        = $true,
+    [string]$SmtpUsername    = 'info@sacc.ug',
+    [string]$SmtpFromEmail   = 'info@sacc.ug',
+    [string]$SmtpFromName    = 'Q-Mgr',
+    [string]$SmtpPassword    = '',
+
     [switch]$SkipClean,
     [switch]$SkipPublish
 )
@@ -183,6 +204,26 @@ $resolvedJwtSecret = if ($JwtSecret) { $JwtSecret } else {
 }
 $dbConnString = "Host=$PgHost;Port=$PgPort;Database=$PgDatabase;Username=$PgUser;Password=$PgPassword"
 
+# Platform SMTP password: command line, else the untracked local secrets file, else nothing.
+$resolvedSmtpPassword = $SmtpPassword
+if (-not $resolvedSmtpPassword) {
+    $secretsFile = Join-Path $PSScriptRoot 'secrets.local.json'
+    if (Test-Path $secretsFile) {
+        try {
+            $secrets = Get-Content $secretsFile -Raw | ConvertFrom-Json
+            if ($secrets.SmtpPassword) {
+                $resolvedSmtpPassword = [string]$secrets.SmtpPassword
+                Write-Info "SMTP password read from scripts/deploy/secrets.local.json"
+            }
+        } catch {
+            Write-Warn "secrets.local.json could not be read ($($_.Exception.Message)) — continuing without an SMTP password."
+        }
+    }
+}
+if (-not $resolvedSmtpPassword) {
+    Write-Warn "No SMTP password (-SmtpPassword or scripts/deploy/secrets.local.json). The package ships with platform email UNCONFIGURED: tenants that have not set their own SMTP will have mail skipped, not failed."
+}
+
 $apiAppSettingsProd = [ordered]@{
     ConnectionStrings = [ordered]@{
         DefaultConnection = $dbConnString
@@ -197,6 +238,10 @@ $apiAppSettingsProd = [ordered]@{
     App = [ordered]@{
         PublicWebBaseUrl = "https://$HostName"
     }
+    # MediaStorage:PublicBaseUrl is deliberately NOT here. install.sh preserves this file on every
+    # upgrade, so a key added to it never reaches an existing server. It is set in qmgr-api.service
+    # as Environment=MediaStorage__PublicBaseUrl instead; see LocalDiskMediaStorageService and
+    # UploadLinkRepair for why uploads need it.
     # See the -DataProtectionPath parameter for why this must be set explicitly rather than left
     # to Program.cs's AppContext.BaseDirectory default.
     DataProtection = [ordered]@{
@@ -255,6 +300,18 @@ $webAppSettingsProd = [ordered]@{
     # the correct browser-facing address for that link; found live when the docs link opened
     # 127.0.0.1 even against a "production" build.
     ApiPublicUrl = "https://$HostName"
+    # The SAME key ring the API uses, and for the same reason — see -DataProtectionPath. Added
+    # 2026-09-10 alongside the AddDataProtection call in Q-Mgr.Web/Program.cs, which the Web
+    # project had never had: without it the Web app fell back to an EPHEMERAL key ring, so
+    # antiforgery tokens stopped validating after every restart. That failed soft (a warning, not
+    # an exception), which is why it went unnoticed while the identical gap in the API produced a
+    # 500 on every visitor check-in.
+    #
+    # This line and the ReadWritePaths entry on the Web unit are a pair: setting the path without
+    # making it writable would turn today's soft degradation into a hard startup failure.
+    DataProtection = [ordered]@{
+        KeyPath = $DataProtectionPath
+    }
     Logging = [ordered]@{
         LogLevel = [ordered]@{
             Default              = 'Warning'
@@ -386,6 +443,20 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # ---- Uploaded files (API wwwroot/uploads, a symlink to $UploadsPath) ----
+    # Every upload's link is https://$HostName/uploads/... (MediaStorage:PublicBaseUrl). Without
+    # this block the catch-all "location /" sent those requests to Web, which has no such files,
+    # so signage PDFs, images and attachments all 404ed. No limit_req: one display loading a
+    # playlist fetches many files from a single IP.
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:$ApiPort;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+    }
+
     # ---- API health check (not proxied to Web) ----
     location = /api-health {
         proxy_pass http://127.0.0.1:$ApiPort/health;
@@ -434,6 +505,22 @@ Write-LinuxText -Path (Join-Path $genDir 'qmgr.nginx.conf') -Content $nginxConf
 Write-Success 'nginx config generated (qmgr.nginx.conf)'
 
 # --- systemd: API ---
+# Email__* in the unit rather than in appsettings.Production.json — install.sh preserves that file
+# on an upgrade, the unit is always replaced. Password omitted entirely when there isn't one, so
+# PlatformEmailDefaults sees an incomplete section and skips mail instead of failing every send.
+$emailEnvLines = @(
+    "Environment=Email__SmtpHost=$SmtpHost"
+    "Environment=Email__SmtpPort=$SmtpPort"
+    "Environment=Email__UseSsl=$($SmtpUseSsl.ToString().ToLowerInvariant())"
+    "Environment=Email__SmtpUsername=$SmtpUsername"
+    "Environment=Email__FromEmail=$SmtpFromEmail"
+    "Environment=Email__FromName=$SmtpFromName"
+)
+if ($resolvedSmtpPassword) {
+    $emailEnvLines += "Environment=Email__SmtpPassword=$resolvedSmtpPassword"
+}
+$emailUnitEnvironment = ($emailEnvLines -join "`n")
+
 $apiUnit = @"
 [Unit]
 Description=Q-Mgr API
@@ -451,6 +538,8 @@ RestartSec=5
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://127.0.0.1:$ApiPort
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+Environment=MediaStorage__PublicBaseUrl=https://$HostName
+$emailUnitEnvironment
 MemoryMax=1200M
 
 NoNewPrivileges=true
@@ -488,7 +577,11 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/log/qmgr
+# $DataProtectionPath added 2026-09-10, when Q-Mgr.Web gained the AddDataProtection call it had
+# never had. Both processes share the one key ring (same SetApplicationName), so both units need
+# it writable. ProtectSystem=strict mounts everything else read-only — this is the same pairing
+# whose absence on the API side made every walk-in check-in 500.
+ReadWritePaths=/var/log/qmgr $DataProtectionPath
 
 [Install]
 WantedBy=multi-user.target

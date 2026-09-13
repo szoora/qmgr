@@ -298,6 +298,14 @@ app.MapHealthChecks("/health");
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.RbacSeeder>>());
     await rbacSeeder.SeedAsync();
 
+    // Repoint upload links saved with the internal loopback host (http://127.0.0.1:{ApiPort}) onto
+    // MediaStorage:PublicBaseUrl. A no-op unless that key is set, and a no-op once repaired.
+    var uploadLinkRepair = new QMgr.Infrastructure.Data.UploadLinkRepair(
+        db,
+        configuration,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.UploadLinkRepair>>());
+    await uploadLinkRepair.RunAsync();
+
     // Seed demo data (development only)
     if (app.Environment.IsDevelopment())
     {
@@ -310,6 +318,18 @@ app.MapHealthChecks("/health");
     // Initialize platform settings (from appsettings.json to database)
     var platformSettingsService = scope.ServiceProvider.GetRequiredService<QMgr.Application.Interfaces.IPlatformSettingsService>();
     await platformSettingsService.InitializeDefaultSettingsAsync();
+
+    // Fill the platform Email/SMTP settings from configuration if they are still blank. AFTER the
+    // initializer, which creates the row on a fresh database; this covers the existing install the
+    // initializer skips entirely (it returns early once any PlatformSettings row exists).
+    var platformEmailDefaults = new QMgr.Infrastructure.Data.PlatformEmailDefaults(
+        db,
+        configuration,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.PlatformEmailDefaults>>());
+    await platformEmailDefaults.RunAsync();
+
+    // The row may have just changed underneath the 30-minute settings cache.
+    await platformSettingsService.ReloadCacheAsync();
 }
 
 // Hangfire Dashboard (protected)

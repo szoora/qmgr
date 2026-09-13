@@ -16,15 +16,18 @@ public class NotificationSettingsService : INotificationSettingsService
 {
     private readonly QMgrDbContext _context;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISmtpProfileResolver _smtp;
     private readonly ILogger<NotificationSettingsService> _logger;
 
     public NotificationSettingsService(
         QMgrDbContext context,
         IHttpClientFactory httpClientFactory,
+        ISmtpProfileResolver smtp,
         ILogger<NotificationSettingsService> logger)
     {
         _context = context;
         _httpClientFactory = httpClientFactory;
+        _smtp = smtp;
         _logger = logger;
     }
 
@@ -160,7 +163,11 @@ public class NotificationSettingsService : INotificationSettingsService
             return false;
         }
 
-        if (string.IsNullOrEmpty(settings.SmtpHost) || string.IsNullOrEmpty(settings.EmailFromAddress))
+        // Same resolution as the real send, so a passing test proves the account that will actually
+        // be used — including the platform fallback. Testing a different account from the one that
+        // delivers is worse than not testing at all.
+        var profile = await _smtp.ResolveAsync(settings);
+        if (profile == null)
         {
             _logger.LogWarning("Email SMTP settings not configured");
             return false;
@@ -168,18 +175,18 @@ public class NotificationSettingsService : INotificationSettingsService
 
         try
         {
-            using var smtpClient = new SmtpClient(settings.SmtpHost, settings.SmtpPort)
+            using var smtpClient = new SmtpClient(profile.Host, profile.Port)
             {
-                EnableSsl = settings.SmtpUseSsl,
-                Credentials = !string.IsNullOrEmpty(settings.SmtpUsername)
-                    ? new NetworkCredential(settings.SmtpUsername, settings.SmtpPassword)
+                EnableSsl = profile.UseSsl,
+                Credentials = !string.IsNullOrEmpty(profile.Username)
+                    ? new NetworkCredential(profile.Username, profile.Password)
                     : null,
                 Timeout = 10000 // 10 second timeout for test
             };
 
             var mailMessage = new MailMessage
             {
-                From = new MailAddress(settings.EmailFromAddress, settings.EmailFromName ?? "Q-Mgr"),
+                From = new MailAddress(profile.FromEmail, profile.FromName),
                 Subject = "Q-Mgr Email Test",
                 Body = @"<html>
 <body style='font-family: Arial, sans-serif;'>

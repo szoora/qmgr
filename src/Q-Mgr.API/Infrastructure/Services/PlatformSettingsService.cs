@@ -10,6 +10,7 @@ public class PlatformSettingsService : IPlatformSettingsService
 {
     private readonly QMgrDbContext _context;
     private readonly IMemoryCache _cache;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<PlatformSettingsService> _logger;
     private const string CacheKeyPrefix = "PlatformSettings_";
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
@@ -17,10 +18,12 @@ public class PlatformSettingsService : IPlatformSettingsService
     public PlatformSettingsService(
         QMgrDbContext context,
         IMemoryCache cache,
+        IConfiguration configuration,
         ILogger<PlatformSettingsService> logger)
     {
         _context = context;
         _cache = cache;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -266,16 +269,20 @@ public class PlatformSettingsService : IPlatformSettingsService
                 DisplayOrder = 8,
                 Icon = "envelope",
                 IsEditable = true,
-                SettingsJson = System.Text.Json.JsonSerializer.Serialize(new EmailSettings
-                {
-                    SmtpHost = "",
-                    SmtpPort = 587,
-                    SmtpUsername = "",
-                    SmtpPassword = "",
-                    FromEmail = "noreply@qmgr.app",
-                    FromName = "Q-Mgr",
-                    UseSsl = true
-                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+                // From configuration when the Email section is set, so a fresh install and an
+                // existing one (which PlatformEmailDefaults reconciles at startup) agree. Blank
+                // otherwise — an unconfigured platform sends no mail rather than pretending to.
+                SettingsJson = System.Text.Json.JsonSerializer.Serialize(
+                    PlatformEmailDefaults.FromConfiguration(_configuration) ?? new EmailSettings
+                    {
+                        SmtpHost = "",
+                        SmtpPort = 587,
+                        SmtpUsername = "",
+                        SmtpPassword = "",
+                        FromEmail = "",
+                        FromName = "Q-Mgr",
+                        UseSsl = true
+                    }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
             }
         };
 
