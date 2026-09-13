@@ -34,7 +34,7 @@
             {
                 <div class="watchlist-reason__block">
                     <span class="watchlist-reason__label">Flagged</span>
-                    <p class="watchlist-reason__text">@FlaggedAt.Value.ToLocalTime().ToString("MMM dd, yyyy 'at' HH:mm")</p>
+                    <p class="watchlist-reason__text">@QDateFormat.DT(FlaggedAt.Value.ToLocalTime())</p>
                 </div>
             }
 

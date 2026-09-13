@@ -128,7 +128,7 @@
                                     @onclick="@(() => SelectDay(day))">
                                 <span class="day-name">@day.ToString("ddd")</span>
                                 <span class="day-num">@day.Day</span>
-                                <span class="day-month">@day.ToString("MMM")</span>
+                                <span class="day-month">@QDateFormat.Mon(day)</span>
                             </button>
                         }
                     </div>
@@ -141,14 +141,14 @@
                     {
                         <div class="booking-state small">
                             <QIcon Name="door-closed" Size="lg" />
-                            <p>Closed on @selectedDate.ToString("dddd"). Try another day.</p>
+                            <p>Closed on @QDateFormat.Day(selectedDate). Try another day.</p>
                         </div>
                     }
                     else if (!OpenSlots.Any())
                     {
                         <div class="booking-state small">
                             <QIcon Name="calendar-x" Size="lg" />
-                            <p>No times left on @selectedDate.ToString("dddd d MMM"). Try another day.</p>
+                            <p>No times left on @QDateFormat.LongDay(selectedDate). Try another day.</p>
                         </div>
                     }
                     else

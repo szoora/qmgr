@@ -147,7 +147,7 @@
                 {
                     <RadzenChart Style="height: 250px;">
                         <RadzenLineSeries Data="@trendData" CategoryProperty="Day" ValueProperty="Rating" Title="Avg Rating" Smooth="true" />
-                        <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                        <RadzenCategoryAxis Padding="20" FormatString="@("{0:" + QDateFormat.Compact + "}")" />
                         <RadzenValueAxis Min="1" Max="5">
                             <RadzenGridLines Visible="true" />
                         </RadzenValueAxis>
@@ -157,7 +157,7 @@
                 else if (trendData.Count == 1)
                 {
                     <p class="chart-empty">
-                        All feedback in this range arrived on one day (@trendData[0].Day.ToString("MMM d, yyyy"), averaging
+                        All feedback in this range arrived on one day (@QDateFormat.D(trendData[0].Day), averaging
                         @trendData[0].Rating.ToString("F1") stars), so there is no trend to plot yet.
                     </p>
                 }
@@ -241,7 +241,7 @@
                                 </div>
                                 <div class="feedback-meta">
                                     <span class="feedback-service">@(feedback.ServiceTypeName ?? "Unspecified service")</span>
-                                    <span class="feedback-date">@feedback.SubmittedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                    <span class="feedback-date">@QDateFormat.DT(feedback.SubmittedAt.ToLocalTime())</span>
                                 </div>
                             </div>
                             <div class="feedback-content">
@@ -256,7 +256,7 @@
                                 <div class="feedback-response">
                                     @if (feedback.HasResponse)
                                     {
-                                        <QBadge Variant="success" Text="@($"Responded{(feedback.RespondedAt.HasValue ? $" · {feedback.RespondedAt.Value.ToLocalTime():MMM dd}" : "")}")" />
+                                        <QBadge Variant="success" Text="@($"Responded{(feedback.RespondedAt.HasValue ? $" · {QDateFormat.C(feedback.RespondedAt.Value.ToLocalTime())}" : "")}")" />
                                     }
                                     else
                                     {
@@ -655,7 +655,7 @@
         get
         {
             var (from, to) = ResolvePeriod(selectedPeriod);
-            return from == to ? from.ToString("MMM d, yyyy") : $"{from:MMM d, yyyy} – {to:MMM d, yyyy}";
+            return QDateFormat.Range(from, to);
         }
     }
 

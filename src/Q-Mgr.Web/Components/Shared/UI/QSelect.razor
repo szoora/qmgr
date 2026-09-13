@@ -45,9 +45,9 @@
                                type="text"
                                class="q-select__search-input"
                                placeholder="Search..."
-                               value="@searchQuery"
-                               @onblur="HandleBlur"
-                               @oninput="@(e => searchQuery = e.Value?.ToString() ?? "")" />
+                               @bind="searchQuery"
+                               @bind:event="oninput"
+                               @onblur="HandleBlur" />
                     </div>
                 }
                 @if (AllowClear && Value != null && !Value.Equals(default(TValue)))

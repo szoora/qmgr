@@ -101,8 +101,8 @@ else
 
             <!-- Date/Time -->
             <div class="header-datetime">
-                <span class="date">@currentDateTime.ToString("ddd, MMM dd")</span>
-                <span class="time">@currentDateTime.ToString("HH:mm")</span>
+                <span class="date">@QDateFormat.DD(currentDateTime)</span>
+                <span class="time">@QDateFormat.T(currentDateTime)</span>
             </div>
 
             <!-- User Dropdown -->
@@ -559,6 +559,14 @@ else
                         </div>
                     }
                 }
+            </div>
+            @* The bell is where somebody who wants fewer emails actually looks, so the way out
+               lives here as well as on the profile page. *@
+            <div class="notifications-footer">
+                <a href="/profile/notifications" @onclick="@(() => showNotifications = false)">
+                    <i class="bi bi-sliders"></i>
+                    <span>Notification preferences</span>
+                </a>
             </div>
         </div>
     }
@@ -1341,7 +1349,7 @@ else
         if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
         if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
         if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
-        return dateTime.ToString("MMM dd");
+        return QDateFormat.C(dateTime);
     }
 
     private async Task Logout()

@@ -76,7 +76,7 @@
                             @onclick="@(() => ShiftMonth(-1))"><QIcon Name="chevron-left" /></button>
 
                     <button type="button" class="q-datepicker__monthlabel" @onclick="ToggleYearGrid">
-                        @viewMonth.ToString("MMMM yyyy")
+                        @QDateFormat.MYLong(viewMonth)
                         <QIcon Name="@(showYearGrid ? "chevron-up" : "chevron-down")" />
                     </button>
 

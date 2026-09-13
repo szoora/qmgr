@@ -10,6 +10,7 @@
 @inject IAuthService AuthService
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
 @using QMgr.Domain.Constants
 
 <PageTitle>Media Library - Q-Mgr</PageTitle>
@@ -1797,9 +1798,15 @@
     {
         mediaToAddToPlaylist = media;
         showPreviewDialog = false;
-        availablePlaylists = await ContentApi.GetPlaylistsAsync(organizationId);
+
+        // Media is organization-wide, but playlists and campaigns belong to a branch. Passing the
+        // organization id here asked the API for the playlists of a branch that does not exist, so
+        // this dialog always said "No playlists yet" however many the Playlists page showed.
+        await BranchState.InitializeAsync();
+        var branchId = BranchState.CurrentBranchId;
+        availablePlaylists = branchId == Guid.Empty ? new() : await ContentApi.GetPlaylistsAsync(branchId);
         selectedPlaylistId = availablePlaylists.FirstOrDefault()?.Id ?? Guid.Empty;
-        availableCampaigns = await ContentApi.GetCampaignsAsync(organizationId);
+        availableCampaigns = branchId == Guid.Empty ? new() : await ContentApi.GetCampaignsAsync(branchId);
         selectedCampaignId = null;
         showAddToPlaylistDialog = true;
     }

@@ -30,8 +30,8 @@
                     @(selectionMode ? "Done" : "Clear tickets")
                 </button>
             }
-            <span class="qb-current-time">@currentTime.ToString("HH:mm:ss")</span>
-            <span class="qb-current-date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
+            <span class="qb-current-time">@QDateFormat.TS(currentTime)</span>
+            <span class="qb-current-date">@QDateFormat.Long(currentTime)</span>
         </div>
     </div>
 

@@ -1008,6 +1008,28 @@
     overflow-y: auto;
 }
 
+/* Token-only, so it needs no [data-theme] counterpart — the header above predates the token
+   layer, which is why that one still carries a pair of overrides. */
+.notifications-footer {
+    border-top: 1px solid var(--qm-border);
+}
+
+.notifications-footer a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+    text-decoration: none;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.notifications-footer a:hover {
+    background: var(--qm-bg-elevated);
+    color: var(--qm-primary);
+}
+
 .notifications-empty {
     display: flex;
     flex-direction: column;

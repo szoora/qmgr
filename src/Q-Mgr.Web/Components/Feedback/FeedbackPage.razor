@@ -111,7 +111,7 @@
                             <QIcon Name="calendar3-fill" />
                             <div>
                                 <span class="label">Date</span>
-                                <span class="value">@serviceDate.Value.ToString("MMMM dd, yyyy")</span>
+                                <span class="value">@QDateFormat.D(serviceDate.Value)</span>
                             </div>
                         </div>
                     }
@@ -188,8 +188,9 @@
                                   maxlength="1000"
                                   required="@q.IsRequired"
                                   aria-required="@(q.IsRequired ? "true" : "false")"
-                                  value="@answer"
-                                  @oninput="@(e => SetAnswer(q.Id, e.Value?.ToString()))"></textarea>
+                                  @bind:get="answer"
+                                  @bind:set="@(v => SetAnswer(q.Id, v))"
+                                  @bind:event="oninput"></textarea>
                     </div>
                 }
                 else

@@ -1,10 +1,13 @@
 @page "/admin/notification-settings"
 @using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject NotificationService ToastService
 @inject IAuthService AuthService
 @inject IPermissionService PermissionService
+@inject INotificationApiService NotificationApi
 @inject NavigationManager Navigation
 
 <PageTitle>Notification Settings - Q-Mgr</PageTitle>
@@ -33,10 +36,15 @@
     {
         <div class="qm-admin-settings-container">
             <div class="qm-admin-settings-nav">
-                @foreach (var section in sections)
+                @* VisibleSections, not sections: this page opens read-only for anyone holding
+                   notifications.view, but the delivery log is gated on notifications.manage
+                   server-side. Offering the tab to a caller who will only get a 403 inside it is
+                   the same mis-gating that put a fully-disabled Categories page in front of a
+                   class teacher. *@
+                @foreach (var section in VisibleSections)
                 {
                     <div class="qm-admin-settings-nav-item @(activeSection == section.Key ? "active" : "")"
-                         @onclick="@(() => activeSection = section.Key)">
+                         @onclick="@(() => SelectSection(section.Key))">
                         <i class="bi @(section.Icon)"></i>
                         <span>@(section.Name)</span>
                         @if (section.Key == "sms" && settings.SmsEnabled)
@@ -589,6 +597,120 @@
                         </div>
                     </div>
                 }
+                else if (activeSection == "deliveries")
+                {
+                    @* ── Was it actually delivered? ──────────────────────────────────────────
+                       NotificationLog had no reader at all until now: rows were written and only
+                       curl could see them, so "did that email go out?" had no answer inside the
+                       product. A SKIPPED send writes no row on purpose — logging "email is off
+                       for this tenant" as a failure would put a red mark against every message a
+                       tenant sends. *@
+                    <div class="qm-admin-settings-section">
+                        <div class="qm-admin-section-header">
+                            <h3><i class="bi bi-journal-check"></i> Delivery Log</h3>
+                            <div class="dl-head-actions">
+                                <QCheckbox Value="@deliveryFailuresOnly"
+                                           ValueChanged="@OnDeliveryFilterChanged"
+                                           Label="Failures only" />
+                                <QButton Text="Refresh" Icon="arrow-clockwise" Variant="secondary" Size="sm"
+                                         OnClick="@LoadDeliveries" Disabled="@isLoadingDeliveries" />
+                            </div>
+                        </div>
+
+                        <div class="qm-admin-settings-group">
+                            <div class="qm-admin-alert info">
+                                <i class="bi bi-info-circle"></i>
+                                <div>
+                                    <p>
+                                        One row per real send attempt for SMS and email. Recipient addresses are
+                                        <strong>masked by the API</strong> — enough to see which address failed, not
+                                        enough to lift a staff directory out of the log.
+                                    </p>
+                                    <p class="qm-admin-form-hint">
+                                        A message that was never attempted because the channel is switched off for this
+                                        organization writes no row, so an empty log with SMS disabled is correct, not broken.
+                                    </p>
+                                </div>
+                            </div>
+
+                            @if (isLoadingDeliveries)
+                            {
+                                <div class="loading-container"><QSpinner Size="md" /><span>Loading delivery attempts...</span></div>
+                            }
+                            else if (deliveryError != null)
+                            {
+                                <div class="qm-admin-alert error">
+                                    <i class="bi bi-exclamation-circle"></i>
+                                    <div><p>@deliveryError</p></div>
+                                </div>
+                            }
+                            else if (!deliveries.Any())
+                            {
+                                <div class="dl-empty">
+                                    <i class="bi bi-inbox"></i>
+                                    <p>@(deliveryFailuresOnly ? "No failed deliveries — nothing has gone wrong." : "No delivery attempts recorded yet.")</p>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="dl-summary">
+                                    <span><strong>@deliveries.Count</strong> attempt@(deliveries.Count == 1 ? "" : "s")</span>
+                                    <span class="dl-ok"><strong>@deliveries.Count(d => d.Success)</strong> delivered</span>
+                                    <span class="dl-bad"><strong>@deliveries.Count(d => !d.Success)</strong> failed</span>
+                                </div>
+
+                                @* Its own overflow-x wrapper: the PAGE must never scroll sideways,
+                                   but a wide table may. *@
+                                <div class="dl-table-wrap">
+                                    <table class="dl-table">
+                                        <thead>
+                                            <tr>
+                                                <th>When</th>
+                                                <th>Channel</th>
+                                                <th>Recipient</th>
+                                                <th>Notification</th>
+                                                <th>Outcome</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var d in deliveries)
+                                            {
+                                                <tr class="@(d.Success ? "" : "dl-row-failed")">
+                                                    <td class="dl-when">@QDateFormat.LocalDT(d.CreatedAt)</td>
+                                                    <td><QBadge Text="@d.Channel" Variant="@(d.Channel == "Sms" ? "warning" : "info")" Size="sm" /></td>
+                                                    <td class="dl-recipient">@d.Recipient</td>
+                                                    <td class="dl-title">@d.NotificationTitle</td>
+                                                    <td>
+                                                        @if (d.Success)
+                                                        {
+                                                            <span class="dl-ok"><i class="bi bi-check-circle-fill"></i> Delivered</span>
+                                                            @if (d.RetryCount > 0)
+                                                            {
+                                                                <span class="dl-retries">after @d.RetryCount retr@(d.RetryCount == 1 ? "y" : "ies")</span>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="dl-bad"><i class="bi bi-x-circle-fill"></i> Failed</span>
+                                                            @if (!string.IsNullOrWhiteSpace(d.ErrorMessage))
+                                                            {
+                                                                <span class="dl-reason">@d.ErrorMessage</span>
+                                                            }
+                                                            @if (d.RetryCount > 0)
+                                                            {
+                                                                <span class="dl-retries">@d.RetryCount retr@(d.RetryCount == 1 ? "y" : "ies"), last @QDateFormat.LocalDT(d.LastRetryAt)</span>
+                                                            }
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
             </div>
         </div>
     }
@@ -624,8 +746,57 @@
         new() { Key = "whatsapp", Name = "WhatsApp", Icon = "bi-whatsapp" },
         new() { Key = "inapp", Name = "In-App", Icon = "bi-bell" },
         new() { Key = "queue", Name = "Queue Messages", Icon = "bi-person-check" },
-        new() { Key = "templates", Name = "Templates", Icon = "bi-file-text" }
+        new() { Key = "templates", Name = "Templates", Icon = "bi-file-text" },
+        new() { Key = "deliveries", Name = "Delivery Log", Icon = "bi-journal-check" }
     };
+
+    private IEnumerable<SectionInfo> VisibleSections =>
+        sections.Where(s => s.Key != "deliveries" || canManage);
+
+    // ---------------- Delivery log ----------------
+    private bool isLoadingDeliveries;
+    private bool deliveryFailuresOnly;
+    private string? deliveryError;
+    private List<NotificationDeliveryDto> deliveries = new();
+    private bool deliveriesLoaded;
+
+    private async Task SelectSection(string key)
+    {
+        activeSection = key;
+
+        // Fetched on first open rather than with the settings: the log is up to 100 rows nobody
+        // asked for when they came here to change an SMTP host.
+        if (key == "deliveries" && !deliveriesLoaded && !isLoadingDeliveries)
+            await LoadDeliveries();
+    }
+
+    private async Task OnDeliveryFilterChanged(bool failuresOnly)
+    {
+        deliveryFailuresOnly = failuresOnly;
+        await LoadDeliveries();
+    }
+
+    private async Task LoadDeliveries()
+    {
+        isLoadingDeliveries = true;
+        deliveryError = null;
+        try
+        {
+            deliveries = await NotificationApi.GetDeliveriesAsync(deliveryFailuresOnly, 100);
+            deliveriesLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            // GetDeliveriesAsync throws with the server's own message (the four preference/log
+            // methods do, unlike the bell methods next to them), so this shows the real reason —
+            // including "you do not hold notifications.manage".
+            deliveryError = ex.Message;
+        }
+        finally
+        {
+            isLoadingDeliveries = false;
+        }
+    }
 
     // Sample values used only for the live preview in the Queue Messages section — they mirror
     // the placeholders QueueCustomerNotifier substitutes for real, including the legacy aliases.
@@ -920,3 +1091,60 @@
         public string Message { get; set; } = "";
     }
 }
+
+<style>
+    /* ── Delivery log ─────────────────────────────────────────────────────────────────────
+       Token-only, so no [data-theme="light"] block is needed. Severity is carried by colour
+       AND an icon, never by colour alone. */
+    .dl-head-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+    .dl-summary {
+        display: flex; gap: 18px; flex-wrap: wrap;
+        padding: 10px 0 14px;
+        font-size: 13px;
+        color: var(--qm-text-secondary);
+    }
+    .dl-summary strong { color: var(--qm-text-primary); font-variant-numeric: tabular-nums; }
+
+    /* The table scrolls, the page does not — see CLAUDE.md's sideways-scrolling rule. */
+    .dl-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-md);
+    }
+
+    .dl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .dl-table th {
+        text-align: left;
+        padding: 10px 12px;
+        background: var(--qm-bg-elevated);
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 11.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--qm-text-muted);
+        white-space: nowrap;
+    }
+    .dl-table td { padding: 10px 12px; border-bottom: 1px solid var(--qm-border); vertical-align: top; color: var(--qm-text-secondary); }
+    .dl-table tr:last-child td { border-bottom: none; }
+
+    /* Tinted from --qm-primary-rgb's status counterpart so it follows the theme with no override. */
+    .dl-row-failed { background: rgba(var(--qm-danger-rgb), 0.06); }
+
+    .dl-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .dl-recipient { font-family: var(--qm-font-mono, ui-monospace, monospace); white-space: nowrap; }
+    .dl-title { color: var(--qm-text-primary); max-width: 280px; }
+
+    .dl-ok { color: var(--qm-success); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .dl-bad { color: var(--qm-danger); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .dl-reason, .dl-retries { display: block; margin-top: 3px; font-size: 12px; color: var(--qm-text-muted); }
+
+    .dl-empty { text-align: center; padding: 36px 20px; color: var(--qm-text-muted); }
+    .dl-empty i { font-size: 40px; display: block; margin-bottom: 10px; }
+    .dl-empty p { margin: 0; font-size: 13.5px; }
+
+    @@media (max-width: 640px) {
+        .qm-admin-section-header { flex-wrap: wrap; }
+        .dl-head-actions { width: 100%; }
+    }
+</style>

@@ -123,7 +123,7 @@
                 <RadzenChart Style="height: 280px;">
                     <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Issued" Title="Issued" Smooth="true" />
                     <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Served" Title="Served" Smooth="true" />
-                    <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                    <RadzenCategoryAxis Padding="20" FormatString="@("{0:" + QDateFormat.Compact + "}")" />
                     <RadzenValueAxis>
                         <RadzenGridLines Visible="true" />
                     </RadzenValueAxis>
@@ -573,7 +573,7 @@
             </head>
             <body>
                 <h1>Queue Summary{{branchLabel}}</h1>
-                <div class="meta-line">Range {{from:MMM d, yyyy}} – {{to:MMM d, yyyy}} · Printed {{DateTime.Now:MMM d, yyyy h:mm tt}}</div>
+                <div class="meta-line">Range {{QDateFormat.Range(from, to)}} · Printed {{QDateFormat.DT(DateTime.Now)}}</div>
                 <table>
                     <tr><th>Metric</th><th style="text-align:right">Value</th></tr>
                     <tr><td>Tokens issued</td><td class="value">{{issued}}</td></tr>

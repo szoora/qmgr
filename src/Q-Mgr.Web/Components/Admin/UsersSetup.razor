@@ -5,9 +5,12 @@
 @inject IPermissionService PermissionSvc
 @inject NavigationManager Navigation
 @inject IBranchStateService BranchState
+@inject IStudentApiService StudentApi
+@inject IClassTeacherApiService ClassTeacherApi
 @using System.Text.Json
 @using QMgr.Web.Services
 @using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 
@@ -211,16 +214,79 @@
         }
         <div class="form-row">
             <div class="form-group">
-                <QSelect TValue="Guid" TItem="RoleOption" @bind-Value="@formData.RoleId" Items="@roleOptions"
+                <QSelect TValue="Guid" TItem="RoleOption" Value="@formData.RoleId" ValueChanged="@OnRoleSelected" Items="@roleOptions"
                          ValueSelector="@(r => r.Id)" TextSelector="@(r => r.Name)" Label="Role *" />
             </div>
             <div class="form-group">
-                <QSelect TValue="Guid?" TItem="BranchOption" @bind-Value="@formData.BranchId" Items="@branchOptions"
+                <QSelect TValue="Guid?" TItem="BranchOption" Value="@formData.BranchId" ValueChanged="@OnBranchSelected" Items="@branchOptions"
                          ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Branch" AllowClear="true"
                          Disabled="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null)"
                          Placeholder="@(isSuperAdmin && editingUser == null && formData.OrganizationId == null ? "Select an organization first" : "Select...")" />
             </div>
         </div>
+
+        @* ── Classes, only for the Class Teacher role ─────────────────────────────────────
+           A class teacher's role gives them permissions; their CLASS ASSIGNMENTS are what give
+           them any rows at all. Creating one without a class produced an account that opened to
+           an empty app, and the only thing that said so was a warning on a different page. *@
+        @if (IsClassTeacherRoleSelected)
+        {
+            <div class="form-group">
+                @if (!canManageClassTeachers)
+                {
+                    <div class="us-ct-warn">
+                        <QIcon Name="info-circle-fill" />
+                        <span>
+                            This role sees only the students in its assigned classes. You do not hold
+                            <strong>Manage Class Teachers</strong>, so the classes must be assigned for you on the
+                            <strong>Class Teachers</strong> page — until then this account sees no students at all.
+                        </span>
+                    </div>
+                }
+                else if (formData.BranchId == null)
+                {
+                    <div class="us-ct-warn">
+                        <QIcon Name="info-circle-fill" />
+                        <span>Pick a branch above to choose classes — an assignment belongs to a class in one branch.</span>
+                    </div>
+                }
+                else if (isLoadingClasses)
+                {
+                    <div class="us-ct-warn"><QSpinner Size="sm" /><span>Loading this branch's classes...</span></div>
+                }
+                else if (!classOptions.Any())
+                {
+                    <div class="us-ct-warn">
+                        <QIcon Name="exclamation-triangle-fill" />
+                        <span>
+                            This branch has no classes configured yet. Add them under
+                            <strong>Student Roster → Lists</strong> first, then assign them here.
+                        </span>
+                    </div>
+                }
+                else
+                {
+                    <QMultiSelect TValue="string" TItem="ClassOption"
+                                  SelectedValues="@selectedClasses"
+                                  SelectedValuesChanged="@(v => selectedClasses = v.ToList())"
+                                  Items="@classOptions"
+                                  ValueSelector="@(c => c.Name)"
+                                  TextSelector="@(c => c.Label)"
+                                  Label="Classes this teacher holds"
+                                  Placeholder="Choose one or more classes" />
+                    <p class="form-hint">
+                        Saved as class-teacher assignments. A class that already has a class teacher is
+                        skipped with a note — one class has one class teacher, and an assistant is added
+                        from the Class Teachers page.
+                        @if (selectedClasses.Count == 0)
+                        {
+                            <strong> With none chosen, this account will see no students at all.</strong>
+                        }
+                    </p>
+                }
+            </div>
+        }
+
         <div class="form-group">
             <QCheckbox @bind-Value="@formData.IsActive" Label="User is active" />
         </div>
@@ -617,7 +683,7 @@
 
     // ---- Export -----------------------------------------------------------------------------
 
-    private string ExportSubtitle => $"{users.Count:N0} user(s) · {DateTime.Now:d MMMM yyyy}";
+    private string ExportSubtitle => $"{users.Count:N0} user(s) · {QDateFormat.D(DateTime.Now)}";
 
     private static readonly List<ExportColumn<UserInfo>> UserExportColumns = new()
     {
@@ -706,6 +772,9 @@
             canCreateUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersCreate);
             canEditUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersEdit);
             canDeleteUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersDelete);
+            // Deliberately a SEPARATE permission from users.edit: the API keeps
+            // classes.teachers.manage from implying account administration, so this form must too.
+            canManageClassTeachers = await PermissionSvc.HasPermissionAsync(Permissions.ClassTeachersManage);
             isSuperAdmin = await PermissionSvc.IsSuperAdminAsync();
             if (isSuperAdmin)
             {
@@ -758,7 +827,7 @@
             if (rolesResponse.IsSuccessStatusCode)
             {
                 var apiRoles = await rolesResponse.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
-                roleOptions = apiRoles.Select(r => new RoleOption { Id = r.Id, Name = r.Name }).ToList();
+                roleOptions = apiRoles.Select(r => new RoleOption { Id = r.Id, Name = r.Name, Code = r.Code }).ToList();
             }
         }
         catch (Exception ex)
@@ -897,7 +966,7 @@
         return colors[Math.Abs(name.GetHashCode()) % colors.Length];
     }
 
-    private void ShowAddDialog()
+    private async Task ShowAddDialog()
     {
         editingUser = null;
         formData = new UserFormData
@@ -911,10 +980,15 @@
             // see the modal markup) until one is, instead of silently showing zero branches.
             branchOptions = new();
         }
+
+        selectedClasses = new();
+        originalAssignments = new();
+        await RefreshClassOptionsAsync();
+
         showDialog = true;
     }
 
-    private void EditUser(UserInfo user)
+    private async Task EditUser(UserInfo user)
     {
         editingUser = user;
         var names = user.FullName?.Split(' ') ?? Array.Empty<string>();
@@ -928,7 +1002,177 @@
             BranchId = user.BranchId,
             IsActive = user.IsActive
         };
+
+        selectedClasses = new();
+        originalAssignments = new();
+        await RefreshClassOptionsAsync();
+        await LoadExistingAssignmentsAsync(user.Id);
+
         showDialog = true;
+    }
+
+    // =====================================================================================
+    // Class-teacher assignments.
+    //
+    // The permission set on a role says what a class teacher MAY do; their ClassTeacherAssignment
+    // rows are what give them any students at all. Splitting those across two pages is how you
+    // end up with an account that opens to an empty app, so the classes are chosen here — where
+    // the role is chosen — and written through the same endpoint the Class Teachers page uses.
+    // ClassTeacherAssignment is a table rather than a field on the class precisely because
+    // UpdateVocabularies writes the whole class list OVER the stored blob (see CLAUDE.md).
+    // =====================================================================================
+
+    private bool canManageClassTeachers;
+    private bool isLoadingClasses;
+    private List<ClassOption> classOptions = new();
+    private List<string> selectedClasses = new();
+
+    /// <summary>What this user already held when the dialog opened, so a removal can be ended rather than orphaned.</summary>
+    private List<ClassTeacherDto> originalAssignments = new();
+
+    private sealed record ClassOption(string Name, string Label);
+
+    private bool IsClassTeacherRoleSelected =>
+        roleOptions.FirstOrDefault(r => r.Id == formData.RoleId)?.Code == RoleCodes.ClassTeacher;
+
+    private async Task OnRoleSelected(Guid roleId)
+    {
+        formData.RoleId = roleId;
+
+        // Only fetched when the Class Teacher role is actually picked — every other role would be
+        // paying for a class list it never shows.
+        if (IsClassTeacherRoleSelected && !classOptions.Any())
+            await RefreshClassOptionsAsync();
+    }
+
+    private async Task OnBranchSelected(Guid? branchId)
+    {
+        formData.BranchId = branchId;
+
+        // The class list belongs to the branch, so a branch change invalidates the selection
+        // rather than silently keeping class names that may not exist in the new one.
+        selectedClasses = new();
+        await RefreshClassOptionsAsync();
+    }
+
+    private async Task RefreshClassOptionsAsync()
+    {
+        classOptions = new();
+        if (!canManageClassTeachers || formData.BranchId is not { } branchId || branchId == Guid.Empty) return;
+
+        isLoadingClasses = true;
+        try
+        {
+            // Retired classes are excluded: students already in one keep it, but nobody should be
+            // newly assigned to a class that is no longer offered.
+            var vocab = await StudentApi.GetVocabulariesAsync(branchId);
+            var coverage = await ClassTeacherApi.GetCoverageAsync(branchId);
+
+            classOptions = vocab.Classes
+                .Where(c => c.IsActive)
+                .OrderBy(c => c.SortOrder)
+                .Select(c =>
+                {
+                    var held = coverage.Classes.FirstOrDefault(x =>
+                        x.ClassName.Trim().ToLowerInvariant() == c.Name.Trim().ToLowerInvariant())?.ClassTeacher;
+
+                    // Says who already holds it, in the picker. Choosing a held class is not
+                    // blocked here — the API is the authority and returns a 409 — but an
+                    // administrator should be able to see the collision before they hit Save.
+                    var label = held == null || held.UserId == editingUser?.Id
+                        ? c.Name
+                        : $"{c.Name} — held by {held.FullName}";
+                    return new ClassOption(c.Name, label);
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Could not load classes", ex.Message);
+        }
+        finally
+        {
+            isLoadingClasses = false;
+        }
+    }
+
+    private async Task LoadExistingAssignmentsAsync(Guid userId)
+    {
+        if (!canManageClassTeachers || formData.BranchId is not { } branchId || branchId == Guid.Empty) return;
+
+        var all = await ClassTeacherApi.GetAssignmentsAsync(branchId);
+        originalAssignments = all.Where(a => a.UserId == userId).ToList();
+        selectedClasses = originalAssignments.Select(a => a.ClassName).ToList();
+    }
+
+    /// <summary>
+    /// Reconciles the picked classes against what the user already held: new ones are assigned,
+    /// removed ones are ENDED (never deleted — the history of who could see a child's file is the
+    /// audit answer). Runs after the user is saved, and a failure here is reported without
+    /// claiming the user save failed, because it did not.
+    /// </summary>
+    private async Task SyncClassAssignmentsAsync(Guid userId)
+    {
+        if (!canManageClassTeachers || formData.BranchId is not { } branchId || branchId == Guid.Empty) return;
+
+        var wanted = selectedClasses
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var held = originalAssignments;
+        var problems = new List<string>();
+        var added = 0;
+        var ended = 0;
+
+        foreach (var className in wanted)
+        {
+            if (held.Any(h => h.ClassName.Trim().Equals(className, StringComparison.OrdinalIgnoreCase))) continue;
+            try
+            {
+                await ClassTeacherApi.AssignAsync(branchId, new AssignClassTeacherRequest
+                {
+                    ClassName = className,
+                    UserId = userId,
+                    Role = ClassTeacherRole.ClassTeacher
+                });
+                added++;
+            }
+            catch (Exception ex)
+            {
+                // The commonest case is a 409 because the class already has a class teacher. The
+                // service throws with the server's own words, so the administrator is told which
+                // class and why rather than "some assignments failed".
+                problems.Add($"{className}: {ex.Message}");
+            }
+        }
+
+        foreach (var assignment in held)
+        {
+            if (wanted.Any(w => w.Equals(assignment.ClassName.Trim(), StringComparison.OrdinalIgnoreCase))) continue;
+            try
+            {
+                await ClassTeacherApi.EndAsync(branchId, assignment.Id,
+                    new EndClassTeacherRequest { Reason = "Removed while editing the user account" });
+                ended++;
+            }
+            catch (Exception ex)
+            {
+                problems.Add($"{assignment.ClassName}: {ex.Message}");
+            }
+        }
+
+        if (added > 0 || ended > 0)
+        {
+            var parts = new List<string>();
+            if (added > 0) parts.Add($"{added} class{(added == 1 ? "" : "es")} assigned");
+            if (ended > 0) parts.Add($"{ended} ended");
+            NotificationService.Notify(ToastSeverity.Success, "Classes updated", string.Join(", ", parts) + ".");
+        }
+
+        foreach (var problem in problems)
+            NotificationService.Notify(ToastSeverity.Warning, "Class not assigned", problem);
     }
 
     private async Task SaveUser()
@@ -993,6 +1237,26 @@
             {
                 NotificationService.Notify(ToastSeverity.Success, "Success",
                     editingUser == null ? "User created" : "User updated");
+
+                // After the user exists, not before: a new account has no id to assign a class to
+                // until the POST comes back. A class-assignment problem is reported on its own and
+                // does not retract the "user created" above, which is true either way.
+                if (IsClassTeacherRoleSelected)
+                {
+                    var savedUserId = editingUser?.Id;
+                    if (savedUserId == null)
+                    {
+                        var created = await response.Content.ReadFromJsonAsync<UserDto>(JsonOptions);
+                        savedUserId = created?.Id;
+                    }
+
+                    if (savedUserId is { } uid && uid != Guid.Empty)
+                        await SyncClassAssignmentsAsync(uid);
+                    else if (selectedClasses.Any())
+                        NotificationService.Notify(ToastSeverity.Warning, "Classes not assigned",
+                            "The account was created but its id did not come back, so the classes were not assigned. Assign them on the Class Teachers page.");
+                }
+
                 showDialog = false;
                 await LoadData();
             }
@@ -1191,6 +1455,14 @@
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = "";
+
+        /// <summary>
+        /// The RBAC role code. Carried because one role behaves differently in this form: picking
+        /// Class Teacher without also giving them a class creates an account that can see nothing
+        /// at all, and until now that was only caught afterwards by the coverage warning on the
+        /// Class Teachers page.
+        /// </summary>
+        public string Code { get; set; } = "";
     }
 
     private class BranchOption

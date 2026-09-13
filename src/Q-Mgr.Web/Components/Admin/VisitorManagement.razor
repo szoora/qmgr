@@ -191,7 +191,7 @@
                         }
                         @if (visitor.ScheduledAt.HasValue)
                         {
-                            <span class="detail-item"><QIcon Name="calendar-event" /> Scheduled @visitor.ScheduledAt.Value.ToString("MMM dd, HH:mm")</span>
+                            <span class="detail-item"><QIcon Name="calendar-event" /> Scheduled @QDateFormat.CDT(visitor.ScheduledAt.Value)</span>
                         }
                         @if (visitor.CheckedInAt.HasValue)
                         {
@@ -499,7 +499,7 @@
                     </label>
                     @if (sub.LastSentAt.HasValue)
                     {
-                        <p class="settings-hint">Last sent @sub.LastSentAt.Value.ToLocalTime().ToString("d MMM yyyy, HH:mm").</p>
+                        <p class="settings-hint">Last sent @QDateFormat.DT(sub.LastSentAt.Value.ToLocalTime()).</p>
                     }
                 </div>
             }
@@ -537,7 +537,7 @@
                 <div class="badge-card">
                     <div id="pass-qr-canvas" class="badge-qr-container"></div>
                     <div class="badge-name">@createdPass.Label</div>
-                    <div class="badge-code">Admits up to @createdPass.MaxVisitors, expires @createdPass.ExpiresAt.ToLocalTime().ToString("MMM dd, HH:mm")</div>
+                    <div class="badge-code">Admits up to @createdPass.MaxVisitors, expires @QDateFormat.CDT(createdPass.ExpiresAt.ToLocalTime())</div>
                 </div>
                 <QButton Text="Print" Icon="printer-fill" Variant="secondary" OnClick="@PrintPass" />
             </div>
@@ -556,7 +556,7 @@
                     <div class="visitor-row">
                         <div>
                             <strong>@pass.Label</strong>
-                            <div class="settings-hint">@pass.CurrentVisitors / @pass.MaxVisitors on site &middot; expires @pass.ExpiresAt.ToLocalTime().ToString("MMM dd, HH:mm")</div>
+                            <div class="settings-hint">@pass.CurrentVisitors / @pass.MaxVisitors on site &middot; expires @QDateFormat.CDT(pass.ExpiresAt.ToLocalTime())</div>
                         </div>
                         <QButton Text="Revoke" Icon="x-circle" Size="sm" Variant="ghost" OnClick="@(() => RevokePass(pass))" />
                     </div>
@@ -788,7 +788,7 @@
 
     // ---- Export -----------------------------------------------------------------------------
 
-    private string ExportSubtitle => $"{visitors.Count:N0} visit(s) in the current view · {DateTime.Now:d MMMM yyyy}";
+    private string ExportSubtitle => $"{visitors.Count:N0} visit(s) in the current view · {QDateFormat.D(DateTime.Now)}";
 
     private static readonly List<ExportColumn<VisitorDto>> VisitorExportColumns = new()
     {
@@ -1100,7 +1100,7 @@
         var contact = d.Phone ?? d.Email;
         if (!string.IsNullOrWhiteSpace(contact)) parts.Add(contact!);
         parts.Add(d.TotalVisits == 1 ? "1 visit" : $"{d.TotalVisits} visits");
-        if (d.LastVisitAt.HasValue) parts.Add($"last {d.LastVisitAt.Value:MMM dd}");
+        if (d.LastVisitAt.HasValue) parts.Add($"last {QDateFormat.C(d.LastVisitAt.Value)}");
         return string.Join(" · ", parts);
     }
 
@@ -1232,9 +1232,9 @@
             ? "A similar name is already on file — check this is not the same person."
             : $"{count} similar names are already on file — check this is not the same person.");
 
-    private async Task OnSearchInput(ChangeEventArgs e)
+    private async Task OnSearchInput(string? value)
     {
-        searchQuery = e.Value?.ToString() ?? "";
+        searchQuery = value ?? "";
 
         searchDebounce?.Cancel();
         if (searchQuery.Trim().Length < 2)
@@ -1306,7 +1306,7 @@
             }
             else
             {
-                <input value="@searchQuery" @oninput="OnSearchInput" placeholder="Search by visitor or student name, phone, email or ID..." />
+                <input @bind:get="searchQuery" @bind:set="OnSearchInput" @bind:event="oninput" placeholder="Search by visitor or student name, phone, email or ID..." />
                 @if (rosterSearchResults.Any() || searchResults.Any())
                 {
                     <div class="returning-results">
@@ -1346,7 +1346,7 @@
                                 <span class="returning-result-meta">
                                     @(p.Company ?? "") @(string.IsNullOrEmpty(p.Company) ? "" : "·") @(p.Phone ?? p.Email ?? "")
                                     · @p.TotalVisits visit@(p.TotalVisits == 1 ? "" : "s")
-                                    @(p.LastVisitAt.HasValue ? $"· last {p.LastVisitAt.Value:MMM dd}" : "")
+                                    @(p.LastVisitAt.HasValue ? $"· last {QDateFormat.C(p.LastVisitAt.Value)}" : "")
                                 </span>
                             </div>
                         }
@@ -1745,8 +1745,8 @@
                 <div class="badge">
                     <img src="{{qrDataUrl}}" alt="QR pass" />
                     <div class="name">{{System.Net.WebUtility.HtmlEncode(createdPass.Label)}}</div>
-                    <div class="code">Admits up to {{createdPass.MaxVisitors}} &middot; expires {{createdPass.ExpiresAt.ToLocalTime():MMM dd, yyyy HH:mm}}</div>
-                    <div class="date">{{DateTime.Now:MMM dd, yyyy HH:mm}}</div>
+                    <div class="code">Admits up to {{createdPass.MaxVisitors}} &middot; expires {{QDateFormat.DT(createdPass.ExpiresAt.ToLocalTime())}}</div>
+                    <div class="date">{{QDateFormat.DT(DateTime.Now)}}</div>
                 </div>
             </body>
             </html>
@@ -1801,7 +1801,7 @@
                     <div class="code">{{badgeVisitor.BadgeCode}}</div>
                     {{companyLine}}
                     {{hostLine}}
-                    <div class="date">{{DateTime.Now:MMM dd, yyyy HH:mm}}</div>
+                    <div class="date">{{QDateFormat.DT(DateTime.Now)}}</div>
                 </div>
             </body>
             </html>

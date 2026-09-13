@@ -41,8 +41,7 @@
         <div class="toolbar-row">
             <div class="toolbar-dates">
                 <QButton Icon="chevron-left" Variant="ghost" Size="sm" OnClick="@(() => ShiftDay(-1))" aria-label="Previous day" />
-                <input type="date" class="date-input" value="@selectedDate.ToString("yyyy-MM-dd")"
-                       @onchange="OnDateChanged" aria-label="Day to show" />
+                <QDatePicker Value="@selectedDate" ValueChanged="@OnDateChanged" Class="toolbar-datepicker" aria-label="Day to show" />
                 <QButton Icon="chevron-right" Variant="ghost" Size="sm" OnClick="@(() => ShiftDay(1))" aria-label="Next day" />
                 <QButton Text="Today" Variant="secondary" Size="sm" OnClick="@GoToToday" />
             </div>
@@ -95,7 +94,7 @@
             {
                 <div class="appointment-day">
                     <div class="day-heading-row">
-                        <h3 class="day-heading">@group.Key.ToString("dddd, d MMMM")</h3>
+                        <h3 class="day-heading">@QDateFormat.LongDay(group.Key)</h3>
                         @if (canManage && group.Any(IsCancellable))
                         {
                             <button type="button" class="day-select" @onclick="@(() => ToggleDay(group))">
@@ -197,7 +196,7 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label for="apt-date">Date</label>
-                    <input type="date" id="apt-date" class="date-input" value="@formDate.ToString("yyyy-MM-dd")" @onchange="OnFormDateChanged" />
+                    <QDatePicker Value="@formDate" ValueChanged="@OnFormDateChanged" />
                 </div>
                 <div class="form-group">
                     <label for="apt-slot">Time</label>
@@ -418,8 +417,8 @@
     }
 
     private string ExportSubtitle => showWholeWeek
-        ? $"Week of {WeekStart:d MMM yyyy} · {appointments.Count:N0} booking(s)"
-        : $"{selectedDate:dddd, d MMMM yyyy} · {appointments.Count:N0} booking(s)";
+        ? $"Week of {QDateFormat.D(WeekStart)} · {appointments.Count:N0} booking(s)"
+        : $"{QDateFormat.Long(selectedDate)} · {appointments.Count:N0} booking(s)";
 
     private DateTime WeekStart => selectedDate.AddDays(-(int)selectedDate.DayOfWeek);
 
@@ -574,13 +573,15 @@
         await LoadAppointments();
     }
 
-    private async Task OnDateChanged(ChangeEventArgs e)
+    // Takes a DateTime? straight from QDatePicker instead of parsing a browser-formatted string:
+    // the old <input type="date"> rendered in the BROWSER'S locale, so the same field read
+    // "03/09/2026" to one member of staff and "09/03/2026" to another. A null means the field was
+    // cleared, which for the day being viewed is not a state that makes sense — it is ignored.
+    private async Task OnDateChanged(DateTime? value)
     {
-        if (DateTime.TryParse(e.Value?.ToString(), out var parsed))
-        {
-            selectedDate = parsed.Date;
-            await LoadAppointments();
-        }
+        if (value is not { } picked) return;
+        selectedDate = picked.Date;
+        await LoadAppointments();
     }
 
     private async Task OnRangeToggled(ChangeEventArgs e)
@@ -616,13 +617,11 @@
         await LoadSlots();
     }
 
-    private async Task OnFormDateChanged(ChangeEventArgs e)
+    private async Task OnFormDateChanged(DateTime? value)
     {
-        if (DateTime.TryParse(e.Value?.ToString(), out var parsed))
-        {
-            formDate = parsed.Date;
-            await LoadSlots();
-        }
+        if (value is not { } picked) return;
+        formDate = picked.Date;
+        await LoadSlots();
     }
 
     /// <summary>

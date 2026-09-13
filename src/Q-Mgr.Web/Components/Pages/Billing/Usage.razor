@@ -762,7 +762,7 @@ else
 
     private string GetMonthName(int month)
     {
-        return new DateTime(2000, month, 1).ToString("MMMM");
+        return QDateFormat.MonLong(new DateTime(2000, month, 1));
     }
 
     // DTOs

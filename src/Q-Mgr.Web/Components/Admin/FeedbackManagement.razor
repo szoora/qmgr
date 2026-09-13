@@ -190,7 +190,7 @@
                                 @GetSourceIcon(feedback.Source)
                                 @feedback.Source
                             </span>
-                            <span class="timestamp">@feedback.CreatedAt.ToString("MMM dd, yyyy HH:mm")</span>
+                            <span class="timestamp">@QDateFormat.DT(feedback.CreatedAt)</span>
                         </div>
                     </div>
 
@@ -253,7 +253,7 @@
                                     <span>Response</span>
                                     @if (feedback.RespondedAt.HasValue)
                                     {
-                                        <span class="response-time">@feedback.RespondedAt.Value.ToString("MMM dd, yyyy")</span>
+                                        <span class="response-time">@QDateFormat.D(feedback.RespondedAt.Value)</span>
                                     }
                                 </div>
                                 <p class="response-text">@feedback.Response</p>

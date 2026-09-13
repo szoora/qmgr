@@ -121,7 +121,7 @@
                         </div>
                         <div class="detail-content">
                             <label>Member Since</label>
-                            <span>@profile.CreatedAt.ToString("MMMM dd, yyyy")</span>
+                            <span>@QDateFormat.D(profile.CreatedAt)</span>
                         </div>
                     </div>
 
@@ -133,7 +133,7 @@
                             </div>
                             <div class="detail-content">
                                 <label>Last Login</label>
-                                <span>@profile.LastLogin.Value.ToString("MMM dd, yyyy HH:mm")</span>
+                                <span>@QDateFormat.DT(profile.LastLogin.Value)</span>
                             </div>
                         </div>
                     }
@@ -155,6 +155,11 @@
                         <i class="bi bi-chevron-right"></i>
                     </button>
                     <hr />
+                    <a href="/profile/notifications" class="action-item">
+                        <i class="bi bi-bell"></i>
+                        <span>Notification Preferences</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
                     <a href="/admin/settings" class="action-item">
                         <i class="bi bi-gear"></i>
                         <span>System Settings</span>

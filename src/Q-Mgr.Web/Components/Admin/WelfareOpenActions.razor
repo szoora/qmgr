@@ -57,7 +57,7 @@
                         <p class="action-row-desc">@(string.IsNullOrWhiteSpace(record.ActionTaken) ? record.CategoryName : record.ActionTaken)</p>
                         @if (record.ActionDueDate.HasValue)
                         {
-                            <span class="action-row-due">Due @record.ActionDueDate.Value.ToLocalTime().ToString("MMM d, yyyy")</span>
+                            <span class="action-row-due">Due @QDateFormat.D(record.ActionDueDate.Value.ToLocalTime())</span>
                         }
                     </div>
                     <QIcon Name="chevron-right" />

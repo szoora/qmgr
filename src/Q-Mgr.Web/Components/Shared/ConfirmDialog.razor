@@ -9,7 +9,7 @@
             <label class="confirm-reason-label">
                 @ReasonLabel
                 <textarea class="confirm-reason-input" rows="3" placeholder="@ReasonPlaceholder"
-                          value="@Reason" @oninput="@OnReasonInput"></textarea>
+                          @bind:get="Reason" @bind:set="OnReasonInput" @bind:event="oninput"></textarea>
             </label>
         }
     </ChildContent>
@@ -75,9 +75,9 @@
         };
     }
 
-    private async Task OnReasonInput(ChangeEventArgs e)
+    private async Task OnReasonInput(string? value)
     {
-        Reason = e.Value?.ToString() ?? string.Empty;
+        Reason = value ?? string.Empty;
         await ReasonChanged.InvokeAsync(Reason);
     }
 

@@ -75,7 +75,7 @@
                         <div class="campaign-meta">
                             <span class="meta-item">
                                 <QIcon Name="calendar-event-fill" />
-                                @campaign.StartDate.ToString("MMM d, yyyy") &ndash; @campaign.EndDate.ToString("MMM d, yyyy")
+                                @QDateFormat.D(campaign.StartDate) &ndash; @QDateFormat.D(campaign.EndDate)
                             </span>
                             <span class="meta-item">
                                 <QIcon Name="eye-fill" />
@@ -136,18 +136,11 @@
 <!-- Impression Stats Dialog -->
 <QModal @bind-Visible="showStatsDialog" Title="@($"Impressions: {statsCampaign?.Name}")" Icon="graph-up" Size="xl">
     <ChildContent>
+        @* One range control, not two loose browser date fields plus three private preset buttons.
+           The old pair emitted two separate changes for one edit and could briefly hold a
+           From-after-To pair; QDateRangePicker normalizes and emits once. *@
         <div class="stats-filter-row">
-            <div class="stats-filter-item">
-                <label>From<input type="date" @bind="statsFrom" /></label>
-            </div>
-            <div class="stats-filter-item">
-                <label>To<input type="date" @bind="statsTo" /></label>
-            </div>
-            <div class="stats-filter-item stats-quick-ranges">
-                <QButton Text="7 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(6))" />
-                <QButton Text="30 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(29))" />
-                <QButton Text="90 days" Size="sm" Variant="ghost" OnClick="@(() => ApplyStatsQuickRange(89))" />
-            </div>
+            <QDateRangePicker Range="@statsRange" RangeChanged="@OnStatsRangeChanged" ShowCaption="false" />
             <div class="stats-filter-item">
                 <QButton Text="Apply" Icon="funnel-fill" Size="sm" Variant="primary" OnClick="@LoadStats" Disabled="@statsLoading" />
             </div>
@@ -173,7 +166,7 @@
             <div class="stats-empty">
                 <QIcon Name="eye-slash" />
                 <h4>No impressions yet</h4>
-                <p>Nothing was recorded between @stats.From.ToString("MMM d, yyyy") and @stats.To.ToString("MMM d, yyyy"). Impressions are logged each time a media item attached to this campaign plays on a public display.</p>
+                <p>Nothing was recorded between @QDateFormat.D(stats.From) and @QDateFormat.D(stats.To). Impressions are logged each time a media item attached to this campaign plays on a public display.</p>
             </div>
         }
         else
@@ -201,7 +194,7 @@
                 <h4>Impressions by Day</h4>
                 <RadzenChart Style="height: 240px;">
                     <RadzenLineSeries Data="@dailyChartData" CategoryProperty="Day" ValueProperty="Count" Title="Impressions" Smooth="true" />
-                    <RadzenCategoryAxis Padding="20" FormatString="{0:MMM dd}" />
+                    <RadzenCategoryAxis Padding="20" FormatString="@("{0:" + QDateFormat.Compact + "}")" />
                     <RadzenValueAxis>
                         <RadzenGridLines Visible="true" />
                     </RadzenValueAxis>
@@ -268,7 +261,7 @@
             <QDataExport TItem="string[]"
                          Title="Campaign impressions"
                          FileStem="@($"campaign-{Slugify(statsCampaign?.Name ?? "stats")}-impressions")"
-                         Subtitle="@($"{statsCampaign?.Name} · {statsFrom:d MMM yyyy} – {statsTo:d MMM yyyy}")"
+                         Subtitle="@($"{statsCampaign?.Name} · {QDateFormat.Range(statsFrom, statsTo)}")"
                          Variant="primary"
                          SourceProvider="@ProvideStatsExportSourceAsync"
                          Disabled="@(statsLoading || stats == null)"
@@ -467,19 +460,9 @@
         color: var(--qm-text-muted);
     }
 
-    .stats-filter-item input[type="date"] {
-        padding: 7px 10px;
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-sm);
-        background: var(--qm-bg-input, var(--qm-bg-card));
-        color: var(--qm-text-primary);
-        font-family: inherit;
-    }
-
-    .stats-quick-ranges {
-        flex-direction: row;
-        gap: 6px;
-    }
+    /* The `input[type="date"]` block and the .stats-quick-ranges row that used to live here went
+       with the two loose date fields and the three private preset buttons they styled —
+       QDateRangePicker brings its own. */
 
     .stats-loading, .stats-empty {
         display: flex;
@@ -652,8 +635,11 @@
     private bool statsLoading = false;
     private CampaignDto? statsCampaign;
     private CampaignStatsDto? stats;
-    private DateOnly statsFrom = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-29);
-    private DateOnly statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
+    // The range control's state. statsFrom/statsTo read off it rather than being held separately,
+    // so there is no second copy to drift — the API's own cap is written back into the range.
+    private DateRange statsRange = DateRange.LastDays(30);
+    private DateOnly statsFrom => statsRange.From;
+    private DateOnly statsTo => statsRange.To;
 
     // RadzenChart's category axis wants a DateTime to format/order against — DayCountDto carries
     // a DateOnly, so this is a charting-only projection (same pattern as VisitorReport.razor).
@@ -851,18 +837,16 @@
         statsCampaign = campaign;
         stats = null;
         dailyChartData = new();
-        statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
-        statsFrom = statsTo.AddDays(-29);
+        statsRange = DateRange.LastDays(30);
         showStatsDialog = true;
         await LoadStats();
     }
 
     private void CloseStatsDialog() => showStatsDialog = false;
 
-    private async Task ApplyStatsQuickRange(int daysBack)
+    private async Task OnStatsRangeChanged(DateRange range)
     {
-        statsTo = DateOnly.FromDateTime(DateTime.UtcNow);
-        statsFrom = statsTo.AddDays(-daysBack);
+        statsRange = range;
         await LoadStats();
     }
 
@@ -880,10 +864,7 @@
 
         // The API may have swapped or capped the range (366-day max) — reflect what it actually used.
         if (stats != null)
-        {
-            statsFrom = stats.From;
-            statsTo = stats.To;
-        }
+            statsRange = new DateRange(stats.From, stats.To);
 
         statsLoading = false;
         await InvokeAsync(StateHasChanged);

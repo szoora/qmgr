@@ -23,17 +23,51 @@
     <div class="page-header">
         <div class="header-content">
             <h1>Welfare Reports</h1>
-            <p class="subtitle">Dashboard overview and searchable records across the whole branch.</p>
+            <p class="subtitle">
+                @if (scopedClasses.Any())
+                {
+                    <text>Dashboard overview and searchable records for the classes you hold.</text>
+                }
+                else
+                {
+                    <text>Dashboard overview and searchable records across the whole branch.</text>
+                }
+            </p>
         </div>
         <div class="header-actions">
-            <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
-            @if (canImport)
+            @* Both withheld from a class-scoped caller, for one reason with two faces: the API
+               refuses the import outright (it writes rows for any student in the file, and the
+               processor runs in a Hangfire worker where the row-level scope cannot be enforced),
+               so the Import button would only produce a 403 — and since they can never START an
+               import, the history endpoint scopes to "jobs you began yourself" and always answers
+               with an empty list. A button that opens a permanently empty modal reads as a broken
+               feature, not as an absent permission. Found in the browser 2026-09-13. *@
+            @if (!scopedClasses.Any())
+            {
+                <QButton Text="Import History" Icon="clock-history" Variant="secondary" OnClick="@OpenHistoryModal" />
+            }
+            @if (canImport && !scopedClasses.Any())
             {
                 <QButton Text="Import Records" Icon="file-earmark-spreadsheet" Variant="secondary" OnClick="@OpenImportModal"
                          Title="Backfill historical achievement / behavior / welfare records from a spreadsheet" />
             }
         </div>
     </div>
+
+    @* Every figure on this page is already narrowed server-side for a class-scoped role. Saying so
+       is the point: a form tutor reading their own class's total as the school's is a wrong
+       conclusion drawn from a correct query, and nothing here used to say which it was. *@
+    @if (scopedClasses.Any())
+    {
+        <div class="wr-scope-note">
+            <QIcon Name="funnel-fill" />
+            <span>
+                These figures cover <strong>@string.Join(", ", scopedClasses)</strong> only —
+                the class@(scopedClasses.Count == 1 ? "" : "es") you hold. They are not
+                branch-wide totals.
+            </span>
+        </div>
+    }
 
     <div class="tab-strip">
         <button type="button" class="tab-btn @(activeTab == "dashboard" ? "active" : "")" @onclick="@(() => SwitchTab("dashboard"))">Dashboard</button>
@@ -108,7 +142,7 @@
     else if (activeTab == "search")
     {
         <div class="filter-bar filter-bar--wrap">
-            <input class="search-input" value="@searchKeyword" @oninput="@(e => searchKeyword = e.Value?.ToString() ?? "")" placeholder="Search description or action taken..." />
+            <input class="search-input" @bind="searchKeyword" @bind:event="oninput" placeholder="Search description or action taken..." />
             <QDateRangePicker Range="@searchRange" RangeChanged="@OnSearchRangeChanged" ShowCaption="false" ShowPresets="false" />
             <QSelect TValue="WelfareCaseType?" TItem="(string Label, WelfareCaseType? Value)" Value="@searchCaseType" Items="@caseTypeFilterOptions"
                      TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)" Label="Case Type" ValueChanged="@(v => searchCaseType = v)" />
@@ -155,7 +189,7 @@
         {
             @* Same bar as the roster, same dialog, same pipeline behind it — a welfare record is
                a different noun over identical machinery. *@
-            @if (selectedRecordIds.Count > 0 && canEditWelfare)
+            @if (selectedRecordIds.Count > 0 && CanBatch)
             {
                 <div class="batch-bar">
                     <span class="batch-bar-count"><QIcon Name="check2-square" /> <strong>@selectedRecordIds.Count.ToString("N0")</strong> selected</span>
@@ -185,9 +219,12 @@
             <div class="results-table">
                 <div class="results-row results-header">
                     <span class="results-select">
-                        <input type="checkbox" checked="@AllVisibleSelected"
-                               @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
-                               title="Select every record matching the current filters" />
+                        @if (CanBatch)
+                        {
+                            <input type="checkbox" checked="@AllVisibleSelected"
+                                   @onchange="@(e => ToggleSelectAll((bool)(e.Value ?? false)))"
+                                   title="Select every record matching the current filters" />
+                        }
                     </span>
                     <span>Student</span><span>Category</span><span>Tier</span><span>Status</span><span>Occurred</span><span>Reported By</span><span></span>
                 </div>
@@ -195,14 +232,17 @@
                 {
                     <div class="results-row">
                         <span class="results-select">
-                            <input type="checkbox" checked="@selectedRecordIds.Contains(r.Id)"
-                                   @onchange="@(e => ToggleSelection(r.Id, (bool)(e.Value ?? false)))" />
+                            @if (CanBatch)
+                            {
+                                <input type="checkbox" checked="@selectedRecordIds.Contains(r.Id)"
+                                       @onchange="@(e => ToggleSelection(r.Id, (bool)(e.Value ?? false)))" />
+                            }
                         </span>
                         <span class="results-student">@r.StudentName</span>
                         <span>@r.CategoryName</span>
                         <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
                         <span class="status-chip status-chip--@r.Status.ToString().ToLowerInvariant()">@r.Status</span>
-                        <span>@r.OccurredAt.ToLocalTime().ToString("MMM d, yyyy")</span>
+                        <span>@QDateFormat.D(r.OccurredAt.ToLocalTime())</span>
                         <span>@r.ReportedByName</span>
                         <span class="results-actions">
                             <QButton Icon="eye-fill" Size="sm" Variant="ghost" Title="View timeline" OnClick="@(() => Navigation.NavigateTo($"/admin/students/{r.StudentId}/welfare"))" />
@@ -423,7 +463,7 @@
                 @foreach (var job in historyJobs)
                 {
                     <div class="import-log-row outcome-@(job.FailedCount > 0 ? "failed" : "created")">
-                        <span class="import-log-rownum">@job.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                        <span class="import-log-rownum">@QDateFormat.CDT(job.CreatedAt.ToLocalTime())</span>
                         <span class="import-log-outcome">@job.Status</span>
                         <span class="import-log-name">@(job.SourceFileName ?? "Unnamed upload")</span>
                         <span class="import-log-message">@job.TotalRows rows &middot; @job.CreatedCount created &middot; @job.DuplicateCount duplicate &middot; @job.FailedCount failed</span>
@@ -539,6 +579,23 @@
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+
+    /* Deliberately quiet — a standing fact about the caller's role, not a problem to fix. Tinted
+       from --qm-primary-rgb so it follows the theme without a [data-theme="light"] override. */
+    .wr-scope-note {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-primary);
+        border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-primary-rgb), 0.07);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+    .wr-scope-note i, .wr-scope-note span:first-child { color: var(--qm-primary); flex-shrink: 0; margin-top: 2px; }
+    .wr-scope-note strong { color: var(--qm-text-primary); }
 
     .tab-strip { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); margin-bottom: 20px; }
     .tab-btn { padding: 10px 18px; border: none; background: none; color: var(--qm-text-muted); font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }
@@ -679,6 +736,13 @@
     private DateTime? dashboardFrom;
     private DateTime? dashboardTo;
     private WelfareSummaryDto? summary;
+
+    /// <summary>
+    /// The classes the caller's row-level scope narrows every figure on this page to. Empty for an
+    /// unscoped role. Read off the summary response rather than fetched separately — the server is
+    /// the only thing that knows the caller's DataScope, and it is already answering.
+    /// </summary>
+    private List<string> scopedClasses = new();
 
     // ---------------- Cohorts ----------------
     private bool isLoadingCohorts;
@@ -1012,7 +1076,10 @@
 
             var response = await Http.GetAsync(url);
             if (response.IsSuccessStatusCode)
+            {
                 summary = await response.Content.ReadFromJsonAsync<WelfareSummaryDto>(JsonOptions);
+                scopedClasses = summary?.ScopedToClasses ?? new();
+            }
             else
             {
                 var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
@@ -1076,6 +1143,14 @@
     // operation; nothing else about batching lives here.
 
     private bool canEditWelfare;
+
+    /// <summary>
+    /// Bulk edits need the permission AND an unscoped caller. The API refuses every batch from a
+    /// class-scoped caller — a batch is applied by a Hangfire worker, which cannot narrow it to the
+    /// caller's classes — so offering the checkboxes to a class teacher would only produce a 403
+    /// after they had selected twenty records. Same shape as the import button above.
+    /// </summary>
+    private bool CanBatch => canEditWelfare && !scopedClasses.Any();
     private readonly HashSet<Guid> selectedRecordIds = new();
     private QBatchDialog? batchDialog;
 
@@ -1189,8 +1264,12 @@
             if (searchCaseType.HasValue) parts.Add(searchCaseType.Value.ToString());
             if (searchStatus.HasValue) parts.Add(searchStatus.Value.ToString());
             if (dueView != null) parts.Add(DueViewLabel.ToLowerInvariant());
-            if (searchFrom.HasValue || searchTo.HasValue)
-                parts.Add($"{searchFrom:d MMM yyyy} – {searchTo:d MMM yyyy}".Replace(" – ", searchTo.HasValue ? " – " : " onwards"));
+            if (searchFrom.HasValue && searchTo.HasValue)
+                parts.Add(QDateFormat.Range(searchFrom.Value, searchTo.Value));
+            else if (searchFrom.HasValue)
+                parts.Add($"{QDateFormat.D(searchFrom.Value)} onwards");
+            else if (searchTo.HasValue)
+                parts.Add($"up to {QDateFormat.D(searchTo.Value)}");
             return parts.Any() ? "Filtered: " + string.Join(", ", parts) : "All records";
         }
     }
@@ -1221,7 +1300,7 @@
             ? string.Join("", r.Notes.Select(n => $"""
                 <div class="note">
                     <strong>{System.Net.WebUtility.HtmlEncode(n.Kind == WelfareNoteKind.Statement ? (n.AttributedToName ?? n.AuthorName) : n.AuthorName)}</strong>
-                    <span class="meta">{(n.Kind == WelfareNoteKind.Statement ? "Statement · " : "")}{n.CreatedAt.ToLocalTime():MMM d, yyyy h:mm tt}</span>
+                    <span class="meta">{(n.Kind == WelfareNoteKind.Statement ? "Statement · " : "")}{QDateFormat.DT(n.CreatedAt.ToLocalTime())}</span>
                     <p>{System.Net.WebUtility.HtmlEncode(n.Body)}</p>
                 </div>
                 """))
@@ -1249,7 +1328,7 @@
             </head>
             <body>
                 <h1>{{System.Net.WebUtility.HtmlEncode(r.StudentName)}} — {{System.Net.WebUtility.HtmlEncode(r.CategoryName)}}</h1>
-                <div class="meta-line">{{r.CaseType}} · {{r.Tier}} tier · {{r.Status}} · Occurred {{r.OccurredAt.ToLocalTime():MMM d, yyyy h:mm tt}}</div>
+                <div class="meta-line">{{r.CaseType}} · {{r.Tier}} tier · {{r.Status}} · Occurred {{QDateFormat.DT(r.OccurredAt.ToLocalTime())}}</div>
                 <div class="field"><label>Description</label>{{System.Net.WebUtility.HtmlEncode(r.Description)}}</div>
                 {{(string.IsNullOrWhiteSpace(r.Location) ? "" : $"""<div class="field"><label>Location</label>{System.Net.WebUtility.HtmlEncode(r.Location)}</div>""")}}
                 <div class="field"><label>Reported By</label>{{System.Net.WebUtility.HtmlEncode(r.ReportedByName)}}</div>

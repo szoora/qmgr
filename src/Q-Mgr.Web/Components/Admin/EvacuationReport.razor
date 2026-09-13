@@ -61,7 +61,7 @@
 
         <div class="evac-meta">
             <span><strong>@report.BranchName</strong></span>
-            <span>As at @report.GeneratedAt.ToLocalTime().ToString("HH:mm:ss") on @report.GeneratedAt.ToLocalTime().ToString("ddd dd MMM yyyy")</span>
+            <span>As at @QDateFormat.TS(report.GeneratedAt.ToLocalTime()) on @QDateFormat.DD(report.GeneratedAt.ToLocalTime())</span>
             <span>@report.CheckedInVisitorCount named visitor@(report.CheckedInVisitorCount == 1 ? "" : "s") &middot; @report.GroupPassOccupantCount on group passes</span>
         </div>
 

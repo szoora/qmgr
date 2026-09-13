@@ -106,7 +106,7 @@
                             <span class="stat-label">Requests/min limit</span>
                         </div>
                         <div class="stat">
-                            <span class="stat-value">@(client.LastUsedAt.HasValue ? client.LastUsedAt.Value.ToLocalTime().ToString("MMM dd, HH:mm") : "Never")</span>
+                            <span class="stat-value">@(client.LastUsedAt.HasValue ? QDateFormat.CDT(client.LastUsedAt.Value.ToLocalTime()) : "Never")</span>
                             <span class="stat-label">Last Used</span>
                         </div>
                     </div>

@@ -61,7 +61,7 @@ else
                     </div>
                     <div class="spotify-connected-info">
                         <strong>Connected as @status.DisplayName</strong>
-                        <span>@($"Connected {status.ConnectedAt:MMM dd, yyyy}")</span>
+                        <span>@($"Connected {QDateFormat.D(status.ConnectedAt)}")</span>
                     </div>
                 </div>
                 <p class="card-description">

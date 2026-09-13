@@ -254,7 +254,7 @@
                             <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Password *</span></label>
                             <div class="input-wrapper">
                                 <input type="@(showPassword ? "text" : "password")" id="password"
-                                       @bind="formData.Password" @oninput="OnPasswordChanged"
+                                       @bind="formData.Password" @bind:event="oninput" @bind:after="OnPasswordChanged"
                                        placeholder="Create a strong password" class="form-control" />
                                 <button type="button" class="input-toggle" aria-label="@(showPassword ? "Hide password" : "Show password")" aria-pressed="@(showPassword ? "true" : "false")" @onclick="TogglePasswordVisibility" tabindex="-1">
                                     <QIcon Name="@(showPassword ? "eye-slash" : "eye")" />
@@ -841,9 +841,11 @@
     private static string FormatPrice(ModuleCatalogItem module) =>
         $"UGX {module.MonthlyPriceUgx:N0}/mo";
 
-    private void OnPasswordChanged(ChangeEventArgs e)
+    // Runs after @bind has already written formData.Password. Setting the password here from a
+    // separate @oninput, as this did, bypassed @bind's client-state tracking and let each re-render
+    // overwrite what was typed in the meantime.
+    private void OnPasswordChanged()
     {
-        formData.Password = e.Value?.ToString() ?? "";
         var strength = PasswordStrengthHelper.Calculate(formData.Password);
         passwordStrength = strength.Score;
         passwordStrengthClass = strength.CssClass;

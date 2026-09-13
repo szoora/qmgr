@@ -75,7 +75,7 @@ else
                 {
                     @if (status!.TrialEndsAt.HasValue)
                     {
-                        <p class="trial-note"><QIcon Name="clock-history" Size="14" /> Trial ends @status.TrialEndsAt.Value.ToString("MMM d, yyyy")</p>
+                        <p class="trial-note"><QIcon Name="clock-history" Size="14" /> Trial ends @QDateFormat.D(status.TrialEndsAt.Value)</p>
                     }
                     @if (status.GrantedByPlatformAdmin)
                     {

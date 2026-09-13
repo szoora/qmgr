@@ -118,7 +118,7 @@ else
                         <div class="card-info">
                             <div class="info-row">
                                 <QIcon Name="calendar-plus-fill" />
-                                <span>Added @(method.CreatedAt?.ToString("MMM dd, yyyy") ?? "recently")</span>
+                                <span>Added @(method.CreatedAt.HasValue ? QDateFormat.D(method.CreatedAt.Value) : "recently")</span>
                             </div>
                         </div>
 

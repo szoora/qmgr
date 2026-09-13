@@ -16,6 +16,7 @@
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IClassTeacherApiService ClassTeacherApi
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -42,7 +43,7 @@
     </div>
 
     <div class="roster-toolbar">
-        <input class="roster-search-input" value="@filterQuery" @oninput="@(e => { filterQuery = e.Value?.ToString() ?? ""; })" placeholder="Filter by student name, code, class, or guardian name..." />
+        <input class="roster-search-input" @bind="filterQuery" @bind:event="oninput" placeholder="Filter by student name, code, class, or guardian name..." />
         <label class="roster-toggle">
             <input type="checkbox" @bind="includeInactive" @bind:after="LoadStudents" />
             <span>Show inactive</span>
@@ -175,7 +176,7 @@
                            "consent is on file" and "a guardian may not have contact" a centimetre
                            apart is how somebody misreads a safeguarding row. *@
                         <span class="consent-icon @(s.DataConsentGivenAt.HasValue ? "consent-icon--given" : "")"
-                              title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {s.DataConsentGivenAt.Value.ToLocalTime():MMM d, yyyy}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
+                              title="@(s.DataConsentGivenAt.HasValue ? $"Data consent recorded {QDateFormat.D(s.DataConsentGivenAt.Value.ToLocalTime())}{(string.IsNullOrWhiteSpace(s.DataConsentNotes) ? "" : " — " + s.DataConsentNotes)}" : "No data consent on file")">
                             <QIcon Name="@(s.DataConsentGivenAt.HasValue ? "patch-check-fill" : "patch-question")" Size="sm" />
                         </span>
 
@@ -204,10 +205,29 @@
                         }
                     </span>
                     <span class="roster-code">@(s.StudentCode ?? "—")</span>
-                    <span>
+                    <span class="roster-class-cell">
                         @if (!string.IsNullOrEmpty(s.ClassName))
                         {
                             <span class="class-pill" style="@($"background:{GetClassColor(s.ClassName)}")">@s.ClassName</span>
+
+                            @* "Who do I call about this child" answered on the row itself. The DTO
+                               already carries the teacher's contact block, so this costs no extra
+                               request — and the tel: link matters because the front desk reads this
+                               list on a touch screen where a tooltip never appears. *@
+                            @if (ClassTeacherFor(s.ClassName) is { } ct)
+                            {
+                                <span class="roster-ct">
+                                    <QIcon Name="person-video3" Size="11" />
+                                    @if (!string.IsNullOrWhiteSpace(ct.Phone))
+                                    {
+                                        <a href="tel:@ct.Phone" title="@ContactTitle(ct)">@ct.FullName</a>
+                                    }
+                                    else
+                                    {
+                                        <span title="@ContactTitle(ct)">@ct.FullName</span>
+                                    }
+                                </span>
+                            }
                         }
                         else
                         {
@@ -577,7 +597,7 @@
         @if (consentTargetStudent?.DataConsentGivenAt is { } givenAt)
         {
             <p class="consent-status consent-status--given">
-                <QIcon Name="shield-check" /> Consent recorded @givenAt.ToLocalTime().ToString("MMM d, yyyy 'at' h:mm tt")
+                <QIcon Name="shield-check" /> Consent recorded @QDateFormat.DT(givenAt.ToLocalTime())
             </p>
             @if (!string.IsNullOrWhiteSpace(consentTargetStudent.DataConsentNotes))
             {
@@ -679,6 +699,32 @@
                                 <span class="vocab-usage" title="Students currently holding this value">
                                     @(usage == 0 ? "unused" : $"{usage} student{(usage == 1 ? "" : "s")}")
                                 </span>
+
+                                @* Who holds this class, shown where the class is edited. A class
+                                   with no teacher is the state that silently fires no alerts, so
+                                   it says so here rather than only on the Class Teachers page.
+                                   Matched on the ORIGINAL name: assignments are keyed on the stored
+                                   spelling, and this row may be mid-rename. *@
+                                @if (withColor && classTeachersLoaded)
+                                {
+                                    var holder = ClassTeacherFor(OriginalNameOf(item));
+                                    @if (holder != null)
+                                    {
+                                        <a class="vocab-ct" href="/admin/students/class-teachers"
+                                           title="@($"{holder.FullName} holds this class — open Class Teachers")">
+                                            <QIcon Name="person-video3" Size="12" />
+                                            <span>@holder.FullName</span>
+                                        </a>
+                                    }
+                                    else
+                                    {
+                                        <a class="vocab-ct vocab-ct-none" href="/admin/students/class-teachers"
+                                           title="Nobody is alerted when a student in this class has a record logged — open Class Teachers to assign one">
+                                            <QIcon Name="person-dash" Size="12" />
+                                            <span>No teacher</span>
+                                        </a>
+                                    }
+                                }
 
                                 <button type="button" class="vocab-btn" title="Move up" @onclick="@(() => MoveItem(vocabTab, item, -1))">
                                     <QIcon Name="chevron-up" Size="13" />
@@ -878,7 +924,7 @@
                 @foreach (var job in historyJobs)
                 {
                     <div class="import-log-row outcome-@(job.FailedCount > 0 ? "failed" : "created")">
-                        <span class="import-log-rownum">@job.CreatedAt.ToLocalTime().ToString("MMM dd, HH:mm")</span>
+                        <span class="import-log-rownum">@QDateFormat.CDT(job.CreatedAt.ToLocalTime())</span>
                         <span class="import-log-outcome">@job.Status</span>
                         <span class="import-log-name">@(job.SourceFileName ?? (job.Source == "api_sync" ? "External sync" : "Manual entry"))</span>
                         <span class="import-log-message">@job.TotalRows rows &middot; @job.CreatedCount created &middot; @job.UpdatedCount updated &middot; @job.DuplicateCount duplicate &middot; @job.FailedCount failed</span>
@@ -998,6 +1044,32 @@
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
     }
+
+    /* Who holds the class, on the row where the class is edited. Tinted from --qm-primary-rgb so
+       it follows the theme with no [data-theme="light"] override. */
+    .vocab-ct {
+        display: inline-flex; align-items: center; gap: 5px;
+        max-width: 150px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(var(--qm-primary-rgb), 0.10);
+        color: var(--qm-primary);
+        font-size: 11.5px;
+        text-decoration: none;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .vocab-ct span { overflow: hidden; text-overflow: ellipsis; }
+    .vocab-ct:hover { background: rgba(var(--qm-primary-rgb), 0.18); }
+
+    /* An unheld class is the state this feature fails silently in, so it reads as a gap rather
+       than as another chip. */
+    .vocab-ct-none {
+        background: transparent;
+        border: 1px dashed var(--qm-border);
+        color: var(--qm-text-muted);
+    }
+    .vocab-ct-none:hover { background: var(--qm-bg-elevated); color: var(--qm-text-secondary); }
 
     .vocab-btn {
         display: inline-flex; align-items: center; justify-content: center;
@@ -1351,6 +1423,13 @@
     .guardian-chip { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
     .guardian-print-btn { padding: 2px !important; min-width: unset !important; }
     .class-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
+
+    /* min-width:0 so this grid child can shrink below its content — a cell that refuses to
+       shrink is what widened the document and made the whole page scroll sideways. */
+    .roster-class-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 0; }
+    .roster-ct { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; font-size: 11.5px; color: var(--qm-text-muted); min-width: 0; }
+    .roster-ct a, .roster-ct span { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .roster-ct a:hover { color: var(--qm-primary); text-decoration: underline; }
     .class-color-list { display: flex; flex-direction: column; gap: 10px; }
     .class-color-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
     .class-color-row:last-child { border-bottom: none; }
@@ -1776,7 +1855,7 @@
                         <div class="name">{{System.Net.WebUtility.HtmlEncode(guardian.FullName)}}</div>
                         <div class="relationship">{{System.Net.WebUtility.HtmlEncode(guardian.Relationship)}} of {{System.Net.WebUtility.HtmlEncode(student.FullName)}}</div>
                         <div class="hint">Visiting Day Pass — present at check-in.<br />Not valid for entry without staff verification.</div>
-                        <div class="date">Printed {{DateTime.Now:MMM dd, yyyy}}</div>
+                        <div class="date">Printed {{QDateFormat.D(DateTime.Now)}}</div>
                         {{contactLineHtml}}
                     </div>
                 </div>
@@ -2051,6 +2130,7 @@
 
         await LoadVocabulariesAsync();
         vocabUsage = await StudentApi.GetVocabularyUsageAsync(branchId);
+        await LoadClassTeachersAsync();
 
         // Deep copy — editing the live object would leave the roster's own pickers showing edits
         // that were never saved, including ones the user then cancelled.
@@ -2074,6 +2154,50 @@
 
     private static VocabularyItemDto Clone(VocabularyItemDto i) =>
         new() { Name = i.Name, Color = i.Color, SortOrder = i.SortOrder, IsActive = i.IsActive };
+
+    // ---------------- Class teachers ----------------
+    // Loaded for the Classes tab's chip and the roster row's contact line. GetAssignmentsAsync
+    // swallows and returns empty, so a tenant without the Student Welfare module, or a caller
+    // without welfare.view, simply gets no chip rather than an error — the right outcome for a
+    // decoration on somebody else's page.
+    private List<ClassTeacherDto> classTeachers = new();
+    private bool classTeachersLoaded;
+
+    private async Task LoadClassTeachersAsync()
+    {
+        if (branchId == Guid.Empty) return;
+
+        classTeachers = await ClassTeacherApi.GetAssignmentsAsync(branchId);
+        classTeachersLoaded = true;
+    }
+
+    /// <summary>
+    /// The primary class teacher for a class name, or null. Trim().ToLower() on BOTH sides — the
+    /// same normalization ClassTeachersController.NormalizeClassName, StudentScopeService and
+    /// WelfareAlertService use. A stray space here would show "No teacher" for a class that has
+    /// one, which is the cosmetic face of a safeguarding-relevant matching bug.
+    /// </summary>
+    private ClassTeacherDto? ClassTeacherFor(string? className)
+    {
+        if (string.IsNullOrWhiteSpace(className)) return null;
+        var key = className.Trim().ToLowerInvariant();
+
+        return classTeachers.FirstOrDefault(t =>
+                   t.Role == ClassTeacherRole.ClassTeacher && t.ClassName.Trim().ToLowerInvariant() == key)
+               ?? classTeachers.FirstOrDefault(t => t.ClassName.Trim().ToLowerInvariant() == key);
+    }
+
+    /// <summary>The teacher's contact card as one hover line — job title, email, phones, office.</summary>
+    private static string ContactTitle(ClassTeacherDto t)
+    {
+        var parts = new List<string> { $"{t.FullName} — class teacher" };
+        if (!string.IsNullOrWhiteSpace(t.JobTitle)) parts.Add(t.JobTitle!);
+        if (!string.IsNullOrWhiteSpace(t.Email)) parts.Add(t.Email);
+        if (!string.IsNullOrWhiteSpace(t.Phone)) parts.Add(t.Phone!);
+        if (!string.IsNullOrWhiteSpace(t.AlternatePhone)) parts.Add(t.AlternatePhone!);
+        if (!string.IsNullOrWhiteSpace(t.OfficeLocation)) parts.Add(t.OfficeLocation!);
+        return string.Join(" · ", parts);
+    }
 
     private List<VocabularyItemDto> ItemsFor(string tab) => tab switch
     {
@@ -2444,6 +2568,7 @@
         printLetterhead = await StudentApi.GetPrintLetterheadAsync(branchId);
 
         await LoadVocabulariesAsync();
+        await LoadClassTeachersAsync();
         await LoadStudents();
     }
 

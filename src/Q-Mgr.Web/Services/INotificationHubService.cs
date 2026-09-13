@@ -99,4 +99,33 @@ public interface INotificationApiService
     /// Delete a notification
     /// </summary>
     Task DeleteAsync(Guid notificationId);
+
+    // =====================================================================================
+    // Preferences and the delivery log.
+    //
+    // These four THROW on failure, carrying the server's own message — unlike the five methods
+    // above, which swallow and return an empty result. That split is deliberate rather than
+    // untidy: a bell that fails to refresh should not break the page it sits in, but a preferences
+    // form that silently discards a save is the exact failure mode CLAUDE.md records for
+    // IQueueApiService (CounterTerminal reporting success on a failed call). A caller here wraps
+    // them in try/catch and shows the real reason.
+    // =====================================================================================
+
+    /// <summary>
+    /// The event categories a person can be reached about, with their defaults. Fetched rather than
+    /// hardcoded in the UI so a new category added to <c>NotificationEventKeys</c> appears in the
+    /// preferences panel without a Web change.
+    /// </summary>
+    Task<List<NotificationEventDefinition>> GetPreferenceEventsAsync();
+
+    /// <summary>The caller's OWN channel preferences, every known event filled in at its default.</summary>
+    Task<UserNotificationPreferencesDto> GetPreferencesAsync();
+
+    Task SavePreferencesAsync(UserNotificationPreferencesDto preferences);
+
+    /// <summary>
+    /// Delivery attempts, newest first — "was this actually delivered?". Requires
+    /// notifications.manage; recipient addresses arrive masked from the API.
+    /// </summary>
+    Task<List<NotificationDeliveryDto>> GetDeliveriesAsync(bool failuresOnly = false, int limit = 100);
 }

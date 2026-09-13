@@ -59,8 +59,8 @@ else
         </div>
         <div class="header-right">
             <div class="datetime">
-                <span class="date">@currentTime.ToString("dddd, MMMM dd, yyyy")</span>
-                <span class="time">@currentTime.ToString("HH:mm:ss")</span>
+                <span class="date">@QDateFormat.Long(currentTime)</span>
+                <span class="time">@QDateFormat.TS(currentTime)</span>
             </div>
         </div>
     </div>

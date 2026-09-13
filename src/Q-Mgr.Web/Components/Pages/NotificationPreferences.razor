@@ -1,0 +1,304 @@
+@page "/profile/notifications"
+@inject INotificationApiService NotificationApi
+@inject IToastService NotificationService
+@inject NavigationManager Navigation
+@inject IAppInitializationService AppInit
+@using QMgr.Application.DTOs
+
+<PageTitle>Notification Preferences - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Notification Preferences</h1>
+            <p class="subtitle">
+                How you are reached about each kind of event. The in-app bell is always on — it is
+                the record that you were told, and a notification nobody can find later is worse
+                than one nobody wanted.
+            </p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Back to Profile" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/profile"))" />
+            <QButton Text="Save Preferences" Icon="check-lg" Variant="primary" OnClick="@SaveAsync"
+                     Disabled="@(isSaving || isLoading || loadFailed)" Loading="@isSaving" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading your preferences...</span></div>
+    }
+    else if (loadFailed)
+    {
+        @* Latched, and Save is blocked while it is set — exactly the reasoning
+           NotificationSettings uses: saving a defaults-shaped model over real stored preferences
+           would silently switch somebody's email off. *@
+        <div class="np-alert error">
+            <QIcon Name="exclamation-triangle-fill" />
+            <div>
+                <strong>Could not load your preferences</strong>
+                <p>@loadError</p>
+                <QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" Size="sm" OnClick="@LoadAsync" />
+            </div>
+        </div>
+    }
+    else
+    {
+        @* ── The two master switches ─────────────────────────────────────────────────────
+           Applied on top of the per-event choices, because "stop emailing me while I am on
+           leave" is a thing people actually want and hunting through five toggles to do it is
+           how somebody ends up filtering the whole app to spam. *@
+        <div class="np-masters">
+            <div class="np-master">
+                <div class="np-master-icon"><QIcon Name="envelope" /></div>
+                <div class="np-master-text">
+                    <strong>Email</strong>
+                    <span>@(prefs.EmailEnabled ? "On — you are emailed for the events ticked below." : "Off — no email at all, whatever is ticked below.")</span>
+                </div>
+                <QCheckbox Value="@prefs.EmailEnabled" ValueChanged="@(v => prefs.EmailEnabled = v)" Label="Email me" />
+            </div>
+            <div class="np-master">
+                <div class="np-master-icon"><QIcon Name="chat-dots" /></div>
+                <div class="np-master-text">
+                    <strong>SMS</strong>
+                    <span>
+                        @if (prefs.SmsEnabled)
+                        {
+                            <text>On — texted for the events ticked below. SMS costs your organization per message, so nothing is ticked by default.</text>
+                        }
+                        else
+                        {
+                            <text>Off — no text messages at all, whatever is ticked below.</text>
+                        }
+                    </span>
+                </div>
+                <QCheckbox Value="@prefs.SmsEnabled" ValueChanged="@(v => prefs.SmsEnabled = v)" Label="Text me" />
+            </div>
+        </div>
+
+        @if (!events.Any())
+        {
+            <div class="empty-state">
+                <QIcon Name="bell-slash" Size="xl" />
+                <h3>No event categories</h3>
+                <p>There is nothing here to configure yet.</p>
+            </div>
+        }
+        else
+        {
+            @* Grouped by the category the server declares, not by a list held here — a new event
+               key added to NotificationEventKeys appears on this page with no Web change. *@
+            @foreach (var group in events.GroupBy(e => e.Category))
+            {
+                <div class="np-group">
+                    <div class="np-group-head">
+                        <h3>@group.Key</h3>
+                    </div>
+
+                    @foreach (var ev in group)
+                    {
+                        var choice = ChoiceFor(ev.Key);
+                        <div class="np-row">
+                            <div class="np-row-text">
+                                <strong>@ev.Name</strong>
+                                <p>@ev.Description</p>
+                            </div>
+                            @* Each toggle carries its own visible label rather than sitting under a
+                               column heading: a bare checkbox in a column is unreadable the moment
+                               the row wraps on a phone, which is where these are most likely read. *@
+                            <div class="np-row-toggles">
+                                <QCheckbox Value="@choice.Email"
+                                           ValueChanged="@(v => choice.Email = v)"
+                                           Disabled="@(!prefs.EmailEnabled)"
+                                           Label="Email" Class="np-toggle" />
+                                <QCheckbox Value="@choice.Sms"
+                                           ValueChanged="@(v => choice.Sms = v)"
+                                           Disabled="@(!prefs.SmsEnabled)"
+                                           Label="SMS" Class="np-toggle" />
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <p class="np-foot">
+                Safeguarding records are never sent by email or SMS to anyone, whatever is set here
+                &mdash; a confidential or restricted record raises no alert at all.
+            </p>
+        }
+    }
+</div>
+
+@code {
+    private bool isLoading = true;
+    private bool isSaving;
+
+    /// <summary>Latched on a failed load. Blocks Save so a defaults-shaped model cannot overwrite real stored preferences.</summary>
+    private bool loadFailed;
+    private string loadError = string.Empty;
+
+    private List<NotificationEventDefinition> events = new();
+    private UserNotificationPreferencesDto prefs = new();
+
+    // OnAfterRenderAsync, never OnInitialized: there is no JS interop during prerendering, so the
+    // token read that authorises these calls returns null in that pass. See CLAUDE.md.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        // Loads the tokens out of localStorage into the in-memory store. Idempotent, so it costs
+        // nothing when MainLayout has already done it, and without it the first call can race an
+        // uninitialised store and 401.
+        await AppInit.InitializeAsync();
+        await LoadAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadFailed = false;
+        try
+        {
+            events = await NotificationApi.GetPreferenceEventsAsync();
+            prefs = await NotificationApi.GetPreferencesAsync();
+        }
+        catch (Exception ex)
+        {
+            // The service throws with the server's own message, so this shows the real reason.
+            loadFailed = true;
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// The stored entry for one event, created at the event's declared default if the user has
+    /// never touched it. Returned by reference so the checkboxes bind straight to the object that
+    /// gets posted back — no second copy to keep in step.
+    /// </summary>
+    private NotificationChannelPreference ChoiceFor(string eventKey)
+    {
+        var existing = prefs.Events.FirstOrDefault(e => e.EventKey == eventKey);
+        if (existing != null) return existing;
+
+        var definition = events.FirstOrDefault(e => e.Key == eventKey);
+        var created = new NotificationChannelPreference
+        {
+            EventKey = eventKey,
+            Email = definition?.DefaultEmail ?? false,
+            Sms = definition?.DefaultSms ?? false
+        };
+        prefs.Events.Add(created);
+        return created;
+    }
+
+    private async Task SaveAsync()
+    {
+        isSaving = true;
+        try
+        {
+            // Every known event is posted, whether or not it was touched: the API stores the blob
+            // as given, and posting a partial list would leave an untouched event following the
+            // organization default for ever rather than the choice shown on screen.
+            foreach (var ev in events) ChoiceFor(ev.Key);
+
+            await NotificationApi.SavePreferencesAsync(prefs);
+            NotificationService.Notify(ToastSeverity.Success, "Preferences saved", "This takes effect on the next notification sent to you.");
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save your preferences", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}
+
+<style>
+    .np-masters {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 14px;
+        margin-bottom: 22px;
+    }
+
+    .np-master {
+        display: flex; align-items: center; gap: 13px;
+        padding: 14px 16px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-bg-card);
+        box-shadow: var(--qm-shadow-sm);
+        flex-wrap: wrap;
+    }
+
+    .np-master-icon {
+        width: 32px; height: 32px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--qm-primary-light);
+        color: var(--qm-primary);
+        flex-shrink: 0;
+    }
+
+    .np-master-text { flex: 1; min-width: 0; }
+    .np-master-text strong { display: block; font-family: var(--qm-font-display); font-size: 14.5px; color: var(--qm-text-primary); }
+    .np-master-text span { font-size: 12.5px; color: var(--qm-text-secondary); line-height: 1.5; }
+
+    .np-group {
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-bg-card);
+        box-shadow: var(--qm-shadow-sm);
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+
+    .np-group-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--qm-border);
+        background: var(--qm-bg-elevated);
+    }
+    .np-group-head h3 { margin: 0; font-family: var(--qm-font-display); font-size: 15px; font-weight: 700; color: var(--qm-text-primary); }
+
+    .np-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 13px 16px;
+    }
+    .np-row + .np-row { border-top: 1px solid var(--qm-border); }
+
+    .np-row-text { min-width: 0; }
+    .np-row-text strong { display: block; font-size: 13.5px; font-weight: 600; color: var(--qm-text-primary); }
+    .np-row-text p { margin: 2px 0 0; font-size: 12.5px; color: var(--qm-text-secondary); line-height: 1.5; }
+
+    .np-row-toggles { display: flex; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
+
+    .np-alert {
+        display: flex; gap: 12px; align-items: flex-start;
+        padding: 14px 16px;
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-danger);
+        border-radius: var(--qm-radius-md);
+        background: var(--qm-bg-card);
+    }
+    .np-alert > i, .np-alert > span:first-child { color: var(--qm-danger); flex-shrink: 0; margin-top: 2px; }
+    .np-alert strong { display: block; font-family: var(--qm-font-display); font-size: 14px; margin-bottom: 3px; color: var(--qm-text-primary); }
+    .np-alert p { margin: 0 0 10px; font-size: 13px; color: var(--qm-text-secondary); line-height: 1.5; }
+
+    .np-foot { margin-top: 4px; font-size: 12.5px; color: var(--qm-text-muted); line-height: 1.6; }
+
+    /* The page must never scroll sideways — the header's two buttons and the master-switch rows
+       are exactly the *-actions shape that caused the phone overflow. */
+    @@media (max-width: 640px) {
+        .header-actions { flex-wrap: wrap; }
+        .np-row { flex-wrap: wrap; }
+        .np-row-toggles { width: 100%; justify-content: flex-start; }
+    }
+</style>

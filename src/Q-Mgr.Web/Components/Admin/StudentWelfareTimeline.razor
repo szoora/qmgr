@@ -15,6 +15,7 @@
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
+@implements IDisposable
 
 <PageTitle>Welfare Timeline - Q-Mgr</PageTitle>
 
@@ -161,7 +162,7 @@
                                     <span class="status-badge status-badge--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
                                 }
                             </div>
-                            <span class="timeline-date">@record.OccurredAt.ToLocalTime().ToString("MMM d, yyyy · h:mm tt")</span>
+                            <span class="timeline-date">@QDateFormat.DT(record.OccurredAt.ToLocalTime())</span>
                         </div>
                         <p class="timeline-description">@record.Description</p>
                         @if (!string.IsNullOrWhiteSpace(record.Location))
@@ -190,7 +191,7 @@
                                         }
                                         @if (record.ActionDueDate.HasValue)
                                         {
-                                            @($"{(record.AssignedToUserId.HasValue ? " · " : "")}Due {record.ActionDueDate.Value:MMM d, yyyy}")
+                                            @($"{(record.AssignedToUserId.HasValue ? " · " : "")}Due {QDateFormat.D(record.ActionDueDate.Value)}")
                                             @if (record.ActionDueDate.Value < DateTime.UtcNow && record.Status != WelfareStatus.Resolved)
                                             {
                                                 <span class="overdue-tag">Overdue</span>
@@ -229,7 +230,7 @@
                                         {
                                             <span class="note-recorded-by">recorded by @note.AuthorName</span>
                                         }
-                                        <span class="note-date">@note.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                        <span class="note-date">@QDateFormat.CDT(note.CreatedAt.ToLocalTime())</span>
                                         <p>@note.Body</p>
                                     </div>
                                 }
@@ -243,7 +244,7 @@
                                 {
                                     <div class="notification-item @(n.Success ? "notification-item--success" : "notification-item--failed")">
                                         <QIcon Name="@(n.Success ? "check-circle-fill" : "x-circle-fill")" />
-                                        <span>@n.Channel to @n.GuardianName by @n.SentByName · @n.CreatedAt.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                                        <span>@n.Channel to @n.GuardianName by @n.SentByName · @QDateFormat.CDT(n.CreatedAt.ToLocalTime())</span>
                                     </div>
                                 }
                             </div>
@@ -261,9 +262,11 @@
                                    later than the incident itself. Labelled by state so a record
                                    that has never been graded advertises the gap rather than
                                    hiding it behind a generic verb. *@
-                                <QButton Text="@(record.ResponseStage == null ? "Set response" : "Interpretation")"
+                                @* An achievement has no response stage, so it never advertises a
+                                   gap — its dialog is the antecedent/function pair only. *@
+                                <QButton Text="@(record.CaseType != WelfareCaseType.Achievement && record.ResponseStage == null ? "Set response" : "Interpretation")"
                                          Icon="list-ol" Size="sm"
-                                         Variant="@(record.ResponseStage == null ? "secondary" : "ghost")"
+                                         Variant="@(record.CaseType != WelfareCaseType.Achievement && record.ResponseStage == null ? "secondary" : "ghost")"
                                          OnClick="@(() => ShowResponseDialog(record))" />
                             }
                             @if (record.Status != WelfareStatus.Draft && canEdit)
@@ -338,12 +341,17 @@
                              Label="What did it get them" Placeholder="Unclear" AllowClear="true"
                              HelperText="Your read, not a diagnosis." />
                 </div>
-                <div class="form-group">
-                    <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@createModel.ResponseStage"
-                             ValueChanged="@OnResponseStageChanged"
-                             Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
-                             Label="Response" Placeholder="Not decided yet" AllowClear="true" />
-                </div>
+                @* Not offered on an achievement: the API rejects a stage on one, so showing the
+                   field would present a choice the save then refuses. *@
+                @if (createModel.CaseType != WelfareCaseType.Achievement)
+                {
+                    <div class="form-group">
+                        <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@createModel.ResponseStage"
+                                 ValueChanged="@OnResponseStageChanged"
+                                 Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                                 Label="Response" Placeholder="Not decided yet" AllowClear="true" />
+                    </div>
+                }
             </div>
 
             @* The escalation prompt. Guidance, never a barrier — it explains and asks, and the
@@ -517,7 +525,7 @@
         {
             <p class="response-dialog-subject">
                 <strong>@responseTargetRecord.CategoryName</strong>
-                · @responseTargetRecord.OccurredAt.ToLocalTime().ToString("MMM d, yyyy")
+                · @QDateFormat.D(responseTargetRecord.OccurredAt.ToLocalTime())
             </p>
         }
         <div class="form-group">
@@ -531,16 +539,29 @@
                      Label="What did it get them" Placeholder="Unclear" AllowClear="true" />
             <p class="form-hint">Your read, not a diagnosis.</p>
         </div>
-        <div class="form-group">
-            <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@responseStageValue"
-                     ValueChanged="@(v => responseStageValue = v)"
-                     Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
-                     Label="Response" Placeholder="Not decided yet" AllowClear="true" />
+        @* Withheld on an achievement, matching the create form and the API's own refusal. An
+           existing value is left untouched rather than silently cleared — responseStageValue was
+           loaded from the record and is posted back as it stands. *@
+        @if (responseTargetRecord?.CaseType != WelfareCaseType.Achievement)
+        {
+            <div class="form-group">
+                <QSelect TValue="WelfareResponseStage?" TItem="StageOption" Value="@responseStageValue"
+                         ValueChanged="@(v => responseStageValue = v)"
+                         Items="@stageOptions" TextSelector="@(x => x.Label)" ValueSelector="@(x => x.Value)"
+                         Label="Response" Placeholder="Not decided yet" AllowClear="true" />
+                <p class="form-hint">
+                    This is what feeds the student's &ldquo;What has been tried&rdquo; ladder. Clearing it
+                    removes this record from that view.
+                </p>
+            </div>
+        }
+        else
+        {
             <p class="form-hint">
-                This is what feeds the student's &ldquo;What has been tried&rdquo; ladder. Clearing it
-                removes this record from that view.
+                An achievement isn't a response to anything, so it carries no response stage and
+                doesn't appear in &ldquo;What has been tried&rdquo;.
             </p>
-        </div>
+        }
         <p class="form-hint">
             Only how this record is <em>read</em> can be changed. What happened — the account, date,
             category and tier — is part of the ledger and stays as first written.
@@ -964,9 +985,39 @@
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
 
+            // A SuperAdmin arrives here with no organization chosen, so CurrentBranchId is empty and
+            // every branch-scoped request on this page 404s -- most visibly the Category list, which
+            // left the create form with an empty dropdown and no explanation. Picking an
+            // organization and a branch raises OnBranchChanged; without this subscription nothing
+            // re-read it and only a full page reload fixed the form.
+            BranchState.OnBranchChanged += HandleBranchChanged;
+
             await LoadData();
             StateHasChanged();
         }
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            var next = BranchState.CurrentBranchId;
+            if (next == branchId) return;
+
+            branchId = next;
+            if (branchId == Guid.Empty) return;
+
+            // staffOptions is loaded once and guarded by `!staffOptions.Any()`, so it would keep the
+            // previous branch's staff on the assignment picker. Cleared here so LoadData refetches.
+            staffOptions.Clear();
+            await LoadData();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
     }
 
     private async Task OnRangeChanged(DateRange next)
@@ -1087,6 +1138,14 @@
     {
         createModel.CaseType = caseType;
         createModel.CategoryId = Guid.Empty;
+
+        // Switching to Achievement after picking a response would post a combination the API
+        // refuses, and the field it came from is no longer on screen to correct it.
+        if (caseType == WelfareCaseType.Achievement)
+        {
+            createModel.ResponseStage = null;
+            createModel.EscalationAcknowledged = false;
+        }
     }
 
     private void OnCategorySelected(Guid categoryId)
@@ -1206,7 +1265,13 @@
         // nothing on the form said so. Now there is a way (the Set response action on each card),
         // so this is a nudge rather than a last chance; "Not decided yet" stays a legitimate
         // answer for staff logging an incident before anyone has decided what to do about it.
-        ungradedWarning = !asDraft && createModel.ResponseStage == null && !acknowledgeUngraded;
+        // NOT on an achievement. The API refuses a response stage on one outright ("An achievement
+        // has no response stage" — WelfareController), so nagging for one here asked the user to
+        // set a field they are forbidden to set, and the only way past it was the confirmation box.
+        ungradedWarning = !asDraft
+            && createModel.CaseType != WelfareCaseType.Achievement
+            && createModel.ResponseStage == null
+            && !acknowledgeUngraded;
         if (ungradedWarning)
         {
             // Setting ungradedWarning above is what RENDERS the banner, so the scroll has to wait
@@ -1436,7 +1501,7 @@
                 {
                     <p class="restricted-panel-body">@restrictedNotes</p>
                     <div class="restricted-panel-meta">
-                        Last updated @(restrictedUpdatedAt?.ToLocalTime().ToString("MMM d, yyyy · h:mm tt") ?? "—")
+                        Last updated @QDateFormat.DT(restrictedUpdatedAt?.ToLocalTime())
                         @(string.IsNullOrWhiteSpace(restrictedUpdatedBy) ? "" : $" by {restrictedUpdatedBy}")
                     </div>
                 }

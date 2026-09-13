@@ -160,11 +160,11 @@
                     <p>
                         <QIcon Name="exclamation-triangle" />
                         @(checkInTarget.InductionCompletedAt.HasValue
-                            ? $"Site induction lapsed on {checkInTarget.InductionExpiresAt?.ToLocalTime():MMM dd, yyyy}."
+                            ? $"Site induction lapsed on {QDateFormat.D(checkInTarget.InductionExpiresAt?.ToLocalTime())}."
                             : "No site induction is recorded for this contractor.")
                         You can still check them in — record the induction here if it has been done.
                     </p>
-                    <label class="full-width">Induction completed on<input type="date" @bind="inductionCompletedLocal" /></label>
+                    <div class="full-width"><QDatePicker Label="Induction completed on" @bind-Value="inductionCompletedLocal" Max="DateTime.Today" Clearable="true" Placeholder="Not recorded" /></div>
                     <label class="full-width">Induction note<input @bind="inductionNotes" placeholder="e.g. site safety briefing given by M. Okello" /></label>
                 </div>
             }
@@ -415,7 +415,7 @@
                         </div>
                         @if (due.HasValue)
                         {
-                            <span class="when-badge @cssClass">@due.Value.ToLocalTime().ToString("ddd dd MMM, HH:mm")</span>
+                            <span class="when-badge @cssClass">@QDateFormat.CDT(due.Value.ToLocalTime())</span>
                         }
                     </div>
 
@@ -462,7 +462,7 @@
 
             var created = await VisitorApi.CreateExpectedVisitorsAsync(branchId, createModel);
             NotificationService.Notify(ToastSeverity.Success, "Pre-registered",
-                $"{created.Count} visitor{(created.Count == 1 ? "" : "s")} expected on {createExpectedAtLocal:MMM dd} at {createExpectedAtLocal:HH:mm}");
+                $"{created.Count} visitor{(created.Count == 1 ? "" : "s")} expected on {QDateFormat.C(createExpectedAtLocal)} at {QDateFormat.T(createExpectedAtLocal)}");
             showCreateModal = false;
             await LoadData();
         }

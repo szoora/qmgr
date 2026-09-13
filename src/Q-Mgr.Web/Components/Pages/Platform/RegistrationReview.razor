@@ -150,7 +150,7 @@
                                         <span class="qm-text-muted">Nothing notable</span>
                                     }
                                 </td>
-                                <td><div class="date-cell">@attempt.CreatedAt.ToLocalTime().ToString("MMM d, yyyy HH:mm")</div></td>
+                                <td><div class="date-cell">@QDateFormat.DT(attempt.CreatedAt.ToLocalTime())</div></td>
                                 <td>
                                     @if (attempt.ReviewedAt.HasValue)
                                     {

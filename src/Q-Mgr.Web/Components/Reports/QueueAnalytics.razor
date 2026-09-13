@@ -394,7 +394,7 @@
         get
         {
             var (from, to) = ResolvePeriod(selectedPeriod);
-            return from == to ? from.ToString("MMM d, yyyy") : $"{from:MMM d, yyyy} – {to:MMM d, yyyy}";
+            return QDateFormat.Range(from, to);
         }
     }
 

@@ -58,7 +58,7 @@
                             <td>@entry.Purpose</td>
                             <td>@entry.StatusAtDeletion</td>
                             <td>@(entry.DeletedByUserName ?? "—")</td>
-                            <td>@entry.DeletedAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</td>
+                            <td>@QDateFormat.DT(entry.DeletedAt.ToLocalTime())</td>
                             <td class="reason">@entry.DeletionReason</td>
                         </tr>
                     }

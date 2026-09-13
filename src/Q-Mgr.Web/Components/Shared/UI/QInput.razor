@@ -19,6 +19,12 @@
             <i class="@GetIconClass(IconLeft) q-input__icon q-input__icon--left"></i>
         }
 
+        @* @bind:get/@bind:set, never value="…" plus a hand-written @oninput. Only a @bind directive
+           makes the compiler emit SetUpdatesAttributeName("value"), which is what tells the renderer
+           to accept the text the browser already holds when an input event arrives. Without it every
+           keystroke's re-render diffs against the value from the previous render, sends that older
+           value back and overwrites what the user has typed since — lagging text and dropped
+           characters on any connection that is not near-instant. See dotnet/aspnetcore#14242. *@
         @if (Type == "textarea")
         {
             <textarea id="@inputId"
@@ -29,15 +35,16 @@
                       rows="@Rows"
                       @onfocus="HandleFocus"
                       @onblur="HandleBlur"
-                      @oninput="HandleInput"
-                      @attributes="AdditionalAttributes">@Value</textarea>
+                      @bind:get="currentText"
+                      @bind:set="HandleInput"
+                      @bind:event="oninput"
+                      @attributes="AdditionalAttributes"></textarea>
         }
         else
         {
             <input id="@inputId"
                    type="@Type"
                    class="q-input"
-                   value="@Value"
                    placeholder="@Placeholder"
                    disabled="@Disabled"
                    readonly="@ReadOnly"
@@ -48,7 +55,9 @@
                    list="@List"
                    @onfocus="HandleFocus"
                    @onblur="HandleBlur"
-                   @oninput="HandleInput"
+                   @bind:get="currentText"
+                   @bind:set="HandleInput"
+                   @bind:event="oninput"
                    @attributes="AdditionalAttributes" />
         }
 
@@ -93,6 +102,17 @@
     private string inputId = $"q-input-{Guid.NewGuid():N}";
     private bool HasFocus;
     private bool showPassword;
+
+    // The text in the box, held apart from Value because the two legitimately differ while typing:
+    // an int field can be blank or read "1." for a moment without a parseable Value behind it.
+    // Rendering Value directly would snap such a field back on the next re-render of the page.
+    private string? currentText;
+
+    // The last Value this component either received or reported. A Value arriving that differs from
+    // it is an outside change (a form reset, a record loaded) and replaces the text; one that merely
+    // echoes what the user typed does not.
+    private TValue? lastValue;
+    private bool valueSynced;
 
     /// <summary>
     /// The current value
@@ -223,6 +243,16 @@
     /// </summary>
     [Parameter] public EventCallback OnBlur { get; set; }
 
+    protected override void OnParametersSet()
+    {
+        if (!valueSynced || !EqualityComparer<TValue?>.Default.Equals(Value, lastValue))
+        {
+            currentText = Value?.ToString();
+            lastValue = Value;
+            valueSynced = true;
+        }
+    }
+
     private string GetIconClass(string icon)
     {
         if (string.IsNullOrEmpty(icon)) return "";
@@ -248,34 +278,62 @@
         await OnBlur.InvokeAsync();
     }
 
-    private async Task HandleInput(ChangeEventArgs e)
+    private async Task HandleInput(string? text)
     {
-        var stringValue = e.Value?.ToString();
+        currentText = text;
+
+        // Text that does not parse yet ("" or "1." in an int field) stays in the box and is not
+        // reported; the last good Value stands until it does.
+        if (!TryParse(text, out var parsed))
+            return;
+
+        lastValue = parsed;
+        await ValueChanged.InvokeAsync(parsed!);
+    }
+
+    private static bool TryParse(string? text, out TValue? result)
+    {
+        result = default;
 
         if (typeof(TValue) == typeof(string))
         {
-            await ValueChanged.InvokeAsync((TValue)(object)(stringValue ?? ""));
+            result = (TValue)(object)(text ?? "");
+            return true;
         }
-        else if (typeof(TValue) == typeof(int) && int.TryParse(stringValue, out var intVal))
+        if (typeof(TValue) == typeof(int) && int.TryParse(text, out var intVal))
         {
-            await ValueChanged.InvokeAsync((TValue)(object)intVal);
+            result = (TValue)(object)intVal;
+            return true;
         }
-        else if (typeof(TValue) == typeof(int?) && (string.IsNullOrEmpty(stringValue) || int.TryParse(stringValue, out var nullableIntVal)))
+        if (typeof(TValue) == typeof(int?))
         {
-            await ValueChanged.InvokeAsync(string.IsNullOrEmpty(stringValue) ? default : (TValue)(object)int.Parse(stringValue));
+            if (string.IsNullOrEmpty(text))
+                return true;
+            if (int.TryParse(text, out var nullableIntVal))
+            {
+                result = (TValue)(object)nullableIntVal;
+                return true;
+            }
+            return false;
         }
-        else if (typeof(TValue) == typeof(decimal) && decimal.TryParse(stringValue, out var decVal))
+        if (typeof(TValue) == typeof(decimal) && decimal.TryParse(text, out var decVal))
         {
-            await ValueChanged.InvokeAsync((TValue)(object)decVal);
+            result = (TValue)(object)decVal;
+            return true;
         }
-        else if (typeof(TValue) == typeof(double) && double.TryParse(stringValue, out var dblVal))
+        if (typeof(TValue) == typeof(double) && double.TryParse(text, out var dblVal))
         {
-            await ValueChanged.InvokeAsync((TValue)(object)dblVal);
+            result = (TValue)(object)dblVal;
+            return true;
         }
+
+        return false;
     }
 
     private async Task Clear()
     {
+        currentText = "";
+        lastValue = default;
         await ValueChanged.InvokeAsync(default);
     }
 }

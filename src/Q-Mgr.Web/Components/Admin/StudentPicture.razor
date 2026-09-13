@@ -15,6 +15,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IClassTeacherApiService ClassTeacherApi
 
 <PageTitle>Student Picture - Q-Mgr</PageTitle>
 
@@ -211,12 +212,53 @@
                     <ChildContent>
                         <dl class="sp-facts">
                             @RenderFact("Class", s.ClassName)
+
+                            @* Who holds pastoral responsibility for this child, next to the class
+                               it comes from. Its own dt/dd rather than a RenderFact call because
+                               a phone number a member of staff can actually tap is the point — on
+                               a touch screen a tooltip never appears at all. *@
+                            @if (classTeacher is { } ct)
+                            {
+                                <dt>Class teacher</dt>
+                                <dd class="sp-ct">
+                                    <span class="sp-ct-name">
+                                        @ct.FullName
+                                        @if (!string.IsNullOrWhiteSpace(ct.JobTitle))
+                                        {
+                                            <span class="sp-ct-title">@ct.JobTitle</span>
+                                        }
+                                    </span>
+                                    <span class="sp-ct-links">
+                                        <a href="mailto:@ct.Email" title="@ct.Email"><QIcon Name="envelope" Size="12" /> Email</a>
+                                        @if (!string.IsNullOrWhiteSpace(ct.Phone))
+                                        {
+                                            <a href="tel:@ct.Phone"><QIcon Name="telephone" Size="12" /> @ct.Phone</a>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(ct.AlternatePhone))
+                                        {
+                                            <a href="tel:@ct.AlternatePhone"><QIcon Name="telephone-plus" Size="12" /> @ct.AlternatePhone</a>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(ct.OfficeLocation))
+                                        {
+                                            <span><QIcon Name="geo-alt" Size="12" /> @ct.OfficeLocation</span>
+                                        }
+                                    </span>
+                                </dd>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(s.ClassName) && classTeachersLoaded)
+                            {
+                                <dt>Class teacher</dt>
+                                <dd class="sp-muted">
+                                    Nobody holds @s.ClassName, so no class teacher is alerted about this child.
+                                </dd>
+                            }
+
                             @RenderFact("Age", s.AgeYears.HasValue ? $"{s.AgeYears}" : null)
                             @RenderFact("Sex", s.Sex?.ToString())
                             @RenderFact("Residency", s.Residency?.ToString())
                             @RenderFact("House", s.House)
                             @RenderFact("Dormitory", s.DormitoryOrStream)
-                            @RenderFact("Admitted", s.AdmissionDate?.ToString("d MMM yyyy"))
+                            @RenderFact("Admitted", s.AdmissionDate.HasValue ? QDateFormat.D(s.AdmissionDate.Value) : null)
                             @RenderFact("Lives with", HumaniseLivesWith(s.LivesWith))
                             @RenderFact("Home country", s.HomeCountry)
                             @RenderFact("Home district", s.HomeDistrict)
@@ -321,10 +363,10 @@
                                                 }
                                             </div>
                                             <div class="sp-g-sub">
-                                                Raised by @f.RaisedByName, @f.RaisedAt.ToLocalTime().ToString("d MMM yyyy")
+                                                Raised by @f.RaisedByName, @QDateFormat.D(f.RaisedAt.ToLocalTime())
                                                 @if (f.ReviewDueDate.HasValue && f.IsActive)
                                                 {
-                                                    <span> &middot; review @f.ReviewDueDate.Value.ToLocalTime().ToString("d MMM yyyy")</span>
+                                                    <span> &middot; review @QDateFormat.D(f.ReviewDueDate.Value.ToLocalTime())</span>
                                                 }
                                             </div>
                                             @if (!string.IsNullOrWhiteSpace(f.Notes))
@@ -553,6 +595,16 @@
     .sp-facts dt { color: var(--qm-text-muted); white-space: nowrap; }
     .sp-facts dd { margin: 0; color: var(--qm-text-primary); word-break: break-word; }
 
+    /* min-width:0 on a grid child that holds links: without it the cell refuses to shrink below
+       its content and widens the whole document. */
+    .sp-ct { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .sp-ct-name { font-weight: 600; }
+    .sp-ct-title { font-weight: 400; color: var(--qm-text-muted); font-size: 12px; }
+    .sp-ct-title::before { content: " · "; }
+    .sp-ct-links { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; min-width: 0; }
+    .sp-ct-links a, .sp-ct-links span { display: inline-flex; align-items: center; gap: 4px; color: var(--qm-text-secondary); text-decoration: none; }
+    .sp-ct-links a:hover { color: var(--qm-primary); text-decoration: underline; }
+
     /* ---- guardians & flags list ---- */
     .sp-guardians, .sp-flag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
     .sp-guardians li, .sp-flag-list li { padding-bottom: 11px; border-bottom: 1px solid var(--qm-border); }
@@ -667,6 +719,7 @@
             {
                 flags = await StudentApi.GetFlagsAsync(branchId, StudentId, includeEnded: true);
                 if (canManage) await LoadCategoriesAsync();
+                await LoadClassTeacherAsync(picture.Student.ClassName);
             }
         }
         finally
@@ -674,6 +727,33 @@
             isLoading = false;
             StateHasChanged();
         }
+    }
+
+    // ---------------- Class teacher ----------------
+    private ClassTeacherDto? classTeacher;
+    private bool classTeachersLoaded;
+
+    /// <summary>
+    /// The teacher holding this child's class. GetAssignmentsAsync swallows and returns empty, so
+    /// a caller without welfare.view or a tenant without the module gets no line at all rather
+    /// than an error — but classTeachersLoaded stays false in that case, so the "nobody holds this
+    /// class" message is never shown on the strength of a failed request.
+    /// </summary>
+    private async Task LoadClassTeacherAsync(string? className)
+    {
+        if (branchId == Guid.Empty || string.IsNullOrWhiteSpace(className)) return;
+
+        var assignments = await ClassTeacherApi.GetAssignmentsAsync(branchId);
+        if (assignments.Count == 0) return;
+
+        // Trim().ToLower() on both sides, matching ClassTeachersController.NormalizeClassName and
+        // StudentScopeService. A stray space here reads as "no class teacher" for a child who has
+        // one, which is the visible face of a safeguarding-relevant matching bug.
+        var key = className.Trim().ToLowerInvariant();
+        classTeacher = assignments.FirstOrDefault(t =>
+                           t.Role == ClassTeacherRole.ClassTeacher && t.ClassName.Trim().ToLowerInvariant() == key)
+                       ?? assignments.FirstOrDefault(t => t.ClassName.Trim().ToLowerInvariant() == key);
+        classTeachersLoaded = true;
     }
 
     private async Task LoadCategoriesAsync()
@@ -868,8 +948,8 @@
 
     private static string FlagTitle(StudentFlagDto f)
     {
-        var title = $"{f.CategoryName} — raised by {f.RaisedByName} on {f.RaisedAt.ToLocalTime():d MMM yyyy}";
-        if (f.ReviewDueDate.HasValue) title += $", review {f.ReviewDueDate.Value.ToLocalTime():d MMM yyyy}";
+        var title = $"{f.CategoryName} — raised by {f.RaisedByName} on {QDateFormat.D(f.RaisedAt.ToLocalTime())}";
+        if (f.ReviewDueDate.HasValue) title += $", review {QDateFormat.D(f.ReviewDueDate.Value.ToLocalTime())}";
         return title;
     }
 }

@@ -691,7 +691,7 @@
         if (timeSpan.TotalDays < 30)
             return $"{(int)timeSpan.TotalDays}d ago";
 
-        return timestamp.ToString("MMM d, yyyy");
+        return QDateFormat.D(timestamp);
     }
 
     private record PlatformStats

@@ -145,7 +145,7 @@ else if (settings != null && settings.Any())
                         @if (setting.UpdatedAt.HasValue)
                         {
                             <span class="last-updated">
-                                Updated: @setting.UpdatedAt.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                                Updated: @QDateFormat.DT(setting.UpdatedAt.Value.ToLocalTime())
                             </span>
                         }
 

@@ -72,7 +72,7 @@
                     </div>
                     <div class="metric-value">@metrics.TotalTokensServed.ToString("N0")</div>
                     <div class="metric-footer">
-                        <span class="period-info">@metrics.From.ToString("MMM d") - @metrics.To.ToString("MMM d")</span>
+                        <span class="period-info">@QDateFormat.C(metrics.From) - @QDateFormat.C(metrics.To)</span>
                     </div>
                 </div>
             </QCard>
@@ -85,7 +85,7 @@
                     </div>
                     <div class="metric-value">@metrics.TotalApiCalls.ToString("N0")</div>
                     <div class="metric-footer">
-                        <span class="period-info">@metrics.From.ToString("MMM d") - @metrics.To.ToString("MMM d")</span>
+                        <span class="period-info">@QDateFormat.C(metrics.From) - @QDateFormat.C(metrics.To)</span>
                     </div>
                 </div>
             </QCard>
@@ -114,7 +114,7 @@
                                          title="New: @trend.NewTenants">
                                     </div>
                                 </div>
-                                <div class="bar-label">@trend.Date.ToString("MMM")</div>
+                                <div class="bar-label">@QDateFormat.Mon(trend.Date)</div>
                                 <div class="bar-values">
                                     <span class="new-value">+@trend.NewTenants</span>
                                     <span class="cumulative-value">@trend.CumulativeTenants</span>
@@ -163,7 +163,7 @@
                             @foreach (var metric in revenueMetrics.OrderByDescending(r => r.Period).Take(12))
                             {
                                 <tr>
-                                    <td class="period-cell">@metric.Period.ToString("MMM yyyy")</td>
+                                    <td class="period-cell">@QDateFormat.MY(metric.Period)</td>
                                     <td class="revenue-cell">$@metric.MRR.ToString("N0")</td>
                                     <td class="revenue-cell">$@metric.ARR.ToString("N0")</td>
                                     <td class="revenue-cell">$@metric.TotalRevenue.ToString("N0")</td>
@@ -192,7 +192,7 @@
                     @foreach (var usage in usageTrends.OrderByDescending(u => u.Date).Take(6))
                     {
                         <div class="usage-card">
-                            <div class="usage-period">@usage.Date.ToString("MMMM yyyy")</div>
+                            <div class="usage-period">@QDateFormat.MYLong(usage.Date)</div>
                             <div class="usage-stats">
                                 <div class="usage-stat">
                                     <div class="stat-icon">

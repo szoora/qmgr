@@ -30,11 +30,11 @@
     <h1>@TabTitle()</h1>
     <p>
         <strong>@(report?.ScopeName ?? BranchState.CurrentBranchName)</strong>
-        &middot; @fromDate.ToString("d MMMM yyyy") to @toDate.ToString("d MMMM yyyy")
+        &middot; @QDateFormat.D(fromDate) to @QDateFormat.D(toDate)
         &middot; @FilterSummary()
     </p>
     <p class="print-meta">
-        Generated @DateTime.Now.ToString("dddd d MMMM yyyy, HH:mm")
+        Generated @QDateFormat.LongDT(DateTime.Now)
         &middot; times shown in @(report?.TimeZoneId ?? "UTC")
     </p>
 </div>
@@ -101,7 +101,7 @@
                     @* Gated on ReportsExport server-side rather than VisitorsView — this is a bulk
                        PII export (a name, phone and email per row), not the on-screen summary. *@
                     <QDataExport TItem="string[]" Title="Visitor log" FileStem="visitor-log"
-                                 Subtitle="@($"{fromDate:d MMM yyyy} – {toDate:d MMM yyyy} · {FilterSummary()}")"
+                                 Subtitle="@($"{QDateFormat.Range(fromDate, toDate)} · {FilterSummary()}")"
                                  SourceProvider="@ProvideExportSourceAsync" />
                 }
             </div>
@@ -544,9 +544,9 @@
                                 <tr class="@(i.ValidOnVisitDate ? "" : "row-bad")">
                                     <td>@i.FullName</td>
                                     <td>@i.Company</td>
-                                    <td>@(i.CheckedInAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</td>
-                                    <td>@(i.InductionCompletedAt?.ToLocalTime().ToString("d MMM yyyy") ?? "None recorded")</td>
-                                    <td>@(i.InductionExpiresAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</td>
+                                    <td>@(QDateFormat.D(i.CheckedInAt?.ToLocalTime()) ?? "—")</td>
+                                    <td>@(QDateFormat.D(i.InductionCompletedAt?.ToLocalTime()) ?? "None recorded")</td>
+                                    <td>@(QDateFormat.D(i.InductionExpiresAt?.ToLocalTime()) ?? "—")</td>
                                     <td>@(i.ValidOnVisitDate ? "Yes" : "No")</td>
                                 </tr>
                             }
@@ -572,7 +572,7 @@
                             {
                                 <tr class="@(w.OverrideReason != null ? "row-warn" : "")">
                                     <td>@w.FullName</td>
-                                    <td>@(w.OccurredAt?.ToLocalTime().ToString("d MMM, HH:mm") ?? "—")</td>
+                                    <td>@(QDateFormat.CDT(w.OccurredAt?.ToLocalTime()) ?? "—")</td>
                                     <td>@w.Event</td>
                                     <td>@(w.OverrideReason ?? w.Reason)</td>
                                 </tr>
@@ -603,7 +603,7 @@
                                 <tr>
                                     <td>@c.FullName</td>
                                     <td class="mono">@c.BadgeCode</td>
-                                    <td>@(c.CheckedInAt?.ToLocalTime().ToString("d MMM, HH:mm") ?? "—")</td>
+                                    <td>@(QDateFormat.CDT(c.CheckedInAt?.ToLocalTime()) ?? "—")</td>
                                     <td>@c.Purpose</td>
                                 </tr>
                             }
@@ -616,10 +616,10 @@
         <QCard Title="Data retention" Class="report-block">
             <ul class="rank-list">
                 <li><span class="rank-name">Policy</span><span class="rank-count">@compliance.Retention.RetentionDays days</span></li>
-                <li><span class="rank-name">Last purge</span><span class="rank-count">@(compliance.Retention.LastRunAt?.ToLocalTime().ToString("d MMM yyyy, HH:mm") ?? "Not recorded yet")</span></li>
+                <li><span class="rank-name">Last purge</span><span class="rank-count">@(QDateFormat.DT(compliance.Retention.LastRunAt?.ToLocalTime()) ?? "Not recorded yet")</span></li>
                 <li><span class="rank-name">Removed in that run</span><span class="rank-count">@compliance.Retention.LastRunVisitsPurged visit(s)</span></li>
                 <li><span class="rank-name">Removed in total</span><span class="rank-count">@compliance.Retention.TotalVisitsPurged visit(s)</span></li>
-                <li><span class="rank-name">Oldest record still held</span><span class="rank-count">@(compliance.Retention.OldestRetainedVisitAt?.ToLocalTime().ToString("d MMM yyyy") ?? "—")</span></li>
+                <li><span class="rank-name">Oldest record still held</span><span class="rank-count">@(QDateFormat.D(compliance.Retention.OldestRetainedVisitAt?.ToLocalTime()) ?? "—")</span></li>
             </ul>
             @if (compliance.Retention.LastRunAt == null)
             {

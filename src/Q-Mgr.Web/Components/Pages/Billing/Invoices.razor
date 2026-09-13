@@ -1,5 +1,7 @@
 @page "/billing/invoices"
 @using System.Text.Json
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
 @inject HttpClient Http
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
@@ -56,14 +58,15 @@ else
                          Items="@statusOptions" Label="Status" Placeholder="All Statuses" AllowClear="true" />
             </div>
 
-            <div class="filter-group">
-                <label>From Date</label>
-                <QDatePicker @bind-Value="filterFromDate" @bind-Value:after="ApplyFilters" />
-            </div>
-
-            <div class="filter-group">
-                <label>To Date</label>
-                <QDatePicker @bind-Value="filterToDate" @bind-Value:after="ApplyFilters" />
+            @* The shared range control rather than two loose pickers: one change event per edit,
+               a normalized From/To that cannot be inverted, and the same presets every other
+               filtered list in the app offers. Includes "All time", which is the sensible default
+               for a billing history. *@
+            <div class="filter-group filter-group--range">
+                <QDateRangePicker Range="@filterRange"
+                                  RangeChanged="@OnRangeChanged"
+                                  Presets="@DateRangePresets.WithAllTime"
+                                  ShowCaption="false" />
             </div>
 
             <div class="filter-group">
@@ -100,18 +103,18 @@ else
                                 <td>
                                     <strong>@invoice.InvoiceNumber</strong>
                                 </td>
-                                <td>@invoice.InvoiceDate.ToString("MMM dd, yyyy")</td>
+                                <td>@QDateFormat.D(invoice.InvoiceDate)</td>
                                 <td>
                                     @if (invoice.Status == "Overdue" && invoice.DueDate < DateTime.UtcNow)
                                     {
                                         <span class="text-danger">
-                                            @invoice.DueDate.ToString("MMM dd, yyyy")
+                                            @QDateFormat.D(invoice.DueDate)
                                             <QIcon Name="exclamation-circle-fill" />
                                         </span>
                                     }
                                     else
                                     {
-                                        @invoice.DueDate.ToString("MMM dd, yyyy")
+                                        @QDateFormat.D(invoice.DueDate)
                                     }
                                 </td>
                                 <td>
@@ -128,7 +131,7 @@ else
                                     @if (invoice.PaidAt.HasValue)
                                     {
                                         <span class="qm-text-muted small d-block mt-1">
-                                            Paid @invoice.PaidAt.Value.ToString("MMM dd")
+                                            Paid @QDateFormat.C(invoice.PaidAt.Value)
                                         </span>
                                     }
                                 </td>
@@ -186,7 +189,7 @@ else
             <QIcon Name="receipt" Size="64" />
             <h3>No Invoices Found</h3>
             <p>@(string.IsNullOrEmpty(filterStatus) ? "You don't have any invoices yet." : "No invoices match your filters.")</p>
-            @if (!string.IsNullOrEmpty(filterStatus) || filterFromDate != null || filterToDate != null)
+            @if (!string.IsNullOrEmpty(filterStatus) || !filterRange.IsAllTime)
             {
                 <QButton Text="Clear Filters" Icon="x-circle-fill" Variant="primary" OnClick="@ClearFilters" />
             }
@@ -248,11 +251,11 @@ else
                                     }
 
                                     <div class="invoice-to-dates">
-                                        <span>Invoice Date: @invoiceDetails.InvoiceDate.ToString("MMMM dd, yyyy")</span>
-                                        <span>Due Date: @invoiceDetails.DueDate.ToString("MMMM dd, yyyy")</span>
+                                        <span>Invoice Date: @QDateFormat.D(invoiceDetails.InvoiceDate)</span>
+                                        <span>Due Date: @QDateFormat.D(invoiceDetails.DueDate)</span>
                                         @if (invoiceDetails.PaidAt.HasValue)
                                         {
-                                            <span>Paid Date: @invoiceDetails.PaidAt.Value.ToString("MMMM dd, yyyy")</span>
+                                            <span>Paid Date: @QDateFormat.D(invoiceDetails.PaidAt.Value)</span>
                                         }
                                     </div>
                                 </div>
@@ -361,6 +364,18 @@ else
         font-weight: 600;
         color: var(--qm-text-secondary);
         margin: 0;
+    }
+
+    /* The range control holds two fields and a preset row, so it gets more of the grid than a
+       single select. min-width:0 so it can still shrink — a grid child that refuses to is what
+       makes the whole page scroll sideways. */
+    .filter-group--range {
+        grid-column: span 2;
+        min-width: 0;
+    }
+
+    @@media (max-width: 720px) {
+        .filter-group--range { grid-column: span 1; }
     }
 
     .invoices-table-card {
@@ -726,8 +741,9 @@ else
 
     // Filters
     private string? filterStatus;
-    private DateTime? filterFromDate;
-    private DateTime? filterToDate;
+    // Defaults to All time: a billing history is read to find one invoice, not to survey a period,
+    // so hiding older invoices behind a default window would be actively unhelpful.
+    private DateRange filterRange = DateRange.AllTime();
     private List<string> statusOptions = new() { "Paid", "Pending", "Overdue", "Failed" };
 
     // Pagination
@@ -787,21 +803,29 @@ else
             if (!string.IsNullOrEmpty(filterStatus) && i.Status != filterStatus)
                 return false;
 
-            if (filterFromDate.HasValue && i.InvoiceDate < filterFromDate.Value)
-                return false;
-
-            if (filterToDate.HasValue && i.InvoiceDate > filterToDate.Value)
-                return false;
+            // IsAllTime skips the comparison entirely rather than comparing against a sentinel
+            // date — the range's own "complete record" state, not a magic year.
+            if (!filterRange.IsAllTime)
+            {
+                var day = DateOnly.FromDateTime(i.InvoiceDate);
+                if (day < filterRange.From || day > filterRange.To)
+                    return false;
+            }
 
             return true;
         }).OrderByDescending(i => i.InvoiceDate).ToList();
     }
 
+    private void OnRangeChanged(DateRange range)
+    {
+        filterRange = range;
+        ApplyFilters();
+    }
+
     private void ClearFilters()
     {
         filterStatus = null;
-        filterFromDate = null;
-        filterToDate = null;
+        filterRange = DateRange.AllTime();
         ApplyFilters();
     }
 

@@ -267,7 +267,7 @@
         if (diff.TotalHours < 24)
             return $"{(int)diff.TotalHours} hour{((int)diff.TotalHours != 1 ? "s" : "")} ago";
 
-        return dateTime.ToString("MMM dd, HH:mm");
+        return QDateFormat.CDT(dateTime);
     }
 
     public void Dispose()

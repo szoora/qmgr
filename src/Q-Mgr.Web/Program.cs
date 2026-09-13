@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Localization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -23,6 +24,27 @@ builder.Services.AddSingleton(jsonOptions);
 
 // Add Radzen services
 builder.Services.AddRadzenComponents();
+
+// Data Protection. The Web app had NO AddDataProtection call at all until 2026-09-10, so it fell
+// back to an ephemeral key ring — regenerated on every process start, meaning antiforgery tokens
+// (and anything else protected here) stopped validating after any restart or redeploy.
+//
+// Same bug class as the one that made every production walk-in check-in return 500: the deployed
+// unit runs with ProtectSystem=strict + ProtectHome=true, which mounts everything outside
+// ReadWritePaths read-only, and the framework's default key location is AppContext.BaseDirectory —
+// inside the install root. The difference is only that this one FAILS SOFT: ASP.NET Core warns and
+// carries on with in-memory keys rather than throwing, which is exactly why it never announced
+// itself.
+//
+// The path is the SAME one the API persists to, deliberately: build-linux.ps1 creates it once at
+// /var/lib/qmgr/dataprotection-keys, chowns it, and lists it in both units' ReadWritePaths. It sits
+// outside $InstallRoot so a deploy does not replace it. SetApplicationName must match the API's
+// ("QMgr") — the application name is part of the key-derivation purpose chain, so two processes
+// sharing a ring but disagreeing on the name cannot read each other's payloads.
+builder.Services.AddDataProtection()
+    .SetApplicationName("QMgr")
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(AppContext.BaseDirectory, "dataprotection-keys")));
 
 // Note: Web project is a UI client only - it calls API via HTTP
 // DO NOT add Application/Infrastructure layers here as it causes conflicts

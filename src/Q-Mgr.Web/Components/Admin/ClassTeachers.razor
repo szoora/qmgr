@@ -21,10 +21,14 @@
             <h1>Class Teachers</h1>
             <p class="subtitle">Who holds pastoral responsibility for each class. A class teacher sees only the students in their own classes, and is alerted when one of them has a record logged.</p>
         </div>
-        @if (canManage)
-        {
-            <QButton Text="Assign a Class Teacher" Icon="person-plus" Variant="primary" OnClick="@(() => ShowAssignDialog(null))" />
-        }
+        <div class="header-actions">
+            @if (canManage)
+            {
+                <QButton Text="History" Icon="clock-history" Variant="secondary" OnClick="@(() => ShowHistoryDialog(null))"
+                         Title="Who held each class before — the audit answer to who could see a child's file last term" />
+                <QButton Text="Assign a Class Teacher" Icon="person-plus" Variant="primary" OnClick="@(() => ShowAssignDialog(null))" />
+            }
+        </div>
     </div>
 
     @if (isLoading)
@@ -124,10 +128,14 @@
                             @RenderTeacher(a, isPrimary: false)
                         }
 
-                        @if (canManage && row.ClassTeacher != null)
+                        @if (canManage)
                         {
                             <div class="ct-card-foot">
-                                <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
+                                @if (row.ClassTeacher != null)
+                                {
+                                    <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
+                                }
+                                <QButton Text="History" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => ShowHistoryDialog(row.ClassName))" />
                             </div>
                         }
                     </div>
@@ -206,6 +214,116 @@
     </FooterContent>
 </QModal>
 
+@* ── Contact details ───────────────────────────────────────────────────────────────────── *@
+<QModal @bind-Visible="showContact" Title="@($"Contact details — {contactTarget?.FullName}")" Icon="person-vcard" Size="md" ShowDefaultFooter="false">
+    <ChildContent>
+    <div class="form-grid">
+        <p class="ct-end-lead">
+            How staff and the front desk reach this teacher about a child in their class. Shown on
+            the class card, the roster row and the student's profile.
+        </p>
+        <QInput TValue="string" Label="Job title" @bind-Value="contactForm.JobTitle" Placeholder="e.g. Form tutor, Head of Year 4" MaxLength="120" />
+        <QInput TValue="string" Label="Phone" @bind-Value="contactForm.Phone" Placeholder="0753404044" MaxLength="30" />
+        <QInput TValue="string" Label="Alternate phone" @bind-Value="contactForm.AlternatePhone" Placeholder="A second number to try" MaxLength="30" />
+        <QInput TValue="string" Label="Office location" @bind-Value="contactForm.OfficeLocation" Placeholder="e.g. Staff room, Block B" MaxLength="200" />
+        <p class="form-hint">
+            Clearing a field removes it — this replaces the whole contact block rather than merging,
+            so a stale number can actually be taken off. The email address is part of the account and
+            is changed in the user editor.
+        </p>
+    </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showContact = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveContact" Disabled="@saving" />
+    </FooterContent>
+</QModal>
+
+@* ── History ───────────────────────────────────────────────────────────────────────────────
+   Assignments are ended, never deleted, precisely so this view can exist: "who could see this
+   child's file last term" is an audit question a school will eventually be asked. *@
+<QModal @bind-Visible="showHistory" Title="@(historyClass == null ? "Class-teacher history" : $"History — {historyClass}")" Icon="clock-history" Size="lg" ShowDefaultFooter="false">
+    <ChildContent>
+    @if (isLoadingHistory)
+    {
+        <div class="loading-container"><QSpinner Size="md" /><span>Loading history...</span></div>
+    }
+    else if (!history.Any())
+    {
+        <p class="ct-end-lead">
+            Nothing recorded @(historyClass == null ? "for this branch" : $"for {historyClass}") yet.
+            Every assignment made from now on appears here, including after it ends.
+        </p>
+    }
+    else
+    {
+        <div class="ct-hist-wrap">
+            <table class="ct-hist">
+                <thead>
+                    <tr>
+                        <th>Class</th>
+                        <th>Teacher</th>
+                        <th>Role</th>
+                        <th>Held</th>
+                        <th>Assigned by</th>
+                        <th>Ended</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in history)
+                    {
+                        <tr class="@(h.EndedAt == null ? "ct-hist-live" : "")">
+                            <td><strong>@h.ClassName</strong></td>
+                            <td>
+                                @h.FullName
+                                @if (!h.UserIsActive)
+                                {
+                                    <span class="ct-hist-sub">account inactive</span>
+                                }
+                            </td>
+                            <td>@(h.Role == ClassTeacherRole.ClassTeacher ? "Class teacher" : "Assistant")</td>
+                            <td class="ct-hist-when">
+                                @QDateFormat.LocalDT(h.AssignedAt)
+                                @if (h.EndedAt == null)
+                                {
+                                    <span class="ct-hist-sub">still current</span>
+                                }
+                                else
+                                {
+                                    <span class="ct-hist-sub">to @QDateFormat.LocalDT(h.EndedAt)</span>
+                                }
+                            </td>
+                            <td>@h.AssignedByName</td>
+                            <td>
+                                @if (h.EndedAt == null)
+                                {
+                                    <span class="ct-hist-sub">—</span>
+                                }
+                                else
+                                {
+                                    @(h.EndedByName ?? "Unknown")
+                                    @if (!string.IsNullOrWhiteSpace(h.EndReason))
+                                    {
+                                        <span class="ct-hist-sub">@h.EndReason</span>
+                                    }
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="form-hint">
+            Newest first, capped at the 500 most recent. A row with <strong>still current</strong>
+            is a live assignment, not history.
+        </p>
+    }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => showHistory = false)" />
+    </FooterContent>
+</QModal>
+
 @code {
     private bool isLoading = true;
     private bool canManage;
@@ -219,6 +337,15 @@
     private ClassTeacherDto? ending;
     private string endReason = string.Empty;
     private AssignClassTeacherRequest form = new();
+
+    private bool showContact;
+    private ClassTeacherDto? contactTarget;
+    private UpdateStaffContactRequest contactForm = new();
+
+    private bool showHistory;
+    private bool isLoadingHistory;
+    private string? historyClass;
+    private List<ClassTeacherDto> history = new();
 
     private record StaffOption(Guid Id, string Label, string RoleCode);
     private record RoleOption(ClassTeacherRole Value, string Label);
@@ -350,6 +477,61 @@
         }
     }
 
+    private void ShowContactDialog(ClassTeacherDto teacher)
+    {
+        contactTarget = teacher;
+
+        // Pre-filled from the DTO's own contact block. The save is a full replace, so anything not
+        // shown here would be blanked — every field the endpoint writes is on the form.
+        contactForm = new UpdateStaffContactRequest
+        {
+            Phone = teacher.Phone,
+            AlternatePhone = teacher.AlternatePhone,
+            OfficeLocation = teacher.OfficeLocation,
+            JobTitle = teacher.JobTitle
+        };
+        showContact = true;
+    }
+
+    private async Task SaveContact()
+    {
+        if (contactTarget == null) return;
+        saving = true;
+        try
+        {
+            await ClassTeacherApi.UpdateContactAsync(BranchState.CurrentBranchId, contactTarget.UserId, contactForm);
+            NotificationService.Notify(ToastSeverity.Success, "Contact updated", $"{contactTarget.FullName}'s details have been saved.");
+            showContact = false;
+            contactTarget = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save the contact details", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task ShowHistoryDialog(string? className)
+    {
+        historyClass = className;
+        history = new();
+        showHistory = true;
+        isLoadingHistory = true;
+
+        try
+        {
+            history = await ClassTeacherApi.GetHistoryAsync(BranchState.CurrentBranchId, className);
+        }
+        finally
+        {
+            isLoadingHistory = false;
+        }
+    }
+
     private RenderFragment RenderTeacher(ClassTeacherDto t, bool isPrimary) => @<div class="ct-person @(isPrimary ? "" : "ct-person-assistant")">
         <div class="ct-person-main">
             <div class="ct-avatar">@Initials(t.FullName)</div>
@@ -392,7 +574,13 @@
         </div>
         @if (canManage)
         {
-            <QButton Icon="person-dash" Variant="ghost" Size="sm" Title="End this assignment" OnClick="@(() => ShowEndDialog(t))" />
+            <div class="ct-person-actions">
+                @* Edited here rather than only in the user editor: the people who maintain "who do
+                   I call about this child" are not always the people who administer accounts, which
+                   is why the API gives this its own endpoint under classes.teachers.manage. *@
+                <QButton Icon="pencil" Variant="ghost" Size="sm" Title="Edit contact details" OnClick="@(() => ShowContactDialog(t))" />
+                <QButton Icon="person-dash" Variant="ghost" Size="sm" Title="End this assignment" OnClick="@(() => ShowEndDialog(t))" />
+            </div>
         }
     </div>;
 
@@ -484,7 +672,27 @@
     .ct-contact a:hover { color: var(--qm-primary); text-decoration: underline; }
 
     .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: 13.5px; }
-    .ct-card-foot { padding: 0 16px 12px; }
+    /* flex-wrap at source: two buttons on a narrow card is exactly the *-footer shape that
+       widened the document and made the whole page scroll sideways. */
+    .ct-card-foot { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px; }
+    .ct-person-actions { display: flex; gap: 2px; flex-shrink: 0; }
+
+    /* The table scrolls; the page never does. */
+    .ct-hist-wrap { overflow-x: auto; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
+    .ct-hist { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ct-hist th {
+        text-align: left; padding: 9px 12px; white-space: nowrap;
+        background: var(--qm-bg-elevated);
+        border-bottom: 1px solid var(--qm-border);
+        font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--qm-text-muted);
+    }
+    .ct-hist td { padding: 9px 12px; border-bottom: 1px solid var(--qm-border); vertical-align: top; color: var(--qm-text-secondary); }
+    .ct-hist tr:last-child td { border-bottom: none; }
+    /* Tinted from --qm-primary-rgb so it follows the theme with no [data-theme] override. */
+    .ct-hist-live { background: rgba(var(--qm-primary-rgb), 0.06); }
+    .ct-hist-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ct-hist-sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--qm-text-muted); }
 
     .ct-inline-warn {
         display: flex; gap: 9px; align-items: flex-start;

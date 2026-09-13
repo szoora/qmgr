@@ -38,14 +38,44 @@ public static class QDateFormat
     /// <summary>Wednesday 9 September 2026 — document headers, where there is room to be formal.</summary>
     public const string LongDate = "dddd d MMMM yyyy";
 
+    /// <summary>Wednesday 9 September 2026, 14:30 — a formal header that also states the time it was produced.</summary>
+    public const string LongDateTime = "dddd d MMMM yyyy, HH:mm";
+
+    /// <summary>Wednesday 9 September — a day header inside a view whose year is already established (the appointments day view, a booking picker).</summary>
+    public const string LongDayDate = "dddd d MMMM";
+
+    /// <summary>Wednesday. On its own only where the weekday IS the fact ("we are closed on a Wednesday").</summary>
+    public const string Weekday = "dddd";
+
     /// <summary>14:30. 24-hour throughout: no am/pm, no ambiguity, and it sorts.</summary>
     public const string Time = "HH:mm";
+
+    /// <summary>
+    /// 14:30:05 — a live clock, and the evacuation roll call's "as at", where the second is part of
+    /// the claim. Note that unlike the date formats, "HH:mm" and "HH:mm:ss" were the ONLY two time
+    /// spellings in the app, and neither can be misread — so time was never the ambiguity this
+    /// class exists to fix, and the remaining hand-typed <c>ToString("HH:mm")</c> calls on live
+    /// clocks were deliberately left rather than churned.
+    /// </summary>
+    public const string TimeWithSeconds = "HH:mm:ss";
 
     /// <summary>09 Sep — inside a period whose year is already stated (chart axes, table rows).</summary>
     public const string Compact = "dd MMM";
 
+    /// <summary>09 Sep, 14:30 — a timestamp inside a period whose year is already stated (activity feeds, "last seen").</summary>
+    public const string CompactDateTime = "dd MMM, HH:mm";
+
     /// <summary>Sep 2026</summary>
     public const string MonthYear = "MMM yyyy";
+
+    /// <summary>September 2026 — a month heading with room for the full name.</summary>
+    public const string MonthYearLong = "MMMM yyyy";
+
+    /// <summary>Sep — a bare month label on a chart axis, where the surrounding period gives the year.</summary>
+    public const string MonthAbbrev = "MMM";
+
+    /// <summary>September — a bare month name in prose.</summary>
+    public const string MonthName = "MMMM";
 
     /// <summary>2026-09-09 — machine-facing only: filenames, query strings, CSV sort keys.</summary>
     public const string Iso = "yyyy-MM-dd";
@@ -66,7 +96,51 @@ public static class QDateFormat
     public static string T(DateTime value) => value.ToString(Time, Inv);
     public static string T(DateTime? value) => value.HasValue ? T(value.Value) : "—";
 
+    /// <summary>14:30:05.</summary>
+    public static string TS(DateTime value) => value.ToString(TimeWithSeconds, Inv);
+
     public static string Long(DateTime value) => value.ToString(LongDate, Inv);
+    public static string Long(DateTime? value) => value.HasValue ? Long(value.Value) : "—";
+
+    /// <summary>Wednesday 9 September 2026, 14:30.</summary>
+    public static string LongDT(DateTime value) => value.ToString(LongDateTime, Inv);
+    public static string LongDT(DateTime? value) => value.HasValue ? LongDT(value.Value) : "—";
+
+    /// <summary>Wednesday 9 September — a day header with no year.</summary>
+    public static string LongDay(DateTime value) => value.ToString(LongDayDate, Inv);
+    public static string LongDay(DateOnly value) => value.ToString(LongDayDate, Inv);
+
+    /// <summary>Wed 09 Sep 2026.</summary>
+    public static string DD(DateTime value) => value.ToString(DayDate, Inv);
+    public static string DD(DateTime? value) => value.HasValue ? DD(value.Value) : "—";
+
+    /// <summary>09 Sep — no year.</summary>
+    public static string C(DateTime value) => value.ToString(Compact, Inv);
+    public static string C(DateOnly value) => value.ToString(Compact, Inv);
+    public static string C(DateTime? value) => value.HasValue ? C(value.Value) : "—";
+
+    /// <summary>09 Sep, 14:30 — no year.</summary>
+    public static string CDT(DateTime value) => value.ToString(CompactDateTime, Inv);
+    public static string CDT(DateTime? value) => value.HasValue ? CDT(value.Value) : "—";
+
+    /// <summary>Sep 2026.</summary>
+    public static string MY(DateTime value) => value.ToString(MonthYear, Inv);
+    public static string MY(DateTime? value) => value.HasValue ? MY(value.Value) : "—";
+
+    /// <summary>September 2026.</summary>
+    public static string MYLong(DateTime value) => value.ToString(MonthYearLong, Inv);
+
+    /// <summary>Sep — a bare month label.</summary>
+    public static string Mon(DateTime value) => value.ToString(MonthAbbrev, Inv);
+    public static string Mon(DateOnly value) => value.ToString(MonthAbbrev, Inv);
+
+    /// <summary>September — a bare month name.</summary>
+    public static string MonLong(DateTime value) => value.ToString(MonthName, Inv);
+
+    /// <summary>Wednesday.</summary>
+    public static string Day(DateTime value) => value.ToString(Weekday, Inv);
+    public static string Day(DateOnly value) => value.ToString(Weekday, Inv);
+
     public static string Iso8601(DateOnly value) => value.ToString(Iso, Inv);
     public static string Iso8601(DateTime value) => value.ToString(Iso, Inv);
 

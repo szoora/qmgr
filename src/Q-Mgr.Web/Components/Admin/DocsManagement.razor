@@ -68,7 +68,7 @@
                         <span class="doc-stat"><QIcon Name="link-45deg" />/docs/@article.Slug</span>
                         @if (article.UpdatedAt.HasValue)
                         {
-                            <span class="doc-stat">Updated @article.UpdatedAt.Value.ToString("MMM d")</span>
+                            <span class="doc-stat">Updated @QDateFormat.C(article.UpdatedAt.Value)</span>
                         }
                     </div>
                 </div>

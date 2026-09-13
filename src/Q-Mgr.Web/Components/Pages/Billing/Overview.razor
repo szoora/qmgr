@@ -60,7 +60,7 @@ else
                     </div>
                     <div class="detail-item">
                         <QIcon Name="clock-fill" />
-                        <span>Next Billing: @billingInfo.NextBillingDate?.ToString("MMM dd, yyyy")</span>
+                        <span>Next Billing: @QDateFormat.D(billingInfo.NextBillingDate)</span>
                     </div>
                     <div class="detail-item">
                         <QIcon Name="credit-card-fill" />
@@ -213,7 +213,7 @@ else
                     }
                     else
                     {
-                        <text>Pick a plan any time before @trialEndsAt?.ToString("MMMM dd, yyyy") to keep uninterrupted access.</text>
+                        <text>Pick a plan any time before @QDateFormat.D(trialEndsAt) to keep uninterrupted access.</text>
                     }
                 </p>
                 <div class="card-actions">
@@ -259,7 +259,7 @@ else
                         {
                             <tr>
                                 <td class="invoice-number">@invoice.InvoiceNumber</td>
-                                <td>@invoice.InvoiceDate.ToString("MMM dd, yyyy")</td>
+                                <td>@QDateFormat.D(invoice.InvoiceDate)</td>
                                 <td>@invoice.Description</td>
                                 <td><strong>@invoice.Currency @invoice.Amount.ToString("N2")</strong></td>
                                 <td>

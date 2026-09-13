@@ -81,14 +81,14 @@
                                         <QBadge Text="@tenant.Status.ToString()" Variant="@GetStatusVariant(tenant.Status)" />
                                     </td>
                                     <td>
-                                        <div class="date-cell">@tenant.CreatedAt.ToString("MMM d, yyyy")</div>
+                                        <div class="date-cell">@QDateFormat.D(tenant.CreatedAt)</div>
                                     </td>
                                     <td>
                                         @if (tenant.TrialEndsAt.HasValue)
                                         {
                                             var isExpired = tenant.TrialEndsAt.Value < DateTime.UtcNow;
                                             <div class="date-cell @(isExpired ? "expired" : "")">
-                                                @tenant.TrialEndsAt.Value.ToString("MMM d, yyyy")
+                                                @QDateFormat.D(tenant.TrialEndsAt.Value)
                                             </div>
                                         }
                                         else
@@ -262,7 +262,7 @@
                         </div>
                         <div class="detail-item">
                             <label>Current Period Ends:</label>
-                            <span>@tenantDetails.Subscription.CurrentPeriodEnd.ToString("MMM d, yyyy")</span>
+                            <span>@QDateFormat.D(tenantDetails.Subscription.CurrentPeriodEnd)</span>
                         </div>
                     </div>
                 }

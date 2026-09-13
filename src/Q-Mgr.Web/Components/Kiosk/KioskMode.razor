@@ -84,8 +84,8 @@ else
             @* The clock updates every second. It is deliberately NOT a live region: announcing
                it would talk over everything else a screen-reader user is trying to hear. *@
             <div class="header-info" aria-live="off">
-                <span class="datetime">@currentDateTime.ToString("dddd, MMMM dd, yyyy")</span>
-                <span class="time">@currentDateTime.ToString("HH:mm:ss")</span>
+                <span class="datetime">@QDateFormat.Long(currentDateTime)</span>
+                <span class="time">@QDateFormat.TS(currentDateTime)</span>
             </div>
         </div>
         <div class="welcome-section">

@@ -336,4 +336,35 @@ public class NotificationApiService : INotificationApiService
             _logger.LogError(ex, "Failed to delete notification: {NotificationId}", notificationId);
         }
     }
+
+    // ---------------------------------------------------------------------------------
+    // Preferences and the delivery log — these THROW. See the interface for why.
+    // ---------------------------------------------------------------------------------
+
+    public async Task<List<NotificationEventDefinition>> GetPreferenceEventsAsync()
+    {
+        var response = await _httpClient.GetAsync("api/v1/notifications/preferences/events");
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<List<NotificationEventDefinition>>(_jsonOptions) ?? new();
+    }
+
+    public async Task<UserNotificationPreferencesDto> GetPreferencesAsync()
+    {
+        var response = await _httpClient.GetAsync("api/v1/notifications/preferences");
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<UserNotificationPreferencesDto>(_jsonOptions) ?? new();
+    }
+
+    public async Task SavePreferencesAsync(UserNotificationPreferencesDto preferences)
+    {
+        var response = await _httpClient.PutAsJsonAsync("api/v1/notifications/preferences", preferences, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
+
+    public async Task<List<NotificationDeliveryDto>> GetDeliveriesAsync(bool failuresOnly = false, int limit = 100)
+    {
+        var response = await _httpClient.GetAsync($"api/v1/notifications/deliveries?failuresOnly={failuresOnly}&limit={limit}");
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<List<NotificationDeliveryDto>>(_jsonOptions) ?? new();
+    }
 }
