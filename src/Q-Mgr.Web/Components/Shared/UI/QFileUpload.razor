@@ -3,6 +3,7 @@
 @inject IJSRuntime JSRuntime
 @inject IAuthService AuthService
 @inject HttpClient Http
+@inject IConfiguration Configuration
 
 @*
     Shared evidence/attachment upload widget — built once so any future feature needing "attach a
@@ -71,7 +72,7 @@
     [Parameter] public bool HasError { get; set; }
     [Parameter] public string? ErrorMessage { get; set; }
 
-    /// <summary>Endpoint the file is POSTed to (multipart, field name "file") — relative to the API's own base URL, matching HttpClient's own convention elsewhere in this app.</summary>
+    /// <summary>Endpoint the file is POSTed to (multipart, field name "file") — relative to the API's public base URL (ApiPublicUrl), since the browser, not this server, makes the request.</summary>
     [Parameter, EditorRequired] public string UploadUrl { get; set; } = string.Empty;
 
     [Parameter] public string Accept { get; set; } = "image/*,application/pdf";
@@ -95,13 +96,16 @@
         selfRef = DotNetObjectReference.Create(this);
         var token = await AuthService.GetAccessTokenAsync();
 
-        // The API is a separate origin from this Web app (e.g. :5001 vs :5002 in dev) - the page's
-        // own <base href> resolves to THIS app's origin, not the API's, so building the upload URL
-        // from it silently posted evidence uploads back to the Web server itself (a 405, since Web
-        // has no matching route) instead of the API. Http.BaseAddress is already configured with
-        // the real ApiBaseUrl (see Program.cs) and is what every other page's API calls use - reuse
-        // it here too instead of re-deriving a URL from the DOM.
-        var fullUrl = UploadUrl.StartsWith("http") ? UploadUrl : new Uri(Http.BaseAddress!, UploadUrl).ToString();
+        // The upload is sent by the BROWSER (qFileUpload.js calls fetch), so its target must be an
+        // address the browser can reach. Two wrong answers have shipped here:
+        //   1. The page's own <base href> — this Web app's origin, which has no upload route (405).
+        //   2. Http.BaseAddress — ApiBaseUrl, which is right for this server's own calls but is the
+        //      internal loopback in production (http://127.0.0.1:{ApiPort}). No browser can reach it,
+        //      so every welfare evidence upload failed there (found 2026-09-11, alongside signage PDFs
+        //      failing on the same unreachable address).
+        // ApiPublicUrl is the browser-facing API origin (https://{host} in production, which nginx
+        // routes under /api/), the same key MainLayout, ApiClientsSetup and Support already use.
+        var fullUrl = UploadUrl.StartsWith("http") ? UploadUrl : new Uri(BrowserApiBaseUri(), UploadUrl).ToString();
 
         await JSRuntime.InvokeVoidAsync("qFileUpload.init", inputRef, new
         {
@@ -113,6 +117,14 @@
             quality = ImageQuality,
             dotNetRef = selfRef
         });
+    }
+
+    // Trailing slash guaranteed: resolving "api/v1/…" against a base whose path lacks one would drop
+    // that path's last segment.
+    private Uri BrowserApiBaseUri()
+    {
+        var baseUrl = Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
+        return new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
     }
 
     [JSInvokable]

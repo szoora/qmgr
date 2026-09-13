@@ -17,15 +17,21 @@ public class LocalDiskMediaStorageService : IMediaStorageService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<LocalDiskMediaStorageService> _logger;
 
+    // The browser-facing origin that serves /uploads/ (production: https://qmgr.cashbook.ug, where
+    // nginx routes /uploads/ to this API). Unset in development, where the request host is right.
+    private readonly string? _publicBaseUrl;
+
     private const string RelativeFolder = "uploads/media";
 
     public LocalDiskMediaStorageService(
         IWebHostEnvironment webHostEnvironment,
         IHttpContextAccessor httpContextAccessor,
+        IConfiguration configuration,
         ILogger<LocalDiskMediaStorageService> logger)
     {
         _webHostEnvironment = webHostEnvironment;
         _httpContextAccessor = httpContextAccessor;
+        _publicBaseUrl = configuration["MediaStorage:PublicBaseUrl"];
         _logger = logger;
     }
 
@@ -93,12 +99,22 @@ public class LocalDiskMediaStorageService : IMediaStorageService
     /// Web instance is rendering the request — matches the reasoning already documented
     /// on ContentController.UploadMediaContent. `expiry` is meaningless for a plain
     /// static file and is ignored (unlike the S3 provider, where it drives a pre-signed URL).
+    ///
+    /// MediaStorage:PublicBaseUrl wins when set. The request host is only right when the browser
+    /// itself called the API. In production every upload arrives from Q-Mgr.Web's server-side
+    /// HttpClient over the internal loopback (ApiBaseUrl, http://127.0.0.1:{ApiPort}), so the
+    /// request host is an address no browser can reach — and it was being saved into every
+    /// uploaded file's link, which is why signage showed "503 while retrieving PDF
+    /// http://127.0.0.1:8586/uploads/…".
     /// </summary>
     public Task<string> GetUrlAsync(string filePath, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
     {
-        var request = _httpContextAccessor.HttpContext?.Request;
         var relativePath = filePath.StartsWith(RelativeFolder) ? filePath : $"{RelativeFolder}/{Path.GetFileName(filePath)}";
 
+        if (!string.IsNullOrWhiteSpace(_publicBaseUrl))
+            return Task.FromResult($"{_publicBaseUrl.TrimEnd('/')}/{relativePath}");
+
+        var request = _httpContextAccessor.HttpContext?.Request;
         if (request == null)
         {
             // No HttpContext (e.g. a background job) — best effort, no host to anchor to.
