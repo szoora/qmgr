@@ -242,6 +242,17 @@ public record WelfareSummaryDto
     public int OverdueActionsCount { get; init; }
     public List<WelfareCategoryCountDto> ByCategory { get; init; } = new();
     public List<WelfareStaffCountDto> ByStaff { get; init; } = new();
+
+    /// <summary>
+    /// The classes these figures actually cover, when the caller's role is class-scoped. Empty for
+    /// an unscoped caller, which is every role that is not a class teacher.
+    ///
+    /// Carried on the summary rather than fetched separately because a scoped total is the more
+    /// dangerous number of the two: "42 behaviour records" read by a form tutor as the school's
+    /// figure, when it is their own class's, is a wrong conclusion drawn from a correct query. The
+    /// scope is enforced server-side either way — this only makes it legible.
+    /// </summary>
+    public List<string> ScopedToClasses { get; init; } = new();
 }
 
 public record WelfareCategoryCountDto

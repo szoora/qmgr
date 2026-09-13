@@ -44,17 +44,20 @@ public class BatchController : ControllerBase
     private readonly QMgrDbContext _context;
     private readonly IBatchOperationService _resolver;
     private readonly ITenantContextAccessor _tenantAccessor;
+    private readonly IStudentScopeService _scope;
     private readonly ILogger<BatchController> _logger;
 
     public BatchController(
         QMgrDbContext context,
         IBatchOperationService resolver,
         ITenantContextAccessor tenantAccessor,
+        IStudentScopeService scope,
         ILogger<BatchController> logger)
     {
         _context = context;
         _resolver = resolver;
         _tenantAccessor = tenantAccessor;
+        _scope = scope;
         _logger = logger;
     }
 
@@ -148,6 +151,11 @@ public class BatchController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Undo(Guid branchId, Guid jobId, CancellationToken ct)
     {
+        // BEFORE the job lookup, not inside GuardAsync below: a scoped caller must not be able to
+        // tell an existing batch (403) from one that never existed (404) by the status code.
+        var scopeRefusal = await ScopedCallerRefusalAsync();
+        if (scopeRefusal != null) return scopeRefusal;
+
         var job = await _context.RosterImportJobs
             .FirstOrDefaultAsync(j => j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Batch, ct);
 
@@ -380,6 +388,26 @@ public class BatchController : ControllerBase
 
         if (isSuperAdmin) return null;
 
+        // A class-scoped caller cannot run ANY batch, and the reason is structural rather than a
+        // judgement about this particular operation.
+        //
+        // Every endpoint here takes a bare list of record IDs and hands them to a resolver that
+        // filters on BranchId alone, then to BatchOperationProcessorJob -- a Hangfire worker, where
+        // IStudentScopeService does not exist because it reads the caller's HTTP context. There is
+        // nowhere downstream to apply the row filter every welfare and roster READ respects, so the
+        // preview would name students outside the caller's classes and the run would write to them.
+        // This is the same rule the welfare bulk import already follows: a bulk operation carried
+        // out by a background job cannot be row-scoped later, so it is refused here.
+        //
+        // It matters today and not only in theory: the class-teacher role holds welfare.edit, which
+        // is the gate on the three welfare batch operations.
+        //
+        // 403 with a reason, not the 404 used for out-of-scope records: no record's existence is
+        // being confirmed, the caller's own role is the whole answer, and they need to be told which
+        // so they ask an administrator instead of retrying.
+        var scopeRefusal = await ScopedCallerRefusalAsync();
+        if (scopeRefusal != null) return scopeRefusal;
+
         var required = RequiredPermission(operation);
         if (!await HasPermissionAsync(required))
             return StatusCode(StatusCodes.Status403Forbidden, new
@@ -395,6 +423,27 @@ public class BatchController : ControllerBase
     /// A batch is never allowed to do something the caller could not do singly. Undo is gated on
     /// the same permission as the operation it reverses, for the same reason.
     /// </summary>
+    /// <summary>
+    /// Refuses a class-scoped caller, or null for everyone else.
+    ///
+    /// Called from <see cref="GuardAsync"/> and, separately, as the FIRST thing Undo does. Undo
+    /// has to read the job before it knows which operation to check the permission for, so if the
+    /// scope check waited for GuardAsync a scoped caller could tell an existing job (403) from a
+    /// missing one (404) by the status code alone. Cheap to run twice; the scope service memoises
+    /// per request.
+    /// </summary>
+    private async Task<IActionResult?> ScopedCallerRefusalAsync()
+    {
+        if (await _scope.IsUnscopedAsync()) return null;
+
+        return StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+        {
+            Title = "A class teacher cannot run bulk operations",
+            Detail = "A batch is applied by a background job, which cannot narrow it to your classes. Change these records one at a time, or ask an administrator to run the batch.",
+            Status = StatusCodes.Status403Forbidden
+        });
+    }
+
     private static string RequiredPermission(BatchOperation operation) => operation switch
     {
         BatchOperation.AdvanceClass or BatchOperation.SetField or BatchOperation.Deactivate or BatchOperation.SetConsent

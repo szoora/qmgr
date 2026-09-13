@@ -207,6 +207,27 @@ public class WelfareController : ControllerBase
             || (r.AdditionalStudentIds != null && r.AdditionalStudentIds.Any(a => ids.Contains(a))));
     }
 
+    /// <summary>
+    /// The import log's counterpart to <see cref="ApplyStudentScopeAsync"/>. A welfare import job's
+    /// per-row entries carry <c>StudentName</c>, <c>GuardianName</c> and the row message for every
+    /// row of a whole-branch backfill, so an unscoped import log hands a class-scoped caller the
+    /// entire school roll and the descriptions that came with it — the same leak
+    /// <see cref="ApplyStudentScopeAsync"/> exists to stop, reached by a different route.
+    ///
+    /// There is no student ID to filter on here (a failed row may have matched no student at all),
+    /// so the rule is ownership rather than class membership: a scoped caller sees the jobs they
+    /// started themselves and nothing else. FAILS CLOSED — an unidentifiable caller sees none.
+    /// </summary>
+    private async Task<IQueryable<RosterImportJob>> ApplyImportJobScopeAsync(IQueryable<RosterImportJob> query)
+    {
+        if (await _scope.IsUnscopedAsync()) return query;
+
+        var userId = CurrentUserId();
+        if (userId == Guid.Empty) return query.Where(_ => false);
+
+        return query.Where(j => j.CreatedByUserId == userId);
+    }
+
     // ---------------------------------------------------------------------
     // Categories (org-scoped, admin-managed — same "admin picks it" convention as ClassColors)
     // ---------------------------------------------------------------------
@@ -483,6 +504,12 @@ public class WelfareController : ControllerBase
 
         // --- Identity & ownership ---
         var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == request.StudentId && s.BranchId == branchId && s.IsActive);
+        // A class-scoped caller may only file against a student they hold. Reads were scoped from
+        // Phase 77 but this WRITE was not, so a form tutor could log a safeguarding record against
+        // any child in the school by ID -- and learn their name from the response. Deliberately the
+        // SAME message as an unknown student: an out-of-scope child must read as one that is not
+        // there, or the error itself confirms the student exists.
+        if (student != null && !await _scope.CanSeeStudentAsync(branchId, student.Id)) student = null;
         if (student == null)
             return BadRequest(new ProblemDetails { Title = "Student not found", Detail = "The selected student does not exist in this branch, or is no longer active.", Status = StatusCodes.Status400BadRequest });
 
@@ -505,7 +532,12 @@ public class WelfareController : ControllerBase
             .ToList();
         if (additionalStudentIds.Count > 0)
         {
-            var validCount = await _context.Students.CountAsync(s => additionalStudentIds.Contains(s.Id) && s.BranchId == branchId && s.IsActive);
+            var validQuery = _context.Students.Where(s => additionalStudentIds.Contains(s.Id) && s.BranchId == branchId && s.IsActive);
+            // Same scope rule as the primary student above. Without this, the linked-students list
+            // is a side door onto exactly what the primary check refuses -- a record on the timeline
+            // of any child in the branch.
+            validQuery = await _scope.ApplyAsync(validQuery, branchId);
+            var validCount = await validQuery.CountAsync();
             if (validCount != additionalStudentIds.Count)
                 return BadRequest(new ProblemDetails { Title = "One or more additional students not found", Detail = "Every linked student must exist in this branch and be active.", Status = StatusCodes.Status400BadRequest });
         }
@@ -1078,13 +1110,21 @@ public class WelfareController : ControllerBase
             .OrderByDescending(c => c.Count)
             .ToList();
 
+        // Told to the client so the reports page can say whose figures these are. A class teacher
+        // reading their own class's total as the school's is a wrong conclusion from a correct
+        // query, and nothing on the page said otherwise.
+        var scopedClasses = (await _scope.IsUnscopedAsync())
+            ? new List<string>()
+            : (await _scope.GetClassNamesAsync(branchId)).ToList();
+
         return Ok(new WelfareSummaryDto
         {
             TotalRecords = records.Count,
             OpenActionsCount = records.Count(r => r.Status != WelfareStatus.Resolved),
             OverdueActionsCount = records.Count(r => r.Status != WelfareStatus.Resolved && r.ActionDueDate.HasValue && r.ActionDueDate.Value < now),
             ByCategory = byCategory,
-            ByStaff = byStaff
+            ByStaff = byStaff,
+            ScopedToClasses = scopedClasses
         });
     }
 
@@ -1172,6 +1212,24 @@ public class WelfareController : ControllerBase
         if (userId == Guid.Empty)
             return BadRequest(new ProblemDetails { Title = "Historical imports must be started by a signed-in user", Detail = "Imported records are attributed to the importing staff member; API-key callers can't be attributed.", Status = StatusCodes.Status400BadRequest });
 
+        // A class-scoped caller cannot start one at all. The processor matches rows to students by
+        // code and name inside a Hangfire worker, where IStudentScopeService — which reads the
+        // caller's HTTP context — does not exist, so there is nowhere downstream to enforce the
+        // row-level scope. Rather than let a bulk write bypass the scope every read respects, the
+        // whole operation is refused here: a backfill of a school's previous ledger is an
+        // administrative act, not a form tutor's.
+        //
+        // A 403 with a reason, not the 404 this controller uses elsewhere: there is no record whose
+        // existence a 403 would confirm here — the caller's own role is the answer, and they need
+        // to be told which so they ask an administrator rather than retrying the upload.
+        if (!await _scope.IsUnscopedAsync())
+            return StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+            {
+                Title = "A class teacher cannot bulk-import welfare records",
+                Detail = "An import writes records for any student in the file, which would reach beyond your classes. Ask an administrator to run the backfill.",
+                Status = StatusCodes.Status403Forbidden
+            });
+
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         var job = new RosterImportJob
@@ -1214,8 +1272,12 @@ public class WelfareController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetTimelineContext(Guid branchId, Guid studentId)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
-        if (branchError != null) return branchError;
+        // VerifyStudentAccess, not VerifyBranchOwnership. This is a per-student endpoint and it
+        // hands back the child's name, code and class, so on the branch-only guard a class teacher
+        // could read the identity of any student in the school by ID. Same 404-not-403 shape as the
+        // rest of the per-student surface: an out-of-scope student must read as one that is not there.
+        var accessError = await VerifyStudentAccess(branchId, studentId);
+        if (accessError != null) return accessError;
 
         // Inactive students are included on purpose: a child who has left still has a ledger, and
         // a safeguarding record does not stop being readable because the roster row was retired.
@@ -1265,8 +1327,11 @@ public class WelfareController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var jobs = await _context.RosterImportJobs
-            .Where(j => j.BranchId == branchId && j.Kind == RosterImportKind.Welfare)
+        var query = _context.RosterImportJobs
+            .Where(j => j.BranchId == branchId && j.Kind == RosterImportKind.Welfare);
+        query = await ApplyImportJobScopeAsync(query);
+
+        var jobs = await query
             .OrderByDescending(j => j.CreatedAt)
             .Take(Math.Clamp(limit, 1, 200))
             .ToListAsync();
@@ -1284,8 +1349,11 @@ public class WelfareController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var job = await _context.RosterImportJobs.FirstOrDefaultAsync(j =>
+        var jobQuery = _context.RosterImportJobs.Where(j =>
             j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Welfare);
+        jobQuery = await ApplyImportJobScopeAsync(jobQuery);
+
+        var job = await jobQuery.FirstOrDefaultAsync();
         if (job == null) return NotFound();
         return Ok(StudentsController.MapToDto(job));
     }
@@ -1301,9 +1369,11 @@ public class WelfareController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var jobExists = await _context.RosterImportJobs.AnyAsync(j =>
+        var existsQuery = _context.RosterImportJobs.Where(j =>
             j.Id == jobId && j.BranchId == branchId && j.Kind == RosterImportKind.Welfare);
-        if (!jobExists) return NotFound();
+        existsQuery = await ApplyImportJobScopeAsync(existsQuery);
+
+        if (!await existsQuery.AnyAsync()) return NotFound();
 
         var query = _context.RosterImportJobEntries.Where(e => e.RosterImportJobId == jobId);
         if (outcome.HasValue) query = query.Where(e => e.Outcome == outcome.Value);
@@ -1618,8 +1688,11 @@ public class WelfareController : ControllerBase
     [ProducesResponseType(typeof(EscalationCheckDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetEscalationCheck(Guid branchId, Guid studentId, [FromQuery] int windowDays = 120)
     {
-        var branchError = await VerifyBranchOwnership(branchId);
-        if (branchError != null) return branchError;
+        // Per-student, and the sentence it returns names the child and counts their prior responses,
+        // so it needs the student guard rather than the branch one. "Guidance, never a barrier" is
+        // about not blocking a save; it was never a reason to answer for a student out of scope.
+        var accessError = await VerifyStudentAccess(branchId, studentId);
+        if (accessError != null) return accessError;
 
         var student = await _context.Students.FirstOrDefaultAsync(s => s.Id == studentId && s.BranchId == branchId);
         if (student == null) return NotFound();
@@ -1675,9 +1748,16 @@ public class WelfareController : ControllerBase
     /// Cohort and disproportionality reporting. The uncomfortable one is deliberate: if boarders,
     /// or one sex, or one house are escalated to a punitive response faster for comparable
     /// incidents, only a report will ever show it.
+    ///
+    /// Gated at welfare.reports.view, NOT the plain welfare.view it carried until 2026-09-10. This
+    /// is a branch-wide aggregate rendered only by the reports page, and it was the one report
+    /// endpoint any welfare.view holder could call directly — the whole point of a separate
+    /// reports permission is that seeing everyone's records in one view is a bigger exposure than
+    /// visiting one student at a time. The row-level class scope below is a separate axis and does
+    /// not substitute for the gate.
     /// </summary>
     [HttpGet("branches/{branchId:guid}/welfare/cohorts")]
-    [RequirePermission(Permissions.WelfareView)]
+    [RequirePermission(Permissions.WelfareReportsView)]
     [ProducesResponseType(typeof(WelfareCohortReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCohortReport(Guid branchId, [FromQuery] int days = 90)
     {
