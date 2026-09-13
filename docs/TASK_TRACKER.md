@@ -5,6 +5,562 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
+## 🧭 SESSION HANDOVER (written 2026-09-13) — Phase 82: items 3–5 of the 2026-09-10 backlog, closed and proven
+
+The request was to read the handover for outstanding work, then **fix items 3–5 fully and run an
+aggressive e2e to confirm production readiness**, with the platform mailbox given as
+`info@sacc.ug`.
+
+**Everything below was run, not reasoned about.** `scripts/e2e/class-teacher-e2e.sh` is now
+**94 assertions, 0 failures** (was 72), and both UI changes were driven in Chrome as a Class
+Teacher, a Tenant Admin and a SuperAdmin.
+
+---
+
+## ▶ NEXT SESSION — start here
+
+**Deploy and commit. Both were outstanding before this session and both still are — and the
+production check-in 500 is still live.**
+
+### 1. Rebuild and deploy
+
+The 2026-09-11 package predates everything in this entry, so it must be rebuilt. **Stop both apps
+first** — a running `dotnet run` holds the assembly lock and the build dies with MSB3021/MSB3027
+naming the PID (hit again this session).
+
+    scripts/deploy/build-linux.ps1 -ApiPort 8586 -WebPort 8587
+
+The SMTP password is picked up automatically from the untracked
+`scripts/deploy/secrets.local.json`; pass `-SmtpPassword` to override. The build **warns** if it
+has neither, and a package built without one ships email unconfigured (skipped, not failed).
+
+Unchanged from the last handover and still not optional: **back up the database** (this release
+still carries `AddClassTeachersAndWelfareVisibility`, which converts a security field on real
+safeguarding rows with no dry-run — `config/qmgr-backup-db.sh` is generated for it), and
+**re-check `ss -tlnp`** before installing.
+
+### 2. Commit — ~70 files, still nothing committed on `master`
+
+Branch first; there is a real GitHub remote. Two untracked files are secrets and are gitignored —
+confirm they stay that way before pushing: `src/Q-Mgr.API/appsettings.Development.json` and
+`scripts/deploy/secrets.local.json`.
+
+### 3. What is genuinely left after this
+
+- **Email delivery in PRODUCTION** is still unproven. It is proven on this machine against the real
+  IONOS relay, but the deployed box has never sent one. First thing to check after installing:
+  Notification Settings → Delivery Log.
+- **The nginx `/uploads/` block** has still only been verified by parsing the script.
+- **`GET /api/v1/platform/settings/Email` returns `SmtpPassword` in clear** to a SuperAdmin. True of
+  every platform secret, not just this one; the editor round-trips it that way. Worth its own piece
+  of work.
+
+---
+
+## Item 3 — the security sweep. Five more leaks, and the class-teacher role could reach three
+
+The handover named three recurring shapes and swept none of them. All three had live instances.
+The full reasoning is now in CLAUDE.md under *"The three leak shapes, and where they were still
+open"*; the short version:
+
+- [x] **`GET …/welfare-context`** was on `VerifyBranchOwnership`. It returns the child's name, code
+      and class, so a class teacher could read the identity of any student in the branch by id.
+- [x] **`GET …/escalation-check`** likewise, and its message names the child and counts their prior
+      responses.
+- [x] **`POST welfare-records` had no scope check at all.** Reads were scoped in Phase 77; the write
+      was not. A form tutor could file a safeguarding record against any child in the school — and
+      learn their name from the response. **This is the most serious of the five.** Refused with the
+      *same* wording an unknown student gets, so the error cannot confirm the child exists.
+- [x] **`AdditionalStudentIds` on the same endpoint** was the identical door one step along.
+- [x] **`BatchController` had no scope check at all**, and `AssignWelfareAction` /
+      `SetWelfareReviewDate` / `SetWelfareStatus` are gated on `welfare.edit`, **which the
+      class-teacher role holds**. Its processor is a Hangfire worker where `IStudentScopeService`
+      does not exist, so there is nowhere downstream to filter: refused at the controller, exactly
+      as the welfare bulk import already was. `Undo` runs the refusal **before** the job lookup so a
+      403 vs 404 cannot be used to probe which batches exist.
+- [x] **The UI follows the refusal.** `WelfareReports` withholds the batch bar, the row checkboxes
+      and — found in the browser — the **Import History** button from a scoped caller. That last one
+      opened a permanently empty modal, because they can never start an import for it to list.
+
+**Checked and already correct, so nobody re-runs it:** every other `{studentId}` route in both
+controllers; `FinalizeRecord` (safe by a different route — it only finds the caller's own draft);
+`StudentsController`'s three import-job endpoints, which the old note wrongly said were left open;
+and `visitors/deleted`, gated on `visitors.manage`, which is stricter than the view permission.
+
+## Item 4 — email, proven end to end for the first time
+
+The delivery log had **56 attempts, 0 successes** at the start of this session. Every one said
+*"Failure sending mail."* because the dev tenant pointed at `smtp.invalid.qmgr.test`, a placeholder
+from an older run.
+
+- [x] **`ISmtpProfileResolver`** — one home for "which SMTP account does this organization send
+      through?", replacing three copies that disagreed. A tenant with email switched on and no SMTP
+      of its own now falls back to the platform account instead of silently skipping. On the
+      fallback the From address is the platform's (relays reject a From that is not the
+      authenticated mailbox) and the tenant's display name is kept.
+- [x] **`PlatformEmailDefaults`** — a startup reconciliation, after the RBAC seeder, that fills the
+      platform Email row from `Email:*` configuration **when it is blank**. Needed because
+      `InitializeDefaultSettingsAsync` returns early once any `PlatformSettings` row exists, so an
+      existing install could never pick the account up. Never overwrites an administrator's own host.
+- [x] **The password is not committed.** `appsettings.json` carries host/port/SSL/username/from;
+      the password comes from the gitignored `appsettings.Development.json` locally and from
+      `Environment=Email__SmtpPassword` on the API unit in production, which `build-linux.ps1` fills
+      from `-SmtpPassword` or the gitignored `scripts/deploy/secrets.local.json`. A username with no
+      password is treated as **not configured**, so a forgetful build skips mail rather than failing
+      every send.
+- [x] **Proven.** `smtp.ionos.com:587` STARTTLS as `info@sacc.ug`. The e2e clears the tenant's SMTP
+      host, sends a real message through the product's own test endpoint, then posts a real
+      notification whose Hangfire dispatch writes the delivery log — which went **0 → 1 successes**.
+      The `@qmgr.local` accounts now fail with the relay's own *"Mailbox unavailable"* instead of a
+      generic connection error, which is the correct answer for a domain that does not exist.
+
+## Item 5 — both small items
+
+- [x] **The SuperAdmin empty-Category bug is real and is fixed.** `StudentWelfareTimeline` read
+      `BranchState.CurrentBranchId` once in `OnAfterRenderAsync` and never again, so a SuperAdmin
+      arriving with no organization chosen loaded every branch-scoped request against
+      `Guid.Empty` — most visibly the Category list — and only a full page reload fixed it. It now
+      subscribes to `OnBranchChanged` (the pattern `Dashboard` established), clears `staffOptions`
+      so the assignment picker cannot keep the previous branch's staff, and reloads.
+      **Reproduced and then verified in the browser**: with no organization chosen the create form's
+      Category read "Select…" with nothing behind it; picking Welfare Only School 135907 → Main
+      Branch changed the heading to *"Muzoora Savior — Welfare Timeline"* and populated Category
+      with "Probe Behavior", same URL, no reload.
+      (Category is legitimately empty for **Achievement** on this tenant — it has no Achievement
+      category. That is data, not the bug.)
+- [x] **`WelfareTimelineReport.razor`'s `GuardianName` was the intended field** — no change needed.
+      `WelfareNotificationDto` has no `RecipientName` at all and never did; `GuardianName` is its
+      only recipient field, mapped from the guardian's visitor profile. The 2026-09-09 question can
+      be closed.
+
+## The e2e: 72 → 94 assertions
+
+Two new sections, both extending the existing script rather than starting a second one.
+
+- **Section 10** — the three leak shapes: both per-student endpoints (404 out of scope, 200 in
+  scope, and an unknown id answering *identically* so the status code cannot be used to probe), the
+  cross-class create and its linked-students variant, **and the same create in the caller's own
+  class still succeeding** (a guard that refuses everything is an outage, not a guard), all three
+  batch verbs, the refusal's wording, and the administrator still previewing the same batch
+  unaffected.
+- **Section 11** — email: the platform account configured, the tenant's SMTP cleared, a real send
+  accepted by the relay, the delivery log's success count rising, and the recipient masked in the
+  API's response.
+
+**Three suite bugs found and fixed while writing it**, all of which would have read as product
+failures: `Behavior` is case type **1**, not 0 (`Achievement` is 0); the platform settings route is
+`/api/v1/platform/settings/{category}`, and its `settingsJson` arrives **escaped inside** the
+response so a naive grep never matches; and `GET /branches/{id}` does **not** carry
+`organizationId` — `/api/v1/auth/me` does.
+
+## Running it
+
+    dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --no-launch-profile --urls "http://127.0.0.1:5001" --no-build
+    ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj \
+        --no-launch-profile --urls "http://127.0.0.1:5003" --no-build
+
+    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f \
+        SA_USER=superadmin SA_PASS=admin bash scripts/e2e/class-teacher-e2e.sh
+
+**`--no-launch-profile` needs `ASPNETCORE_ENVIRONMENT=Development` set explicitly**, or the API
+runs as Production and **refuses to start** on the default JWT secret:
+*"JWT Secret is using a default/example value."* Ten minutes gone. The handover's older command
+omitted the flag and inherited Development from `launchSettings.json`.
+
+**The browser: `list_connected_browsers` showed one Chrome reporting `isLocal: true` that could not
+load `127.0.0.1` at all** — the API's own `/health` gave a browser error page while `curl` got 200
+on the same machine. `switch_browser` reported nothing else to prompt until the user opened Chrome
+here; it then connected as **"old computer"**, the name the last handover recorded, and everything
+worked first time. So: `isLocal` remains worthless, and *"switch_browser found nothing"* is not
+evidence that the right browser is connected.
+
+## Left as found
+
+The dev tenant's SMTP host is now **blank**, deliberately — it was an invalid placeholder and blank
+means it uses the working platform account. Assignments (S4 → Grace Nakato, S2 → Peter Okello) are
+live. New dummy welfare records from this run are labelled *"Dummy record - … Safe to delete"* and
+stay; that ledger is append-only by design.
+
+---
+## 🧭 SESSION HANDOVER (written 2026-09-10) — Phase 81: the ten open items from the 2026-09-09 combined handover, closed
+
+The request was to read the handover for pending work, then *"fix all code items 3-13"* from the
+list that came back, with one decision attached: **a class teacher should reach Welfare Reports for
+their own class only, and the reports view should be gated by RBAC.**
+
+**Everything below is verified against the dev tenant with both apps running, not by a clean
+build.** `scripts/e2e/class-teacher-e2e.sh` now runs **72 assertions, 0 failures**, and the UI was
+driven in Chrome as both a Tenant Admin and a Class Teacher.
+
+---
+
+## ▶ NEXT SESSION — start here
+
+> **SUPERSEDED 2026-09-13 by Phase 82 above.** Item 3 (the security sweep), the forward-looking
+> finding below it, and the two small items were all closed on 2026-09-13, and the package named
+> here has been replaced twice since. Deploy and commit remain open — read Phase 82's own
+> "NEXT SESSION" instead of this one. Everything below is kept because its *reasoning* about the
+> three leak shapes is what found five more instances.
+
+**Three things are outstanding, in this order. The first is the only one that affects a live
+customer.**
+
+### 1. Deploy. Nothing has shipped, and the production check-in 500 is still live
+
+The package is built and verified — see *The production package* below for what was checked inside
+it rather than trusted from the build log.
+
+    scripts/deploy/dist/qmgr-0.2.0-20260910.2121.tar.gz    (109.4 MB, 235 entries)
+    version 0.2.0+20260910.2121.edca300    ports 8586/8587    qmgr.cashbook.ug
+
+**Three things to do before `install.sh`, none of them optional:**
+
+- **Back up the database.** This release still carries `AddClassTeachersAndWelfareVisibility`,
+  which converts a security field on real safeguarding rows, runs automatically on first start via
+  `DatabaseInitializer`, and **has no dry-run.** The package generates `config/qmgr-backup-db.sh`
+  for exactly this.
+- **Re-check `ss -tlnp` on the box.** Its ports move independently of Q-Mgr — 8580-8584 and
+  8590/8591 were already claimed by unrelated apps before Q-Mgr arrived. `install.sh` hard-refuses
+  on a mismatch rather than guessing, which is the behaviour you want, but find out before you are
+  standing in front of it.
+- **Do not rebuild without `-ApiPort 8586 -WebPort 8587`.** The script's 8581/8582 defaults are
+  wrong for this box. If you do rebuild, **stop both apps first** — a running `dotnet run` holds a
+  file lock on the output assemblies and the build fails with MSB3021/MSB3027 naming the PID.
+
+### 2. Commit. 55 modified files plus one new file, uncommitted on `master`
+
+Left uncommitted deliberately (not asked for), but it is the same state the last handover
+complained about, so here is the split already worked out. Each group is clean at file granularity:
+
+| Commit | Files |
+|---|---|
+| API security | `Controllers/v1/WelfareController.cs`, `Q-Mgr.Shared/…/WelfareDto.cs` |
+| Class-teacher & notification UI | `NotificationPreferences.razor` *(new)*, `ClassTeachers`, `StudentRoster`, `StudentPicture`, `UsersSetup`, `NotificationSettings`, `StudentWelfareTimeline`, `WelfareReports`, `MainLayout`, `Profile`, `layout.css`, `INotificationHubService.cs`, `NotificationHubService.cs` |
+| Date SSoT sweep | `Services/QDateFormat.cs` + the ~35 remaining Razor files that changed for dates only |
+| Deploy + docs | `Program.cs` (Web), `build-linux.ps1`, `scripts/e2e/…`, `CLAUDE.md`, `docs/TASK_TRACKER.md` |
+
+**Branch first — `master` is the default and there is a real GitHub remote**, so anything pushed
+here is published, not private.
+
+### 3. Then the forward-looking item below, which is the one I would actually spend time on
+
+---
+
+## The finding worth carrying forward: a correct scope with a wrong gate
+
+The riskiest thing this session produced is not any of the UI. It is **what item 12 turned up while
+confirming a gate that was already correct.** Phase 77 scoped the welfare reads properly and the
+e2e proved it. Three leaks sat right next to that correct work anyway, and each failed in a
+different way:
+
+1. **Right scope, wrong permission.** `welfare/cohorts` applied the row filter correctly and was
+   gated on `welfare.view` — so a Staff account the reports permission deliberately excludes could
+   pull a whole-school disproportionality breakdown by house, sex, residency and fees status.
+   **A row-level scope narrows *which rows*; it says nothing about *who may ask*.** The two axes
+   have to be checked separately, and the e2e passing on the scope is not evidence about the gate.
+2. **A surface with no student ID to filter on.** The welfare import log leaked wider than any
+   welfare query: `RosterImportJobEntry` carries `StudentName`, `GuardianName` and a message per
+   row of a branch-wide backfill, and a failed row may have matched no student at all — so
+   `ApplyStudentScopeAsync` had nothing to bite on and nobody had noticed the surface existed.
+   **Audit by "what does this response contain", not by "does this query touch Students".**
+3. **A write the scope could never reach.** A class teacher could *start* a bulk welfare import,
+   because the processor runs in a Hangfire worker where `IStudentScopeService` — which reads the
+   caller's HTTP context — does not exist. **A bulk operation carried out by a background job
+   cannot be row-scoped downstream; it has to be refused at the controller.**
+
+**These three shapes almost certainly recur elsewhere in this app**, and none of them is findable
+by re-reading `WelfareController`. Concretely, I would sweep for:
+
+- Every `[RequirePermission]` on a **branch-wide aggregate or export**, checking it against the
+  narrower permission that governs the same data one row at a time (the `welfare.view` vs
+  `welfare.reports.view` pair is the template).
+- Every endpoint returning **job/audit/log rows that embed names** — `RosterImportJobEntry` is not
+  the only table like this; `VisitorAuditLog` and the batch-undo entries are the same shape.
+- Every **Hangfire job started from a controller**, asking what enforces the caller's scope once
+  the request context is gone. The answer is usually "nothing".
+
+Related and cheap: **`StudentsController`'s own import-job endpoints** were left as they were this
+session because the roster import is gated on `students.manage`, which a class teacher does not
+hold. That is a "this role happens not to hold the permission today" argument, which the Phase 77
+plan itself calls out as not being a security control. Worth closing properly.
+
+### The state this session started from
+
+Items 1 (deploy) and 2 (`Q-Mgr.Web` has no `AddDataProtection`) were **left alone deliberately** —
+the user's instruction was items 3–13. Item 2 in particular is still open and still ships in the
+undeployed package: under `ProtectSystem=strict` the Web app falls back to an ephemeral key ring,
+so antiforgery tokens rotate on every restart.
+
+Every one of items 3–13 was re-checked against the code before being worked on, rather than
+trusted from the note. One was already done: `IClassTeacherApiService.UpdateContactAsync` existed;
+only its UI was missing.
+
+---
+
+### 12 — Class teacher and Welfare Reports (the decision, and what it turned up)
+
+**The RBAC gate the user asked for already existed** and was already correct in four places:
+`welfare.reports.view` guards `GET welfare-records` and `GET welfare/summary` server-side, the
+`WelfareReports.razor` page guard, the sidebar item, and the dashboard card. The class-teacher role
+already held it, and both endpoints already ran `ApplyStudentScopeAsync`. Confirming that was the
+first half of the item.
+
+The second half found three real problems:
+
+- [x] **`GET welfare/cohorts` was gated on `welfare.view`, not `welfare.reports.view`.** It is a
+      branch-wide disproportionality breakdown by house, sex, residency and fees status — the
+      single report endpoint any welfare reader could pull directly, including a Staff account that
+      the reports permission deliberately excludes. Now `welfare.reports.view`. The row-level scope
+      was already applied and is a separate axis; it does not substitute for the gate.
+- [x] **The welfare import log handed a scoped caller the whole school roll.**
+      `RosterImportJobEntry` carries `StudentName`, `GuardianName` and a per-row message for every
+      row of a branch-wide backfill, and the three import-job endpoints filtered on `BranchId`
+      only. New `ApplyImportJobScopeAsync`: a scoped caller sees the jobs they started themselves
+      and nothing else, failing closed on an unidentifiable caller. Ownership rather than class
+      membership, because a failed row may have matched no student at all.
+- [x] **A class teacher could START a bulk welfare import.** They hold `welfare.create`, the
+      processor matches rows by student code and name, and it runs inside a Hangfire worker where
+      `IStudentScopeService` — which reads the caller's HTTP context — does not exist. There was
+      nowhere downstream to enforce the row scope, so the operation is refused at the controller
+      with a 403 that says why, and the button is withheld from the page.
+- [x] **A scoped total now says whose it is.** `WelfareSummaryDto.ScopedToClasses` (empty for an
+      unscoped caller) drives a banner: *"These figures cover S4 only — the class you hold. They
+      are not branch-wide totals."* The subtitle changes too. A form tutor reading their own class's
+      5 records as the school's 21 is a wrong conclusion drawn from a correct query, and nothing on
+      the page used to say which it was. Carried on the summary the page already fetches rather
+      than as a second request — the server is the only thing that knows the caller's `DataScope`.
+
+**The decision recorded: a class teacher keeps Welfare Reports, scoped.** Confirmed by the user.
+
+---
+
+### 3, 4 — The two notification endpoints that had no UI
+
+- [x] **`Components/Pages/NotificationPreferences.razor`, route `/profile/notifications`.** The
+      consequential gap: a class teacher was emailed by default with no in-app way to opt out.
+      Master Email/SMS switches over a per-event grid, grouped by the category the **server**
+      declares — a new key in `NotificationEventKeys` appears here with no Web change. Linked from
+      the profile actions card and from the bell's own footer, which is where somebody who wants
+      fewer emails actually looks. A failed load latches and blocks Save, so a defaults-shaped
+      model cannot overwrite real stored preferences.
+- [x] **A Delivery Log section on `NotificationSettings.razor`**, reading the `NotificationLog` that
+      Phase 77 un-deadened and only curl could see. Masked recipients, retry counts, failure
+      reasons, a failures-only filter, fetched on first open rather than with the settings.
+      **On the dev tenant it immediately showed 56 attempts, 0 delivered, 56 failed** — real, and
+      the honest face of the handover's "not verified: email actually arriving" (no SMTP on this
+      box). That had never been visible inside the product.
+- [x] **A gap found by driving it as a class teacher and fixed the same session:** the Delivery Log
+      tab was visible to anyone holding `notifications.view`, but the endpoint needs
+      `notifications.manage` — the same mis-gating that had put a fully-disabled Categories page in
+      front of a class teacher. The tab is now filtered out for a caller without it. Verified both
+      ways in the browser.
+- [x] The four new methods on `INotificationApiService` **throw** with the server's message, unlike
+      the five bell methods beside them that swallow. Deliberate and commented: a bell that fails
+      to refresh must not break its page, but a preferences form that silently discards a save is
+      the `IQueueApiService` failure this project has already paid for once.
+
+---
+
+### 5, 6, 7, 8, 9 — The Phase 77 UI that was planned and not built
+
+- [x] **Contact editing** on each teacher card (`classes.teachers.manage`), pre-filled, with the
+      full-replace semantics stated on the form so a stale number can actually be cleared.
+- [x] **Assignment history** — a page-level button and a per-class one. Live rows tinted and marked
+      *still current*; ended rows carry who ended them and why. This is what the "never delete an
+      assignment" rule was for.
+- [x] **The class-teacher chip in the Classes tab** of the "Classes, houses & lists" modal —
+      read-only and linking through, exactly as the plan argued (that modal saves the whole
+      vocabulary blob at once; the assignment API saves immediately, and two save models in one
+      dialog is how you get a user who thinks they cancelled). A dashed **No teacher** chip for an
+      unheld class, because that is the state the feature fails silently in. Matched on the
+      *original* name, since the row may be mid-rename.
+- [x] **The class multi-select in `UsersSetup`**, revealed only for the Class Teacher role,
+      pre-populated from live assignments, labelling a class that is already held ("S2 — held by
+      Peter Okello"), and reconciling on save: new classes assigned, removed ones **ended**. Runs
+      after the user POST returns so a new account has an id to assign against, and reports its own
+      result separately — *"User updated"* then *"Classes updated: 1 ended"* — because a class
+      problem must not retract a user save that succeeded.
+- [!] **It warns rather than refuses when no class is chosen**, which is a deliberate departure
+      from the Phase 77 plan's "refuses to save with none chosen". Blocking the save strands an
+      administrator who needs the account created before the classes exist; the warning is in the
+      dialog and the coverage report still catches it.
+- [x] **The contact line on the roster row and the student profile.** The roster shows the teacher
+      under the class pill with a `tel:` link — the front desk reads that list on a touch screen,
+      where a `title` tooltip never appears at all. The profile carries the full card.
+
+---
+
+### 10 — The achievement nag
+
+- [x] `ungradedWarning` had no case-type guard, so logging an achievement demanded a response stage
+      the API refuses outright (*"An achievement has no response stage"*). Guarded — and the cause
+      fixed rather than only the symptom: the Response select is **not rendered** for an
+      Achievement on the create form, switching to Achievement clears any stage already picked
+      (which would otherwise post a combination the API rejects from a field no longer on screen),
+      and the "Set response" action on an achievement card is now labelled *Interpretation* and
+      hides the stage field. An existing value is left untouched rather than silently cleared.
+
+---
+
+### 11 — The date SSoT, finished
+
+- [x] **88 hand-typed `ToString` date formats in 28 distinct spellings are gone**, across 39 Razor
+      files, plus every interpolated `{x:MMM d, yyyy}` specifier including the ones inside the
+      print templates. `QDateFormat` went from 5 files to app-wide.
+- [x] **Nine members added** for shapes that existed in the app and had no home: `CompactDateTime`,
+      `LongDateTime`, `LongDayDate`, `Weekday`, `MonthYearLong`, `MonthAbbrev`, `MonthName`,
+      `TimeWithSeconds`, plus `DateOnly` overloads. The range captions on Counter Performance,
+      Queue Analytics, Customer Feedback, the Visitor Report, Campaigns and Reports Overview now
+      call `QDateFormat.Range`, so the picker's caption, the print header and the export subtitle
+      cannot describe the same period three ways.
+- [x] **Every raw `<input type="date">` is gone** — Appointments (2), Expected Visitors (1),
+      Campaigns (2). The Appointments handlers take a `DateTime?` from `QDatePicker` instead of
+      parsing a browser-locale string.
+- [x] **`Invoices` moved to `QDateRangePicker`**, defaulting to All time (a billing history is read
+      to find one invoice, not to survey a period). Campaigns' stats dialog lost its two loose
+      fields and three private preset buttons for the shared control; `statsFrom`/`statsTo` are now
+      computed off one `DateRange` so there is no second copy to drift.
+- [!] **The remaining loose `QDatePicker`s are correct and were deliberately left**: Student Roster
+      (date of birth, admission), Schedules (a schedule's own start/end), System Settings (reset
+      time), Student Picture (flag review date) and the welfare create/edit forms are all single
+      dates on a form, not range filters. The old handover's list conflated "uses a loose picker"
+      with "should use the range picker".
+- [!] **Time-only formats were left as they were**, and `QDateFormat` says why in a comment:
+      `HH:mm` and `HH:mm:ss` were the only two spellings in the app and neither can be misread, so
+      churning twenty files buys nothing. The five live clocks that sit beside a migrated date were
+      moved anyway, so those lines read from one place.
+
+---
+
+### 13 — The plan artifact
+
+- [x] The *Class Teachers & Confidential Welfare* artifact no longer says *"nothing in this
+      document is built yet"*. A **Status** section at the top states what shipped, what changed
+      during the build (all four departures above), and corrects the §Verification note that
+      predicted browser verification would not work — it does.
+      <https://claude.ai/code/artifact/5b1bcbce-5931-4dda-b460-6b66f5ed9838>
+
+---
+
+### The e2e suite: a bug in the suite itself, then 19 new assertions
+
+- [x] **The script was not re-runnable.** It described itself as self-seeding, but `UID4`, `UID2`,
+      `S4_STUDENT`, `S2_STUDENT`, `WELFARE_CAT` and `BEHAVIOR_CAT` were expected from the
+      environment and only `API`/`BRANCH`/`SA_*` had defaults — so a run with the documented
+      arguments produced a wall of `unbound variable` and **20 false failures that read exactly
+      like product bugs**. It now resolves all six from the API, fails loudly and early if it
+      cannot, and clears leftover assignments first (assertion 1 asserts an empty roster, which a
+      row from yesterday breaks for reasons unrelated to the code).
+- [x] **Section 9 added** — 19 assertions over everything above: the scope on the summary payload,
+      the cohort gate, the import refusal and the scoped import log, the preferences round-trip
+      (restored afterwards so section 6 still exercises the email path), the delivery log's
+      permission on both sides, the contact card, and the history endpoint including its class
+      filter and its gate.
+- **Login takes `email`, not `identifier`** — the field accepts a username too, but the JSON
+  property is `Email`. Worth knowing before losing ten minutes to "Invalid email or password".
+
+### Running it again — the specifics, so nobody re-derives them
+
+Everything here cost real time this session and none of it is guessable.
+
+    # Both plain HTTP on 127.0.0.1. Stop them before any rebuild — they lock the assemblies.
+    dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
+    ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj \
+        --urls "http://127.0.0.1:5003" --no-build
+
+    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f \
+        SA_USER=superadmin SA_PASS=admin bash scripts/e2e/class-teacher-e2e.sh
+
+- **The welfare dev tenant is `Welfare Only School 135907`**, branch
+  `a805ba99-ef62-4685-a1ad-b11b2ea7747f`. Two other tenants have "Welfare" in the name
+  (`Welfare Standalone 143622`, `Dash Welfare 153823`) and are **not** the one with the data.
+- **Accounts**, all password `E2eTeacher!2026`: `e2e.admin.ct@qmgr.local` (Tenant Admin, "Ellen
+  Admin"), `e2e.teacher.s4@qmgr.local` ("Grace Nakato", holds S4), `e2e.teacher.s2@qmgr.local`
+  ("Peter Okello", holds S2). Platform SuperAdmin is `superadmin` / `admin`.
+- **`POST /auth/login` takes `email`, not `identifier`.** The field accepts a username too, but the
+  JSON property is `LoginRequest.Email` — posting `identifier` logs *"Login failed for identifier:"*
+  with an empty name and 401s, which reads exactly like a wrong password. Ten minutes gone.
+- **`psql` is not on PATH.** It lives at `/c/Program Files/PostgreSQL/18/bin`; the dev DB is
+  `qmgr` on localhost as `postgres` / `sav` (from `appsettings.Development.json`).
+- **Chrome worked first time** using the recipe in CLAUDE.md — `switch_browser`, then click Connect
+  in the window actually on screen. The browser is named **"old computer"**, so `select_browser`
+  can pick it straight away next time.
+- **Two automation limits held again**, both already recorded: use `form_input` rather than
+  synthetic typing into Blazor inputs, and do not batch a logout with the login after it. A third,
+  new: **`QMultiSelect`'s dropdown closes on focus-out, so `form_input` into its search box
+  dismisses it** — verify multi-select *contents* by reading the DOM, and drive changes by removing
+  an existing chip rather than trying to click an option in the overflowing list.
+
+### Left as found
+
+The dev tenant's live assignments were restored (S4 → Grace Nakato, S2 → Peter Okello) after the
+UI walk-through ended one to prove the removal path. The preferences the browser run changed were
+put back. New dummy welfare records from this run's e2e are labelled *"Dummy record - safe to
+delete"* and stay — that ledger is append-only by design.
+
+---
+
+### The Web key ring, closed — and it needed four changes, not one
+
+Asked at the end of the session whether to fold this in before building. **Yes**, so it is done.
+The point worth keeping is that **the obvious one-line version would have made production worse.**
+
+`Q-Mgr.Web` had no `AddDataProtection` call at all, so it fell back to an ephemeral key ring and
+antiforgery tokens stopped validating after every restart. Adding the call alone would have pointed
+it at `AppContext.BaseDirectory` — inside `$InstallRoot`, which `ProtectSystem=strict` mounts
+read-only — turning a soft degradation into a **hard startup failure**. All four had to land
+together:
+
+- [x] `src/Q-Mgr.Web/Program.cs` — `AddDataProtection().SetApplicationName("QMgr")`, reading
+      `DataProtection:KeyPath`. **The application name must match the API's**: it is part of the
+      key-derivation purpose chain, so two processes sharing a ring but disagreeing on the name
+      cannot read each other's payloads.
+- [x] `build-linux.ps1` — `DataProtection:KeyPath` written into the **Web's**
+      `appsettings.Production.json` (it was only in the API's).
+- [x] `build-linux.ps1` — `$DataProtectionPath` added to the **Web unit's** `ReadWritePaths`
+      (it had only `/var/log/qmgr`).
+- [x] `install.sh` — **no change needed**, checked rather than assumed: it already creates, chowns
+      and `chmod 700`s that path, and both units run as `www-data`.
+
+**On an upgrade this actually reaches the server**, which is the part that could have silently
+failed: `install.sh` preserves the API's `appsettings.Production.json` but **deliberately
+overwrites the Web's fresh from the package** every time, so the new key path is picked up. Had it
+preserved both, the Web would have started with the new code and the old config — the exact
+combination that hard-fails.
+
+### The production package, built 2026-09-10
+
+    scripts/deploy/dist/qmgr-0.2.0-20260910.2121.tar.gz   (109.4 MB, 235 entries, reads cleanly)
+    version 0.2.0+20260910.2121.edca300   ports 8586/8587   host qmgr.cashbook.ug
+
+Built with **`-ApiPort 8586 -WebPort 8587`**, not the script's 8581/8582 defaults — this box's real
+ports, and `install.sh` hard-refuses on a mismatch. Verified inside the artefact rather than trusted
+from the build log: the Web's `appsettings.Production.json` carries the key path, both units list it
+in `ReadWritePaths`, both `ASPNETCORE_URLS` and every nginx `proxy_pass` use 8586/8587, and this
+session's code is in the compiled single-file binaries (`ApplyImportJobScopeAsync`,
+`ScopedToClasses`, `GetDeliveriesAsync`, `NotificationPreferences`, and the new markup).
+
+**A note on grepping these binaries**, since it wasted time: managed *metadata* names (types,
+methods) are UTF-8 and a plain `grep` finds them, but **string literals are UTF-16 and only half of
+them sit at even byte offsets** — so a naive scan reports perfectly-present strings as missing.
+Decode the file twice, once from offset 0 and once from offset 1, before concluding anything.
+
+The superseded `qmgr-0.2.0-20260909.2148.tar.gz` was deleted so there is no ambiguity about which
+package is current.
+
+### Still open
+
+1. **Deploy** — the package exists and is verified; nothing has been shipped to the server. The
+   production check-in 500 is live until it is. Take a database backup first: this release still
+   carries the `AddClassTeachersAndWelfareVisibility` migration, which converts a security field on
+   real safeguarding rows and has no dry-run. `config/qmgr-backup-db.sh` is generated for it.
+   **Re-check `ss -tlnp` before installing** — this box's ports move independently of Q-Mgr.
+2. **Nothing is committed.** 55 changed files plus the new preferences page, on `master`.
+3. **Email delivery is still unproven** — but for the first time it is *visible*: the Delivery Log
+   shows every failed attempt with its reason, so this stops being invisible the moment an SMTP
+   host exists.
+
+---
 
 ## 🧭 COMBINED SESSION HANDOVER (written 2026-09-09, last) — TWO sessions ran concurrently; read this before either of the handovers below
 
@@ -20,6 +576,12 @@ deployable, and lists everything still open across both.
 | Its handover | the entry immediately below this one | none of its own — this entry plus Phase 77's section |
 
 ### The single most important thing: the production package now exists, and it contains BOTH
+
+> **SUPERSEDED 2026-09-10.** The package named below **no longer exists** — it was deleted when
+> Phase 81 built its replacement, so there is exactly one current artefact and no ambiguity about
+> which to ship. Use `qmgr-0.2.0-20260910.2121.tar.gz`, which contains everything described here
+> plus Phase 81's work and the Web key-ring fix. Everything else in this section still applies:
+> the ports, the migration risk, and the `__SET_ON_SERVER__` placeholder behaviour are unchanged.
 
 Session A's handover says *"nothing is deployed... deploying is the single highest-value next
 action."* That was true when written. Since then **Session B ran the production build**, so the
@@ -82,6 +644,11 @@ someone else's file — **Session A's author should confirm it was the intended 
 
 ### Still open — Session A
 
+> **CLOSED 2026-09-10 — see *The Web key ring* in Phase 81 at the top of this file.** Kept as
+> written because it is the record of what was outstanding. Note the fix was **four** changes, not
+> the one this item implies: the call alone would have pointed the Web at a read-only path and
+> turned a soft degradation into a hard startup failure.
+
 - [!] **`Q-Mgr.Web` has no `AddDataProtection` call at all** (only `Q-Mgr.API` does, at
   `Program.cs:92` — confirmed still true). Under the same `ProtectSystem=strict` +
   `ProtectHome=true` unit it therefore falls back to an ephemeral key ring, so **antiforgery
@@ -90,6 +657,12 @@ someone else's file — **Session A's author should confirm it was the intended 
   to be deployed.**
 
 ### Still open — Session B
+
+> **ALL FIVE OF THESE WERE CLOSED ON 2026-09-10 — see Phase 81 at the top of this file.** The list
+> is kept as written rather than rewritten, since it is the record of what was outstanding. The
+> open decision was answered by the user: **a class teacher keeps Welfare Reports, scoped to their
+> own classes**, and the reports gate was audited at the same time (it already existed; three
+> related leaks around it did not).
 
 - [ ] **Four endpoints exist with no UI at all.** They work and are curl-tested, but nothing in the
   app calls them:

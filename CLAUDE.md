@@ -167,6 +167,22 @@ Three rules that are easy to break by accident:
   permission set for five minutes; class membership changes far more often, and a teacher removed
   from a class must lose access on the very next request. The scope service is scoped and memoised
   per request only.
+- **A row-level scope does not substitute for the permission gate, and neither covers the third
+  case (2026-09-10).** Three leaks were found where the scope was correct and something else was
+  not. `welfare/cohorts` — a whole-school disproportionality breakdown — was gated on `welfare.view`
+  rather than `welfare.reports.view`, so any welfare reader could pull it directly. The welfare
+  import log leaked wider than any query: `RosterImportJobEntry` carries `StudentName`,
+  `GuardianName` and a message per row of a branch-wide backfill, so those three endpoints now run
+  `ApplyImportJobScopeAsync` (a scoped caller sees only the jobs they started — ownership, not class
+  membership, because a failed row may have matched no student). And a scoped caller cannot START a
+  bulk welfare import at all: **the processor runs in a Hangfire worker where `IStudentScopeService`
+  does not exist**, because it reads the caller's HTTP context. That is the general rule —
+  **a bulk write that a background job carries out cannot be row-scoped downstream, so refuse it at
+  the controller** rather than letting it bypass the filter every read respects.
+- **Tell the client when its figures are scoped.** `WelfareSummaryDto.ScopedToClasses` (empty for an
+  unscoped caller) is what lets Welfare Reports say *"These figures cover S4 only."* A class
+  teacher reading their own class's total as the school's is a wrong conclusion drawn from a
+  correct query, and until 2026-09-10 nothing on the page said which it was.
 
 **There are THREE permission catalogues**, and a code added to one and not the others produces a
 different result depending on which seeder wins the startup race: `RbacSeeder.AllPermissions`,
@@ -283,16 +299,113 @@ mapping in this project, including the one that broke here, is hand-written obje
 code. There is no auto-mapper safety net — a mismatched field name is a silent runtime bug, not a
 compile error, until proven otherwise by exactly this kind of manual review.
 
+## The three leak shapes, and where they were still open (2026-09-13)
+
+Phase 81 predicted that three shapes of leak would recur beyond the ones it fixed. They did, in
+five more places, all now closed. **Read this before adding an endpoint that touches a student.**
+
+- **A per-student endpoint on the BRANCH guard.** `GET …/welfare-context` and
+  `GET …/escalation-check` both used `VerifyBranchOwnership`, so a class teacher could read any
+  child's name, code and class — and their prior-response counts — by id. Both now use
+  `VerifyStudentAccess`. The rule from `GetStudentPicture` did not stick because it was written as
+  a fact about one endpoint rather than as a rule: **if the route has `{studentId}` in it, the
+  guard is `VerifyStudentAccess`, full stop.**
+- **A WRITE the row scope never covered.** `POST welfare-records` checked the student existed in
+  the branch and nothing else, so a class-scoped caller could file a safeguarding record against
+  any child in the school and learn their name from the response. `AdditionalStudentIds` was the
+  same door one step along. Both are scoped now — the linked list through `_scope.ApplyAsync`.
+  **Phase 77 scoped the reads and stopped; a scope that only covers reads is half a scope.**
+  The refusal reuses the *unknown student* wording deliberately: a distinct "not your class"
+  message confirms the child is on the roll.
+- **A bulk operation a background job carries out.** `BatchController` had no scope check at all,
+  and three of its operations are gated on `welfare.edit`, **which the class-teacher role holds**.
+  It hands a bare list of ids to `BatchOperationProcessorJob`, a Hangfire worker where
+  `IStudentScopeService` does not exist. Refused at the controller for a scoped caller, the same
+  rule the welfare bulk import already followed. Note `Undo` runs the scope refusal *before* it
+  looks the job up, so a scoped caller cannot tell an existing batch (403) from a missing one (404).
+
+**What was checked and found already correct**, so nobody re-runs it: every other `{studentId}`
+route in `StudentsController` and `WelfareController` already calls `VerifyStudentAccess` or
+`CanSeeStudentAsync`; `FinalizeRecord` is safe by a different route (it only finds the caller's own
+draft); `StudentsController`'s three import-job endpoints were closed before this session, contrary
+to the note that said they were left; and `visitors/deleted` is gated on `visitors.manage`, which is
+stricter than the view permission, not looser.
+
+**The UI has to follow the refusal, or the fix reads as a bug.** `WelfareReports` withheld its batch
+bar and row checkboxes from a scoped caller — otherwise a class teacher selects twenty records and
+gets a 403 — and also its **Import History** button, found in the browser: they can never start an
+import, so that endpoint scopes to "jobs you began yourself" and the modal is permanently empty.
+A button that opens an empty modal reads as broken; an absent button reads as an absent permission.
+
+## Email: there IS a platform mailbox now, and every tenant falls back to it (2026-09-13)
+
+**`info@sacc.ug` on `smtp.ionos.com:587` (STARTTLS) is the platform account.** Proven end to end on
+2026-09-13: the delivery log recorded its first successful send in the life of the feature.
+
+- **`ISmtpProfileResolver` is the single home** for "which SMTP account does this organization send
+  through?". There were three copies before and they disagreed: the tenant send and the tenant
+  test-send both required the tenant to have configured its own SMTP and **silently skipped
+  otherwise**, which is the state every tenant starts in, while `EmailSender` only ever used the
+  platform account. A tenant with email switched on and no SMTP details delivered nothing and said
+  nothing. Now: the tenant's own host wins when set, otherwise the platform account.
+- **On the fallback the From address is the PLATFORM's, not the tenant's.** IONOS (and Google, and
+  Microsoft) reject a From that is not the authenticated mailbox, so carrying the tenant's address
+  would turn a working relay into a 5xx on every send. The tenant's *display name* is kept, so the
+  recipient still sees the school's name.
+- **The password is never a committed default.** `appsettings.json` carries the host, port, SSL,
+  username and from-address; `SmtpPassword` is blank there on purpose — this repo has a real GitHub
+  remote. It comes from the untracked `appsettings.Development.json` locally and from
+  `Environment=Email__SmtpPassword` on the API unit in production, which `build-linux.ps1` fills
+  from `-SmtpPassword` or the untracked `scripts/deploy/secrets.local.json`. **A username with no
+  password is treated as NOT CONFIGURED** rather than written in: that is the difference between
+  "email is off" and "every send fails", and the build warns when it happens.
+- **`PlatformEmailDefaults` runs at startup, after the RBAC seeder**, and fills the platform Email
+  row from configuration **only when it is blank**. It exists because
+  `InitializeDefaultSettingsAsync` returns early the moment *any* `PlatformSettings` row exists, so
+  an existing install would never pick the account up. Same shape as `UploadLinkRepair`. It never
+  overwrites a host an administrator chose, so a deploy cannot silently repoint a customer's mail.
+- **Email__* goes in the systemd unit, not `appsettings.Production.json`** — `install.sh` preserves
+  the API's copy of that file on every upgrade, so a key added there never reaches a live server.
+  The unit is replaced every install. Same reasoning as `MediaStorage__PublicBaseUrl`.
+- **A "Failure sending mail." with no detail used to mean the host was unreachable.** With a real
+  relay the delivery log now carries the relay's own words — *"Mailbox unavailable"* for the
+  `@qmgr.local` e2e accounts, which is correct and expected, those domains do not exist.
+- Known and not changed: `GET /api/v1/platform/settings/Email` returns `SmtpPassword` in clear to a
+  SuperAdmin. That is how the Platform Settings editor round-trips it and is true of every platform
+  secret, not just this one — worth fixing as its own piece of work, not as a side effect of this.
+
 ## Verification: there is no test project, and that is the decision (2026-09-05)
 
 **Do not propose, scaffold, or ask for a test project.** Earlier handovers listed "no automated
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — 43 assertions over the
-class-teacher scope, the visibility tiers and the alert. It is not a test project and is not run by
-a build; it is a curl script against a live API and a real tenant, which is exactly what the rule
-below asks for, written down so it can be re-run. Extend it rather than starting a new one.
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **94 assertions** (72 until
+2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the reports gate, the
+notification preferences, the delivery log, the three leak shapes above, and real email delivery.
+It is not a test project and is not run by a build; it is a curl script against a live API and a
+real tenant, which is exactly what the rule below asks for, written down so it can be re-run.
+Extend it rather than starting a new one.
+
+**Sections 10 and 11 send REAL email** to `info@sacc.ug` (two messages per run) and clear the
+tenant's own SMTP host so the platform fallback is what is under test. Set `E2E_MAILBOX` to send
+somewhere else. The `@qmgr.local` test accounts are unroutable on purpose, so the welfare-alert
+emails in section 6 fail at the relay with "Mailbox unavailable" — that is the correct answer for a
+domain that does not exist, not a regression.
+
+    API=http://127.0.0.1:5001 BRANCH=<branch guid> SA_USER=superadmin SA_PASS=admin \
+        bash scripts/e2e/class-teacher-e2e.sh
+
+**Only `API` and `BRANCH` are needed** — it resolves the six user/student/category ids itself and
+clears leftover assignments before it starts. That was not true until 2026-09-10: those ids were
+expected from the environment with no defaults and no check, so a run with the documented arguments
+produced a wall of `unbound variable` and **20 false failures that read exactly like product bugs**.
+**A suite whose setup can fail silently is worse than no suite**, so it now fails loudly and early
+with a message naming what the tenant is missing.
+
+**Login posts `email`, not `identifier`.** The field accepts a username too (see the Auth section),
+but `LoginRequest.Email` is the JSON property — posting `identifier` logs "Login failed for
+identifier: " with an empty name and returns 401.
 
 **Verify by running the thing against the dev tenant, seeding whatever data the path needs.**
 Creating rows to test with is a normal setup step, not a blocker to report. If a code path has no
@@ -414,6 +527,45 @@ The environmental notes below remain true and are still worth avoiding:
 - A `chrome-error://chromewebdata` landing while curl gets a clean 200 is the signature of driving
   the wrong browser, not of a server problem. Check `list_connected_browsers` before assuming
   anything else.
+
+## Text inputs must use `@bind`, never `value="…"` plus `@oninput` (found in production 2026-09-11)
+
+Reported as "when I type fast the input lags and drops characters, on every form". The cause was
+`QInput`, which almost every form uses: it rendered `value="@Value"` with a hand-written
+`@oninput="HandleInput"`. **Only a `@bind` directive makes the Razor compiler emit
+`SetUpdatesAttributeName("value")`**, and ASP.NET Core's `RenderTreeUpdater.UpdateToMatchClientState`
+accepts the browser's typed text into the render tree only when that is present. Without it, each
+keystroke's re-render diffs against the previous render's value and sends it back, overwriting
+whatever was typed since. See dotnet/aspnetcore#14242 (same pattern, same symptom, fixed by `@bind`)
+and #40097 (Microsoft's own `InputText` had the same omission).
+
+**It is not a network problem, and was proven not to be.** An A/B test on the same machine, the
+same page and the same typing: the old `QInput` made Blazor write stale text into the focused box
+10 and 20 times (`A`, `A0`, `A00`… replayed over the full string), the fixed one 0 and 0. On
+production the old `QInput` did the same, while a plain `@bind:event="oninput"` input on the same
+page made 0 writes. Latency only decides how often a keystroke lands mid-rewind and is lost, which is
+why a dev machine never shows it.
+
+**It lost real text in production, not just rewound it.** In production's Create Playlist dialog,
+typing `Morning lobby announcements and welcome videos` into Name in three quick bursts produced 29
+overwrites and left `Morning announcements and welcome videos`: the word "lobby " was gone. The
+old `QInput` textarea (Description) made 0 writes, because it rendered its text as child content
+rather than a `value` attribute. The number field (Default Duration) made 2.
+
+- **Use `@bind`, or `@bind:get`/`@bind:set` when a handler must run**, with `@bind:event="oninput"`
+  for live updates. `@bind:after` is the place for side effects, as `Register.razor`'s password
+  strength meter now does. A separate `@oninput` that writes the bound field reintroduces the bug even
+  next to a `@bind`: the client-state flag is attached to `@bind`'s own event, not the extra one.
+- **`QInput` keeps its own `currentText`** so a number field can be blank or read `1.` mid-typing
+  without snapping back on the next page re-render. Outside changes to `Value` still replace the text.
+- **Test it by recording writes, not by eye.** Wrap `HTMLInputElement.prototype`'s `value` setter
+  and log writes while the element is focused. Real keystrokes never call the setter, so any logged
+  write is Blazor overwriting the box. A correct input logs zero, at any latency.
+
+Seven sites were fixed together: `QInput`, `QSelect`'s search box, `ConfirmDialog`'s reason,
+`FeedbackPage`'s free-text answers, and the filters on `StudentRoster`, `WelfareReports` and
+`VisitorManagement`. **A grep for `@oninput=` under `Components/` should return nothing**; if it
+returns something, check it is not writing a bound value.
 
 ## `IQueueApiService` swallows its errors — every caller must check the return (found 2026-09-06)
 
@@ -577,10 +729,31 @@ must not be able to fail the request.** `VisitorsController.TryIssueVisitToken` 
 cannot be printed, or a live-board push that did not land, is a degraded success, not a failure,
 and reporting failure on a committed write is the worst possible answer for a front desk.
 
-**Still open as of 2026-09-09: `Q-Mgr.Web` has no `AddDataProtection` call at all.** Under the same
-`ProtectSystem=strict` + `ProtectHome=true` unit it therefore falls back to an ephemeral key ring,
-so antiforgery tokens rotate on every restart. Same class as the API bug above, failing softer —
-it degrades rather than throwing, which is why it has not announced itself.
+**CLOSED 2026-09-10 — `Q-Mgr.Web` now has its own `AddDataProtection`, and both processes share the
+API's key ring.** It had none at all, so it fell back to an ephemeral ring and antiforgery tokens
+stopped validating after every restart: the same class as the API bug above, failing softer, which
+is why it never announced itself.
+
+**The one-line version of this fix would have made production worse, and that is the lesson.**
+Adding the call alone points the Web at `AppContext.BaseDirectory` — inside `$InstallRoot`, which
+`ProtectSystem=strict` mounts read-only — turning a soft degradation into a hard startup failure.
+A key-ring change is **four** changes and they must land together:
+
+1. the `AddDataProtection` call, reading `DataProtection:KeyPath`;
+2. that key written into **that process's** `appsettings.Production.json` by `build-linux.ps1`;
+3. the path in **that unit's** `ReadWritePaths`;
+4. the directory created, `chown`ed and `chmod 700`ed by `install.sh` (already true here — both
+   units run as `www-data`, so it was checked, not changed).
+
+**`SetApplicationName("QMgr")` must match across both processes.** The application name is part of
+the key-derivation purpose chain, so two processes sharing a ring but disagreeing on it cannot read
+each other's payloads.
+
+**Why an upgrade picks this up at all** is worth knowing before you touch either config:
+`install.sh` **preserves the API's** `appsettings.Production.json` (so the real DB password and the
+current JWT secret survive) but **always overwrites the Web's fresh from the package**. If it
+preserved both, the Web would start with new code and old config — precisely the combination that
+hard-fails.
 
 ### 2. The notification hub read a config key that exists in no appsettings file
 
@@ -603,6 +776,60 @@ used to be a bare "invoke if Connected" that silently dropped the membership whe
 `OnInitializedAsync` beat `MainLayout`'s hub startup, and SignalR groups do not survive a reconnect
 either. And `VisitorDisplayBoard` re-reads the on-site list when the connection comes back, since
 anything that happened while it was down was pushed to nobody.
+
+### 3. Every uploaded file's link pointed at the API's loopback address (found 2026-09-11)
+
+Reported as signage showing *"Unexpected server response (503) while retrieving PDF
+http://127.0.0.1:8586/uploads/media/…pdf"*. Two defects, and fixing either alone still leaves the
+file unreachable:
+
+- **The link was built from the request host.** `LocalDiskMediaStorageService.GetUrlAsync` used
+  `Request.Scheme://Request.Host`. Uploads reach the API from Q-Mgr.Web's server-side HttpClient
+  over `ApiBaseUrl` (`http://127.0.0.1:{ApiPort}`), so that loopback address was saved into every
+  upload's link: media, welfare attachments, broadcast attachments, doc covers, visitor photos. On a
+  dev box the browser can reach that address too, so it never showed.
+- **nginx had no `/uploads/` route.** It fell through to `location /` and Web, which has no such
+  files, so even `https://qmgr.cashbook.ug/uploads/…` returned 404.
+
+The fix is three parts that must ship together. **`MediaStorage:PublicBaseUrl`** is the origin for
+new links. It is unset in development, where the request host is right. In production it is set as
+`Environment=MediaStorage__PublicBaseUrl=https://$HostName` in the **API systemd unit**, not in
+appsettings: `install.sh` preserves the server's API `appsettings.Production.json` on every upgrade,
+so a key added there never reaches an existing install. The unit is replaced on every install.
+**Any new API setting a deployed server must pick up belongs in the unit for the same reason.** A **`location /uploads/`** block proxies to the API. And
+**`Infrastructure/Data/UploadLinkRepair`** runs at startup after the RBAC seeder: when the key is
+set, it rewrites stored `http(s)://127.0.0.1|localhost(:port)/uploads/` links onto it, across the
+seven link columns and inside `doc_articles.BodyHtml` (a user decision over rewriting at read time,
+which would have missed links embedded in article HTML). It is idempotent and logs what it changed.
+
+Verified on the dev tenant. With the key unset, an upload saved `http://127.0.0.1:5001/…`,
+reproducing production. A restart with the key set logged `Repointed 1 … media_content.FileUrl` and
+`Repointed 1 … WelfareAttachments.FileUrl`, and a new upload saved the public base. A further
+restart logged `0 row(s) updated`. The nginx block was checked only by parsing the script; there is
+no nginx here to run it.
+
+**Welfare evidence uploads had the same fault in the browser, fixed the same day.**
+`QFileUpload.razor` handed `qFileUpload.js` an upload target built from `Http.BaseAddress`, which
+is `ApiBaseUrl`, the internal loopback in production. The browser's `fetch` could never reach it.
+It now uses `ApiPublicUrl`, falling back to `Http.BaseAddress`, the pattern `MainLayout`,
+`ApiClientsSetup` and `Support` already followed. In production the page and `ApiPublicUrl` share
+an origin, so no CORS applies. It was not tried in production first: the dialog only appears after
+creating a welfare record, and the ledger cannot be deleted from.
+
+Verified locally with the two addresses deliberately different: Web ran with
+`ApiBaseUrl=http://localhost:5001` and `ApiPublicUrl=http://127.0.0.1:5001`, and a wrapper on
+`qFileUpload.init` recorded the target the browser received. It was the `ApiPublicUrl` one. A real
+upload through the Attach Evidence dialog then returned 201 and wrote the attachment row. A local
+test of this path needs `http://127.0.0.1:5003` in the API's CORS origins (for example
+`Cors__AllowedOrigins__4`), because locally Web and API are different origins. The dummy record it
+created, "Dummy record - evidence upload test. Safe to delete.", is on Test Student One.
+
+A SuperAdmin with no organization chosen sees an empty Category list on the create form until the
+page is reloaded after picking an organization and branch. Not investigated.
+
+The general rule, extending the notification-hub one above: **`ApiBaseUrl` is for Web's own
+server-side calls only. Anything a browser will fetch or post to (a saved link, an upload target,
+a docs link) must use a public origin, never the request host of a Web-to-API call.**
 
 ### CORRECTION (2026-09-09): Chrome CAN drive the local app — the earlier note was wrong
 
@@ -639,11 +866,24 @@ list (`DateRangePresets`) and emits a single `RangeChanged`, so a page reloads o
 instead of twice, and cannot briefly query a nonsense From/To pair in between. `DateRange`'s
 constructor normalizes a reversed pair rather than returning an empty result nobody can explain.
 
-**Migration is incomplete and that is a real task, not tidying.** As of 2026-09-09, `QDateFormat`
-is used in 3 files and 62 hand-typed formats remain; `QDateRangePicker` is adopted by the Visitor
-Report, Reports Overview, Welfare Reports and the welfare timeline, while Campaigns, Schedules,
-Appointments, Invoices, StudentRoster, ExpectedVisitors, StudentPicture and SystemSettings are
-still on loose pickers or raw date inputs. **Migrate the file you are already touching.**
+**The migration is FINISHED as of 2026-09-10 — this note said it was incomplete and is corrected.**
+It described 62 remaining hand-typed formats and eight files still on loose pickers. All 88
+occurrences (28 distinct spellings) across 39 Razor files are gone, including every interpolated
+`{x:MMM d, yyyy}` specifier and the ones inside the raw-string print templates; every raw
+`<input type="date">` is gone; and `Invoices` and `Campaigns` moved to `QDateRangePicker`. See
+Phase 81 in `docs/TASK_TRACKER.md`. **Anything new goes through `QDateFormat` — there is now a
+member for every shape the app actually uses, so reaching for a literal means one is missing.**
+
+Two things were deliberately NOT migrated, so nobody "finishes" them again:
+
+- **A single date on a form is correctly a loose `QDatePicker`**, not a range picker — Student
+  Roster's date of birth and admission date, a schedule's own start/end, the reset time, a flag's
+  review date, and the welfare create/edit forms. `QDateRangePicker` is for a *filter* over a
+  period. The older note conflated "uses a loose picker" with "should use the range picker".
+- **Time-only formats stay hand-typed on live clocks.** `HH:mm` and `HH:mm:ss` were the only two
+  spellings in the app and neither can be misread, so time was never the ambiguity this class
+  exists to fix. `QDateFormat.Time` / `TimeWithSeconds` exist for new work; the clocks that sit
+  beside a migrated date were moved anyway so those lines read from one place.
 
 ## The page must never scroll sideways (decided 2026-09-09)
 

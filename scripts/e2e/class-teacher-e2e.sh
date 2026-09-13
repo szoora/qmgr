@@ -60,6 +60,53 @@ AD=$(login e2e.admin.ct@qmgr.local "$PW")
 B="/api/v1/branches/$BRANCH"
 
 # -----------------------------------------------------------------------------
+hdr "0b. Resolve the ids this run needs"
+# Added 2026-09-10. This block did not exist and the six ids below were expected to arrive
+# from the environment — so a re-run with only API and BRANCH set produced a wall of
+# "unbound variable" and 20 false failures, which is exactly the shape of the problem a
+# re-runnable suite exists to avoid. They are resolved from the API now.
+
+pick_user() { # $1 username -> user guid
+  body "$AD" GET "/api/v1/users?pageSize=200" | tr '{' '\n{' \
+    | grep "\"username\":\"$1\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+pick_student() { # $1 class name -> student guid
+  body "$AD" GET "$B/students" | tr '{' '\n{' \
+    | grep "\"className\":\"$1\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+pick_category() { # $1 caseType name -> category guid
+  body "$AD" GET "$B/welfare/categories" | tr '{' '\n{' \
+    | grep "\"caseType\":\"$1\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
+UID4="${UID4:-$(pick_user e2e.teacher.s4)}"
+UID2="${UID2:-$(pick_user e2e.teacher.s2)}"
+S4_STUDENT="${S4_STUDENT:-$(pick_student S4)}"
+S2_STUDENT="${S2_STUDENT:-$(pick_student S2)}"
+WELFARE_CAT="${WELFARE_CAT:-$(pick_category Welfare)}"
+BEHAVIOR_CAT="${BEHAVIOR_CAT:-$(pick_category Behavior)}"
+
+# Fail loudly and early rather than letting `set -u` scatter unbound-variable errors through
+# twenty assertions that then all read as product failures.
+for v in UID4 UID2 S4_STUDENT S2_STUDENT WELFARE_CAT BEHAVIOR_CAT; do
+  if [ -n "${!v}" ]; then ok "resolved $v"; else
+    bad "resolved $v" "a guid" "empty"
+    printf '\n\033[31mCannot continue.\033[0m This tenant needs: the two class-teacher accounts\n'
+    printf '(e2e.teacher.s4 / e2e.teacher.s2, password %s), an active student in S4 and one in S2,\n' "$PW"
+    printf 'and one Welfare and one Behavior category. Seed those, or pass %s explicitly.\n' "$v"
+    exit 1
+  fi
+done
+
+# Any live assignment from a previous run is ended first: assertion 1 below asserts that a
+# teacher with NO assignment sees nothing, and a leftover row from yesterday makes it fail for
+# a reason that has nothing to do with the code.
+for AID_OLD in $(body "$AD" GET "$B/class-teachers" | tr '{' '\n{' | grep -oE '"id":"[^"]*"' | cut -d'"' -f4); do
+  code "$AD" DELETE "$B/class-teachers/$AID_OLD" '{"reason":"E2E reset before run"}' > /dev/null
+done
+ok "previous assignments cleared"
+
+# -----------------------------------------------------------------------------
 hdr "1. FAIL CLOSED — a class teacher with no assignment sees nothing"
 # The single most dangerous bug in this feature: an empty allow-list collapsing
 # into a no-op WHERE and handing a brand-new teacher the entire school roll.
@@ -207,6 +254,201 @@ eq "assignment ended" "$(code "$AD" DELETE "$B/class-teachers/$AID" '{"reason":"
 R4B=$(body "$T4" GET "$B/students")
 eq "roster is empty again, on the very next request" "$(count "$R4B")" "0"
 eq "the record they could read a moment ago is now 404" "$(code "$T4" GET "$B/welfare-records/$STD_ID")" "404"
+
+# -----------------------------------------------------------------------------
+hdr "9. The endpoints that had no UI until 2026-09-10, and the reports gate"
+# Everything below was curl-tested when it was built and then wired to a screen a day later.
+# These assertions exist so the endpoints stay honest now that something actually calls them.
+
+# The assignment ended in section 8, so re-assign before the reads that need scope.
+A4B=$(body "$AD" POST "$B/class-teachers" '{"className":"S4","userId":"'"$UID4"'","role":0}')
+echo "$A4B" | grep -q '"className":"S4"' && ok "re-assigned S4 for the remaining checks" \
+  || bad "re-assign S4" "201 + dto" "$(echo "$A4B" | head -c 160)"
+
+# --- The reports scope, told to the client -----------------------------------
+# A scoped total read as the school's figure is a wrong conclusion drawn from a correct query,
+# so the summary now says which classes it covers and the reports page prints it.
+SUM_T=$(body "$T4" GET "$B/welfare/summary")
+echo "$SUM_T" | grep -q '"scopedToClasses":\["S4"\]' && ok "summary tells a class teacher its figures cover S4 only" \
+  || bad "summary carries the scope" '"scopedToClasses":["S4"]' "$(echo "$SUM_T" | grep -o '"scopedToClasses":[^]]*.' )"
+SUM_A=$(body "$AD" GET "$B/welfare/summary")
+echo "$SUM_A" | grep -q '"scopedToClasses":\[\]' && ok "summary is empty-scoped for an unscoped role" \
+  || bad "admin scope empty" '"scopedToClasses":[]' "$(echo "$SUM_A" | grep -o '"scopedToClasses":[^]]*.' )"
+
+# --- The cohort report is a report ------------------------------------------
+# It was gated on welfare.view until 2026-09-10, so any welfare reader could pull a
+# whole-school disproportionality breakdown. A class teacher holds welfare.reports.view and
+# still reads it (scoped); the gate is what changed, not their access.
+eq "class teacher still reads the cohort report" "$(code "$T4" GET "$B/welfare/cohorts")" "200"
+
+# --- A bulk welfare import is not a form tutor's --------------------------------
+IMP=$(code "$T4" POST "$B/welfare-records/import-jobs" '{"sourceFileName":"e2e.csv","rows":[{"studentCode":"X","categoryName":"Probe Behavior","description":"probe","occurredAt":"2026-09-01"}]}')
+eq "class teacher cannot start a bulk welfare import" "$IMP" "403"
+eq "welfare import log is closed to a scoped role" "$(body "$T4" GET "$B/welfare-records/import-jobs")" "[]"
+
+# --- Per-user notification preferences --------------------------------------
+EV=$(body "$T4" GET "/api/v1/notifications/preferences/events")
+echo "$EV" | grep -q 'welfare.record-logged' && ok "the preference event catalogue is readable" \
+  || bad "preference events" "welfare.record-logged" "$(echo "$EV" | head -c 160)"
+
+eq "own preferences save" "$(code "$T4" PUT "/api/v1/notifications/preferences" \
+  '{"emailEnabled":false,"smsEnabled":true,"events":[{"eventKey":"welfare.record-logged","email":true,"sms":false}]}')" "204"
+PREF=$(body "$T4" GET "/api/v1/notifications/preferences")
+echo "$PREF" | grep -q '"emailEnabled":false' && ok "preferences read back as saved" \
+  || bad "preferences round-trip" '"emailEnabled":false' "$(echo "$PREF" | head -c 200)"
+
+# Restored, so a later run of section 6 still exercises the email path rather than a
+# master switch this section turned off.
+code "$T4" PUT "/api/v1/notifications/preferences" '{"emailEnabled":true,"smsEnabled":true,"events":[]}' > /dev/null
+ok "preferences restored to the defaults"
+
+# --- The delivery log -------------------------------------------------------
+eq "delivery log is closed without notifications.manage" "$(code "$T4" GET "/api/v1/notifications/deliveries")" "403"
+eq "delivery log opens for an administrator"             "$(code "$AD" GET "/api/v1/notifications/deliveries")" "200"
+eq "failures-only filter is accepted"                    "$(code "$AD" GET "/api/v1/notifications/deliveries?failuresOnly=true")" "200"
+
+# --- The teacher's contact card and the assignment history ------------------
+eq "admin edits the teacher's contact card" "$(code "$AD" PUT "$B/class-teachers/staff/$UID4/contact" \
+  '{"phone":"0700000001","alternatePhone":"0700000002","officeLocation":"E2E Staff Room","jobTitle":"E2E Form Tutor"}')" "204"
+CT=$(body "$AD" GET "$B/class-teachers")
+echo "$CT" | grep -q '"officeLocation":"E2E Staff Room"' && ok "the contact card reads back on the assignment" \
+  || bad "contact card round-trip" '"officeLocation":"E2E Staff Room"' "$(echo "$CT" | head -c 240)"
+eq "a class teacher cannot edit contact cards" "$(code "$T4" PUT "$B/class-teachers/staff/$UID2/contact" '{"jobTitle":"nope"}')" "403"
+
+HIST=$(body "$AD" GET "$B/class-teachers/history")
+echo "$HIST" | grep -q '"endedAt"' && ok "history returns ended assignments, not just live ones" \
+  || bad "history includes ended" '"endedAt"' "$(echo "$HIST" | head -c 200)"
+HIST1=$(body "$AD" GET "$B/class-teachers/history?className=S4")
+echo "$HIST1" | grep -q '"className":"S2"' && bad "history filters by class" "no S2 rows" "S2 present" \
+  || ok "history filters by class"
+eq "history is closed to a class teacher" "$(code "$T4" GET "$B/class-teachers/history")" "403"
+
+# =============================================================================
+hdr "10. The three leak SHAPES the 2026-09-10 handover predicted would recur"
+# Phase 81 named three: an aggregate on the wrong gate, a surface with no student id to filter
+# on, and a bulk write a background job carries out. Sections above cover the first two for
+# welfare. These are the instances that were still open on 2026-09-13.
+
+# --- 10a. Per-student endpoints that were still on the BRANCH guard ----------
+# Both returned the child's NAME for any student in the branch. VerifyBranchOwnership answers
+# "is this branch yours"; it cannot answer "is this child yours", and on a per-student endpoint
+# that is the only question that matters.
+eq "welfare-context 404s for a student outside the caller's classes" \
+   "$(code "$T4" GET "$B/students/$S2_STUDENT/welfare-context")" "404"
+eq "welfare-context still opens for the caller's own student" \
+   "$(code "$T4" GET "$B/students/$S4_STUDENT/welfare-context")" "200"
+eq "escalation-check 404s for a student outside the caller's classes" \
+   "$(code "$T4" GET "$B/students/$S2_STUDENT/escalation-check")" "404"
+eq "escalation-check still opens for the caller's own student" \
+   "$(code "$T4" GET "$B/students/$S4_STUDENT/escalation-check")" "200"
+
+# The out-of-scope answer must be indistinguishable from a student that does not exist. A 403
+# would confirm the child is on the roll, which is itself the disclosure.
+eq "an unknown student id answers identically (404, not 403)" \
+   "$(code "$T4" GET "$B/students/00000000-0000-0000-0000-000000000001/welfare-context")" "404"
+
+# --- 10b. The WRITE the row scope never covered ------------------------------
+# Reads were scoped in Phase 77; creating a record was not. A form tutor could file a
+# safeguarding record against any child in the school by id, and learn their name from the
+# response. Refused with the SAME message an unknown student gets, deliberately.
+XS=$(body "$T4" POST "$B/welfare-records" \
+  '{"studentId":"'"$S2_STUDENT"'","categoryId":"'"$WELFARE_CAT"'","caseType":2,"description":"E2E probe: a class teacher must not be able to file against another class.","occurredAt":"2026-09-12T09:00:00Z"}')
+echo "$XS" | grep -q 'Student not found' && ok "class teacher cannot file a record against another class's student" \
+  || bad "cross-class create refused" "400 Student not found" "$(echo "$XS" | head -c 200)"
+if echo "$XS" | grep -qiE 'scope|forbidden|your class'; then
+  bad "the refusal does not reveal that the student exists" "the same wording as an unknown student" "$(echo "$XS" | head -c 200)"
+else
+  ok "the refusal does not reveal that the student exists"
+fi
+
+# The linked-students list is the side door onto exactly what the primary check refuses.
+XL=$(body "$T4" POST "$B/welfare-records" \
+  '{"studentId":"'"$S4_STUDENT"'","additionalStudentIds":["'"$S2_STUDENT"'"],"categoryId":"'"$BEHAVIOR_CAT"'","caseType":1,"description":"E2E probe: linked students must obey the same scope as the primary.","occurredAt":"2026-09-12T09:00:00Z"}')
+echo "$XL" | grep -qi 'additional student' && ok "linked students obey the same scope as the primary" \
+  || bad "linked-student scope" "400 one or more additional students not found" "$(echo "$XL" | head -c 200)"
+
+# And the same call, entirely inside the caller's own class, must still succeed. A guard that
+# refuses everything is not a guard, it is an outage.
+OK4=$(body "$T4" POST "$B/welfare-records" \
+  '{"studentId":"'"$S4_STUDENT"'","categoryId":"'"$BEHAVIOR_CAT"'","caseType":1,"description":"Dummy record - E2E in-scope create probe. Safe to delete.","occurredAt":"2026-09-12T09:00:00Z"}')
+echo "$OK4" | grep -q '"id":"' && ok "the same create inside the caller's own class still succeeds" \
+  || bad "in-scope create" "201 + dto" "$(echo "$OK4" | head -c 200)"
+
+# --- 10c. The bulk write a Hangfire worker carries out -----------------------
+# BatchController hands a bare list of ids to BatchOperationProcessorJob, where
+# IStudentScopeService does not exist. Three of its operations are gated on welfare.edit, which
+# the class-teacher role holds, so this was reachable rather than theoretical.
+BATCH_WELFARE='{"operation":6,"ids":["'"$STD_ID"'"],"value":"Resolved"}'
+eq "class teacher cannot PREVIEW a welfare batch" "$(code "$T4" POST "$B/batch/preview" "$BATCH_WELFARE")" "403"
+eq "class teacher cannot RUN a welfare batch"     "$(code "$T4" POST "$B/batch" "$BATCH_WELFARE")" "403"
+eq "class teacher cannot UNDO a batch"            "$(code "$T4" POST "$B/batch/00000000-0000-0000-0000-000000000001/undo")" "403"
+
+WHY=$(body "$T4" POST "$B/batch/preview" "$BATCH_WELFARE")
+echo "$WHY" | grep -qi 'bulk operations' && ok "the batch refusal says why, so the user asks an administrator" \
+  || bad "batch refusal explains itself" "a reason mentioning bulk operations" "$(echo "$WHY" | head -c 200)"
+
+# The administrator is unaffected: this narrows one role, it does not disable the feature.
+eq "an unscoped administrator still previews the same batch" "$(code "$AD" POST "$B/batch/preview" "$BATCH_WELFARE")" "200"
+
+# --- 10d. Already closed before this run, re-asserted so a regression shows --
+eq "roster import log stays closed to a scoped caller" \
+   "$(body "$T4" GET "$B/students/import-jobs")" "[]"
+eq "a single roster import job 404s for a scoped caller" \
+   "$(code "$T4" GET "$B/students/import-jobs/00000000-0000-0000-0000-000000000001")" "404"
+
+# =============================================================================
+hdr "11. EMAIL - proven end to end, not just configured"
+# "Email delivery is unproven" was carried on every handover since the delivery log was built,
+# because no SMTP host existed on this box. There is one now (see CLAUDE.md), so these assert on
+# real messages accepted by a real relay, not on configuration merely being present.
+MAILBOX="${E2E_MAILBOX:-info@sacc.ug}"
+# From the caller's own profile — GET /branches/{id} deliberately does not carry it.
+ORG_ID=$(body "$AD" GET "/api/v1/auth/me" | grep -o '"organizationId":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -n "$ORG_ID" ] && ok "resolved the tenant's organization id" || bad "resolve organization id" "a guid" "empty"
+
+# The platform account is what a tenant with no SMTP of its own falls back to. It is filled from
+# the Email:* configuration at startup by PlatformEmailDefaults.
+# settingsJson is a JSON string INSIDE the response, so the inner quotes arrive escaped —
+# unescape before matching or the pattern silently never fits.
+PS=$(body "$SA" GET "/api/v1/platform/settings/Email" | sed 's/\\"/"/g')
+if echo "$PS" | grep -qE '"SmtpHost": *"[^"]+"'; then ok "the platform email account is configured"
+else bad "platform email configured" "a non-empty SmtpHost" "$(echo "$PS" | head -c 240)"; fi
+
+# Clear this tenant's own SMTP host so the FALLBACK is what is under test. Its previous value was
+# a deliberately-invalid host from an older run, which is why the delivery log held 56 failures
+# and zero successes.
+code "$AD" PUT "/api/v1/notifications/settings" \
+  '{"organizationId":"'"$ORG_ID"'","emailEnabled":true,"smtpHost":"","smtpPort":587,"smtpUseSsl":true,"smtpUsername":"","smtpPassword":"","emailFromAddress":"","emailFromName":"Q-Mgr E2E"}' > /dev/null
+ok "tenant SMTP cleared, so the platform fallback is what is under test"
+
+# A REAL message, through the product's own test endpoint, resolved by the same code path the
+# real send uses. A pass here means the relay authenticated and accepted the message.
+TE=$(body "$AD" POST "/api/v1/notifications/settings/$ORG_ID/test-email" '{"emailAddress":"'"$MAILBOX"'"}')
+echo "$TE" | grep -q '"success":true' && ok "a tenant with no SMTP of its own sends through the platform account" \
+  || bad "platform fallback delivers" '"success":true' "$(echo "$TE" | head -c 240)"
+
+# And the real dispatch path: an in-app notification with an email channel, delivered by the
+# Hangfire job, which is the only thing that writes NotificationLog. This is the assertion the
+# delivery log was built for and has never been able to make.
+BEFORE_OK=$(body "$AD" GET "/api/v1/notifications/deliveries" | grep -o '"success":true' | wc -l | tr -d ' ')
+code "$AD" POST "/api/v1/notifications" \
+  '{"organizationId":"'"$ORG_ID"'","title":"Q-Mgr E2E delivery probe","message":"Dummy message from the Q-Mgr end-to-end suite. Safe to ignore.","channels":["Email"],"email":"'"$MAILBOX"'","emailSubject":"Q-Mgr E2E delivery probe"}' > /dev/null
+DELIVERED=0; AFTER_OK="$BEFORE_OK"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  sleep 2
+  AFTER_OK=$(body "$AD" GET "/api/v1/notifications/deliveries" | grep -o '"success":true' | wc -l | tr -d ' ')
+  if [ "$AFTER_OK" -gt "$BEFORE_OK" ]; then DELIVERED=1; break; fi
+done
+[ "$DELIVERED" = "1" ] && ok "the delivery log records a SUCCESSFUL email for the first time ($BEFORE_OK -> $AFTER_OK)" \
+  || bad "delivery log records a success" "more than $BEFORE_OK success rows" "$AFTER_OK after 24s"
+
+# The recipient is masked in the log: it is read by administrators, not only by the recipient.
+DL=$(body "$AD" GET "/api/v1/notifications/deliveries")
+if echo "$DL" | grep -q "$MAILBOX"; then
+  bad "the delivery log masks the recipient" "no full address in the payload" "the full address is present"
+else
+  ok "the delivery log masks the recipient"
+fi
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"
