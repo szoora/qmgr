@@ -14,6 +14,8 @@
                             AutoPlay="true"
                             Loop="@(playlist.Count == 1)"
                             Muted="@Muted"
+                            SignageMode="@AutoAdvance"
+                            PageDurationSeconds="@PageDurationFor(currentItem)"
                             ElementId="@($"current-{currentIndex}")"
                             OnMediaEnded="@HandleMediaEnded" />
             </div>
@@ -399,19 +401,31 @@
             ContentType.Image => DefaultDurationSeconds,
             ContentType.Text => DefaultDurationSeconds,
             ContentType.Html => DefaultDurationSeconds,
-            ContentType.Pdf => DefaultDurationSeconds * 2, // PDFs need more time
+            // A PDF is many pages, not one picture, so it has no single up-front duration — the
+            // flip-book turns its own pages and says when it has finished, the way a video does.
+            ContentType.Pdf => 0,
             ContentType.PowerPoint => DefaultDurationSeconds * 3, // Presentations need more time
             _ => 0 // Videos/audio use media end detection, no timer needed
         };
     }
 
+    /// <summary>
+    /// Seconds each PAGE of a document stays up. A playlist item's own duration is read as the
+    /// per-page dwell rather than as the whole document's slot: the old reading (one fixed slot for
+    /// the entire PDF) is what left signage parked on page one.
+    /// </summary>
+    private int PageDurationFor(PlaylistItemModel item)
+        => item.DurationSeconds.GetValueOrDefault() > 0
+            ? item.DurationSeconds!.Value
+            : DefaultDurationSeconds;
+
     private bool UsesTimerBasedAdvance(ContentType type)
     {
-        // Content types that don't fire media end events need timer-based advancement
+        // Content types that don't fire media end events need timer-based advancement.
+        // Video, audio and PDF all report their own end instead.
         return type == ContentType.Image ||
                type == ContentType.Text ||
                type == ContentType.Html ||
-               type == ContentType.Pdf ||
                type == ContentType.PowerPoint;
     }
 

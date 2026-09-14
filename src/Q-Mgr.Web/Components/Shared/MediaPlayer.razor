@@ -115,15 +115,21 @@
 
         case StreamMediaType.Pdf:
             <div class="pdf-container">
-                @* Page auto-advance deliberately off here: PlaylistPlayer already
-                   times this whole item's on-screen duration on its own fixed
-                   timer (ContentType.Pdf => DefaultDurationSeconds * 2), so an
-                   independent per-page flip timer would race against it. Shows
-                   page 1 with working next/prev controls for anyone who can
-                   interact (kiosk touch, admin preview). *@
+                @* On signage the document turns its own pages and owns the item's on-screen time:
+                   PlaylistPlayer no longer runs a fixed timer for a PDF (it used to, at
+                   DefaultDurationSeconds * 2 for the whole document, which showed page one and
+                   nothing else). Loop is set for a single-item playlist, so a screen showing one
+                   document runs the book round and round instead of ending on the last page.
+
+                   Off signage — the media library's preview modal — nothing moves on its own. *@
                 <PdfFlipbook Url="@Url"
+                             AutoAdvance="@SignageMode"
+                             Loop="@(SignageMode && Loop)"
+                             SignageMode="@SignageMode"
+                             PageDurationSeconds="@PageDurationSeconds"
                              ShowControls="true"
-                             OnMediaError="@HandleMediaError" />
+                             OnMediaEnded="@OnMediaEndedCallback"
+                             OnMediaError="@HandlePdfFailure" />
             </div>
             break;
 
@@ -250,7 +256,31 @@
         object-fit: contain;
     }
 
-    .pdf-container,
+    /*
+        height:100% so the flip-book fills a full-screen signage layer, min-height so it still has
+        a usable size in the library's preview modal — .preview-body there is flex:1 with no
+        definite height, which is why the fixed 600px this used to carry could not stay.
+
+        The COLUMN flex is the load-bearing part, and it was measured, not assumed. A percentage
+        height against an indefinite parent resolves to auto, so `.pdf-flipbook { height: 100% }`
+        collapsed to its content and the page stage came out 0px tall inside the modal. A plain
+        row flex did not fix it either — cross-axis stretch does not kick in against that
+        percentage. In a column flex, `flex: 1` acts on the HEIGHT, which is unambiguous:
+        measured 420 / 420 / 340 (container / flip-book / stage) against 420 / 80 / 0 before.
+    */
+    .pdf-container {
+        width: 100%;
+        height: 100%;
+        min-height: 420px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .pdf-container > * {
+        flex: 1;
+        min-height: 0;
+    }
+
     .presentation-container {
         width: 100%;
         height: 600px;
@@ -328,6 +358,16 @@
     [Parameter] public bool Muted { get; set; } = false;
     [Parameter] public string CssClass { get; set; } = "";
     [Parameter] public string? ElementId { get; set; }
+
+    /// <summary>
+    /// This player is on an unattended screen. Page-based content (PDF) turns its own pages and
+    /// fades its chrome out when nothing has moved.
+    /// </summary>
+    [Parameter] public bool SignageMode { get; set; }
+
+    /// <summary>Seconds per page for page-based content while <see cref="SignageMode"/> is on.</summary>
+    [Parameter] public int PageDurationSeconds { get; set; } = 8;
+
     [Parameter] public EventCallback OnMediaEnded { get; set; }
     [Parameter] public EventCallback OnMediaError { get; set; }
 
@@ -669,6 +709,21 @@
         if (OnMediaError.HasDelegate)
         {
             await OnMediaError.InvokeAsync();
+        }
+    }
+
+    /// <summary>
+    /// A PDF that will not open also has to END, or signage stops dead on it: since PlaylistPlayer
+    /// stopped running a fixed timer for PDFs, the flip-book's own "finished" callback is the only
+    /// thing that moves the playlist on, and a document that never opened will never raise it.
+    /// </summary>
+    private async Task HandlePdfFailure()
+    {
+        await HandleMediaError();
+
+        if (SignageMode && OnMediaEnded.HasDelegate)
+        {
+            await OnMediaEnded.InvokeAsync();
         }
     }
 

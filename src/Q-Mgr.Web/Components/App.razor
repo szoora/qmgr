@@ -43,8 +43,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <!-- Radzen (for components only) -->
     <link rel="stylesheet" href="@Assets["_content/Radzen.Blazor/css/material-base.css"]" />
-    <!-- Page-flip (PDF flip-book viewer) -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/css/page-flip.browser.css" />
+    <!-- PDF flip-book viewer. page-flip 2.0.7 ships no dist/css (the URL this used to point at is
+         a 404, which is why the book rendered at zero size for months) — its stylesheet is
+         vendored into pdf-flipbook.css along with the viewer's own chrome. -->
+    <link rel="stylesheet" href="@Assets["css/pdf-flipbook.css"]" />
     <!-- Custom Styles -->
     <link rel="stylesheet" href="@Assets["css/layout.css"]" />
     <link rel="stylesheet" href="@Assets["css/qm-theme.css"]" />
@@ -107,9 +109,9 @@
     <script src="@Assets["js/share-utils.js"]"></script>
     <script src="@Assets["js/q-select.js"]"></script>
     <script src="@Assets["js/qFileUpload.js"]"></script>
-    <!-- PDF flip-book viewer (renders PDF pages via pdf.js, page-turn animation via page-flip) -->
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+    <!-- PDF flip-book viewer. pdf.js (~340KB) and page-flip are NOT loaded here: this file runs on
+         every page of the app, and only a handful ever show a PDF. pdfFlipbook.js injects both the
+         first time a flipbook is actually opened. -->
     <script src="@Assets["js/pdfFlipbook.js"]"></script>
     <!-- Spotify Web Playback SDK (background music for image-gallery signage) -->
     <script src="@Assets["js/spotifyPlayer.js"]"></script>

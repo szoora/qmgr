@@ -1,0 +1,432 @@
+/*
+    PDF flip-book viewer.
+
+    The first block is page-flip's own stylesheet, vendored.
+
+    It is vendored rather than linked because page-flip 2.0.7 publishes NO dist/css — App.razor
+    linked https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/css/page-flip.browser.css for months
+    and that URL is a 404. The only stylesheet in the package is src/Style/stPageFlip.css, which
+    is not a sane thing to hotlink.
+
+    Without these rules the viewer renders NOTHING while looking healthy: .stf__block is the
+    element page-flip measures (Render.getBlockHeight() -> distElement.offsetHeight), so a
+    statically-positioned block collapses to 0px tall and the stretch branch of
+    calculateBoundsRect() clamps the whole book to zero
+    (r = h / n; if (r > blockHeight) { r = blockHeight; h = r * n }).
+    Flips, events and the page counter all keep working at zero size, which is why this presented
+    as "it is not a flip book" rather than as an error.
+
+    Two deliberate differences from the upstream file:
+      - `.sft__wrapper` is a typo in the package (s-f-t); it is spelled correctly here, which is
+        what lets the wrapper carry the height we hand it.
+      - `.stf__wrapper` gets `height: 100%` so the book sizes from the box WE set on the surface
+        element. Upstream instead relies on `autoSize` writing a padding-bottom aspect ratio onto
+        the wrapper, which derives height from width alone and so cannot fit a landscape
+        container — the book overflows vertically and you see a magnified corner of page one.
+*/
+
+.stf__parent {
+    position: relative;
+    display: block;
+    box-sizing: border-box;
+    transform: translateZ(0);
+    -ms-touch-action: pan-y;
+    touch-action: pan-y;
+}
+
+.stf__wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+.stf__parent canvas {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    left: 0;
+    top: 0;
+}
+
+.stf__block {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    perspective: 2000px;
+}
+
+.stf__item {
+    display: none;
+    position: absolute;
+    transform-style: preserve-3d;
+}
+
+.stf__outerShadow,
+.stf__innerShadow,
+.stf__hardShadow,
+.stf__hardInnerShadow {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Viewer chrome
+ * ------------------------------------------------------------------ */
+
+.pdf-flipbook {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--qm-bg-dark);
+    color: var(--qm-text-primary);
+    font-family: var(--qm-font-primary);
+    overflow: hidden;
+    outline: none;
+}
+
+.pdf-flipbook--fullscreen {
+    background: #000;
+}
+
+/* Status (loading / failed) ---------------------------------------- */
+
+.pdf-flipbook-status {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px;
+    text-align: center;
+    background: var(--qm-bg-dark);
+    color: var(--qm-text-secondary);
+}
+
+.pdf-flipbook-status .q-icon {
+    font-size: 40px;
+}
+
+.pdf-flipbook-status-progress {
+    width: 200px;
+    height: 3px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: rgba(var(--qm-primary-rgb), 0.18);
+}
+
+.pdf-flipbook-status-progress span {
+    display: block;
+    height: 100%;
+    background: var(--qm-primary);
+    transition: width 0.2s linear;
+}
+
+.pdf-flipbook-fallback-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    color: var(--qm-primary);
+    text-decoration: none;
+    font-size: 14px;
+}
+
+.pdf-flipbook-fallback-link:hover {
+    text-decoration: underline;
+}
+
+/* Layout ------------------------------------------------------------ */
+
+.pdf-flipbook-body {
+    display: flex;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    min-width: 0;
+}
+
+.pdf-flipbook-main {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Thumbnail rail ---------------------------------------------------- */
+
+.pdf-flipbook-thumbs {
+    width: 112px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: rgba(var(--qm-primary-rgb), 0.06);
+    border-right: 1px solid var(--qm-border);
+}
+
+.pdf-flipbook-thumb {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 2px solid transparent;
+    border-radius: var(--qm-radius-sm, 3px);
+    background: none;
+    cursor: pointer;
+    width: 100%;
+}
+
+.pdf-flipbook-thumb img {
+    width: 100%;
+    display: block;
+    border-radius: 2px;
+    background: #fff;
+}
+
+.pdf-flipbook-thumb span {
+    font-size: 11px;
+    color: var(--qm-text-secondary);
+}
+
+.pdf-flipbook-thumb:hover {
+    border-color: var(--qm-primary-light);
+}
+
+.pdf-flipbook-thumb--active {
+    border-color: var(--qm-primary);
+}
+
+.pdf-flipbook-thumb--hit span {
+    color: var(--qm-primary);
+    font-weight: 700;
+}
+
+/* Toolbar ----------------------------------------------------------- */
+
+.pdf-flipbook-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    flex-shrink: 0;
+    background: rgba(var(--qm-primary-rgb), 0.06);
+    border-bottom: 1px solid var(--qm-border);
+}
+
+.pdf-flipbook-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pdf-flipbook-toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--qm-border);
+}
+
+.pdf-flipbook-zoom-level {
+    font-size: 12px;
+    color: var(--qm-text-secondary);
+    min-width: 44px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.pdf-flipbook-toolbar-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--qm-radius-sm, 3px);
+    color: var(--qm-text-secondary);
+    text-decoration: none;
+}
+
+.pdf-flipbook-toolbar-link:hover {
+    background: var(--qm-bg-card-hover);
+    color: var(--qm-primary);
+}
+
+/* Search ------------------------------------------------------------ */
+
+.pdf-flipbook-search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pdf-flipbook-search input {
+    width: 180px;
+    height: 32px;
+    padding: 0 10px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--qm-text-primary);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-sm, 3px);
+    outline: none;
+}
+
+.pdf-flipbook-search input:focus {
+    border-color: var(--qm-primary);
+}
+
+.pdf-flipbook-search-count {
+    font-size: 12px;
+    color: var(--qm-text-secondary);
+    min-width: 68px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Stage -------------------------------------------------------------- */
+
+.pdf-flipbook-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    scrollbar-width: thin;
+}
+
+.pdf-flipbook-stage--pannable {
+    cursor: grab;
+}
+
+.pdf-flipbook-stage--panning {
+    cursor: grabbing;
+}
+
+.pdf-flipbook-surface {
+    margin: auto;
+    flex-shrink: 0;
+}
+
+/*
+    One page of the book. page-flip clones this element mid-flip via cloneNode(true), which is why
+    the page image is an <img> and not a <canvas> — canvas pixels do NOT survive a clone, so a
+    canvas-backed page would turn blank for the duration of every flip animation.
+*/
+.pdf-flipbook-page {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #fff;
+    overflow: hidden;
+}
+
+.pdf-flipbook-page img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+}
+
+.pdf-flipbook-page-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.pdf-flipbook-hit {
+    position: absolute;
+    background: rgba(255, 214, 0, 0.45);
+    border-radius: 1px;
+}
+
+.pdf-flipbook-hit--current {
+    background: rgba(255, 138, 0, 0.6);
+}
+
+/* Page controls ------------------------------------------------------ */
+
+.pdf-flipbook-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px;
+    flex-shrink: 0;
+    background: rgba(var(--qm-primary-rgb), 0.06);
+    border-top: 1px solid var(--qm-border);
+}
+
+.pdf-flipbook-page-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+}
+
+.pdf-flipbook-page-indicator input {
+    width: 54px;
+    height: 30px;
+    padding: 0 6px;
+    text-align: center;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--qm-text-primary);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-sm, 3px);
+    outline: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.pdf-flipbook-page-indicator input:focus {
+    border-color: var(--qm-primary);
+}
+
+/*
+    Signage: the screen is unattended, so the chrome fades out once nothing has moved. It is faded
+    rather than removed — a passer-by who touches the screen gets the full viewer back, and on a
+    wall display the toolbar is the only route to zoom, search and single/two-page.
+*/
+.pdf-flipbook--signage .pdf-flipbook-toolbar,
+.pdf-flipbook--signage .pdf-flipbook-controls,
+.pdf-flipbook--signage .pdf-flipbook-thumbs {
+    transition: opacity 0.6s ease;
+}
+
+.pdf-flipbook--signage.pdf-flipbook--idle .pdf-flipbook-toolbar,
+.pdf-flipbook--signage.pdf-flipbook--idle .pdf-flipbook-controls,
+.pdf-flipbook--signage.pdf-flipbook--idle .pdf-flipbook-thumbs {
+    opacity: 0;
+    pointer-events: none;
+}
+
+@media (max-width: 720px) {
+    .pdf-flipbook-thumbs {
+        width: 78px;
+    }
+
+    .pdf-flipbook-search input {
+        width: 120px;
+    }
+}
