@@ -5,6 +5,250 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
+## 🧭 SESSION HANDOVER (written 2026-09-14) — Phase 83: the signage PDF viewer, which had never once rendered
+
+User report, from `/display/signage/{branch}` on production: *"This page takes long to open, also I
+am expecting it to open as a flip book. For the signage, it should run the flip in a loop. Also I
+expect advanced features like zoom, single / multipage view, search, etc."* The screenshot showed
+toolbar, thumbnail rail and a working "Page 7 of 8" counter around a completely blank white area.
+
+### The viewer had been broken since Phase 43, and the cause was a 404
+
+`App.razor` linked `https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/css/page-flip.browser.css`.
+**page-flip 2.0.7 publishes no `dist/css` at all** — the only stylesheet in the package is
+`src/Style/stPageFlip.css`. That link had been 404ing for as long as it existed.
+
+Why that blanks the book rather than merely unstyling it: `.stf__block` is the element page-flip
+*measures* (`Render.getBlockHeight()` → `distElement.offsetHeight`), and without
+`position:absolute; height:100%` it is a static div that collapses to **0px tall**. The stretch
+branch of `calculateBoundsRect()` then does `r = h / n; if (r > blockHeight) { r = blockHeight;
+h = r * n }` — clamping the entire book to zero. Flips, events and the page counter all keep
+working at zero size, which is exactly why this read as "it is not a flip book" and not as an error.
+
+Two further faults were in the same path and each would have blanked it on its own:
+
+- **The component hid its own body while loading** (`style="display:none"` on
+  `.pdf-flipbook-body`). page-flip measures its container on construction, and a container inside
+  a `display:none` subtree measures 0×0. The status panel is now an absolute overlay instead.
+- **`autoSize` derives the book height from its width alone** (it writes a padding-bottom aspect
+  ratio onto the wrapper), so in a landscape container the book overflowed vertically and showed a
+  magnified corner of page one. It is now off, and the book is sized from an explicit box we set on
+  the surface element, refreshed by a `ResizeObserver`.
+
+The stylesheet is now **vendored** into `wwwroot/css/pdf-flipbook.css` rather than hotlinked, with
+the package's own `.sft__wrapper` typo corrected. Do not re-point this at a CDN.
+
+### Why it was slow, and what replaced it
+
+The old `init` rasterised **every** page at a fixed `scale: 2`, ran `canvas.toDataURL('image/jpeg')`
+on each, and showed nothing until all of them were done. Open time therefore grew with page count,
+and a data URL is a base64 string of a bitmap that then has to be parsed back into an image —
+megabytes of string for an 8-page A4 document. Now:
+
+- **Progressive.** Page one (and its spread partner) render, the book appears, the rest fill in
+  behind it. Measured: `domContentLoaded` 152ms on the signage route.
+- **`canvas.toBlob` → object URL → `<img>`,** not `toDataURL`. Object URLs are revoked on dispose —
+  a signage screen replays for days and would otherwise leak a document of bitmaps per pass.
+- **Pages are `<img>`, never `<canvas>`.** page-flip animates a soft turn by `cloneNode(true)` on
+  the page element (`Page.newTemporaryCopy`), and canvas pixels do not survive a clone — a
+  canvas-backed page goes blank for the whole flip animation.
+- **Render scale follows the size the page is actually displayed at**, not a constant, and is redone
+  at higher quality on zoom. Measured at 250%: displayed 1260×1783, bitmap 1259×1783 — 1:1, crisp.
+- **pdf.js (~340KB) and page-flip no longer load on every page of the app.** They were blocking
+  `<script>` tags in `App.razor` for the benefit of the handful of routes that show a PDF;
+  `pdfFlipbook.js` now injects them on first use. Verified: on `/platform/dashboard`,
+  `window.pdfjsLib` and `window.St` are both `false` and no render-blocking script entries remain.
+
+### Signage now turns its own pages, and loops
+
+`PlaylistPlayer` used to give a PDF one fixed slot for the whole document
+(`ContentType.Pdf => DefaultDurationSeconds * 2`) and `MediaPlayer` explicitly passed
+`AutoAdvance=false`, so an unattended screen showed **page one and nothing else** for its whole turn.
+A PDF now reports its own end like a video does:
+
+- `GetDefaultDuration(Pdf)` is `0` and `Pdf` is out of `UsesTimerBasedAdvance`. The item's own
+  `DurationSeconds` is read as the **per-page** dwell, not as the document's whole slot.
+- `Loop` is set for a single-item playlist, so a screen showing one document runs round and round.
+  The return to page one is `turnToPage(0)`, not a flip — rewinding backwards through every spread
+  reads as a fault on signage, not as a transition.
+- **A PDF that fails to open must also END**, or signage stops dead on it: since the fixed timer is
+  gone, the flip-book's callback is the only thing that moves the playlist on, and a document that
+  never opened would never raise it. `MediaPlayer.HandlePdfFailure` raises both.
+
+Measured live, 4s per page: `7,8 → 1,2` at 2.2s (the loop), then `3,4` at 6.9s, `5,6` at 11.6s,
+`7,8` at 16.5s, `1,2` again at 20.6s. Animated flips throughout.
+
+### The advanced features asked for
+
+Search (document-wide, built lazily on first use — an unattended screen never searches and the text
+walk costs real CPU on the boxes these run on; 129ms for 8 pages), with highlight rectangles drawn
+from the pdf.js text-run geometry as percentages so they survive zoom and resize, match stepping,
+and hit-marked thumbnails. Single-page vs two-page spread. Zoom 50–400% with a fit control and a
+quality re-render. A page-number box. Fullscreen, thumbnails, keyboard shortcuts
+(arrows/space/Home/End/±/0/F/D). On signage the whole chrome fades out after 6 idle seconds and
+comes back on any pointer movement.
+
+**page-flip has no "always one page" switch.** Its only route to a single page is the portrait
+orientation, chosen when `blockWidth < 2 * minWidth && usePortrait`. `buildBook` uses a sentinel
+`minWidth` to force that, which works only because `applyLayout` clears the `min-width` HTMLUI
+writes onto the element from the settings. Those two are coupled; do not remove the reset.
+
+### Two things that were measured rather than assumed
+
+- **A percentage height does not resolve through the media library's preview-modal chain.**
+  `.preview-body` is `flex:1` with only a `min-height`, so `.pdf-flipbook { height: 100% }`
+  collapsed to its content and the page stage came out **0px tall**. A plain row flex did not fix
+  it either — cross-axis stretch does not kick in against that percentage. `.pdf-container` is now
+  a **column** flex where `flex: 1` acts on the height, which is unambiguous. Measured
+  420 / 420 / 340 (container / flip-book / stage) against 420 / 80 / 0 before.
+- **Chrome runs no animation frames in a minimised window, and page-flip's entire render loop is
+  `requestAnimationFrame`.** With the window minimised, `pageFlip.flipNext()`, `flip()` and
+  `turnToPage()` all appeared completely dead — `PageCollection.show()` changes internal state but
+  the DOM is only touched in `drawFrame`. Roughly 40 minutes went into hunting a non-existent bug
+  before `document.visibilityState` was checked. **Check `visibilityState` and count rAF frames
+  before diagnosing anything animation-driven as broken.** A real signage screen is always visible.
+
+### Known, not changed
+
+`Program.cs` has `app.UseStaticFiles()` **before** `app.UseCors()`, so the API's `/uploads/*` files
+never carry CORS headers. It does not affect production (nginx makes them same-origin), but it means
+the note elsewhere about adding `http://127.0.0.1:5003` to `Cors__AllowedOrigins` for local testing
+**cannot work** — the middleware never runs for those files. Locally, a PDF served from the API to a
+browser on Web's origin fails with pdf.js reporting *"Unexpected server response (503)"*. Verified
+here by serving the test PDF from Web's own `wwwroot` instead. Changing middleware order is a
+security-relevant edit and was left for a decision rather than made as a side effect.
+
+### The e2e was re-run on 2026-09-14 and found three more real defects
+
+The first pass verified the work in pieces, some of them before the last code change. Re-running it
+from a clean slate against the final build — teardown of all media/playlists first, then a fresh
+**12-page** document seeded through the real endpoints — found three things the first pass missed.
+**Two of them were user-visible; one was mine to begin with.**
+
+1. **Jumping to a page moved exactly ONE spread, in the right direction, and stopped.**
+   `pageFlip.flip()` animates correctly only to an *adjacent* spread: `flipToPage` primes
+   `currentSpreadIndex` to one-before-target and then animates from whatever is actually *rendered*.
+   Measured: stepping through search matches from pages 9,10 went 7,8 → 5,6 → 3,4, ignoring the
+   target every time. This affected **every** jump — thumbnails, the page-number box and search hits
+   all share `goToPageIndex`. It also explains why a `catch`-based fallback there was useless:
+   `flipToPage` wraps itself in its own `try/catch` and never throws. Now: animate when the target
+   really is the next or previous spread, `turnToPage()` otherwise. Verified by stepping all 12
+   matches — each lands on its own page — plus far jumps from either end.
+2. **A jump issued while a flip was animating landed one spread off.** The in-flight animation's
+   `onAnimateEnd` calls `showNext()` when it lands, *after* the jump. On signage this is live, not
+   theoretical: the auto-advance flip takes 700ms, so a visitor tapping a thumbnail during one got
+   the wrong page. `goToPageIndex` now calls `getRender().finishAnimation()` first. Verified by
+   deliberately racing it — waiting for a mid-flip frame, then clicking a far thumbnail: 4/4 landed
+   correctly, all four confirmed to have actually caught a live mid-flip.
+3. **The page kept auto-flipping while somebody was using the viewer** — which makes the search and
+   zoom this phase added pointless, since the document slides away mid-read. Idle now drives both
+   the chrome fade *and* an auto-advance pause: interaction stops the timer, and the same idle
+   timeout that fades the chrome back out resumes unattended playback. Verified: untouched it
+   advances (3,4 → 5,6); interacting holds it still across a full dwell (5,6 → 5,6); after the idle
+   window it resumes on its own (7,8 → 9,10) with the chrome faded.
+
+**One "failure" was the test's own fault and is worth recording so it is not re-chased.** Two
+step-match assertions failed because the assertions themselves waited 2s between clicks, letting the
+chrome go idle — `pointer-events: none` then swallowed a click. Re-run with the viewer kept awake,
+stepping is exact (1 → 2 → 3). The idle fade is the designed signage behaviour; the first tap wakes
+the chrome, which is the conventional kiosk pattern.
+
+### Verification
+
+Built clean (0 errors, no new warnings, no RZ10012). Seeded the dev tenant with a real hand-written
+8-page PDF (`scripts`-free, generated for the purpose), uploaded through
+`POST /organizations/{id}/media/upload`, added to a new playlist and item through the real
+endpoints, and drove `/display/signage/{branch}` in Chrome: 8 pages rendered, 8 thumbnails, book
+sized 1808×723, animated flips, the loop, search returning 8/8 and 1/1 correctly with highlights
+painted and thumbnails marked, spread↔single, zoom to 250% with a 1:1 bitmap, and the search box
+driven through the real Blazor `@bind` path (match count "1 / 1", page box jumped to 4).
+
+The re-run added assertions over the failure path and memory hygiene, which matter for a screen that
+runs unattended for days: a second viewer instance initialises independently of the live one;
+`dispose` revokes **every** page object URL (checked by fetching each one afterwards) and empties
+both containers without touching the other instance; and a missing PDF fails cleanly with a real
+message rather than hanging. Console clean apart from the deliberate missing-file test.
+
+**The dev tenant is left clean this time** — the media row and playlist created for the run were
+both deleted through the API afterwards (0 media rows, 0 playlists), as was the temporary PDF served
+from `wwwroot`.
+
+**Not deployed.** Nothing was committed or pushed.
+
+---
+
+## ▶ NEXT SESSION — start here (written 2026-09-14)
+
+**Read this before Phase 82's own "NEXT SESSION" below.** Deploy and commit were outstanding before
+this session and still are; this section supersedes that one only by adding to it.
+
+### 0. OPEN SECURITY ISSUE — uploads are served ahead of any authorisation check
+
+**This is the highest-priority item in this file and it was not known before 2026-09-14.**
+
+Uploads live under the API's own `wwwroot`, so the static-file middleware serves them before
+authentication runs, with no per-file authorisation on that path. The consequence that matters: a
+permission check on the record owning a file is meaningless while the bytes are reachable directly,
+and an upload URL, once it leaks, is permanent, unrevocable, and leaves no audit trail.
+
+**Full detail — the reproduction, the affected middleware lines, and the list of what is exposed —
+is deliberately NOT in this file.** This repository is public (confirmed 2026-09-14), and an unfixed
+finding against a live host should not be published with a working reproduction. It is in
+`SECURITY-UPLOADS.local.md` in the repository root, untracked and covered by the `*.local.md` rule
+in `.gitignore`. **Read that first if you are picking this up.** Once the fix has shipped, fold it
+into this tracker as normal engineering history and delete it — a fixed finding is worth publishing.
+
+The shape of the fix: serve uploads through an authorising controller from a path outside `wwwroot`,
+backfill the stored URLs (`Infrastructure/Data/UploadLinkRepair` is the working precedent), and ship
+the deploy half in the same change — `ReadWritePaths` in the unit, the directory created and
+`chown`ed by `install.sh`, the nginx `/uploads/` block reworked. The Web key-ring fix is the
+cautionary tale: its one-line version would have made production worse.
+
+It is written up as Phase 1 of the document-sharing plan below because that is where the fix
+naturally sits, **but it does not depend on that feature being built** and should not wait for it if
+the rest of the plan is deferred.
+
+### 1. PENDING FEATURE — secure document sharing
+
+**Planned in full on 2026-09-14, nothing built.** The plan is
+[`docs/plans/SECURE_DOCUMENT_SHARING.md`](plans/SECURE_DOCUMENT_SHARING.md), with a designed version
+at https://claude.ai/code/artifact/4ea724da-8aed-4762-9c96-6b4c5b3de2f8.
+
+Requested as: share an uploaded document with people who may have no login, track views and
+downloads, set read-only vs downloadable, set a password, schedule expiry, keep an audit log —
+universal across modules, worked example being a school sharing staff-meeting minutes.
+
+**Revision 2 is the binding version, after a user correction that materially shrank the design.**
+Rev 1 shared records in place via a polymorphic `ResourceType`/`ResourceId` across Welfare, Content,
+Broadcasts and Docs. The user rejected that: *"do not mix this feature with existing reports or
+records… if user wants to share a generated report, it should be exported to pdf and moved into the
+sharing repository, whereas the same document can be flagged to display in the signage, or for
+restricted share to public."*
+
+The three things worth carrying forward without reading the whole plan:
+
+- **Publishing is the boundary.** Records and reports get no share button. Sharing only knows about
+  the Library. This is why **a safeguarding record cannot be link-shared at all**, and why
+  `IStudentScopeService` belongs at export time and nowhere in the sharing code.
+- **The Library already exists: it is `MediaContent`.** Org-scoped, already has `ContentType.Pdf`,
+  and its `PlaylistItems` navigation *is* the signage path — so "flag it for signage" is playlist
+  membership, which works today. Net model is **one table enhanced (`MediaContent`) plus two added
+  (`DocumentShare`, `DocumentShareEvent`)**, no polymorphic resource type.
+- **The share link must NOT reuse `VisitorBadgeTokenService`'s signed-token pattern**, tempting as
+  it looks. A self-contained token cannot be revoked, and revocation is a hard requirement. Opaque
+  random slug, SHA-256 hash stored. `ITimeLimitedDataProtector` *is* right for the 60-second content
+  token once a viewer is through the gates.
+
+Four decisions are open and are the user's, listed in §11 of the plan — the first being whether the
+Library stays one table or splits official documents from marketing media.
+
+### 2. Commit and deploy — unchanged and still outstanding
+
+Phase 83's work (the flip-book rebuild) is uncommitted along with everything before it. See Phase
+82's "NEXT SESSION" below for the build command, the database-backup requirement and the two
+untracked secret files that must stay gitignored.
+
+---
 ## 🧭 SESSION HANDOVER (written 2026-09-13) — Phase 82: items 3–5 of the 2026-09-10 backlog, closed and proven
 
 The request was to read the handover for outstanding work, then **fix items 3–5 fully and run an
@@ -18,6 +262,11 @@ Teacher, a Tenant Admin and a SuperAdmin.
 ---
 
 ## ▶ NEXT SESSION — start here
+
+> **Still current for deploy and commit, but read the 2026-09-14 "NEXT SESSION" above it first** —
+> that one adds a live security issue (uploads are world-readable) and a planned-but-unbuilt feature
+> ahead of everything here. The build command, the database-backup requirement and the secret-file
+> check below are unchanged and still apply.
 
 **Deploy and commit. Both were outstanding before this session and both still are — and the
 production check-in 500 is still live.**
@@ -7002,6 +7251,15 @@ carries playback-control scopes, no account-level access.
   surfaced via `OnPlayerError` → currently just logged server-side, not shown in any UI yet).
 
 ### Phase 43: PDF flip-book viewer built and enhanced; PPT slideshow explicitly declined by the user
+
+> **CORRECTED 2026-09-14 — see Phase 83 at the top of this file. The viewer described below never
+> actually rendered anything.** Its page-flip stylesheet link was a 404 (that path does not exist in
+> the package), which collapsed the book to zero size while leaving the toolbar, thumbnails, page
+> counter and every event working — so "live-verified against a real 14-page PDF" below was reading
+> working chrome around a blank area. The PPT decision in this phase stands and is unaffected; so
+> does the SoundCloud colour fix. The deliberate "does not auto-flip during signage" choice was
+> **reversed** by Phase 83 at the user's request: a PDF now turns its own pages and loops.
+
 - [x] **Real PDF flip-book viewer built**, replacing the passive Google Docs iframe embed for PDFs.
   New `Components/Shared/PdfFlipbook.razor` + `wwwroot/js/pdfFlipbook.js`: PDF.js (CDN, no server
   dependency) renders every page to an image client-side; page-flip/StPageFlip (CDN) gives a real

@@ -17,3 +17,9 @@ src/Q-Mgr.Shared/BuildInfo.cs
 
 # Build-time secrets for scripts/deploy/build-linux.ps1 (SMTP password, etc.)
 scripts/deploy/secrets.local.json
+
+# Local-only security notes: full detail (reproductions, affected lines, exposed
+# data) for findings that are not yet fixed. This repo is PUBLIC — an unfixed
+# finding must not be published with a working reproduction. Remove the note and
+# fold the detail into the tracker once the fix has shipped.
+*.local.md

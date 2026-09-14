@@ -827,6 +827,25 @@ created, "Dummy record - evidence upload test. Safe to delete.", is on Test Stud
 A SuperAdmin with no organization chosen sees an empty Category list on the create form until the
 page is reloaded after picking an organization and branch. Not investigated.
 
+**OPEN — uploads are served as static files, ahead of any authorisation check (found 2026-09-14,
+not yet fixed).** Uploads live under the API's own `wwwroot`, so the static-file middleware serves
+them before authentication runs; there is no per-file authorisation on that path. The practical
+consequence is the one that matters here: **a permission check on the record that owns a file is
+meaningless while the bytes are also reachable directly**, and an upload URL, once it leaks, is
+permanent and unrevocable. Treat every upload surface as world-readable until this is closed.
+
+**Do not add a new upload surface, or build anything that relies on per-file access control, before
+reading this.** OWASP's rule is that uploaded files should never be directly reachable and that
+public access belongs behind a handler mapping an id to a file; that is the shape of the fix, scoped
+as Phase 1 of `docs/plans/SECURE_DOCUMENT_SHARING.md` — which does not depend on the rest of that
+feature being built.
+
+**This repository is public, so the reproduction, the affected lines and the list of exposed data
+are deliberately NOT here.** They are in `SECURITY-UPLOADS.local.md` in the repository root, which
+is untracked and covered by the `*.local.md` rule in `.gitignore`. Fold that file into
+`docs/TASK_TRACKER.md` and delete it once the fix has shipped — a *fixed* finding is normal
+engineering history and worth publishing; an unfixed one against a live host is not.
+
 The general rule, extending the notification-hub one above: **`ApiBaseUrl` is for Web's own
 server-side calls only. Anything a browser will fetch or post to (a saved link, an upload target,
 a docs link) must use a public origin, never the request host of a Web-to-API call.**
@@ -909,6 +928,71 @@ viewport stays at desktop width (recorded in Phase 22 and confirmed again 2026-0
 attempts). Clone the suspect row into a fixed-width probe and compare `scrollWidth` against the
 container with `flex-wrap` on and off — that comparison *is* the bug, and is better evidence than
 a picture.
+
+## The PDF flip-book: a vendored stylesheet, and pages that must be `<img>` (rebuilt 2026-09-14)
+
+The viewer (`Components/Shared/PdfFlipbook.razor`, `wwwroot/js/pdfFlipbook.js`,
+`wwwroot/css/pdf-flipbook.css`) had **never once rendered** between Phase 43 and Phase 83, and the
+reason is worth keeping: `App.razor` linked `page-flip@2.0.7/dist/css/page-flip.browser.css`, a path
+**that package does not publish** — a 404 for as long as it existed. `.stf__block` is the element
+page-flip measures (`Render.getBlockHeight()` → `distElement.offsetHeight`), so without
+`position:absolute; height:100%` it collapsed to 0px and the stretch branch clamped the whole book
+to zero. Flips, events and the page counter all keep working at zero size, so it presented as "it is
+not a flip book", never as an error.
+
+- **The page-flip stylesheet is vendored into `pdf-flipbook.css`. Do not re-point it at a CDN** —
+  the only stylesheet in the package is `src/Style/stPageFlip.css`. The vendored copy also fixes the
+  package's own `.sft__wrapper` typo, which is what lets the wrapper carry a height.
+- **A page element is an `<img>`, never a `<canvas>`.** page-flip animates a turn by
+  `cloneNode(true)` on the page (`Page.newTemporaryCopy`), and canvas pixels do not survive a clone
+  — a canvas-backed page goes blank for the whole animation.
+- **Never hide the viewer's body while it loads.** page-flip measures its container on construction
+  and a container inside a `display:none` subtree measures 0×0. The status panel is an absolute
+  overlay for exactly this reason.
+- **`autoSize` is off and must stay off.** It derives the book's height from its width alone, so in
+  a landscape container the book overflows vertically and shows a magnified corner of page one. The
+  size comes from an explicit box set on the surface element, refreshed by a `ResizeObserver`.
+- **pdf.js and page-flip load on demand, not from `App.razor`.** They were blocking `<script>` tags
+  on every page of the app (~340KB for pdf.js alone) for the handful of routes that show a PDF.
+- **Signage turns its own pages.** `PlaylistPlayer` no longer runs a fixed timer for a PDF
+  (`GetDefaultDuration(Pdf)` is 0, `Pdf` is out of `UsesTimerBasedAdvance`); the item's own
+  `DurationSeconds` is the **per-page** dwell, and the flip-book reports its end like a video does.
+  A PDF that fails to open must therefore ALSO raise ended, or signage stops dead on it —
+  `MediaPlayer.HandlePdfFailure` does both.
+- **Idle drives two things off one concept: the chrome fades AND auto-advance pauses.** A kiosk that
+  keeps turning pages while somebody reads makes search and zoom pointless — you find page 9 and
+  three seconds later the document has moved on. Any real interaction stops the timer; the same idle
+  timeout that fades the chrome back out resumes it. `bindIdle`'s initial call passes `fromUser:
+  false` so an untouched screen starts flipping at once instead of waiting out the first window.
+- **`pageFlip.flip()` animates correctly ONLY to an adjacent spread — anything further needs
+  `turnToPage()`.** `flipToPage` primes `currentSpreadIndex` to one-before-target and then animates
+  from whatever is actually *rendered*, so a multi-spread jump moves exactly one spread and stops.
+  It wraps that in its own `try/catch`, so it never throws and a `catch`-based fallback around it is
+  dead code. Measured before the fix: stepping search matches from pages 9,10 went 7,8 → 5,6 → 3,4,
+  ignoring the target every time. `goToPageIndex` now picks per distance — this is the one path
+  thumbnails, the page-number box and search hits all share.
+- **Finish any in-flight animation before reading the current page.** An animation owns an
+  `onAnimateEnd` that calls `showNext()`/`showPrev()` when it lands; jump over the top of it and
+  that handler fires afterwards, leaving the book one spread off. On signage this is a live race,
+  not a theoretical one — the auto-advance flip takes 700ms and a visitor tapping a thumbnail during
+  it got the wrong page. `goToPageIndex` calls `getRender().finishAnimation()` first.
+- **A percentage height does not resolve through the media library's preview-modal chain**
+  (`.preview-body` is `flex:1` with only a `min-height`), and a row flex does not rescue it either.
+  `.pdf-container` is a **column** flex so `flex: 1` acts on the height. Measured, not assumed.
+
+**Known and deliberately not changed:** `Program.cs` runs `UseStaticFiles()` *before* `UseCors()`,
+so the API's `/uploads/*` files never carry CORS headers. Production is unaffected (nginx makes them
+same-origin), but it means adding `http://127.0.0.1:5003` to `Cors__AllowedOrigins` **cannot** make a
+local cross-origin upload fetch work — the middleware never runs for those files. Locally, serve the
+PDF from Web's own `wwwroot` instead. Reordering that middleware is a security-relevant edit.
+
+**A tooling trap that generalizes beyond this feature: Chrome runs NO `requestAnimationFrame` in a
+minimised or backgrounded window**, and page-flip's entire render loop is rAF-driven. With the window
+minimised, `flipNext()`, `flip()` and `turnToPage()` all looked completely dead — they change
+internal state, but the DOM is only touched in `drawFrame`. That cost about 40 minutes of hunting a
+bug that did not exist. **Check `document.visibilityState` and count rAF frames before diagnosing
+anything animation-driven as broken.** This sits alongside the two known tooling limits already
+recorded above (`resize_window`, the print dialog).
 
 ## Printing is the browser's job (decided 2026-09-09)
 
