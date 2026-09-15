@@ -730,6 +730,11 @@ else
                 // Reload user info now that tokens are available
                 currentUser = await AuthService.GetCurrentUserAsync();
 
+                // This layout can be torn down while the awaits above are in flight (the router
+                // swapped to the page's own layout). A disposed layout must not send anyone
+                // anywhere — the redirect below is a full page load.
+                if (disposed) return;
+
                 // If we now have a user, refresh the UI
                 if (currentUser != null)
                 {
@@ -1385,8 +1390,11 @@ else
         public bool IsRead { get; set; }
     }
 
+    private bool disposed;
+
     public async ValueTask DisposeAsync()
     {
+        disposed = true;
         clockTimer?.Dispose();
 
         // Unsubscribe from notification events

@@ -284,10 +284,46 @@ pinch-zoom** — a book metaphor is a desktop/signage treatment, not a phone one
   package built after this commit (`scripts/deploy/dist/`) is the one to ship; the 20:48 package
   predates scroll mode and the key-ring unit fix.
 
-The login-bounce reported alongside it was **not reproducible**: `/s/{slug}` with stale admin
-tokens planted renders the gate, and the failed refresh clears the tokens. The `[MainLayout]`
-redirect fires only for genuinely protected shell pages, which is correct. The probe
-instrumentation added to trace it was removed before commit.
+The login-bounce reported alongside it was written up here as "not reproducible" for an hour —
+that was wrong, and the paragraph below replaces it.
+
+### The share page bounced to /login on every deploy — reproduced, root-caused, fixed (2026-09-15, late)
+
+After the scroll-mode deploy the user reported the flip-book "not working, just an ordinary
+PDF" (that is scroll mode by design on a phone — see the Book / Scroll toggle below) and, earlier,
+a bounce to the sign-in page. A fresh navigation to `/s/{slug}` never bounced. **Restarting the
+Web process under an open share tab bounced every time**, which is exactly what a deploy does to
+every open link. Instrumented `Routes.razor` and `MainLayout` showed the sequence: router resolves
+`SharedDocument` → **`MainLayout` initialises at `/s/…`** → `AppInit` finds no tokens →
+`NavigateTo("/login?returnUrl=/s/…", forceLoad: true)`.
+
+The mechanism: `AuthorizeRouteView` renders its *Authorizing* state inside `DefaultLayout`
+(`MainLayout`), not the page's `@layout`. `CustomAuthenticationStateProvider` reads localStorage
+over JS interop, so for an anonymous reader the state is never ready synchronously and the
+Authorizing render always happens; `MainLayout.OnAfterRenderAsync` then runs its own check across
+two awaits. On a warm server the auth state resolves and the real page replaces the layout before
+that check reaches the redirect; on the first circuit of a cold process (JIT, first DB calls) the
+check wins. Fix: `Routes.razor` routes any page without `[Authorize]` through a plain `RouteView`
+— no page has `[Authorize]` today, the shell's protection is `MainLayout`'s own redirect, which
+still runs because `RouteView` applies the page's layout — and `MainLayout` refuses to redirect
+after it has been disposed. Verified by the same restart-under-tab: the tab reloaded into the
+resumed viewer, `MainLayout` never initialised, the API saw gate → resume → content. Recorded in
+CLAUDE.md under the prerendering/auth section.
+
+### Book / Scroll toggle in the PDF viewer (2026-09-15, late)
+
+A phone opens in the scrolling column, and the user read that as the flip-book being broken. The
+toolbar now carries a **Book / Scroll** toggle (never on signage): `setViewMode(id, 'book'|'scroll')`
+rebuilds the stage in place from the bitmaps already rendered, remembers the choice in
+`localStorage['qmgr-pdf-view']`, and init honours it on any screen width. A narrow screen's book
+is single-page. Two defects found while verifying it in Chrome: switching to the column left
+page-flip's inline `position:absolute; left; top` on the pages (its frame loop writes them once
+more after `destroy()`), so both pages sat on one line — the column's CSS now carries `!important`
+on position/size/transform; and the thumbnail rail came back empty after any hide/show, because
+Blazor recreates the element — `refreshThumbs` rebuilds it from the stored thumbnails. Verified:
+scroll → book (single page 412×583 on the 500px window, spread offered), Next → page 2, book →
+scroll (pages `position: relative`, stacked, scrolled to page 2), reload with the preference set
+to `book` opens the book.
 
 ### Stale notes verified against the code before any work started
 

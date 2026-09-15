@@ -70,7 +70,30 @@
                         <div class="pdf-flipbook-toolbar-sep"></div>
                     }
 
-                    @if (viewMode != "scroll")
+                    @if (!AutoAdvance)
+                    {
+                        @* Book or scrolling column. A phone opens in the column (see pdfFlipbook.js);
+                           this is how a reader gets the book there, or the column on a desktop, and
+                           the choice is remembered in their browser. Signage has no choice to make. *@
+                        <div class="pdf-flipbook-toolbar-group">
+                            <QButton Icon="@(viewMode == "scroll" ? "book" : "view-stacked")"
+                                     Variant="secondary" Size="sm" OnClick="@ToggleScrollMode"
+                                     Disabled="@(pageCount == 0)"
+                                     Title="@(viewMode == "scroll" ? "Switch to book view (page turns)" : "Switch to scrolling view")"
+                                     aria-label="@(viewMode == "scroll" ? "Switch to book view" : "Switch to scrolling view")" />
+                            @if (viewMode != "scroll")
+                            {
+                                <QButton Icon="@(viewMode == "single" ? "file-earmark" : "book-half")"
+                                         Variant="secondary" Size="sm" OnClick="@ToggleViewMode"
+                                         Disabled="@(pageCount <= 1)"
+                                         Title="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")"
+                                         aria-label="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")" />
+                            }
+                        </div>
+
+                        <div class="pdf-flipbook-toolbar-sep"></div>
+                    }
+                    else if (viewMode != "scroll")
                     {
                         <div class="pdf-flipbook-toolbar-group">
                             <QButton Icon="@(viewMode == "single" ? "file-earmark" : "book")"
@@ -271,6 +294,11 @@
             matchCurrent = 0;
             await LoadDocument();
         }
+        else if (thumbsNeedRefresh && showThumbRail)
+        {
+            thumbsNeedRefresh = false;
+            try { await JS.InvokeVoidAsync("pdfFlipbookInterop.refreshThumbs", containerId); } catch { }
+        }
     }
 
     private async Task LoadDocument()
@@ -351,7 +379,35 @@
         pageInput = await JS.InvokeAsync<int>("pdfFlipbookInterop.goToPage", containerId, target);
     }
 
-    private void ToggleThumbRail() => showThumbRail = !showThumbRail;
+    private void ToggleThumbRail()
+    {
+        showThumbRail = !showThumbRail;
+        // The rail element is recreated empty when it comes back (see refreshThumbs in the JS).
+        if (showThumbRail) thumbsNeedRefresh = true;
+    }
+
+    private bool thumbsNeedRefresh;
+
+    /// <summary>
+    /// Book ⇄ scrolling column. The JS owns the decision and the remembered preference; this
+    /// side only follows what it reports: the column has no spread and no thumbnail rail (a
+    /// fifth of a phone's width), the book gets both back, and zoom returns to fit.
+    /// </summary>
+    private async Task ToggleScrollMode()
+    {
+        var wanted = viewMode == "scroll" ? "book" : "scroll";
+        viewMode = await JS.InvokeAsync<string>("pdfFlipbookInterop.setViewMode", containerId, wanted);
+        zoomLevel = 1.0;
+        if (viewMode == "scroll")
+        {
+            showThumbRail = false;
+        }
+        else if (ShowThumbnails && !showThumbRail)
+        {
+            showThumbRail = true;
+            thumbsNeedRefresh = true;
+        }
+    }
 
     private async Task ToggleViewMode()
     {

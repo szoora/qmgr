@@ -739,6 +739,21 @@ Two rules for anything that acts on auth state:
   it costs nothing when `MainLayout` already has. `MainLayout` established this order; follow it
   rather than inventing a second one.
 
+**A public page must never pass through `AuthorizeRouteView` (found 2026-09-15, the share-page
+"login bounce").** `AuthorizeRouteView` renders its *Authorizing* and *NotAuthorized* states
+inside `DefaultLayout` — `MainLayout` — never inside the page's own `@layout`. Because the auth
+state comes from localStorage over JS interop, an anonymous visitor's state is never ready
+synchronously, so every public page (`/s/{slug}`, `/login`, the kiosk) spent its first render
+inside `MainLayout`, whose own check then sent the visitor to `/login?returnUrl=…` with a full
+page load. On a warm server the real page usually won that race; **on the first circuit after a
+restart — which is what a deploy does to every open tab — it lost, reproducibly** (every open
+share link bounced to the sign-in page the moment the new build came up). `Routes.razor` now sends
+a page with no `[Authorize]` through a plain `RouteView`; only a page that carries `[Authorize]`
+(none do today — the shell's protection is `MainLayout`'s own redirect) gets the authorize view.
+`MainLayout` also refuses to redirect once disposed, since its check spans two awaits. Reproduce
+the class by restarting the Web process under an open tab; never by a fresh navigation, which
+does not show it.
+
 Related, and the reason this was found: **a redirect to `/login` from `/login` is a full-page
 reload of the page the user is already typing into.** `MainLayout` did exactly that until Phase 74.
 Guard the already-on-login case explicitly, and prefer soft `NavigateTo` over `forceLoad: true`
@@ -1056,7 +1071,14 @@ not a flip book", never as an error.
   zoom for the kiosk's sake), a compact one-row toolbar with 44px targets, thumbnails off by
   default, and a lighter, sparser watermark below ~900px of render. **A PDF cannot reflow**;
   fit-width plus zoom is the ceiling for a self-hosted viewer, and the page should not pretend
-  otherwise. `setViewMode` is a no-op in scroll mode and the spread toggle is hidden.
+  otherwise. **The reader can switch: a Book / Scroll toggle in the toolbar** (`setViewMode(id,
+  'book'|'scroll')`), remembered in `localStorage['qmgr-pdf-view']` and honoured at init on any
+  screen; absent a choice, the width decides. A narrow screen's book is single-page, since a spread
+  there is two half-width pages. Signage never offers it. Switching to the column must reset the
+  page elements page-flip styled — its frame loop can write inline styles once more after
+  `destroy()`, so the column's CSS carries `!important` on position/size/transform, on purpose.
+  The thumbnail rail is rebuilt from the bitmaps already made (`refreshThumbs`) whenever Blazor
+  re-creates the rail element; before 2026-09-15 hiding and showing the rail emptied it.
 - **`pageFlip.flip()` animates correctly ONLY to an adjacent spread — anything further needs
   `turnToPage()`.** `flipToPage` primes `currentSpreadIndex` to one-before-target and then animates
   from whatever is actually *rendered*, so a multi-spread jump moves exactly one spread and stops.

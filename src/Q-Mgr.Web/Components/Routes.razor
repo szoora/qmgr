@@ -1,3 +1,5 @@
+@using System.Collections.Concurrent
+@using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Authorization
 @* Both of these are needed for the two tags below to resolve to real components. Without them
@@ -18,18 +20,39 @@
   <CascadingValue Value="Viewer" IsFixed="true">
     <Router AppAssembly="typeof(Program).Assembly">
         <Found Context="routeData">
-            <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
-                <NotAuthorized>
-                    @if (context.User.Identity?.IsAuthenticated != true)
-                    {
-                        <RedirectToLogin />
-                    }
-                    else
-                    {
-                        <Unauthorized />
-                    }
-                </NotAuthorized>
-            </AuthorizeRouteView>
+            @if (RequiresAuthorization(routeData.PageType))
+            {
+                <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+                    <NotAuthorized>
+                        @if (context.User.Identity?.IsAuthenticated != true)
+                        {
+                            <RedirectToLogin />
+                        }
+                        else
+                        {
+                            <Unauthorized />
+                        }
+                    </NotAuthorized>
+                </AuthorizeRouteView>
+            }
+            else
+            {
+                @* A page with no [Authorize] goes through a plain RouteView, and that is a
+                   security-neutral choice with one real effect. AuthorizeRouteView renders its
+                   "Authorizing" and "NotAuthorized" states inside DefaultLayout — MainLayout — and
+                   NOT inside the page's own @layout. The auth state here comes from localStorage
+                   through JS interop, so for an anonymous visitor it is never ready synchronously,
+                   and every public page (the share viewer, login, the kiosk) spent its first render
+                   inside MainLayout, whose own check then sent the visitor to /login with a full
+                   page load. On a warm server the real page usually won the race; on the first
+                   circuit after a restart — which is what a deploy does to every open tab — it
+                   lost, reproducibly. Found 2026-09-15 on the shared-document page.
+
+                   No page in this app carries [Authorize] today: the shell's protection is
+                   MainLayout's own redirect, which RouteView keeps because it still applies the
+                   page's layout. The branch above is kept for any page that does add it. *@
+                <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+            }
             <FocusOnNavigate RouteData="routeData" Selector="h1" />
         </Found>
         <NotFound>
@@ -49,4 +72,17 @@
 @code {
     /// <summary>Set by App.razor from the host request; null on any render path that has no HttpContext.</summary>
     [Parameter] public ViewerRequestInfo? Viewer { get; set; }
+
+    private static readonly ConcurrentDictionary<Type, bool> AuthorizationByPage = new();
+
+    /// <summary>
+    /// The same test AuthorizeRouteView applies (AttributeAuthorizeDataCache): an [Authorize]
+    /// somewhere on the page type, unless an [AllowAnonymous] is there too.
+    /// </summary>
+    private static bool RequiresAuthorization(Type pageType) => AuthorizationByPage.GetOrAdd(pageType, static t =>
+    {
+        var attributes = t.GetCustomAttributes(inherit: true);
+        if (attributes.Any(a => a is IAllowAnonymous)) return false;
+        return attributes.Any(a => a is IAuthorizeData);
+    });
 }

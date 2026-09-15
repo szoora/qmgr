@@ -180,7 +180,9 @@ window.pdfFlipbookInterop = (function () {
             // horizontally too once zoomed past the screen.
             var stageW = inst.stage.clientWidth;
             if (stageW < 40) return;
-            inst.surfaceW = Math.round(stageW * inst.zoom);
+            // Fit-to-width, but a desktop stage is wider than a page is comfortable to read;
+            // cap the column and let the stylesheet centre it. Zoom still goes past the cap.
+            inst.surfaceW = Math.round(Math.min(stageW, SCROLL_MAX_WIDTH) * inst.zoom);
             inst.surfaceH = 0;
             inst.surfaceEl.style.width = inst.surfaceW + 'px';
             scheduleQualityPass(inst);
@@ -247,6 +249,13 @@ window.pdfFlipbookInterop = (function () {
         because the app's viewport meta forbids browser zoom for the kiosk screens' sake).
     */
     function buildScroll(inst) {
+        // Coming from the book: page-flip owns the page elements' inline styles (absolute
+        // position, transform, clip-path, size) and tags them .stf__item. Take the book down
+        // first, then hand the elements back as plain blocks, or they stack on top of each other.
+        if (inst.pageFlip) {
+            try { inst.pageFlip.destroy(); } catch (e) { /* already gone */ }
+            inst.pageFlip = null;
+        }
         if (inst.surfaceEl && inst.surfaceEl.parentNode) {
             inst.surfaceEl.parentNode.removeChild(inst.surfaceEl);
         }
@@ -260,6 +269,8 @@ window.pdfFlipbookInterop = (function () {
         var ratio = inst.pageW / inst.pageH;
         for (var i = 0; i < inst.pageEls.length; i++) {
             var el = inst.pageEls[i];
+            el.className = 'pdf-flipbook-page';
+            el.removeAttribute('style');
             el.style.aspectRatio = String(ratio);
             el.style.height = 'auto';
             surface.appendChild(el);
@@ -281,9 +292,65 @@ window.pdfFlipbookInterop = (function () {
         }, { root: inst.stage, threshold: [0.25, 0.5, 0.75] });
         for (var j = 0; j < inst.pageEls.length; j++) inst.pageObserver.observe(inst.pageEls[j]);
 
-        bindPinch(inst);
+        if (!inst.pinchDown) bindPinch(inst);
         applyLayout(inst, false);
-        notifyPage(inst, Math.min(inst.currentPage, inst.pageCount - 1), false);
+        var landing = Math.min(inst.currentPage, inst.pageCount - 1);
+        notifyPage(inst, landing, false);
+        // Open on the page the reader was on, not the top of the document.
+        if (landing > 0 && inst.pageEls[landing]) inst.stage.scrollTop = inst.pageEls[landing].offsetTop - 8;
+    }
+
+    // The scroll surface's own bindings, undone before the book takes the stage back.
+    function leaveScroll(inst) {
+        if (inst.pageObserver) {
+            try { inst.pageObserver.disconnect(); } catch (e) { }
+            inst.pageObserver = null;
+        }
+        if (inst.pinchDown) {
+            inst.stage.removeEventListener('pointerdown', inst.pinchDown);
+            inst.stage.removeEventListener('pointermove', inst.pinchMove);
+            inst.stage.removeEventListener('pointerup', inst.pinchUp);
+            inst.stage.removeEventListener('pointercancel', inst.pinchUp);
+            inst.pinchDown = inst.pinchMove = inst.pinchUp = null;
+        }
+        inst.stage.classList.remove('pdf-flipbook-stage--scroll');
+        inst.stage.scrollTop = 0;
+        inst.stage.scrollLeft = 0;
+        for (var i = 0; i < inst.pageEls.length; i++) {
+            inst.pageEls[i].removeAttribute('style');
+            inst.holder.appendChild(inst.pageEls[i]);
+        }
+    }
+
+    /*
+        The reader's own choice between the book and the scrolling column, remembered in the
+        browser. Absent, the screen width decides (see init). Signage never reads it: a wall
+        screen is not a reader, and its auto-advance is built on page turns.
+    */
+    var VIEW_PREF_KEY = 'qmgr-pdf-view';
+    var SCROLL_MAX_WIDTH = 1100;
+
+    function readViewPreference() {
+        try {
+            var v = window.localStorage.getItem(VIEW_PREF_KEY);
+            return v === 'book' || v === 'scroll' ? v : null;
+        } catch (e) { return null; }
+    }
+
+    function saveViewPreference(mode) {
+        try { window.localStorage.setItem(VIEW_PREF_KEY, mode); } catch (e) { /* private mode */ }
+    }
+
+    function isNarrow() {
+        return !!(window.matchMedia && window.matchMedia('(max-width: 900px)').matches);
+    }
+
+    // The book a reader gets when they ask for one: a single page on a narrow screen, because a
+    // two-page spread there is two half-width pages — the very thing scroll mode exists to avoid.
+    function bookModeFor(inst) {
+        if (inst.pageCount === 1) return 'single';
+        if (isNarrow()) return 'single';
+        return inst.bookMode || 'spread';
     }
 
     // Pinch-to-zoom and double-tap, driving the same zoom the toolbar buttons do. Two pointers'
@@ -967,9 +1034,19 @@ window.pdfFlipbookInterop = (function () {
                 // reader, DocSend) is fit-to-width with continuous vertical scroll and native
                 // pinch-zoom, so that is what narrow screens get. Signage keeps the book: a screen
                 // on a wall is not a phone, and the auto-advance loop is built on page turns.
-                if (options.scrollOnNarrow !== false && !inst.autoAdvance &&
-                    window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
-                    inst.mode = 'scroll';
+                //
+                // A reader who has pressed the Book / Scroll toggle gets what they chose, on any
+                // screen — the default below only applies when they have not said.
+                if (options.scrollOnNarrow !== false && !inst.autoAdvance) {
+                    var pref = readViewPreference();
+                    var narrow = isNarrow();
+                    if (pref === 'scroll' || (pref !== 'book' && narrow)) {
+                        inst.bookMode = inst.mode;
+                        inst.mode = 'scroll';
+                    } else if (narrow) {
+                        inst.bookMode = inst.mode;
+                        inst.mode = bookModeFor(inst);
+                    }
                 }
 
                 buildPageElements(inst);
@@ -1046,10 +1123,35 @@ window.pdfFlipbookInterop = (function () {
             return inst.zoom;
         },
 
+        // 'scroll' and 'book' switch between the scrolling column and the flip-book (and are
+        // remembered); 'single' and 'spread' pick the book's page layout. Returns the mode in
+        // force, which is what the toolbar renders from.
         setViewMode: function (containerId, mode) {
             var inst = instances.get(containerId);
-            if (inst && inst.mode === 'scroll') return 'scroll';
-            if (!inst || !inst.pageFlip) return 'spread';
+            if (!inst || !inst.pageEls) return inst ? inst.mode : 'spread';
+
+            if (mode === 'scroll' || mode === 'book') {
+                if (inst.autoAdvance) return inst.mode;
+                var wantScroll = mode === 'scroll';
+                if (wantScroll === (inst.mode === 'scroll')) return inst.mode;
+                saveViewPreference(mode);
+                inst.zoom = 1;
+                if (wantScroll) {
+                    inst.bookMode = inst.mode;
+                    inst.mode = 'scroll';
+                    buildScroll(inst);
+                } else {
+                    leaveScroll(inst);
+                    inst.mode = bookModeFor(inst);
+                    buildBook(inst);
+                }
+                paintHighlights(inst);
+                invoke(inst, 'OnZoomChanged', inst.zoom);
+                return inst.mode;
+            }
+
+            if (inst.mode === 'scroll') return 'scroll';
+            if (!inst.pageFlip) return 'spread';
 
             var wanted = mode === 'single' ? 'single' : 'spread';
             if (wanted === inst.mode) return inst.mode;
@@ -1062,6 +1164,19 @@ window.pdfFlipbookInterop = (function () {
             paintHighlights(inst);
             startAutoAdvance(inst);
             return inst.mode;
+        },
+
+        // Blazor removes the rail element when the rail is hidden and creates a fresh, empty one
+        // when it is shown again, so the thumbnails have to be rebuilt into it from the bitmaps
+        // already made. Cheap: nothing is re-rendered.
+        refreshThumbs: function (containerId) {
+            var inst = instances.get(containerId);
+            if (!inst || !inst.pageEls) return;
+            buildThumbRail(inst);
+            for (var i = 0; i < inst.pageCount; i++) {
+                if (inst.thumbUrls[i] && inst.thumbEls[i]) inst.thumbEls[i].querySelector('img').src = inst.thumbUrls[i];
+            }
+            markThumbHits(inst, inst.matches.map(function (m) { return m.page; }));
         },
 
         search: async function (containerId, query) {

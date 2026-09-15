@@ -440,12 +440,24 @@
     flex-direction: column;
     gap: 10px;
     padding: 10px 0 24px;
-    margin: 0;
+    /* Centred when the column is narrower than the stage (a desktop reader who chose Scroll);
+       a zoomed column wider than the stage overflows to the right and the stage pans. */
+    margin: 0 auto;
 }
 
+/* !important on purpose: page-flip positions its pages with inline styles (absolute, left/top,
+   transform, clip-path) and its frame loop can write them once more after destroy() when the
+   reader switches to the column mid-animation. The column must win regardless. */
 .pdf-flipbook-scroll .pdf-flipbook-page {
-    width: 100%;
-    height: auto;
+    position: relative !important;
+    display: block !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    transform: none !important;
+    clip-path: none !important;
+    z-index: auto !important;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 
