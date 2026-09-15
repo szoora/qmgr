@@ -1110,7 +1110,7 @@ public class StudentsController : ControllerBase
         Residency = s.Residency,
         House = s.House,
         DormitoryOrStream = s.DormitoryOrStream,
-        PhotoUrl = s.PhotoUrl,
+        PhotoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(s.PhotoUrl),
 
         // --- Pastoral tier: context and health.
         HomeCountry = pastoral ? s.HomeCountry : null,
@@ -1269,7 +1269,7 @@ public class StudentsController : ControllerBase
         s.Residency = p.Residency;
         s.House = Clean(p.House);
         s.DormitoryOrStream = Clean(p.DormitoryOrStream);
-        s.PhotoUrl = Clean(p.PhotoUrl);
+        s.PhotoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Strip(Clean(p.PhotoUrl));
 
         if (!includePastoral) return;
 

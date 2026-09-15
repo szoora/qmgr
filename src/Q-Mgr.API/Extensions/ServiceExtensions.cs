@@ -104,6 +104,22 @@ public static class ServiceExtensions
         services.Configure<IpRateLimitOptions>(rateLimitSection);
         services.Configure<IpRateLimitPolicies>(configuration.GetSection("IpRateLimitPolicies"));
 
+        // Uploads are served by UploadsController since 2026-09-15 (they used to be static files,
+        // which never passed through the limiter at all). One display loading a playlist fetches
+        // many files from one address, and a media grid fetches a thumbnail per row, so the
+        // general "100 a minute" rule would black out a signage screen. Whitelisted here in code
+        // rather than in appsettings, because the DB "RateLimiting" row above replaces the config
+        // section wholesale and an administrator's edit must not be able to reintroduce this.
+        services.PostConfigure<IpRateLimitOptions>(options =>
+        {
+            options.EndpointWhitelist ??= new List<string>();
+            foreach (var entry in new[] { "get:/uploads/*", "head:/uploads/*" })
+            {
+                if (!options.EndpointWhitelist.Contains(entry, StringComparer.OrdinalIgnoreCase))
+                    options.EndpointWhitelist.Add(entry);
+            }
+        });
+
         services.AddInMemoryRateLimiting();
         services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 

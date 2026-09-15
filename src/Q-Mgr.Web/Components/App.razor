@@ -29,7 +29,7 @@
     <meta name="application-name" content="Q-Mgr" />
     <meta name="theme-color" content="#f8fafc" />
     <meta name="msapplication-TileColor" content="#8c2f52" />
-    <meta name="description" content="Modern queue management system for efficient customer flow" />
+    <meta name="description" content="Q-Mgr — the front-office platform: queues, visitors, signage, welfare and secure documents in one system." />
     <base href="/" />
     <!-- PWA Manifest -->
     <link rel="manifest" href="@Assets["manifest.json"]" />
@@ -91,7 +91,9 @@
         is why data-theme is stamped on <html> above: that path is server-rendered regardless of
         render mode, so those screens keep a correct first paint without prerendering.
     *@
-    <Routes @rendermode="@(new InteractiveServerRenderMode(prerender: false))" />
+    @* Viewer carries the browser's address and user agent into the circuit (see ViewerRequestInfo):
+       this host request is the only place the Web app ever sees them. *@
+    <Routes @rendermode="@(new InteractiveServerRenderMode(prerender: false))" Viewer="_viewer" />
 
     <div id="blazor-error-ui" data-nosnippet>
         An unhandled error has occurred.
@@ -113,6 +115,10 @@
          every page of the app, and only a handful ever show a PDF. pdfFlipbook.js injects both the
          first time a flipbook is actually opened. -->
     <script src="@Assets["js/pdfFlipbook.js"]"></script>
+    <!-- "Publish to Library" on the printable reports: renders the report to a PDF in the
+         browser (html2pdf, loaded on demand from the CDN) and uploads it. Client-side only —
+         no PDF renderer on the server, per the no-server-dependencies rule. -->
+    <script src="@Assets["js/reportPublish.js"]"></script>
     <!-- Spotify Web Playback SDK (background music for image-gallery signage) -->
     <script src="@Assets["js/spotifyPlayer.js"]"></script>
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
@@ -137,9 +143,23 @@
     /// </summary>
     private string? _publicDisplayTheme;
 
+    /// <summary>The host request, available here because this file is statically server-rendered on every request.</summary>
+    [CascadingParameter] public HttpContext? HttpContext { get; set; }
+
+    private ViewerRequestInfo? _viewer;
+
     protected override async Task OnInitializedAsync()
     {
         var uri = new Uri(Navigation.Uri);
+
+        if (HttpContext != null)
+        {
+            // Behind nginx the real address is the first X-Forwarded-For entry; locally it is the
+            // connection's. The API truncates it before storing.
+            var forwarded = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim();
+            var ip = string.IsNullOrWhiteSpace(forwarded) ? HttpContext.Connection.RemoteIpAddress?.ToString() : forwarded;
+            _viewer = new ViewerRequestInfo(ip, HttpContext.Request.Headers.UserAgent.ToString());
+        }
 
         // Gated on the route allowlist, not merely on "the path contains a GUID": this runs for
         // every request in the app, and /admin/students/{studentId}/picture would otherwise fetch

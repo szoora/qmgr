@@ -51,7 +51,7 @@ public class PlatformSettingsController : ControllerBase
             Category = s.Category,
             DisplayName = s.DisplayName,
             Description = s.Description,
-            SettingsJson = s.SettingsJson,
+            SettingsJson = RedactSecrets(s.Category, s.SettingsJson),
             IsEnabled = s.IsEnabled,
             IsEditable = s.IsEditable,
             DisplayOrder = s.DisplayOrder,
@@ -91,7 +91,7 @@ public class PlatformSettingsController : ControllerBase
             Category = setting.Category,
             DisplayName = setting.DisplayName,
             Description = setting.Description,
-            SettingsJson = setting.SettingsJson,
+            SettingsJson = RedactSecrets(setting.Category, setting.SettingsJson),
             IsEnabled = setting.IsEnabled,
             IsEditable = setting.IsEditable,
             DisplayOrder = setting.DisplayOrder,
@@ -146,13 +146,13 @@ public class PlatformSettingsController : ControllerBase
         bool success = category switch
         {
             "JWT" => await UpdateJwtSettingsAsync(request.SettingsJson),
-            "CORS" => await UpdateTypedSettings<CorsSettings>(category, request.SettingsJson),
-            "RateLimiting" => await UpdateTypedSettings<RateLimitSettings>(category, request.SettingsJson),
-            "SaaS" => await UpdateTypedSettings<SaasSettings>(category, request.SettingsJson),
-            "Stripe" => await UpdateTypedSettings<StripeSettings>(category, request.SettingsJson),
-            "MobileMoney" => await UpdateTypedSettings<MobileMoneySettings>(category, request.SettingsJson),
-            "Ads" => await UpdateTypedSettings<AdsSettings>(category, request.SettingsJson),
-            "Email" => await UpdateTypedSettings<EmailSettings>(category, request.SettingsJson),
+            "CORS" => await UpdateTypedSettings<CorsSettings>(category, request.SettingsJson, setting.SettingsJson),
+            "RateLimiting" => await UpdateTypedSettings<RateLimitSettings>(category, request.SettingsJson, setting.SettingsJson),
+            "SaaS" => await UpdateTypedSettings<SaasSettings>(category, request.SettingsJson, setting.SettingsJson),
+            "Stripe" => await UpdateTypedSettings<StripeSettings>(category, request.SettingsJson, setting.SettingsJson),
+            "MobileMoney" => await UpdateTypedSettings<MobileMoneySettings>(category, request.SettingsJson, setting.SettingsJson),
+            "Ads" => await UpdateTypedSettings<AdsSettings>(category, request.SettingsJson, setting.SettingsJson),
+            "Email" => await UpdateTypedSettings<EmailSettings>(category, request.SettingsJson, setting.SettingsJson),
             _ => false
         };
 
@@ -309,11 +309,74 @@ public class PlatformSettingsController : ControllerBase
         return Ok(new { message = "Cache reloaded successfully" });
     }
 
-    private async Task<bool> UpdateTypedSettings<T>(string category, string settingsJson) where T : class
+    /// <summary>
+    /// The mask a secret is shown as. The same eight dots the Platform Settings editor already
+    /// used in its summary rows, so the editor's password fields show it too and a Save that
+    /// leaves it untouched keeps the stored value.
+    /// </summary>
+    internal const string SecretMask = "••••••••";
+
+    /// <summary>
+    /// Which JSON properties in each category are secrets. Until 2026-09-15 GET returned every one
+    /// of them in clear to a SuperAdmin — the SMTP password, the Stripe secret and webhook keys,
+    /// the mobile-money API key — because the editor round-tripped them that way. It now
+    /// round-trips the mask instead, and <see cref="MergeSecrets"/> puts the stored value back on
+    /// save wherever the mask comes in.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> SecretProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Email"] = new[] { "SmtpPassword" },
+        ["Stripe"] = new[] { "SecretKey", "WebhookSecret" },
+        ["MobileMoney"] = new[] { "ApiKey" },
+        ["JWT"] = new[] { "Secret" }
+    };
+
+    /// <summary>Replaces each non-empty secret with the mask. Empty stays empty so "(not set)" still reads as not set.</summary>
+    internal static string RedactSecrets(string category, string settingsJson)
+    {
+        if (!SecretProperties.TryGetValue(category, out var keys) || string.IsNullOrWhiteSpace(settingsJson)) return settingsJson;
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(settingsJson) as System.Text.Json.Nodes.JsonObject;
+            if (node == null) return settingsJson;
+            foreach (var key in keys)
+            {
+                var actual = node.FirstOrDefault(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase)).Key;
+                if (actual == null) continue;
+                var value = node[actual]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(value)) node[actual] = SecretMask;
+            }
+            return node.ToJsonString();
+        }
+        catch (Exception) { return settingsJson; }
+    }
+
+    /// <summary>Wherever the incoming JSON carries the mask for a secret, substitutes the value already stored.</summary>
+    internal static string MergeSecrets(string category, string incomingJson, string? storedJson)
+    {
+        if (!SecretProperties.TryGetValue(category, out var keys) || string.IsNullOrWhiteSpace(storedJson)) return incomingJson;
+        try
+        {
+            var incoming = System.Text.Json.Nodes.JsonNode.Parse(incomingJson) as System.Text.Json.Nodes.JsonObject;
+            var stored = System.Text.Json.Nodes.JsonNode.Parse(storedJson) as System.Text.Json.Nodes.JsonObject;
+            if (incoming == null || stored == null) return incomingJson;
+            foreach (var key in keys)
+            {
+                var inKey = incoming.FirstOrDefault(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase)).Key;
+                if (inKey == null || incoming[inKey]?.GetValue<string>() != SecretMask) continue;
+                var storedKey = stored.FirstOrDefault(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase)).Key;
+                incoming[inKey] = storedKey == null ? "" : stored[storedKey]?.GetValue<string>() ?? "";
+            }
+            return incoming.ToJsonString();
+        }
+        catch (Exception) { return incomingJson; }
+    }
+
+    private async Task<bool> UpdateTypedSettings<T>(string category, string settingsJson, string? storedJson = null) where T : class
     {
         try
         {
-            var settings = JsonSerializer.Deserialize<T>(settingsJson, new JsonSerializerOptions
+            var settings = JsonSerializer.Deserialize<T>(MergeSecrets(category, settingsJson, storedJson), new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             });

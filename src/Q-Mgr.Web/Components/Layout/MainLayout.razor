@@ -250,6 +250,7 @@ else
                             @if (canViewContent)
                             {
                                 <li><a href="content/media" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
+                                <li><a href="content/documents" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/documents") ? "active" : "")"><i class="bi bi-file-earmark-lock2"></i>Document Library</a></li>
                                 <li><a href="content/playlists" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
                                 <li><a href="content/campaigns" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-easel-fill"></i>Display Campaigns</a></li>
                                 <li><a href="content/zones" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
@@ -447,7 +448,7 @@ else
 
         <!-- Footer -->
         <footer class="qm-footer">
-            <span>&copy; @DateTime.Now.Year Q-Mgr Queue Management System</span>
+            <span>&copy; @DateTime.Now.Year Q-Mgr Front-Office Platform</span>
             <div class="footer-links">
                 <a href="@ApiDocsUrl" target="_blank">API Docs</a>
                 <span class="version">v1.0.0</span>

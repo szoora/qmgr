@@ -450,5 +450,175 @@ else
   ok "the delivery log masks the recipient"
 fi
 
+# =============================================================================
+hdr "12. UPLOADS ARE GATED, and the Document Library shares by revocable link"
+# Added 2026-09-15 (Phase 84). Until then every upload was a static file served ahead of
+# authentication — a welfare attachment's URL worked for anyone, for ever. UploadsController now
+# decides per file (public for signage, signed token or record permission for the rest), and
+# sharing only knows the Library. Section 12d sends ONE REAL EMAIL (a verification code) to
+# $MAILBOX; the code itself cannot be read back here, so the wrong-code path is what is asserted.
+
+# Not mktemp: on Git Bash it returns a /tmp/... path that the Windows curl binary cannot open, and
+# every upload then "fails" with an empty body. $TEMP is Windows-shaped there and unset on Linux.
+E2E_PDF="${TEMP:-/tmp}/qmgr-e2e-$$.pdf"
+printf '%%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n4 0 obj << /Length 62 >> stream\nBT /F1 24 Tf 72 760 Td (Q-Mgr e2e shared document) Tj ET\nendstream endobj\n5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\ntrailer << /Root 1 0 R >>\n' > "$E2E_PDF"
+
+upload() { # $1 token, $2 shareable -> body
+  curl -s -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $1" \
+    -F "file=@$E2E_PDF;filename=e2e.pdf;type=application/pdf" -F "name=E2E shared document" \
+    -F "summary=Dummy document from the e2e suite. Safe to delete." -F "shareable=$2"
+}
+raw()     { curl -s -o /dev/null -w '%{http_code}' "$1"; }
+rawauth() { curl -s -o /dev/null -w '%{http_code}' "$2" -H "Authorization: Bearer $1"; }
+strip_token() { echo "$1" | sed 's/[?&]t=[^&"]*//'; }
+jget()    { echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+
+# The Library lives in the Engagement & Communications module. A dev tenant that has not bought it
+# gets a MODULE_NOT_PURCHASED 403 on every media endpoint (found on the first run of this section:
+# 55 failures that read like product bugs and were one missing module). Activate it the way the
+# Billing page does — simulated in Development, where no Mobile Money gateway is configured.
+if body "$AD" GET "/api/v1/organizations/$ORG_ID/media" | grep -q MODULE_NOT_PURCHASED; then
+  # The tenant's own purchase route refuses while another module is on an unpaid trial
+  # (TRIAL_IN_PROGRESS — the dev tenant has Student Welfare trialing), so the platform grant is
+  # used: the same thing a SuperAdmin does from the Tenants page.
+  ACT_MOD=$(code "$SA" PUT "/api/v1/admin/tenants/$ORG_ID/modules/engagement-communications" '{"note":"E2E: the Document Library needs this module"}')
+  eq "engagement-communications module granted to the tenant by the platform" "$ACT_MOD" "200"
+fi
+
+# --- 12a. A shareable document is gated; a plain upload is public ---------------------------
+SHARED=$(upload "$AD" true)
+SHARED_ID=$(jget "$SHARED" id)
+SHARED_URL=$(jget "$SHARED" fileUrl)
+[ -n "$SHARED_ID" ] && ok "admin uploads a shareable document" || bad "upload shareable" "an id" "$(echo "$SHARED" | head -c 200)"
+echo "$SHARED" | grep -q '"isGated":true' && ok "a shareable document on no playlist is gated" \
+  || bad "gated flag" '"isGated":true' "$(echo "$SHARED" | grep -o '"isGated":[a-z]*')"
+echo "$SHARED_URL" | grep -q '[?&]t=' && ok "the DTO carries a signed link" || bad "signed link" "?t= in fileUrl" "$SHARED_URL"
+eq "the raw path refuses the public (401)"  "$(raw "$(strip_token "$SHARED_URL")")" "401"
+eq "the signed link serves the file"        "$(raw "$SHARED_URL")" "200"
+eq "an admin's bearer token serves it too"  "$(rawauth "$AD" "$(strip_token "$SHARED_URL")")" "200"
+eq "a bad token is refused (401)"           "$(raw "$(strip_token "$SHARED_URL")?t=not-a-token")" "401"
+
+PUBLIC=$(upload "$AD" false)
+PUBLIC_ID=$(jget "$PUBLIC" id)
+PUBLIC_URL=$(jget "$PUBLIC" fileUrl)
+echo "$PUBLIC" | grep -q '"isGated":false' && ok "a plain upload is public (signage is public by intent)" \
+  || bad "public flag" '"isGated":false' "$(echo "$PUBLIC" | grep -o '"isGated":[a-z]*')"
+eq "its raw path serves the public (200)" "$(raw "$PUBLIC_URL")" "200"
+eq "a class teacher cannot mark a document shareable (403)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $T4" -F "file=@$E2E_PDF;filename=e2e.pdf;type=application/pdf" -F shareable=true)" "403"
+
+# --- 12b. Welfare evidence follows the record's own rules ---------------------------------
+REC=$(body "$AD" POST "$B/welfare-records" \
+  '{"studentId":"'"$S2_STUDENT"'","categoryId":"'"$BEHAVIOR_CAT"'","caseType":1,"tier":0,"description":"E2E evidence-gating probe. Dummy record - safe to delete.","occurredAt":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}')
+REC_ID=$(jget "$REC" id)
+ATT=$(curl -s -X POST "$API$B/welfare-records/$REC_ID/attachments" -H "Authorization: Bearer $AD" -F "file=@$E2E_PDF;filename=evidence.pdf;type=application/pdf")
+ATT_URL=$(jget "$ATT" fileUrl)
+[ -n "$ATT_URL" ] && ok "evidence attached to a record on an S2 student" || bad "attach evidence" "a fileUrl" "$(echo "$ATT" | head -c 200)"
+eq "evidence raw path refuses the public (401)"              "$(raw "$(strip_token "$ATT_URL")")" "401"
+eq "the signed evidence link serves the file"                "$(raw "$ATT_URL")" "200"
+eq "the S2 class teacher's bearer token reads it (200)"      "$(rawauth "$T2" "$(strip_token "$ATT_URL")")" "200"
+eq "the S4 class teacher gets 404 - out of scope, never 403" "$(rawauth "$T4" "$(strip_token "$ATT_URL")")" "404"
+TLA=$(body "$T2" GET "$B/welfare-records/$REC_ID")
+echo "$TLA" | grep -q '"fileUrl":"[^"]*[?&]t=' && ok "the record's attachment link is signed for the caller who may read it" \
+  || bad "signed attachment in record" "?t= in fileUrl" "$(echo "$TLA" | grep -o '"fileUrl":"[^"]*"' | head -1)"
+
+# --- 12c. Share links: gates, tokens, refusal, lockout, revocation --------------------------
+EXP=$(date -u -d '+30 days' +%Y-%m-%dT23:59:59Z 2>/dev/null || date -u -v+30d +%Y-%m-%dT23:59:59Z)
+LINK=$(body "$AD" POST "/api/v1/media/$SHARED_ID/shares" \
+  '{"label":"E2E passcoded link","passcode":"4242","expiresAt":"'"$EXP"'","allowDownload":false,"watermark":"ViewerIdentity","notifyOnFirstOpen":true,"linkBaseUrl":"http://127.0.0.1:5003"}')
+SLUG=$(jget "$LINK" slug)
+LINK_ID=$(echo "$LINK" | grep -o '"share":{"id":"[^"]*"' | cut -d'"' -f6)
+[ -n "$SLUG" ] && ok "a share link is issued (slug shown once)" || bad "issue link" "a slug" "$(echo "$LINK" | head -c 240)"
+echo "$LINK" | grep -q '"url":"http://127.0.0.1:5003/s/' && ok "the emailed link is built on the WEB origin, not the API's" \
+  || bad "link origin" "http://127.0.0.1:5003/s/..." "$(jget "$LINK" url)"
+P="/api/v1/public/shares/$SLUG"
+GATE=$(curl -s "$API$P")
+echo "$GATE" | grep -q '"requiresPasscode":true' && ok "the public gate says a passcode is required" || bad "gate" '"requiresPasscode":true' "$(echo "$GATE" | head -c 200)"
+echo "$GATE" | grep -q '"documentName":"E2E shared document"' && ok "the gate names the document" || bad "gate name" "E2E shared document" "$(echo "$GATE" | head -c 200)"
+eq "an unknown slug is 404" "$(raw "$API/api/v1/public/shares/not-a-real-slug")" "404"
+popen() { curl -s -X POST "$API$1/open" -H 'Content-Type: application/json' -d "$2"; }
+popen "$P" '{}' | grep -q '"status":"PasscodeRequired"' && ok "open without a passcode: PasscodeRequired" || bad "open no passcode" "PasscodeRequired" "$(popen "$P" '{}' | head -c 120)"
+popen "$P" '{"passcode":"0000"}' | grep -q '"status":"PasscodeInvalid"' && ok "a wrong passcode is refused" || bad "wrong passcode" "PasscodeInvalid" "$(popen "$P" '{"passcode":"0000"}' | head -c 120)"
+GRANT=$(popen "$P" '{"passcode":"4242"}')
+echo "$GRANT" | grep -q '"status":"Granted"' && ok "the right passcode opens it" || bad "right passcode" "Granted" "$(echo "$GRANT" | head -c 160)"
+CT=$(jget "$GRANT" contentToken); ST=$(jget "$GRANT" sessionToken)
+echo "$GRANT" | grep -q '"watermarkText":"Anonymous viewer' && ok "an unverified viewer is watermarked as anonymous" || bad "watermark" "Anonymous viewer ..." "$(jget "$GRANT" watermarkText)"
+eq "the content streams with the 60-second token"                "$(raw "$API$P/content?t=$CT")" "200"
+eq "content without a token is 401"                              "$(raw "$API$P/content")" "401"
+eq "download is refused server-side on a view-only link (403)"   "$(raw "$API$P/download?t=$ST")" "403"
+eq "a page-view event is accepted with the session token" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API$P/events" -H 'Content-Type: application/json' -d '{"sessionToken":"'"$ST"'","page":1,"dwellSeconds":7}')" "204"
+eq "a page-view event without a session is 401"           "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API$P/events" -H 'Content-Type: application/json' -d '{"sessionToken":"x","page":1,"dwellSeconds":7}')" "401"
+RESUME=$(curl -s -X POST "$API$P/resume" -H 'Content-Type: application/json' -d '{"sessionToken":"'"$ST"'"}')
+echo "$RESUME" | grep -q '"status":"Granted"' && ok "a reload resumes the session without a second passcode" || bad "resume" "Granted" "$(echo "$RESUME" | head -c 120)"
+
+for _ in 1 2 3 4 5; do popen "$P" '{"passcode":"9999"}' > /dev/null; done
+popen "$P" '{"passcode":"4242"}' | grep -q '"status":"Locked"' && ok "five wrong passcodes lock the link, even for the right one" \
+  || bad "lockout" "Locked" "$(popen "$P" '{"passcode":"4242"}' | head -c 120)"
+
+eq "a class teacher cannot revoke (403)" "$(code "$T4" DELETE "/api/v1/media/$SHARED_ID/shares/$LINK_ID" '{"reason":"nope"}')" "403"
+REV=$(body "$AD" DELETE "/api/v1/media/$SHARED_ID/shares/$LINK_ID" '{"reason":"E2E revoke"}')
+echo "$REV" | grep -q '"state":"Revoked"' && ok "the admin revokes the link" || bad "revoke" '"state":"Revoked"' "$(echo "$REV" | head -c 160)"
+popen "$P" '{"passcode":"4242"}' | grep -q '"status":"Denied"' && ok "a revoked link is Denied on the very next request" \
+  || bad "revoked open" "Denied" "$(popen "$P" '{"passcode":"4242"}' | head -c 120)"
+eq "content with a still-valid session token is 410 after revocation" "$(raw "$API$P/content?t=$ST")" "410"
+
+# --- 12d. One-time download link; email verification -----------------------------------
+ONE=$(body "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"E2E one-time download","expiresAt":"'"$EXP"'","allowDownload":true,"maxViews":1,"linkBaseUrl":"http://127.0.0.1:5003"}')
+SLUG2=$(jget "$ONE" slug); P2="/api/v1/public/shares/$SLUG2"
+G2=$(popen "$P2" '{}')
+echo "$G2" | grep -q '"status":"Granted"' && ok "a link with no gates opens at once" || bad "open ungated" "Granted" "$(echo "$G2" | head -c 120)"
+ST2=$(jget "$G2" sessionToken)
+eq "download is allowed when the link says so" "$(raw "$API$P2/download?t=$ST2")" "200"
+popen "$P2" '{}' | grep -q '"status":"Denied"' && ok "the second open of a one-time link is Denied" || bad "one-time" "Denied" "$(popen "$P2" '{}' | head -c 120)"
+
+EM=$(body "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"E2E email-verified","expiresAt":"'"$EXP"'","allowedEmails":["'"$MAILBOX"'"],"linkBaseUrl":"http://127.0.0.1:5003"}')
+SLUG3=$(jget "$EM" slug); P3="/api/v1/public/shares/$SLUG3"
+popen "$P3" '{}' | grep -q '"status":"EmailRequired"' && ok "an allow-listed link asks for an email" || bad "email gate" "EmailRequired" "$(popen "$P3" '{}' | head -c 120)"
+popen "$P3" '{"email":"stranger@example.org"}' | grep -q '"status":"EmailNotAllowed"' && ok "an address off the list is refused" \
+  || bad "allow-list" "EmailNotAllowed" "$(popen "$P3" '{"email":"stranger@example.org"}' | head -c 120)"
+SENT=$(popen "$P3" '{"email":"'"$MAILBOX"'"}')
+echo "$SENT" | grep -q '"status":"CodeSent"' && ok "a listed address is emailed a code (REAL email to $MAILBOX)" || bad "code sent" "CodeSent" "$(echo "$SENT" | head -c 160)"
+CH=$(jget "$SENT" challenge)
+popen "$P3" '{"challenge":"'"$CH"'","code":"000000"}' | grep -q '"status":"CodeInvalid"' && ok "a wrong code is refused" \
+  || bad "wrong code" "CodeInvalid" "$(popen "$P3" '{"challenge":"'"$CH"'","code":"000000"}' | head -c 120)"
+
+# --- 12d2. A custom watermark: fixed text, or text plus the viewer ------------------------------
+CW=$(body "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"E2E custom watermark","expiresAt":"'"$EXP"'","watermark":"CustomAndViewer","watermarkText":"CONFIDENTIAL - E2E board pack","linkBaseUrl":"http://127.0.0.1:5003"}')
+SLUG4=$(jget "$CW" slug); P4="/api/v1/public/shares/$SLUG4"
+G4=$(popen "$P4" '{}')
+echo "$G4" | grep -q '"watermarkText":"CONFIDENTIAL - E2E board pack · Anonymous viewer' && ok "a custom watermark is drawn ahead of the viewer's identity" \
+  || bad "custom watermark" "CONFIDENTIAL - E2E board pack · Anonymous viewer ..." "$(jget "$G4" watermarkText)"
+eq "a custom watermark with no text is refused (400)" "$(code "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"blank","expiresAt":"'"$EXP"'","watermark":"Custom"}')" "400"
+
+# --- 12e. The activity log, its permission, and the policy cap ----------------------------
+eq "a class teacher cannot read share activity (403)" "$(code "$T4" GET "/api/v1/media/$SHARED_ID/activity")" "403"
+ACT=$(body "$AD" GET "/api/v1/media/$SHARED_ID/activity")
+OPENS=$(echo "$ACT" | grep -o '"opens":[0-9]*' | head -1 | cut -d: -f2)
+[ "${OPENS:-0}" -ge 2 ] && ok "activity counts the opens ($OPENS)" || bad "activity opens" ">= 2" "${OPENS:-none}"
+echo "$ACT" | grep -q '"type":"Revoked"'    && ok "the revocation is in the event log" || bad "revoke event" '"type":"Revoked"' "$(echo "$ACT" | grep -o '"type":"[A-Za-z]*"' | sort -u | tr '\n' ' ')"
+echo "$ACT" | grep -q '"type":"PageViewed"' && ok "the page read is in the event log"  || bad "page event" '"type":"PageViewed"' ""
+echo "$ACT" | grep -q '"type":"Locked"'     && ok "the lockout is in the event log"    || bad "lock event" '"type":"Locked"' ""
+eq "the CSV export is served"                   "$(code "$AD" GET "/api/v1/media/$SHARED_ID/activity/export")" "200"
+eq "a class teacher cannot issue links (403)"   "$(code "$T4" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"nope","expiresAt":"'"$EXP"'"}')" "403"
+
+eq "the tenant caps link lifetime" "$(code "$AD" PUT "/api/v1/organizations/$ORG_ID/document-sharing/policy" '{"maxLinkDays":7,"attributionRetentionDays":180,"notifyOnFirstOpenByDefault":true}')" "200"
+eq "a link beyond the cap is refused (400)" "$(code "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"too long","expiresAt":"'"$EXP"'"}')" "400"
+code "$AD" PUT "/api/v1/organizations/$ORG_ID/document-sharing/policy" '{"maxLinkDays":365,"attributionRetentionDays":180,"notifyOnFirstOpenByDefault":true}' > /dev/null
+ok "policy restored to 365 days"
+
+code "$AD" PUT "/api/v1/media/$SHARED_ID/publishing" '{"isShareable":false}' > /dev/null
+popen "$P2" '{}' | grep -q '"status":"Denied"' && ok "a document taken off sharing refuses every link (fails closed)" || bad "unshare" "Denied" "$(popen "$P2" '{}' | head -c 120)"
+sleep 31 # the serving classification is cached for 30 seconds
+eq "and its raw path is public again (no longer share-only)" "$(raw "$(strip_token "$SHARED_URL")")" "200"
+
+# --- 12f. Platform secrets never come back in clear -------------------------------------------
+ES=$(body "$SA" GET "/api/v1/platform/settings/Email")
+if echo "$ES" | grep -q 'SmtpPassword\\":\\"\(\(\\\\u2022\)\{8\}\|\)\\"'; then ok "the platform SMTP password is masked (or unset) in the settings API"
+else bad "smtp password masked" "eight dots or empty" "$(echo "$ES" | grep -o 'SmtpPassword[^,]*' | head -1)"; fi
+
+# --- Cleanup: the media rows go; the welfare record stays (append-only, labelled dummy) --------
+eq "cleanup: shared document deleted" "$(code "$AD" DELETE "/api/v1/media/$SHARED_ID")" "204"
+eq "cleanup: public document deleted" "$(code "$AD" DELETE "/api/v1/media/$PUBLIC_ID")" "204"
+rm -f "$E2E_PDF"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

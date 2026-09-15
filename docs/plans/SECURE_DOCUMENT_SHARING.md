@@ -1,6 +1,13 @@
 # Secure document sharing — implementation plan
 
-**Status:** planned, nothing built. **Written:** 2026-09-14. **Revision 2** (library-scoped).
+**Status:** BUILT 2026-09-15 (Phase 84 in `docs/TASK_TRACKER.md`) — all six phases, verified by
+section 12 of `scripts/e2e/class-teacher-e2e.sh`. The four §11 decisions were taken as the plan
+proposed: the Library stays one table (`MediaContent` enhanced); 6 months' attribution retention,
+tenant-editable; a tenant-wide link-lifetime cap (365 days by default, 0 = no cap); and Phase 1
+turned out not to be a breaking change at all — the URL path was kept and only the disk location
+moved, so no backfill and no deploy window were needed. **Written:** 2026-09-14. **Revision 2**
+(library-scoped). Sections below are the design as built; where the build departed, CLAUDE.md's
+"Secure document sharing" section is the binding text.
 **Designed artifact:** https://claude.ai/code/artifact/4ea724da-8aed-4762-9c96-6b4c5b3de2f8
 
 Requested as: share an uploaded document securely with people who may have no login, track views and

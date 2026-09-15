@@ -5,6 +5,191 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
+## 🧭 SESSION HANDOVER (written 2026-09-15) — Phase 84: the open upload store closed, secure document sharing built, platform secrets masked
+
+The request was to read the handover, then *"fix all gaps and bugs, implement all pending tasks and
+recommendations fully"*. Everything listed as open on 2026-09-14 is closed below, and the stale
+items were verified against the code first (see "Stale notes" at the end). **Verified by running:
+`scripts/e2e/class-teacher-e2e.sh` is now 152 assertions, 0 failures** (94 before), against the
+live API on the dev tenant, three times — the first two runs found real problems, one of them mine.
+
+### 0. The open security issue — CLOSED. What it was, now that it is fixed
+
+This is the content of the untracked `SECURITY-UPLOADS.local.md`, folded in and deleted, as that
+file said to do once the fix shipped. A fixed finding is normal engineering history.
+
+`src/Q-Mgr.API/Program.cs` called `app.UseStaticFiles()` 28 lines before `app.UseAuthentication()`,
+and `LocalDiskMediaStorageService` wrote every upload into the API's own `wwwroot/uploads/media`.
+So every upload was served with no identity, no authorisation and no audit trail:
+
+    $ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5001/uploads/media/<any-file>
+    200
+
+Exposed: **`WelfareAttachments.FileUrl`** — safeguarding evidence about children (apology letters,
+photographs of injuries, signed statements); visitor photographs; student photographs; broadcast
+attachments and help-centre images (those two are public by intent). GUID file names were not a
+mitigation: the URLs sit in plain DB columns, in every API response to a caller who can read the
+parent record, in emails, in page markup, and since 2026-09-11 `UploadLinkRepair` rewrote them onto
+the **public** origin. In production `install.sh` symlinked `wwwroot/uploads` to `/var/www/uploads/
+qmgr` and nginx proxied `/uploads/` to the API, so the live host served them to the internet.
+
+**The fix, as shipped (Phase 1 of the sharing plan, but independent of it):**
+
+- The store moved OUT of wwwroot: `MediaStorage:LocalPath`, defaulting to `App_Data/uploads/media`;
+  production sets `Environment=MediaStorage__LocalPath=$UploadsPath/media` in the API unit (the unit,
+  not appsettings — `install.sh` preserves the API's appsettings, so a key there never reaches an
+  existing server). `UploadStoreRelocation` runs at startup: it moved the dev store's 10 files on
+  first run (logged: *moved 10 file(s) from wwwroot into …App_Data\uploads\media*) and, in production,
+  removes the `wwwroot/uploads` symlink; `install.sh` removes it too and no longer creates it.
+- **The URL path did not change.** `UploadsController` answers `/uploads/media/{file}` — so no stored
+  link had to be rewritten, nothing emailed or printed went dead, and the plan's "Phase 1 is a
+  breaking change needing a deploy window" turned out to be unnecessary. That was the one §11
+  decision the build resolved rather than took.
+- Per-file decision (`UploadAuthorizer.ClassifyAsync`, one place): public by intent — signage media,
+  broadcast attachments, help-centre images; everything else gated. A gated file is served for a
+  signed one-hour token in `?t=` (`UploadAccessService`, the visitor-badge primitive), or for a
+  bearer token whose user may read the owning record by that record's own rules (welfare.view + the
+  visibility rung + the class-teacher scope for evidence; students.view + scope for a student photo;
+  visitors.view for a visitor photo). Otherwise **401 anonymous, 404 signed-in — never 403.**
+- Every DTO that carries a gated link signs it (`UploadLinks.Sign`: welfare attachments, visitor and
+  student DTOs, share-only media), and every write that accepts a link back strips the token
+  (`UploadLinks.Strip`/`StripAll`: visitor and student photos, docs cover and article body). The
+  static DTO mappers are why `UploadLinks` has a static face, attached in `Program.cs` at startup.
+- `get:/uploads/*` is whitelisted from IP rate limiting in code, not config — the DB RateLimiting
+  row replaces the config section wholesale.
+- The verification the finding asked for, all in e2e section 12: an unauthenticated GET of a welfare
+  attachment is **401** (was 200); a plain signage upload still serves (200); the S2 class teacher
+  reads S2 evidence with a bearer token (200); the S4 class teacher gets **404, not 403**; a bad
+  token is 401; path traversal is 404. Also checked by hand: all 10 relocated dev files now answer
+  401 anonymously — none of them is a media row (the media rows were deleted in Phase 83; they are
+  evidence and orphaned photos), which is the right answer for each.
+
+### 1. Secure document sharing — BUILT, all six phases
+
+`docs/plans/SECURE_DOCUMENT_SHARING.md` as designed, with the §11 decisions taken as the plan
+proposed (one Library table; 6 months' attribution retention; a tenant-wide link-lifetime cap; and
+Phase 1 not breaking after all). What exists now:
+
+- **Data:** `MediaContent` gained `IsShareable`, `Summary`, `PublishedFrom`, `PublishedAt`,
+  `PublishedByUserId` (the publish audit is the row itself — the project's enhance-before-add rule);
+  `document_shares` and `document_share_events` are new. Migration
+  `20260915150334_AddDocumentLibraryAndShares`, applied on the dev database.
+- **API:** `DocumentSharesController` (publishing flag, issue / edit / revoke links, per-share events,
+  document activity with per-page dwell, CSV export, tenant policy) and `PublicDocumentSharesController`
+  (`/api/v1/public/shares/{slug}`: gate, open, resume, content, download, page events).
+  `IDocumentShareService` is the single home for slugs, hashes, gates, tokens and policy.
+  `DocumentShareRetentionJob` (03:30 UTC) blanks email/address/browser past the window.
+- **Permissions:** `library.publish`, `documents.share.create`, `documents.share.manage`,
+  `documents.share.audit` in all three catalogues; Manager holds the first three.
+- **Web:** `/content/documents` (Document Library page: upload, preview, shareable flag, links with
+  rules/stats, revoke with reason, activity with page-dwell bars and CSV, policy), `/s/{slug}` (the
+  anonymous viewer: passcode → email code → flip-book with a baked-in watermark, download only when
+  allowed, honest view-only wording), "Publish to Library" on the welfare report (html2pdf from the
+  CDN in the browser, uploads a shareable snapshot with its provenance), and a nav entry.
+  `PdfFlipbook` gained `ShowOpenOriginal`, `WatermarkText`, `ViewOnly`, `OnPageViewed`.
+- **Notifications:** `documents.share-opened` event key; the creator is told on first open (bell +
+  email, preference-aware) when the link asks for it.
+
+**Added later the same day, from the live walkthrough with the user:** the Share links and Activity
+modals went to the `xl` size (1140px; the `lg` 800px wrapped every label); a **custom watermark**
+(`DocumentWatermarkMode.Custom` / `CustomAndViewer`, `DocumentShare.WatermarkText`, migration
+`AddDocumentShareWatermarkText`) — fixed text such as "CONFIDENTIAL — Board members only", alone or
+ahead of the viewer's identity, refused with 400 when the text is blank; **expiry and opening with a
+time of day** (`QDatePicker ShowTime`; a date left at midnight still means the whole day); and the
+access mode made an **explicit "Reader can" choice** (view only / view and download) with the
+view-only explanation attached to it — the user's point was that the form described view-only but
+nothing in it was visibly that choice. e2e is 154 assertions after the two watermark ones.
+
+**Two of those shipped broken on first look, both caught by the user in Chrome, not by me:**
+`QDatePicker ShowTime` is time-of-day ONLY (it replaces the calendar with a native time field), so
+"Opens" and "Expires" showed just a clock — I had not looked. Now a date picker with a native
+`type="time"` beside it (`TimeOnly?`; no time means the start / end of the day; "23:59" means the
+end of that minute). And the form's paired rows stayed two columns down to 720px, which at a 760px
+window squeezed the date picker to its icon: the modal's grids now stack under 960px and the
+date/time pair under 480px, measured with a fixed-width probe (390px: nothing past the right edge,
+picker 358px wide). The gate page now states the expiry with its time, in UTC and labelled so.
+**Lesson, again: a `.razor` change needs to be looked at, not just built.**
+
+**Found by the e2e, fixed:** a one-time link with download allowed counted its single view at Open and
+then refused the download it was issued for (410). The view limit now gates opens, not the bytes of a
+counted session (`Serve`/`Resume`); expiry and revocation still bind.
+
+**What the e2e asserts (section 12, 55 assertions):** gated vs public uploads; evidence follows the
+record's rules; link issued with the URL on the *Web* origin; gate → PasscodeRequired → PasscodeInvalid
+→ Granted; anonymous watermark; content streams on the 60-second token, 401 without; download 403 on
+view-only; page events 204 / 401; resume; five wrong passcodes lock the link; a class teacher cannot
+revoke; revoke → Denied on the next request and 410 for a still-valid session; one-time download link;
+email allow-list → EmailRequired / EmailNotAllowed / CodeSent (**one real email** to `$MAILBOX`) /
+CodeInvalid; audit is 403 to a class teacher; opens, Revoked, PageViewed and Locked in the log; CSV;
+policy cap refuses a long link (400); un-sharing fails closed and the raw path goes public again;
+platform secrets masked; cleanup deletes both media rows. The welfare probe record stays (append-only).
+
+**Browser check (Chrome, 2026-09-15), which found three defects the e2e could not:** signed in as
+the e2e Tenant Admin, `/content/documents` rendered the seeded document with its Shareable / Gated
+badges; "Share links" issued a passcoded 30-day link with the URL shown once on the Web origin; a
+second tab at `/s/{slug}` showed the gate (org name, snapshot notice, the rules), took the passcode,
+and rendered both pages in the flip-book with the watermark baked into each bitmap, a "View-only"
+badge and no open-original link; turning a page wrote a `PageViewed` event with its dwell; the admin
+got the "Shared document opened" bell. Measured: the page does not scroll sideways (1920/1920, no
+overflowing element). The three finds, all fixed the same session: **(1)** the watermark read
+"15 Sept" — the service formatted with the server culture, not the invariant one every date in this
+app uses; **(2)** a reload showed the passcode again — `OnAfterRenderAsync` was gated on
+`firstRender`, and the first render happens while the gate is still loading, so the resume never
+ran; **(3)** every viewer was logged as `127.0.0.0` with no browser — the public API calls come from
+the Blazor *server*, not the reader, so App.razor now captures the host request's address and agent
+into a cascaded `ViewerRequestInfo` that the Web relays as `X-Viewer-Ip`/`X-Viewer-Agent`, and the
+API prefers those. After the fix the newest event read "Chrome on Windows". **In production the
+third one would have logged every reader as the Web box**, which is exactly the attribution the log
+exists to give — a curl suite cannot see it because curl *is* the browser there.
+
+The browser-check document was deleted through the API afterwards; the seeded record it left in the
+activity log went with it (events cascade from the share, the share from the document).
+
+### 2. Platform secrets no longer return in clear — CLOSED
+
+`PlatformSettingsController.RedactSecrets` masks `SmtpPassword`, Stripe `SecretKey`/`WebhookSecret`,
+mobile-money `ApiKey` and JWT `Secret` as `••••••••` on every GET; `MergeSecrets` restores the stored
+value on PUT wherever the mask comes back. Verified live: `GET /platform/settings/Email` returns
+`•×8` for the IONOS password. The editor's password fields say so in their helper text.
+
+### 3. Deploy — the package must be rebuilt; the change to the unit matters
+
+`build-linux.ps1`: `MediaStorage__LocalPath` in the API unit; `ReadWritePaths` no longer lists
+`wwwroot/uploads`; `install.sh` creates `$UPLOADS_PATH/media`, removes the old symlink. Same
+commands as before (`-ApiPort 8586 -WebPort 8587`, stop both apps first, **back up the database**:
+this release carries a migration too). Nothing was committed, pushed or deployed this session.
+
+### Found on the way out, NOT fixed: five dev-tenant uploads are in the public git history
+
+`git status` after the relocation showed five files under `src/Q-Mgr.API/wwwroot/uploads/media/`
+as **deleted from the tree** — meaning they were tracked. They went in with the 2026-08-25 baseline
+snapshot, before the `wwwroot/uploads/` ignore rule existed (an ignore rule never untracks a file),
+and have been in `origin` — a public repository — ever since: four PNGs and one JPEG, 62–102 KB
+each, dev-tenant test uploads. Their deletion in the next commit removes them from the tree only;
+**removing them from history is a force-push, which this repository has done once before
+(2026-09-06) and which is the user's call, not mine.** Look at the five images before deciding; if
+any is a real photograph of a person, that decides it. `App_Data/` is now ignored so the relocated
+store cannot follow them in.
+
+### Branding: the descriptor is "Front-Office Platform" (user decision, 2026-09-15)
+
+"Queue Management System" described one module of six. The name **Q-Mgr** stays; the descriptor
+changed everywhere a customer reads it: the `<meta description>` and PWA manifest, the app footer,
+the invoice tagline, the dashboard's first-run sentence, the email footer, and the Postman
+collection description. The seeded module is still called "Core Queue Management" — that is the
+module's name and correct. The queue-ticket header fallback ("Queue Management") was left: it is
+printed on a queue ticket. `scripts/deploy/dist/` still carries the old manifest until the next
+build. Suggested tagline for a landing page, not applied anywhere yet: *"Queues, visitors, signage,
+welfare and secure documents — one system for the front office."*
+
+### Stale notes verified against the code before any work started
+
+- `TransferTokenCommand` "no-op 500" (Phase 27 list) — **stale**: `TransferTokenCommandHandler` exists in
+  `CallNextTokenCommandHandler.cs` and transfer restarts the service clock (Phase 71).
+- The `UseStaticFiles`-before-`UseCors` note — **superseded**: uploads are a controller now, CORS applies.
+- Every "Session B still open" item from the 2026-09-10 handover — closed, as its banner said.
+
+---
 ## 🧭 SESSION HANDOVER (written 2026-09-14) — Phase 83: the signage PDF viewer, which had never once rendered
 
 User report, from `/display/signage/{branch}` on production: *"This page takes long to open, also I
@@ -178,6 +363,10 @@ from `wwwroot`.
 ---
 
 ## ▶ NEXT SESSION — start here (written 2026-09-14)
+
+> **SUPERSEDED 2026-09-15 — items 0 and 1 below are CLOSED (see Phase 84 at the top of this file);
+> item 2 (commit and deploy) is still outstanding and now also carries Phase 84's migration and unit
+> change.** Kept as written because it is the record of what was outstanding.
 
 **Read this before Phase 82's own "NEXT SESSION" below.** Deploy and commit were outstanding before
 this session and still are; this section supersedes that one only by adding to it.

@@ -116,6 +116,18 @@ public class RbacSeeder
         new("content.delete", "Delete Content", "Delete media and playlists", "Content Management", 4, true),
 
         // ============================================
+        // DOCUMENT LIBRARY & SECURE SHARING
+        // Publishing is the boundary: nothing is shared in place. Being able to read a report is
+        // not the same as being able to turn it into a document that leaves the building, and an
+        // access log is a record of people's behaviour, so reading it is narrower than issuing a
+        // link. See docs/plans/SECURE_DOCUMENT_SHARING.md §7.
+        // ============================================
+        new("library.publish", "Publish to Document Library", "Mark a document as shareable, and publish a generated report into the Library", "Document Library", 1, true),
+        new("documents.share.create", "Create Share Links", "Issue a secure link to a Library document, with its expiry, passcode and download rules", "Document Library", 2, true),
+        new("documents.share.manage", "Manage Share Links", "Edit or revoke any share link in the organization, and set the sharing policy", "Document Library", 3, true),
+        new("documents.share.audit", "View Share Activity", "See who opened a shared document, when, from where, and which pages they read", "Document Library", 4, true),
+
+        // ============================================
         // FEEDBACK
         // ============================================
         new("feedback.view", "View Feedback", "View customer feedback submissions", "Feedback", 1, true),
@@ -280,6 +292,10 @@ public class RbacSeeder
                 "reports.view", "reports.export",
                 // Content (full)
                 "content.view", "content.create", "content.edit", "content.delete",
+                // Document Library: a manager publishes and issues links. The ACTIVITY log is
+                // deliberately not here — it is a record of named people's reading and stays
+                // with the Tenant Admin unless a custom role is granted it.
+                "library.publish", "documents.share.create", "documents.share.manage",
                 // Feedback (full)
                 "feedback.view", "feedback.respond", "feedback.analytics",
                 // Visitor Management (full)

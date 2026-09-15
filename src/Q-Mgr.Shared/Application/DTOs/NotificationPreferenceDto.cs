@@ -23,6 +23,9 @@ public static class NotificationEventKeys
     /// <summary>A visitor has arrived to see you.</summary>
     public const string VisitorArrived = "visitor.arrived";
 
+    /// <summary>A document share link you created was opened for the first time.</summary>
+    public const string DocumentShareOpened = "documents.share-opened";
+
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
 
@@ -40,6 +43,9 @@ public static class NotificationEventKeys
         new(VisitorArrived, "A visitor has arrived for me",
             "Someone has checked in at reception to see you.",
             "Visitors", DefaultEmail: false, DefaultSms: false),
+        new(DocumentShareOpened, "A document I shared was opened",
+            "The first time someone opens a share link you created. Only for links where you asked to be told.",
+            "Document Library", DefaultEmail: true, DefaultSms: false),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),

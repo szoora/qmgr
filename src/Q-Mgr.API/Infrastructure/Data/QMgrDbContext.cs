@@ -84,6 +84,8 @@ public class QMgrDbContext : DbContext
     #region Content
 
     public DbSet<MediaContent> MediaContents => Set<MediaContent>();
+    public DbSet<DocumentShare> DocumentShares => Set<DocumentShare>();
+    public DbSet<DocumentShareEvent> DocumentShareEvents => Set<DocumentShareEvent>();
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistItem> PlaylistItems => Set<PlaylistItem>();
     public DbSet<Display> Displays => Set<Display>();
@@ -214,6 +216,14 @@ public class QMgrDbContext : DbContext
         // Add matching filter for PlaylistItem (child of MediaContent)
         modelBuilder.Entity<PlaylistItem>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.MediaContent.OrganizationId == CurrentOrganizationId);
+
+        // Share links and their events follow the document they belong to. The PUBLIC share
+        // endpoints run with no tenant resolved (an anonymous viewer has none), so the filter is
+        // off there and the lookup is by slug hash alone — which is the intended shape.
+        modelBuilder.Entity<DocumentShare>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.MediaContent!.OrganizationId == CurrentOrganizationId);
+        modelBuilder.Entity<DocumentShareEvent>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.Share!.MediaContent!.OrganizationId == CurrentOrganizationId);
 
         modelBuilder.Entity<Quote>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);

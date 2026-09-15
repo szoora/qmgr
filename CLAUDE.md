@@ -1,6 +1,6 @@
 # Q-Mgr Web
 
-Multi-tenant queue-management SaaS. ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
+Multi-tenant front-office SaaS — queues, visitors, signage, student welfare, secure documents (the customer-facing descriptor is "Front-Office Platform", decided 2026-09-15; the queue is one module, not the product). ASP.NET Core API (`src/Q-Mgr.API`) + Blazor Server web app
 (`src/Q-Mgr.Web`), Postgres via EF Core, CQRS via the `Mediator` source-generator library (not
 MediatR). **Git was adopted 2026-08-25**, and **there is a GitHub remote:
 `origin` → `https://github.com/szoora/qmgr.git`** — this line said "local-only, no remote" until
@@ -337,6 +337,72 @@ gets a 403 — and also its **Import History** button, found in the browser: the
 import, so that endpoint scopes to "jobs you began yourself" and the modal is permanently empty.
 A button that opens an empty modal reads as broken; an absent button reads as an absent permission.
 
+## Uploads are gated per file, and every DTO that carries one signs it (2026-09-15)
+
+`UploadsController` answers `/uploads/media/{file}` — the same path every stored link already
+carries, so nothing had to be rewritten — from a store OUTSIDE `wwwroot`
+(`MediaStorage:LocalPath`; production sets it in the API unit to `$UploadsPath/media`, development
+defaults to `App_Data/uploads/media`; `UploadStoreRelocation` moved an existing store at startup
+and removed the production symlink). The decision per file is `IUploadAuthorizer.ClassifyAsync`:
+**which table points at this file name is the only thing that separates a foyer poster from a
+photograph of an injured child**, so that lookup lives in one place.
+
+- **Public by intent:** signage media (on a playlist, or not marked shareable), broadcast
+  attachments (sent to strangers as links), help-centre images. Served with a day of cache.
+- **Gated:** welfare evidence, student and visitor photographs, a share-only Library document, and
+  any file no row points at (an orphan — token only). A gated file is served for a valid `?t=`
+  token (`IUploadAccessService`, one hour, minted only at the point a DTO reaches a caller who has
+  already passed the owning record's checks) or for a bearer token whose user may read the owning
+  record by that record's own rules — welfare.view plus the visibility rung plus the class-teacher
+  scope for evidence. Otherwise **401 anonymous, 404 signed-in — never 403**.
+- **A browser cannot attach the JWT to an `<img>`**, so the signed link is the only way a page can
+  show a gated file. `UploadLinks.Sign` is called from the DTO mappers (`WelfareController`,
+  `VisitorsController.MapToDto`, `StudentsController.MapToDto`, `ContentController.ToDtosAsync`),
+  and **`UploadLinks.Strip` from every write that accepts a link back from a client** (visitor and
+  student photos, docs cover and body images) — or a token that dies in an hour gets persisted.
+  The static mappers are why it has a static face; `Program.cs` attaches the singleton at startup.
+- **Add a new upload surface and you must classify it** in `UploadAuthorizer.LookUpAsync`, or it
+  is an orphan: token-only, which breaks the page that shows it. A new *kind* fails closed there.
+- `get:/uploads/*` is whitelisted from IP rate limiting in code (`PostConfigure<IpRateLimitOptions>`),
+  because the DB "RateLimiting" row replaces the config section wholesale and an administrator's
+  edit must not be able to black out a signage screen.
+
+## Secure document sharing: publishing is the boundary (built 2026-09-15)
+
+The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md`; the rules that are easy to break:
+
+- **Sharing only knows the Library (`MediaContent`).** Nothing is shared in place; a report reaches
+  the Library through "Publish to Library" on its print route (`reportPublish.js` renders it in the
+  browser, no server PDF dependency) and that export runs the report's own permission and scope
+  checks. **Nothing in the sharing code touches `IStudentScopeService`, and that is correct.**
+- **The link is a row, never a signed token.** `DocumentShare.SlugHash` is the SHA-256 of a
+  160-bit random slug; the slug is shown once. Revocation is a column checked on every request —
+  never cached, so "revoke" means now. The 60-second content token and the 4-hour session token
+  ARE `ITimeLimitedDataProtector` payloads, minted only after every gate has been cleared.
+- **The view limit gates opens, not the bytes of a counted session.** A one-time link with download
+  allowed counts its view at Open; `Serve` and `Resume` therefore treat `ViewLimitReached` as active
+  for a valid grant. Found by the e2e (410 where 200 was expected). Expiry and revocation still bind.
+- **Fail closed.** A document taken off sharing, deactivated, or missing its file refuses every link
+  (`Unavailable`); the links and their history stay. An unknown slug and a revoked one read the same.
+- **Say plainly what view-only is.** The download control is withheld server-side (403 and logged)
+  and every page is watermarked from the bitmap up (`drawWatermark`, not an overlay); nothing stops a
+  photograph. The UI says "attribution, not prevention" and must keep saying it.
+- **Three catalogues, four codes:** `library.publish`, `documents.share.create`,
+  `documents.share.manage`, `documents.share.audit`. Audit is narrower than create on purpose (a
+  record of named people's reading); Manager holds the first three, Tenant Admin all four.
+- **The tenant's policy is in `Organization.Settings["DocumentSharing"]`** (link-lifetime cap,
+  attribution retention, defaults) — read through `IDocumentShareService.ReadPolicy`, never a second
+  JSON reader. `DocumentShareRetentionJob` blanks email/address/browser on events past the window.
+- **The reader's address and browser must be RELAYED, or the log names the Web server.** Every call
+  this Blazor Server app makes to the API comes from the Web box's HttpClient, so on the public
+  share endpoints the API would see the loopback and no user agent for every viewer. `App.razor`
+  captures the host request's address and agent into a cascaded `ViewerRequestInfo`; the Web sends
+  them as `X-Viewer-Ip` / `X-Viewer-Agent`; `PublicDocumentSharesController.Viewer()` prefers them.
+  A curl suite cannot catch this class — curl *is* the browser there — so it was found in Chrome.
+- **Verifying it needs the module:** the Library is in `engagement-communications`. On the dev
+  tenant the tenant purchase route refuses while Student Welfare is on trial (`TRIAL_IN_PROGRESS`),
+  so the e2e grants it as SuperAdmin via `PUT /api/v1/admin/tenants/{org}/modules/{code}`.
+
 ## Email: there IS a platform mailbox now, and every tenant falls back to it (2026-09-13)
 
 **`info@sacc.ug` on `smtp.ionos.com:587` (STARTTLS) is the platform account.** Proven end to end on
@@ -370,9 +436,13 @@ A button that opens an empty modal reads as broken; an absent button reads as an
 - **A "Failure sending mail." with no detail used to mean the host was unreachable.** With a real
   relay the delivery log now carries the relay's own words — *"Mailbox unavailable"* for the
   `@qmgr.local` e2e accounts, which is correct and expected, those domains do not exist.
-- Known and not changed: `GET /api/v1/platform/settings/Email` returns `SmtpPassword` in clear to a
-  SuperAdmin. That is how the Platform Settings editor round-trips it and is true of every platform
-  secret, not just this one — worth fixing as its own piece of work, not as a side effect of this.
+- **Fixed 2026-09-15:** `GET /api/v1/platform/settings/{category}` used to return `SmtpPassword`,
+  the Stripe secret and webhook keys and the mobile-money API key in clear to a SuperAdmin, because
+  the editor round-tripped them that way. `PlatformSettingsController.RedactSecrets` now returns the
+  eight-dot mask (`••••••••`, the same string the editor's summary rows already used) for any
+  non-empty secret, and `MergeSecrets` puts the stored value back on save wherever the mask comes
+  in. **A secret shown as the mask means "set"; empty means "not set".** Add any new secret
+  property to `SecretProperties` in that controller or it will leak the same way.
 
 ## Verification: there is no test project, and that is the decision (2026-09-05)
 
@@ -380,9 +450,12 @@ A button that opens an empty modal reads as broken; an absent button reads as an
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **94 assertions** (72 until
-2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the reports gate, the
-notification preferences, the delivery log, the three leak shapes above, and real email delivery.
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **152 assertions** (one more on a tenant that still needs the module granted; 94 until
+2026-09-15, 72 until 2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the
+reports gate, the notification preferences, the delivery log, the three leak shapes above, real
+email delivery, and — since 2026-09-15, section 12 — gated uploads and secure document sharing
+(signed links, the passcode / email / view-limit gates, lockout, revocation, the activity log, the
+policy cap, and platform-secret masking). Section 12 sends one more real email (a verification code).
 It is not a test project and is not run by a build; it is a curl script against a live API and a
 real tenant, which is exactly what the rule below asks for, written down so it can be re-run.
 Extend it rather than starting a new one.
@@ -827,24 +900,12 @@ created, "Dummy record - evidence upload test. Safe to delete.", is on Test Stud
 A SuperAdmin with no organization chosen sees an empty Category list on the create form until the
 page is reloaded after picking an organization and branch. Not investigated.
 
-**OPEN — uploads are served as static files, ahead of any authorisation check (found 2026-09-14,
-not yet fixed).** Uploads live under the API's own `wwwroot`, so the static-file middleware serves
-them before authentication runs; there is no per-file authorisation on that path. The practical
-consequence is the one that matters here: **a permission check on the record that owns a file is
-meaningless while the bytes are also reachable directly**, and an upload URL, once it leaks, is
-permanent and unrevocable. Treat every upload surface as world-readable until this is closed.
-
-**Do not add a new upload surface, or build anything that relies on per-file access control, before
-reading this.** OWASP's rule is that uploaded files should never be directly reachable and that
-public access belongs behind a handler mapping an id to a file; that is the shape of the fix, scoped
-as Phase 1 of `docs/plans/SECURE_DOCUMENT_SHARING.md` — which does not depend on the rest of that
-feature being built.
-
-**This repository is public, so the reproduction, the affected lines and the list of exposed data
-are deliberately NOT here.** They are in `SECURITY-UPLOADS.local.md` in the repository root, which
-is untracked and covered by the `*.local.md` rule in `.gitignore`. Fold that file into
-`docs/TASK_TRACKER.md` and delete it once the fix has shipped — a *fixed* finding is normal
-engineering history and worth publishing; an unfixed one against a live host is not.
+**CLOSED 2026-09-15 — uploads are served by a controller with a per-file decision; see the
+"Uploads are gated per file" section below.** Until then they lived under the API's own `wwwroot`
+and `UseStaticFiles()` served every welfare attachment and visitor photograph to anyone holding the
+URL, 28 lines before `UseAuthentication()` ran. The finding, its reproduction and the fix are now
+normal engineering history in `docs/TASK_TRACKER.md` (Phase 84); the untracked
+`SECURITY-UPLOADS.local.md` that held them while the host was exposed has been deleted.
 
 The general rule, extending the notification-hub one above: **`ApiBaseUrl` is for Web's own
 server-side calls only. Anything a browser will fetch or post to (a saved link, an upload target,
@@ -980,11 +1041,11 @@ not a flip book", never as an error.
   (`.preview-body` is `flex:1` with only a `min-height`), and a row flex does not rescue it either.
   `.pdf-container` is a **column** flex so `flex: 1` acts on the height. Measured, not assumed.
 
-**Known and deliberately not changed:** `Program.cs` runs `UseStaticFiles()` *before* `UseCors()`,
-so the API's `/uploads/*` files never carry CORS headers. Production is unaffected (nginx makes them
-same-origin), but it means adding `http://127.0.0.1:5003` to `Cors__AllowedOrigins` **cannot** make a
-local cross-origin upload fetch work — the middleware never runs for those files. Locally, serve the
-PDF from Web's own `wwwroot` instead. Reordering that middleware is a security-relevant edit.
+**Superseded 2026-09-15:** this note used to say that `/uploads/*` never carried CORS headers
+because `UseStaticFiles()` served them before `UseCors()`. Uploads are a controller now
+(`UploadsController`, see the gated-uploads section), so `UseCors()` applies to them and a local
+cross-origin fetch works once `http://127.0.0.1:5003` is in `Cors__AllowedOrigins`. The middleware
+order itself was not changed.
 
 **A tooling trap that generalizes beyond this feature: Chrome runs NO `requestAnimationFrame` in a
 minimised or backgrounded window**, and page-flip's entire render loop is rAF-driven. With the window

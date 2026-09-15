@@ -166,7 +166,7 @@ foreach ($tag in $foldersByTag.Keys) {
 $collection = [ordered]@{
     info = [ordered]@{
         name = 'Q-Mgr API'
-        description = 'Q-Mgr queue-management platform API. Generated from the live OpenAPI spec. Set the collection variables baseUrl and accessToken (or apiKey for external-integration endpoints) before running requests. See docs/API_INTEGRATION_GUIDE.md for authentication details.'
+        description = 'Q-Mgr front-office platform API (queues, visitors, signage, welfare, documents). Generated from the live OpenAPI spec. Set the collection variables baseUrl and accessToken (or apiKey for external-integration endpoints) before running requests. See docs/API_INTEGRATION_GUIDE.md for authentication details.'
         schema = 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
     }
     auth = [ordered]@{

@@ -15,6 +15,23 @@ public record MediaContentDto
     public int? DurationSeconds { get; init; }
     public string[]? Tags { get; init; }
     public DateTime CreatedAt { get; init; }
+
+    // ---- Document Library (2026-09-15) ----
+    /// <summary>May share links be issued against this document?</summary>
+    public bool IsShareable { get; init; }
+    public string? Summary { get; init; }
+    public string? PublishedFrom { get; init; }
+    public DateTime? PublishedAt { get; init; }
+    public string? PublishedByName { get; init; }
+    /// <summary>On at least one playlist — the signage distribution flag.</summary>
+    public bool OnSignage { get; init; }
+    /// <summary>Links that are neither revoked nor expired.</summary>
+    public int ActiveShareCount { get; init; }
+    /// <summary>
+    /// True when the raw file path answers 401 to the public: shareable and on no playlist. The
+    /// FileUrl on this DTO then carries a short-lived access token for the caller who fetched it.
+    /// </summary>
+    public bool IsGated { get; init; }
 }
 
 public record CreateMediaContentRequest

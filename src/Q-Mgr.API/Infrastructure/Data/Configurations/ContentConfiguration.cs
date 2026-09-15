@@ -34,6 +34,12 @@ public class MediaContentConfiguration : IEntityTypeConfiguration<MediaContent>
         builder.Property(mc => mc.Tags)
             .HasColumnType("text[]");
 
+        // Document Library columns (2026-09-15). Summary is what the share page shows, so it is
+        // bounded; PublishedFrom is a caption ("Welfare report — Jane Doe, Jan–Mar 2026").
+        builder.Property(mc => mc.Summary).HasMaxLength(1000);
+        builder.Property(mc => mc.PublishedFrom).HasMaxLength(500);
+        builder.Property(mc => mc.IsShareable).HasDefaultValue(false);
+
         builder.HasIndex(mc => new { mc.OrganizationId, mc.ContentType })
             .HasDatabaseName("idx_media_content_org_type");
 
@@ -239,5 +245,63 @@ public class QuoteConfiguration : IEntityTypeConfiguration<Quote>
             .WithMany()
             .HasForeignKey(q => q.OrganizationId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+/// <summary>
+/// Share links and their audit trail. Filtered to the tenant through the document they belong
+/// to (see QMgrDbContext.ConfigureTenantQueryFilters) — the PlaylistItem pattern.
+/// </summary>
+public class DocumentShareConfiguration : IEntityTypeConfiguration<DocumentShare>
+{
+    public void Configure(EntityTypeBuilder<DocumentShare> builder)
+    {
+        builder.ToTable("document_shares");
+
+        builder.HasKey(s => s.Id);
+
+        // Exact-match lookup on every public request; unique because two links can never hash
+        // to the same slug (and if the generator ever produced a collision, the insert must fail
+        // rather than silently pointing one link at another's document).
+        builder.Property(s => s.SlugHash).HasMaxLength(64).IsRequired();
+        builder.HasIndex(s => s.SlugHash).IsUnique();
+
+        builder.Property(s => s.Label).HasMaxLength(200);
+        builder.Property(s => s.PasscodeHash).HasMaxLength(500);
+        builder.Property(s => s.AllowedEmailsJson).HasColumnType("jsonb");
+        builder.Property(s => s.RevokeReason).HasMaxLength(500);
+        builder.Property(s => s.WatermarkText).HasMaxLength(200);
+
+        builder.HasIndex(s => s.MediaContentId);
+
+        builder.HasOne(s => s.MediaContent)
+            .WithMany(m => m.Shares)
+            .HasForeignKey(s => s.MediaContentId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class DocumentShareEventConfiguration : IEntityTypeConfiguration<DocumentShareEvent>
+{
+    public void Configure(EntityTypeBuilder<DocumentShareEvent> builder)
+    {
+        builder.ToTable("document_share_events");
+
+        builder.HasKey(e => e.Id);
+
+        builder.Property(e => e.Email).HasMaxLength(320);
+        builder.Property(e => e.IpAddress).HasMaxLength(64);
+        builder.Property(e => e.UserAgent).HasMaxLength(120);
+        builder.Property(e => e.Detail).HasMaxLength(500);
+
+        // The activity view reads one share's events newest-first; the retention purge walks by
+        // date across every share.
+        builder.HasIndex(e => new { e.ShareId, e.CreatedAt });
+        builder.HasIndex(e => e.CreatedAt);
+
+        builder.HasOne(e => e.Share)
+            .WithMany(s => s.Events)
+            .HasForeignKey(e => e.ShareId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

@@ -1,0 +1,1027 @@
+@page "/content/documents"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+@using Microsoft.AspNetCore.WebUtilities
+@inject IContentApiService ContentApi
+@inject IDocumentShareApiService DocShareApi
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@*
+    The Document Library — the Library IS MediaContent, filtered to PDF documents, with the
+    publishing and sharing controls on top. Signage media stays on the Media Library page; this
+    page exists so "which documents can leave the building, and who has opened them" has one home.
+
+    Publishing is the boundary (docs/plans/SECURE_DOCUMENT_SHARING.md §1): nothing is shared in
+    place. A document gets here by upload, or by "Publish to Library" on a printable report.
+*@
+
+<PageTitle>Document Library - Q-Mgr</PageTitle>
+
+<div class="doclib">
+    <div class="doclib-header">
+        <div>
+            <h1><QIcon Name="file-earmark-lock2" /> Document Library</h1>
+            <p class="doclib-sub">PDF documents that can be put on a screen, shared by secure link, or both. Sharing only ever points here.</p>
+        </div>
+        <div class="doclib-actions">
+            @if (canManage)
+            {
+                <QButton Text="Sharing policy" Icon="shield-check" Variant="secondary" OnClick="@OpenPolicy" />
+            }
+            @if (canCreate)
+            {
+                <QButton Text="Upload document" Icon="cloud-upload-fill" Variant="primary" OnClick="@(() => { ResetUpload(); showUpload = true; })" />
+            }
+        </div>
+    </div>
+
+    <div class="doclib-filters filter-row">
+        <QInput TValue="string" @bind-Value="search" Placeholder="Search by name, summary or source" IconLeft="search" Clearable="true" />
+        <QCheckbox @bind-Value="shareableOnly" Label="Shareable only" />
+        <span class="doclib-count">@FilteredDocuments.Count() document(s)</span>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="doclib-empty"><QSpinner Size="lg" /><span>Loading the library...</span></div>
+    }
+    else if (!FilteredDocuments.Any())
+    {
+        <div class="doclib-empty">
+            <QIcon Name="file-earmark-text" />
+            <span>@(documents.Count == 0 ? "No documents yet. Upload a PDF, or publish a report from its print view." : "Nothing matches that filter.")</span>
+        </div>
+    }
+    else
+    {
+        <div class="doclib-grid">
+            @foreach (var doc in FilteredDocuments)
+            {
+                <div class="doclib-card @(doc.Id == highlightId ? "doclib-card--highlight" : "")">
+                    <div class="doclib-card-head">
+                        <div class="doclib-card-icon"><QIcon Name="file-earmark-pdf-fill" /></div>
+                        <div class="doclib-card-title">
+                            <h3 title="@doc.Name">@doc.Name</h3>
+                            <div class="doclib-badges">
+                                @if (doc.IsShareable)
+                                {
+                                    <QBadge Text="Shareable" Variant="primary" Size="sm" Icon="link-45deg" />
+                                }
+                                @if (doc.OnSignage)
+                                {
+                                    <QBadge Text="On signage" Variant="info" Size="sm" Icon="tv" />
+                                }
+                                @if (doc.ActiveShareCount > 0)
+                                {
+                                    <QBadge Text="@($"{doc.ActiveShareCount} live link{(doc.ActiveShareCount == 1 ? "" : "s")}")" Variant="success" Size="sm" />
+                                }
+                                @if (doc.IsGated)
+                                {
+                                    <QBadge Text="Gated" Variant="warning" Size="sm" Icon="lock-fill" />
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(doc.Summary))
+                    {
+                        <p class="doclib-summary">@doc.Summary</p>
+                    }
+
+                    <dl class="doclib-meta">
+                        @if (!string.IsNullOrWhiteSpace(doc.PublishedFrom))
+                        {
+                            <div><dt>Generated from</dt><dd>@doc.PublishedFrom</dd></div>
+                        }
+                        @if (doc.PublishedAt.HasValue)
+                        {
+                            <div><dt>Published</dt><dd>@QDateFormat.DT(doc.PublishedAt) @(string.IsNullOrEmpty(doc.PublishedByName) ? "" : $"by {doc.PublishedByName}")</dd></div>
+                        }
+                        <div><dt>Added</dt><dd>@QDateFormat.D(doc.CreatedAt) · @FormatSize(doc.FileSizeBytes)</dd></div>
+                    </dl>
+
+                    <div class="doclib-card-actions">
+                        <QButton Text="Preview" Icon="eye" Variant="secondary" Size="sm" OnClick="@(() => Preview(doc))" />
+                        @if (canPublish)
+                        {
+                            <QButton Text="@(doc.IsShareable ? "Details" : "Make shareable")" Icon="@(doc.IsShareable ? "pencil" : "unlock")" Variant="secondary" Size="sm" OnClick="@(() => OpenPublishing(doc))" />
+                        }
+                        @if (canShare && doc.IsShareable)
+                        {
+                            <QButton Text="Share links" Icon="link-45deg" Variant="primary" Size="sm" OnClick="@(() => OpenShares(doc))" />
+                        }
+                        @if (canAudit && doc.IsShareable)
+                        {
+                            <QButton Text="Activity" Icon="activity" Variant="secondary" Size="sm" OnClick="@(() => OpenActivity(doc))" />
+                        }
+                        @if (canDelete)
+                        {
+                            <QButton Icon="trash-fill" Variant="danger" Size="sm" OnClick="@(() => AskDelete(doc))" Title="Delete document" />
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@* ---------------- Preview ---------------- *@
+<QModal @bind-Visible="showPreview" Title="@(previewDoc?.Name ?? "Preview")" Size="lg">
+    <ChildContent>
+        @if (previewDoc != null && showPreview)
+        {
+            <div class="doclib-preview">
+                <PdfFlipbook Url="@previewDoc.FileUrl" ShowThumbnails="false" />
+            </div>
+        }
+    </ChildContent>
+</QModal>
+
+@* ---------------- Upload ---------------- *@
+<QModal @bind-Visible="showUpload" Title="Upload a document" Size="md">
+    <ChildContent>
+        <div class="doclib-form">
+            <label class="doclib-file">
+                <InputFile OnChange="@OnUploadFileChosen" accept=".pdf,application/pdf" />
+                <span>@(uploadFile == null ? "Choose a PDF (up to 25 MB)" : $"{uploadFile.Name} · {FormatSize(uploadFile.Size)}")</span>
+            </label>
+            <QInput TValue="string" @bind-Value="uploadName" Label="Name" Placeholder="Staff meeting minutes — 12 Sep 2026" />
+            <QInput TValue="string" @bind-Value="uploadSummary" Label="Summary (shown on the share page)" Type="textarea" Rows="2" MaxLength="1000" />
+            <QInput TValue="string" @bind-Value="uploadSource" Label="Generated from (optional)" Placeholder="e.g. Governors' meeting, 12 Sep 2026" HelperText="A published document is a snapshot. Say what it came from, so a reader in September knows it is March's figures." />
+            @if (canPublish)
+            {
+                <QCheckbox @bind-Value="uploadShareable" Label="Shareable — allow secure links to be created for this document" />
+            }
+            else
+            {
+                <p class="doclib-hint">You can upload documents; marking one as shareable needs the <em>Publish to Document Library</em> permission.</p>
+            }
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showUpload = false)" Disabled="@isUploading" />
+        <QButton Text="@(isUploading ? "Uploading..." : "Upload")" Icon="cloud-upload-fill" Variant="primary" OnClick="@Upload" Disabled="@(isUploading || uploadFile == null)" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Publishing (shareable flag, summary, provenance) ---------------- *@
+<QModal @bind-Visible="showPublishing" Title="@($"Publishing — {publishingDoc?.Name}")" Size="md">
+    <ChildContent>
+        @if (publishingDoc != null)
+        {
+            <div class="doclib-form">
+                <QCheckbox @bind-Value="pubShareable" Label="Shareable — secure links may be created for this document" />
+                <p class="doclib-hint">
+                    A shareable document that is on no playlist is <strong>gated</strong>: its file answers 401 to the public and streams only through a share link. Put it on a playlist and it is on a wall by your choice, and public again.
+                    Turning sharing off does not delete its links; they simply stop working.
+                </p>
+                <QInput TValue="string" @bind-Value="pubSummary" Label="Summary (shown on the share page)" Type="textarea" Rows="2" MaxLength="1000" />
+                <QInput TValue="string" @bind-Value="pubSource" Label="Generated from" Placeholder="What this document is a snapshot of" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showPublishing = false)" Disabled="@isSavingPublishing" />
+        <QButton Text="@(isSavingPublishing ? "Saving..." : "Save")" Icon="check-lg" Variant="primary" OnClick="@SavePublishing" Disabled="@isSavingPublishing" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Share links ---------------- *@
+<QModal @bind-Visible="showShares" Title="@($"Share links — {sharesDoc?.Name}")" Size="xl">
+    <ChildContent>
+        @if (sharesDoc != null)
+        {
+            @if (issued != null)
+            {
+                <div class="doclib-issued">
+                    <div class="doclib-issued-head"><QIcon Name="check-circle-fill" /> Link created. <strong>This is the only time it is shown</strong> — copy it now.</div>
+                    <div class="doclib-issued-url">
+                        <code>@(issued.Url ?? $"{Navigation.BaseUri}s/{issued.Slug}")</code>
+                        <QButton Icon="clipboard" Text="Copy" Variant="secondary" Size="sm" OnClick="@(() => CopyToClipboard(issued.Url ?? $"{Navigation.BaseUri}s/{issued.Slug}"))" />
+                    </div>
+                    @if (issued.EmailsSent > 0)
+                    {
+                        <div class="doclib-issued-note">Emailed to @issued.EmailsSent recipient(s). @(issued.Share.RequiresPasscode ? "The passcode was NOT included — send it by another channel." : "")</div>
+                    }
+                    @foreach (var f in issued.EmailFailures)
+                    {
+                        <div class="doclib-issued-fail"><QIcon Name="exclamation-triangle" /> Not sent — @f</div>
+                    }
+                </div>
+            }
+
+            <div class="doclib-shares-layout">
+                <div class="doclib-shares-list">
+                    <h4>Existing links</h4>
+                    @if (isLoadingShares)
+                    {
+                        <QSpinner />
+                    }
+                    else if (shares.Count == 0)
+                    {
+                        <p class="doclib-hint">No links yet.</p>
+                    }
+                    else
+                    {
+                        @foreach (var s in shares)
+                        {
+                            <div class="doclib-share @(s.State != DocumentShareState.Active ? "doclib-share--off" : "")">
+                                <div class="doclib-share-head">
+                                    <strong>@(string.IsNullOrWhiteSpace(s.Label) ? "Untitled link" : s.Label)</strong>
+                                    <QBadge Text="@StateLabel(s.State)" Variant="@StateVariant(s.State)" Size="sm" />
+                                </div>
+                                <div class="doclib-share-rules">
+                                    <span title="Passcode">@(s.RequiresPasscode ? "🔒 passcode" : "no passcode")</span>
+                                    <span title="Email verification">@(s.RequireEmail ? "✉ email verified" : "no email check")</span>
+                                    <span title="Download">@(s.AllowDownload ? "⬇ download allowed" : "view-only")</span>
+                                    <span title="Expiry">@(s.ExpiresAt.HasValue ? $"expires {QDateFormat.DT(s.ExpiresAt.Value.ToLocalTime())}" : "no expiry")</span>
+                                    @if (s.Watermark is DocumentWatermarkMode.Custom or DocumentWatermarkMode.CustomAndViewer)
+                                    {
+                                        <span title="Watermark">🖋 "@s.WatermarkText"</span>
+                                    }
+                                    @if (s.MaxViews.HasValue)
+                                    {
+                                        <span>@s.ViewCount / @s.MaxViews views</span>
+                                    }
+                                </div>
+                                <div class="doclib-share-stats">
+                                    Opened @s.ViewCount time(s)@(s.UniqueViewers > 0 ? $" by {s.UniqueViewers} verified viewer(s)" : "") ·
+                                    @s.Downloads download(s) · @s.Denials refusal(s)
+                                    @if (s.LastOpenedAt.HasValue)
+                                    {
+                                        <text>· last @QDateFormat.DT(s.LastOpenedAt)</text>
+                                    }
+                                    <br /><small>Created @QDateFormat.D(s.CreatedAt) by @(s.CreatedByName ?? "—")@(s.RevokedAt.HasValue ? $" · revoked {QDateFormat.D(s.RevokedAt)} by {s.RevokedByName ?? "—"}{(string.IsNullOrWhiteSpace(s.RevokeReason) ? "" : $": {s.RevokeReason}")}" : "")</small>
+                                </div>
+                                @if (canManage && s.RevokedAt == null)
+                                {
+                                    <div class="doclib-share-actions">
+                                        <QButton Text="Edit rules" Icon="pencil" Variant="secondary" Size="sm" OnClick="@(() => BeginEditShare(s))" />
+                                        <QButton Text="Revoke" Icon="x-octagon" Variant="danger" Size="sm" OnClick="@(() => BeginRevoke(s))" />
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="doclib-shares-form">
+                    <h4>@(editingShare == null ? "New link" : $"Edit — {editingShare.Label ?? "link"}")</h4>
+                    <QInput TValue="string" @bind-Value="form.Label" Label="Label (staff only)" Placeholder="Governors, Sept minutes" />
+                    <div class="doclib-two">
+                        @* Date AND time: a board pack that must stop working at 17:00 on the meeting day is
+                           a real case. QDatePicker's ShowTime is time-of-day ONLY (it replaces the
+                           calendar), so the time is its own native field beside the date. Opens defaults
+                           to the start of its day, expiry to the end of its day. *@
+                        <div class="doclib-datetime">
+                            <QDatePicker Label="Opens (optional)" @bind-Value="form.NotBefore" Clearable="true" Min="DateTime.Today" />
+                            <label class="doclib-time"><span>at</span><input type="time" class="q-input" @bind="form.NotBeforeTime" disabled="@(form.NotBefore == null)" aria-label="Opens at time" /></label>
+                        </div>
+                        <div class="doclib-datetime">
+                            <QDatePicker Label="@(policy.MaxLinkDays > 0 ? $"Expires (required, within {policy.MaxLinkDays} days)" : "Expires")" @bind-Value="form.ExpiresAt" Clearable="@(policy.MaxLinkDays == 0)" Min="DateTime.Today" Max="@(policy.MaxLinkDays > 0 ? DateTime.Today.AddDays(policy.MaxLinkDays) : null)" />
+                            <label class="doclib-time"><span>at</span><input type="time" class="q-input" @bind="form.ExpiresTime" disabled="@(form.ExpiresAt == null)" aria-label="Expires at time" /></label>
+                        </div>
+                    </div>
+                    <div class="doclib-two">
+                        <QInput TValue="string" @bind-Value="form.Passcode" Label="@(editingShare == null ? "Passcode (optional)" : "New passcode (leave blank to keep)")" Type="password" HelperText="Send it by a different channel from the link." />
+                        <QInput TValue="int?" @bind-Value="form.MaxViews" Label="Max views (optional)" Type="number" Min="1" HelperText="1 makes it a one-time link." />
+                    </div>
+                    @if (editingShare != null && editingShare.RequiresPasscode)
+                    {
+                        <QCheckbox @bind-Value="form.ClearPasscode" Label="Remove the passcode" />
+                    }
+                    <QCheckbox @bind-Value="form.RequireEmail" Label="Require the viewer to verify an email address (one-time code)" />
+                    <QInput TValue="string" @bind-Value="form.AllowedEmailsText" Label="Only these addresses may open it (optional, one per line)" Type="textarea" Rows="2" HelperText="Implies email verification." />
+                    @* The access mode is an explicit choice, not the absence of a checkbox: "view-only" is
+                       the thing the reader is told about on the gate page and the thing withheld
+                       server-side, so it has to be something the person creating the link chose. *@
+                    <QSelect TValue="bool" TItem="AccessChoice" @bind-Value="form.AllowDownload" Items="@accessChoices"
+                             ValueSelector="@(c => c.AllowDownload)" TextSelector="@(c => c.Label)" Label="Reader can" />
+                    @if (!form.AllowDownload)
+                    {
+                        <p class="doclib-hint">
+                            <strong>View-only:</strong> the reader gets the pages in the viewer; the download button is withheld and the server refuses the file (403, and logged) even if the button is forced.
+                            <strong>What it cannot do:</strong> stop a screenshot or a photograph — the watermark below is what makes a copy name its source. Attribution, not prevention.
+                        </p>
+                    }
+                    else
+                    {
+                        <p class="doclib-hint"><strong>View and download:</strong> the original file is offered, and every download is logged against the link.</p>
+                    }
+                    <QSelect TValue="DocumentWatermarkMode" TItem="WatermarkChoice" @bind-Value="form.Watermark" Items="@watermarkChoices"
+                             ValueSelector="@(c => c.Mode)" TextSelector="@(c => c.Label)" Label="Watermark on every page" />
+                    @if (form.Watermark is DocumentWatermarkMode.Custom or DocumentWatermarkMode.CustomAndViewer)
+                    {
+                        <QInput TValue="string" @bind-Value="form.WatermarkText" Label="Watermark text" Placeholder="CONFIDENTIAL — Board members only" MaxLength="200"
+                                HelperText="Drawn diagonally across each page, baked into the image, the same for every reader." />
+                    }
+                    <QCheckbox @bind-Value="form.NotifyOnFirstOpen" Label="Tell me the first time it is opened" />
+                    @if (editingShare == null)
+                    {
+                        <QInput TValue="string" @bind-Value="form.SendToText" Label="Email the link to (optional, one per line)" Type="textarea" Rows="2" />
+                        <QInput TValue="string" @bind-Value="form.Message" Label="Message to include (optional)" Type="textarea" Rows="2" />
+                    }
+                    <div class="doclib-form-actions">
+                        @if (editingShare != null)
+                        {
+                            <QButton Text="Cancel edit" Variant="secondary" OnClick="@CancelEditShare" Disabled="@isSavingShare" />
+                        }
+                        <QButton Text="@(isSavingShare ? "Saving..." : editingShare == null ? "Create link" : "Save rules")" Icon="@(editingShare == null ? "link-45deg" : "check-lg")" Variant="primary" OnClick="@SaveShare" Disabled="@isSavingShare" />
+                    </div>
+                </div>
+            </div>
+        }
+    </ChildContent>
+</QModal>
+
+@* ---------------- Revoke ---------------- *@
+<QModal @bind-Visible="showRevoke" Title="Revoke this link?" Size="sm">
+    <ChildContent>
+        <p>The link stops working immediately for everyone who has it. The history of who opened it is kept.</p>
+        <QInput TValue="string" @bind-Value="revokeReason" Label="Reason (recorded on the link)" Placeholder="Laptop lost / shared too widely / no longer needed" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="secondary" OnClick="@(() => showRevoke = false)" Disabled="@isRevoking" />
+        <QButton Text="@(isRevoking ? "Revoking..." : "Revoke now")" Icon="x-octagon" Variant="danger" OnClick="@ConfirmRevoke" Disabled="@isRevoking" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Activity ---------------- *@
+<QModal @bind-Visible="showActivity" Title="@($"Activity — {activityDoc?.Name}")" Size="xl">
+    <ChildContent>
+        @if (isLoadingActivity)
+        {
+            <div class="doclib-empty"><QSpinner Size="lg" /></div>
+        }
+        else if (activity != null)
+        {
+            <div class="doclib-tiles">
+                <div class="doclib-tile"><span>Opens</span><strong>@activity.Opens</strong></div>
+                <div class="doclib-tile"><span>Verified viewers</span><strong>@activity.UniqueViewers</strong></div>
+                <div class="doclib-tile"><span>Anonymous opens</span><strong>@activity.AnonymousOpens</strong></div>
+                <div class="doclib-tile"><span>Downloads</span><strong>@activity.Downloads</strong></div>
+                <div class="doclib-tile"><span>Refused attempts</span><strong>@activity.Denials</strong></div>
+                <div class="doclib-tile"><span>Links (live / all)</span><strong>@activity.LinksActive / @activity.LinksTotal</strong></div>
+            </div>
+            <p class="doclib-hint">
+                Last opened @(activity.LastOpenedAt.HasValue ? QDateFormat.DT(activity.LastOpenedAt) : "never").
+                Viewer email, address and browser are kept for <strong>@activity.AttributionRetentionDays days</strong> and then blanked; the events themselves are kept.
+            </p>
+
+            @if (activity.Pages.Count > 0)
+            {
+                <h4>Pages read</h4>
+                <div class="doclib-pages">
+                    @{ var maxDwell = Math.Max(1, activity.Pages.Max(p => p.TotalDwellSeconds)); }
+                    @foreach (var p in activity.Pages)
+                    {
+                        <div class="doclib-page-row">
+                            <span class="doclib-page-no">p.@p.Page</span>
+                            <span class="doclib-page-bar"><span style="width:@(p.TotalDwellSeconds * 100 / maxDwell)%"></span></span>
+                            <span class="doclib-page-val">@p.Views view(s) · @FormatDwell(p.TotalDwellSeconds)</span>
+                        </div>
+                    }
+                </div>
+            }
+
+            <h4>Recent events</h4>
+            <div class="doclib-table-wrap">
+                <table class="doclib-table">
+                    <thead><tr><th>When</th><th>Link</th><th>Event</th><th>Viewer</th><th>From</th><th>Detail</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in activity.RecentEvents)
+                        {
+                            <tr class="@(e.Success ? "" : "doclib-row--fail")">
+                                <td>@QDateFormat.DT(e.CreatedAt)</td>
+                                <td>@(e.ShareLabel ?? e.ShareId.ToString("N")[..8])</td>
+                                <td>@EventLabel(e)</td>
+                                <td>@(e.Email ?? e.ActorName ?? "—")</td>
+                                <td>@(string.IsNullOrEmpty(e.IpAddress) && string.IsNullOrEmpty(e.UserAgent) ? "—" : $"{e.IpAddress} {e.UserAgent}".Trim())</td>
+                                <td>@(e.Page.HasValue ? $"page {e.Page}{(e.DwellSeconds.HasValue ? $", {FormatDwell(e.DwellSeconds.Value)}" : "")}" : e.Detail)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Export CSV" Icon="filetype-csv" Variant="secondary" OnClick="@ExportActivity" Disabled="@(activity == null || isExporting)" />
+        <QButton Text="Close" Variant="primary" OnClick="@(() => showActivity = false)" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Policy ---------------- *@
+<QModal @bind-Visible="showPolicy" Title="Sharing policy" Size="sm">
+    <ChildContent>
+        <div class="doclib-form">
+            <QInput TValue="int" @bind-Value="policyEdit.MaxLinkDays" Label="Maximum link lifetime (days; 0 = no cap)" Type="number" Min="0" Max="3650" HelperText="Enforced for every link anyone in the organization creates." />
+            <QInput TValue="int" @bind-Value="policyEdit.AttributionRetentionDays" Label="Keep viewer identity in the activity log for (days)" Type="number" Min="1" Max="3650" HelperText="After this, email, address and browser are blanked from events; the events stay. 180 follows CNIL's guidance for active logs." />
+            <QCheckbox @bind-Value="policyEdit.RequireEmailByDefault" Label="New links require email verification by default" />
+            <QCheckbox @bind-Value="policyEdit.AllowDownloadByDefault" Label="New links allow download by default" />
+            <QCheckbox @bind-Value="policyEdit.NotifyOnFirstOpenByDefault" Label="Creators are told on first open by default" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showPolicy = false)" Disabled="@isSavingPolicy" />
+        <QButton Text="@(isSavingPolicy ? "Saving..." : "Save policy")" Icon="check-lg" Variant="primary" OnClick="@SavePolicy" Disabled="@isSavingPolicy" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog @bind-IsVisible="showDelete" Title="Delete this document?"
+               Message="@($"\"{deleteDoc?.Name}\" will be removed from the Library and from any playlist. Existing share links will stop working. This cannot be undone.")"
+               ConfirmText="Delete" ConfirmButtonClass="btn-danger" OnClose="@HandleDeleteClose" />
+
+<style>
+    .doclib { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+    .doclib-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .doclib-header h1 { font-family: var(--qm-font-display); font-size: 1.5rem; margin: 0; display: flex; align-items: center; gap: .5rem; }
+    .doclib-sub { color: var(--qm-text-secondary); margin: .25rem 0 0; max-width: 60ch; }
+    .doclib-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .doclib-filters { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .doclib-filters > :first-child { flex: 1 1 260px; }
+    .doclib-count { color: var(--qm-text-secondary); font-size: .875rem; }
+    .doclib-empty { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 3rem 1rem; color: var(--qm-text-secondary); background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
+    .doclib-empty .q-icon { font-size: 2rem; }
+    .doclib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+    .doclib-card { background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 1rem; display: flex; flex-direction: column; gap: .75rem; min-width: 0; box-shadow: var(--qm-shadow-sm); }
+    .doclib-card--highlight { border-color: var(--qm-primary); }
+    .doclib-card-head { display: flex; gap: .75rem; align-items: flex-start; min-width: 0; }
+    .doclib-card-icon { width: 40px; height: 40px; border-radius: var(--qm-radius-sm); background: rgba(var(--qm-primary-rgb), .12); color: var(--qm-primary); display: grid; place-items: center; font-size: 1.25rem; flex-shrink: 0; }
+    .doclib-card-title { min-width: 0; flex: 1; }
+    .doclib-card-title h3 { font-size: 1rem; margin: 0 0 .35rem; font-family: var(--qm-font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doclib-badges { display: flex; gap: .35rem; flex-wrap: wrap; }
+    .doclib-summary { margin: 0; color: var(--qm-text-secondary); font-size: .9rem; }
+    .doclib-meta { margin: 0; display: grid; gap: .25rem; font-size: .8rem; }
+    .doclib-meta div { display: flex; gap: .5rem; }
+    .doclib-meta dt { color: var(--qm-text-secondary); flex: 0 0 100px; }
+    .doclib-meta dd { margin: 0; min-width: 0; }
+    .doclib-card-actions { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--qm-border); }
+    .doclib-preview { height: min(70vh, 720px); display: flex; flex-direction: column; }
+    .doclib-preview .pdf-flipbook { flex: 1; min-height: 0; }
+    .doclib-form { display: flex; flex-direction: column; gap: .85rem; }
+    .doclib-two { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    .doclib-datetime { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: end; min-width: 0; }
+    .doclib-time { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--qm-text-secondary); }
+    .doclib-time input { width: 7.5rem; }
+    .doclib-file { display: flex; flex-direction: column; gap: .5rem; padding: 1rem; border: 1px dashed var(--qm-border); border-radius: var(--qm-radius-md); cursor: pointer; color: var(--qm-text-secondary); }
+    .doclib-hint { font-size: .85rem; color: var(--qm-text-secondary); margin: 0; }
+    .doclib-issued { background: rgba(var(--qm-primary-rgb), .08); border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); padding: .85rem 1rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: .5rem; }
+    .doclib-issued-head { display: flex; gap: .5rem; align-items: center; }
+    .doclib-issued-url { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .doclib-issued-url code { background: var(--qm-bg-card); padding: .35rem .5rem; border-radius: var(--qm-radius-sm); word-break: break-all; flex: 1 1 200px; }
+    .doclib-issued-note { font-size: .85rem; }
+    .doclib-issued-fail { font-size: .85rem; color: var(--qm-danger); }
+    .doclib-shares-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 2rem; }
+    .doclib-shares-layout h4 { font-size: .95rem; margin: 0 0 .5rem; font-family: var(--qm-font-display); }
+    .doclib-shares-list { display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+    .doclib-share { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: .7rem .85rem; display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; }
+    .doclib-share--off { opacity: .7; }
+    .doclib-share-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+    .doclib-share-rules { display: flex; gap: .6rem; flex-wrap: wrap; color: var(--qm-text-secondary); }
+    .doclib-share-stats { color: var(--qm-text-secondary); }
+    .doclib-share-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+    .doclib-shares-form { display: flex; flex-direction: column; gap: .7rem; min-width: 0; }
+    .doclib-form-actions { display: flex; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
+    .doclib-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .6rem; margin-bottom: .75rem; }
+    .doclib-tile { background: var(--qm-bg-elevated, var(--qm-bg-card)); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: .6rem .75rem; display: flex; flex-direction: column; }
+    .doclib-tile span { font-size: .75rem; color: var(--qm-text-secondary); }
+    .doclib-tile strong { font-size: 1.35rem; font-family: var(--qm-font-display); }
+    .doclib-pages { display: flex; flex-direction: column; gap: .3rem; margin-bottom: 1rem; }
+    .doclib-page-row { display: grid; grid-template-columns: 44px 1fr 150px; gap: .5rem; align-items: center; font-size: .8rem; }
+    .doclib-page-bar { height: 8px; background: var(--qm-border); border-radius: 4px; overflow: hidden; }
+    .doclib-page-bar span { display: block; height: 100%; background: var(--qm-primary); }
+    .doclib-page-val { color: var(--qm-text-secondary); text-align: right; }
+    .doclib-table-wrap { overflow-x: auto; }
+    .doclib-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .doclib-table th, .doclib-table td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--qm-border); white-space: nowrap; }
+    .doclib-table th { color: var(--qm-text-secondary); font-weight: 600; }
+    .doclib-row--fail td { color: var(--qm-danger); }
+    /* The modal is 1140px at most and narrower than the viewport below that, so the paired rows
+       and the links/form split stack well before phone width — a 300px column cannot hold a date
+       picker and a time field side by side, and a flex/grid child will not shrink below its
+       content (see the sideways-scroll rule in CLAUDE.md). Measured, not guessed: at a 760px
+       window the two-column form squeezed the date picker down to its calendar icon. */
+    @@media (max-width: 960px) {
+        .doclib-shares-layout, .doclib-two { grid-template-columns: 1fr; }
+        .doclib-shares-layout { gap: 1.25rem; }
+        .doclib-page-row { grid-template-columns: 40px 1fr 110px; }
+        .doclib-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @@media (max-width: 480px) {
+        .doclib-datetime { grid-template-columns: 1fr; }
+        .doclib-time input { width: 100%; }
+        .doclib-issued-url code { flex-basis: 100%; }
+        .doclib-card-actions .q-btn { flex: 1 1 auto; }
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "document")] public Guid? highlightId { get; set; }
+
+    private bool isLoading = true;
+    private List<MediaContentDto> documents = new();
+    private string search = "";
+    private bool shareableOnly;
+    private Guid organizationId;
+    private bool canCreate, canPublish, canShare, canManage, canAudit, canDelete;
+    private DocumentSharingPolicyDto policy = new();
+
+    private IEnumerable<MediaContentDto> FilteredDocuments => documents
+        .Where(d => !shareableOnly || d.IsShareable)
+        .Where(d => string.IsNullOrWhiteSpace(search)
+                    || d.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (d.Summary?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (d.PublishedFrom?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        organizationId = user?.OrganizationId ?? Guid.Empty;
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
+        canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+        canShare = await PermissionService.HasPermissionAsync(Permissions.DocumentsShareCreate);
+        canManage = await PermissionService.HasPermissionAsync(Permissions.DocumentsShareManage);
+        canAudit = await PermissionService.HasPermissionAsync(Permissions.DocumentsShareAudit);
+        canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            var all = await ContentApi.GetMediaContentsAsync(organizationId);
+            documents = all.Where(m => m.ContentType == ContentType.Pdf).ToList();
+            if (canShare)
+            {
+                try { policy = await DocShareApi.GetPolicyAsync(organizationId); }
+                catch (Exception ex) { Toast.Notify(ToastSeverity.Warning, "Sharing policy", ex.Message); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the library", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Replace(MediaContentDto updated)
+    {
+        var i = documents.FindIndex(d => d.Id == updated.Id);
+        if (i >= 0) documents[i] = updated; else documents.Insert(0, updated);
+    }
+
+    // ---- Preview ----
+    private bool showPreview;
+    private MediaContentDto? previewDoc;
+    private void Preview(MediaContentDto doc) { previewDoc = doc; showPreview = true; }
+
+    // ---- Upload ----
+    private bool showUpload, isUploading;
+    private IBrowserFile? uploadFile;
+    private string? uploadName, uploadSummary, uploadSource;
+    private bool uploadShareable;
+    private const long MaxUploadBytes = 25 * 1024 * 1024;
+
+    private void ResetUpload() { uploadFile = null; uploadName = uploadSummary = uploadSource = null; uploadShareable = canPublish; }
+
+    private void OnUploadFileChosen(InputFileChangeEventArgs e)
+    {
+        uploadFile = e.File;
+        if (string.IsNullOrWhiteSpace(uploadName)) uploadName = Path.GetFileNameWithoutExtension(e.File.Name);
+    }
+
+    private async Task Upload()
+    {
+        if (uploadFile == null) return;
+        if (uploadFile.Size > MaxUploadBytes) { Toast.Notify(ToastSeverity.Error, "Too large", "Documents are limited to 25 MB."); return; }
+        isUploading = true;
+        try
+        {
+            await using var stream = uploadFile.OpenReadStream(MaxUploadBytes);
+            var doc = await DocShareApi.UploadDocumentAsync(organizationId, stream, uploadFile.Name, uploadName, uploadSummary, uploadSource, uploadShareable && canPublish);
+            Replace(doc);
+            showUpload = false;
+            Toast.Notify(ToastSeverity.Success, "Uploaded", $"\"{doc.Name}\" is in the Library{(doc.IsShareable ? " and shareable" : "")}.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Upload failed", ex.Message);
+        }
+        finally { isUploading = false; }
+    }
+
+    // ---- Publishing ----
+    private bool showPublishing, isSavingPublishing;
+    private MediaContentDto? publishingDoc;
+    private bool pubShareable;
+    private string? pubSummary, pubSource;
+
+    private void OpenPublishing(MediaContentDto doc)
+    {
+        publishingDoc = doc;
+        pubShareable = doc.IsShareable;
+        pubSummary = doc.Summary;
+        pubSource = doc.PublishedFrom;
+        showPublishing = true;
+    }
+
+    private async Task SavePublishing()
+    {
+        if (publishingDoc == null) return;
+        isSavingPublishing = true;
+        try
+        {
+            var updated = await DocShareApi.UpdatePublishingAsync(publishingDoc.Id, new UpdateMediaPublishingRequest { IsShareable = pubShareable, Summary = pubSummary, PublishedFrom = pubSource });
+            Replace(updated);
+            showPublishing = false;
+            Toast.Notify(ToastSeverity.Success, "Saved", updated.IsShareable ? "Secure links can now be created for this document." : "Sharing is off for this document.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message);
+        }
+        finally { isSavingPublishing = false; }
+    }
+
+    // ---- Shares ----
+    private bool showShares, isLoadingShares, isSavingShare;
+    private MediaContentDto? sharesDoc;
+    private List<DocumentShareDto> shares = new();
+    private DocumentShareIssuedDto? issued;
+    private DocumentShareDto? editingShare;
+    private ShareForm form = new();
+
+    private class ShareForm
+    {
+        public string? Label { get; set; }
+        public string? Passcode { get; set; }
+        public bool ClearPasscode { get; set; }
+        public bool RequireEmail { get; set; }
+        public string? AllowedEmailsText { get; set; }
+        public DateTime? NotBefore { get; set; }
+        public DateTime? ExpiresAt { get; set; }
+        /// <summary>From the native time field; null means the start (Opens) / end (Expires) of the day.</summary>
+        public TimeOnly? NotBeforeTime { get; set; }
+        public TimeOnly? ExpiresTime { get; set; } = new TimeOnly(23, 59);
+        public int? MaxViews { get; set; }
+        public bool AllowDownload { get; set; }
+        public DocumentWatermarkMode Watermark { get; set; } = DocumentWatermarkMode.ViewerIdentity;
+        public string? WatermarkText { get; set; }
+        public bool NotifyOnFirstOpen { get; set; } = true;
+        public string? SendToText { get; set; }
+        public string? Message { get; set; }
+    }
+
+    private record AccessChoice(bool AllowDownload, string Label);
+    private static readonly List<AccessChoice> accessChoices = new()
+    {
+        new(false, "View only — read it in the viewer, no download"),
+        new(true, "View and download the original file")
+    };
+
+    private record WatermarkChoice(DocumentWatermarkMode Mode, string Label);
+    private static readonly List<WatermarkChoice> watermarkChoices = new()
+    {
+        new(DocumentWatermarkMode.ViewerIdentity, "Viewer's identity and the time"),
+        new(DocumentWatermarkMode.Custom, "Custom text only"),
+        new(DocumentWatermarkMode.CustomAndViewer, "Custom text, plus the viewer's identity and the time"),
+        new(DocumentWatermarkMode.None, "No watermark")
+    };
+
+    private static List<string> Lines(string? text) => (text ?? "")
+        .Split(new[] { '\n', '\r', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    private void ResetShareForm()
+    {
+        editingShare = null;
+        form = new ShareForm
+        {
+            RequireEmail = policy.RequireEmailByDefault,
+            AllowDownload = policy.AllowDownloadByDefault,
+            NotifyOnFirstOpen = policy.NotifyOnFirstOpenByDefault,
+            ExpiresAt = policy.MaxLinkDays > 0 ? DateTime.Today.AddDays(Math.Min(30, policy.MaxLinkDays)) : null,
+            ExpiresTime = new TimeOnly(23, 59)
+        };
+    }
+
+    private async Task OpenShares(MediaContentDto doc)
+    {
+        sharesDoc = doc;
+        issued = null;
+        ResetShareForm();
+        showShares = true;
+        await LoadSharesAsync();
+    }
+
+    private async Task LoadSharesAsync()
+    {
+        if (sharesDoc == null) return;
+        isLoadingShares = true;
+        try { shares = await DocShareApi.GetSharesAsync(sharesDoc.Id); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load links", ex.Message); }
+        finally { isLoadingShares = false; }
+    }
+
+    private void BeginEditShare(DocumentShareDto s)
+    {
+        editingShare = s;
+        form = new ShareForm
+        {
+            Label = s.Label,
+            RequireEmail = s.RequireEmail,
+            AllowedEmailsText = string.Join("\n", s.AllowedEmails),
+            NotBefore = s.NotBefore?.ToLocalTime().Date,
+            NotBeforeTime = s.NotBefore.HasValue ? TimeOnly.FromDateTime(s.NotBefore.Value.ToLocalTime()) : null,
+            ExpiresAt = s.ExpiresAt?.ToLocalTime().Date,
+            ExpiresTime = s.ExpiresAt.HasValue ? TimeOnly.FromDateTime(s.ExpiresAt.Value.ToLocalTime()) : new TimeOnly(23, 59),
+            MaxViews = s.MaxViews,
+            AllowDownload = s.AllowDownload,
+            Watermark = s.Watermark,
+            WatermarkText = s.WatermarkText,
+            NotifyOnFirstOpen = s.NotifyOnFirstOpen
+        };
+    }
+
+    private void CancelEditShare() => ResetShareForm();
+
+    // A local calendar day from the picker plus an "HH:mm" from the time field. No time means the
+    // START of that day for Opens and the END of it (23:59:59) for Expires.
+    private static DateTime? CombineUtc(DateTime? date, TimeOnly? time, bool endOfDay)
+    {
+        if (!date.HasValue) return null;
+        var local = DateTime.SpecifyKind(date.Value.Date, DateTimeKind.Local);
+        if (time.HasValue)
+        {
+            local = local.Add(time.Value.ToTimeSpan());
+            // "23:59" typed as an expiry means the end of that minute, not its first second.
+            if (endOfDay && time.Value.Hour == 23 && time.Value.Minute == 59) local = local.AddSeconds(59);
+        }
+        else if (endOfDay)
+        {
+            local = local.AddDays(1).AddSeconds(-1);
+        }
+        return local.ToUniversalTime();
+    }
+    private static DateTime? EndOfDayUtc(DateTime? date, TimeOnly? time) => CombineUtc(date, time, endOfDay: true);
+    private static DateTime? StartOfDayUtc(DateTime? date, TimeOnly? time) => CombineUtc(date, time, endOfDay: false);
+
+    private async Task SaveShare()
+    {
+        if (sharesDoc == null) return;
+        isSavingShare = true;
+        try
+        {
+            var watermark = form.Watermark;
+            if (editingShare == null)
+            {
+                var result = await DocShareApi.CreateShareAsync(sharesDoc.Id, new CreateDocumentShareRequest
+                {
+                    Label = form.Label,
+                    Passcode = string.IsNullOrWhiteSpace(form.Passcode) ? null : form.Passcode,
+                    RequireEmail = form.RequireEmail,
+                    AllowedEmails = Lines(form.AllowedEmailsText),
+                    NotBefore = StartOfDayUtc(form.NotBefore, form.NotBeforeTime),
+                    ExpiresAt = EndOfDayUtc(form.ExpiresAt, form.ExpiresTime),
+                    MaxViews = form.MaxViews,
+                    AllowDownload = form.AllowDownload,
+                    Watermark = watermark,
+                    WatermarkText = form.WatermarkText,
+                    NotifyOnFirstOpen = form.NotifyOnFirstOpen,
+                    SendTo = Lines(form.SendToText),
+                    Message = form.Message,
+                    LinkBaseUrl = Navigation.BaseUri
+                });
+                issued = result;
+                Toast.Notify(ToastSeverity.Success, "Link created", "Copy it now — it is not shown again.");
+                ResetShareForm();
+            }
+            else
+            {
+                var updated = await DocShareApi.UpdateShareAsync(sharesDoc.Id, editingShare.Id, new UpdateDocumentShareRequest
+                {
+                    Label = form.Label,
+                    NotBefore = StartOfDayUtc(form.NotBefore, form.NotBeforeTime),
+                    ExpiresAt = EndOfDayUtc(form.ExpiresAt, form.ExpiresTime),
+                    MaxViews = form.MaxViews,
+                    AllowDownload = form.AllowDownload,
+                    RequireEmail = form.RequireEmail,
+                    AllowedEmails = Lines(form.AllowedEmailsText),
+                    Watermark = watermark,
+                    WatermarkText = form.WatermarkText,
+                    NotifyOnFirstOpen = form.NotifyOnFirstOpen,
+                    NewPasscode = string.IsNullOrWhiteSpace(form.Passcode) ? null : form.Passcode,
+                    ClearPasscode = form.ClearPasscode
+                });
+                Toast.Notify(ToastSeverity.Success, "Rules saved", "They apply to the next request on this link.");
+                ResetShareForm();
+            }
+            await LoadSharesAsync();
+            Replace(await RefreshDocAsync(sharesDoc.Id));
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, editingShare == null ? "Could not create the link" : "Could not save", ex.Message);
+        }
+        finally { isSavingShare = false; }
+    }
+
+    private async Task<MediaContentDto> RefreshDocAsync(Guid id)
+        => await ContentApi.GetMediaContentAsync(id) ?? documents.First(d => d.Id == id);
+
+    private bool showRevoke, isRevoking;
+    private DocumentShareDto? revokingShare;
+    private string? revokeReason;
+
+    private void BeginRevoke(DocumentShareDto s) { revokingShare = s; revokeReason = null; showRevoke = true; }
+
+    private async Task ConfirmRevoke()
+    {
+        if (sharesDoc == null || revokingShare == null) return;
+        isRevoking = true;
+        try
+        {
+            await DocShareApi.RevokeShareAsync(sharesDoc.Id, revokingShare.Id, revokeReason);
+            showRevoke = false;
+            Toast.Notify(ToastSeverity.Success, "Revoked", "The link no longer opens.");
+            await LoadSharesAsync();
+            Replace(await RefreshDocAsync(sharesDoc.Id));
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not revoke", ex.Message);
+        }
+        finally { isRevoking = false; }
+    }
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            Toast.Notify(ToastSeverity.Success, "Copied", "The link is on your clipboard.");
+        }
+        catch { Toast.Notify(ToastSeverity.Warning, "Copy it by hand", "The browser did not allow clipboard access."); }
+    }
+
+    // ---- Activity ----
+    private bool showActivity, isLoadingActivity, isExporting;
+    private MediaContentDto? activityDoc;
+    private DocumentActivityDto? activity;
+
+    private async Task OpenActivity(MediaContentDto doc)
+    {
+        activityDoc = doc;
+        activity = null;
+        showActivity = true;
+        isLoadingActivity = true;
+        try { activity = await DocShareApi.GetActivityAsync(doc.Id); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load activity", ex.Message); }
+        finally { isLoadingActivity = false; }
+    }
+
+    private async Task ExportActivity()
+    {
+        if (activityDoc == null) return;
+        isExporting = true;
+        try
+        {
+            var csv = await DocShareApi.ExportActivityCsvAsync(activityDoc.Id);
+            await JS.InvokeVoidAsync("qmgrExport.saveText", csv, "text/csv", $"{activityDoc.Name} - share activity.csv");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Export failed", ex.Message); }
+        finally { isExporting = false; }
+    }
+
+    // ---- Policy ----
+    private bool showPolicy, isSavingPolicy;
+    private PolicyEdit policyEdit = new();
+    private class PolicyEdit
+    {
+        public int MaxLinkDays { get; set; }
+        public int AttributionRetentionDays { get; set; }
+        public bool RequireEmailByDefault { get; set; }
+        public bool AllowDownloadByDefault { get; set; }
+        public bool NotifyOnFirstOpenByDefault { get; set; }
+    }
+
+    private void OpenPolicy()
+    {
+        policyEdit = new PolicyEdit
+        {
+            MaxLinkDays = policy.MaxLinkDays,
+            AttributionRetentionDays = policy.AttributionRetentionDays,
+            RequireEmailByDefault = policy.RequireEmailByDefault,
+            AllowDownloadByDefault = policy.AllowDownloadByDefault,
+            NotifyOnFirstOpenByDefault = policy.NotifyOnFirstOpenByDefault
+        };
+        showPolicy = true;
+    }
+
+    private async Task SavePolicy()
+    {
+        isSavingPolicy = true;
+        try
+        {
+            policy = await DocShareApi.UpdatePolicyAsync(organizationId, new DocumentSharingPolicyDto
+            {
+                MaxLinkDays = policyEdit.MaxLinkDays,
+                AttributionRetentionDays = policyEdit.AttributionRetentionDays,
+                RequireEmailByDefault = policyEdit.RequireEmailByDefault,
+                AllowDownloadByDefault = policyEdit.AllowDownloadByDefault,
+                NotifyOnFirstOpenByDefault = policyEdit.NotifyOnFirstOpenByDefault
+            });
+            showPolicy = false;
+            Toast.Notify(ToastSeverity.Success, "Policy saved", "It applies to every link created from now on.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save the policy", ex.Message); }
+        finally { isSavingPolicy = false; }
+    }
+
+    // ---- Delete ----
+    private bool showDelete;
+    private MediaContentDto? deleteDoc;
+    private void AskDelete(MediaContentDto doc) { deleteDoc = doc; showDelete = true; }
+
+    private async Task HandleDeleteClose(bool confirmed)
+    {
+        showDelete = false;
+        if (confirmed) await ConfirmDelete();
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (deleteDoc == null) return;
+        try
+        {
+            if (await ContentApi.DeleteMediaContentAsync(deleteDoc.Id))
+            {
+                documents.RemoveAll(d => d.Id == deleteDoc.Id);
+                Toast.Notify(ToastSeverity.Success, "Deleted", $"\"{deleteDoc.Name}\" was removed.");
+            }
+            else Toast.Notify(ToastSeverity.Error, "Could not delete", "The server refused the deletion.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not delete", ex.Message); }
+        finally { showDelete = false; }
+    }
+
+    // ---- Labels ----
+    private static string FormatSize(long? bytes) => bytes switch
+    {
+        null => "—",
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / 1024.0 / 1024.0:0.#} MB"
+    };
+
+    private static string FormatDwell(int seconds) => seconds < 60 ? $"{seconds}s" : seconds < 3600 ? $"{seconds / 60}m {seconds % 60}s" : $"{seconds / 3600}h {(seconds % 3600) / 60}m";
+
+    private static string StateLabel(DocumentShareState s) => s switch
+    {
+        DocumentShareState.Active => "Live",
+        DocumentShareState.NotYetOpen => "Not yet open",
+        DocumentShareState.Expired => "Expired",
+        DocumentShareState.Revoked => "Revoked",
+        DocumentShareState.ViewLimitReached => "View limit reached",
+        DocumentShareState.Locked => "Locked",
+        _ => "Unavailable"
+    };
+
+    private static string StateVariant(DocumentShareState s) => s switch
+    {
+        DocumentShareState.Active => "success",
+        DocumentShareState.NotYetOpen => "info",
+        DocumentShareState.Locked => "warning",
+        _ => "secondary"
+    };
+
+    private static string EventLabel(DocumentShareEventDto e) => e.Type switch
+    {
+        DocumentShareEventType.Issued => "Link created",
+        DocumentShareEventType.Opened => "Opened",
+        DocumentShareEventType.PasscodeFailed => "Wrong passcode",
+        DocumentShareEventType.EmailCodeSent => e.Success ? "Code emailed" : "Code email failed",
+        DocumentShareEventType.EmailVerified => "Email verified",
+        DocumentShareEventType.EmailRejected => "Email rejected",
+        DocumentShareEventType.PageViewed => "Page read",
+        DocumentShareEventType.Downloaded => "Downloaded",
+        DocumentShareEventType.Denied => "Refused",
+        DocumentShareEventType.Revoked => "Revoked",
+        DocumentShareEventType.Locked => "Locked out",
+        DocumentShareEventType.Updated => "Rules changed",
+        _ => e.Type.ToString()
+    };
+}

@@ -251,6 +251,11 @@ public class VisitorsController : ControllerBase
         Guid organizationId, Guid? explicitProfileId,
         string fullName, string? phone, string? email, string? idNumber, string? company, string? photoUrl)
     {
+        // The photo endpoint hands the client a SIGNED link so the check-in form can show the
+        // capture; what gets stored is the bare link, or a token that dies in an hour would be
+        // persisted against the profile.
+        photoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Strip(photoUrl);
+
         if (explicitProfileId.HasValue)
         {
             var chosen = await _context.VisitorProfiles.FirstOrDefaultAsync(
@@ -468,7 +473,7 @@ public class VisitorsController : ControllerBase
         Email = p.Email,
         Company = p.Company,
         IdNumber = p.IdNumber,
-        PhotoUrl = p.PhotoUrl,
+        PhotoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(p.PhotoUrl),
         IsWatchlisted = p.IsWatchlisted,
         WatchlistReason = p.WatchlistReason,
         WatchlistAddedAt = p.WatchlistAddedAt,
@@ -1385,7 +1390,7 @@ public class VisitorsController : ControllerBase
                 Email = p.Email,
                 Company = p.Company,
                 IdNumber = p.IdNumber,
-                PhotoUrl = p.PhotoUrl,
+                PhotoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(p.PhotoUrl),
                 IsWatchlisted = p.IsWatchlisted,
                 WatchlistReason = p.WatchlistReason,
                 LastVisitAt = lastVisitByProfile.GetValueOrDefault(p.Id),
@@ -1483,7 +1488,9 @@ public class VisitorsController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Failed to store the photo" });
         }
 
-        return Ok(uploadResult.FileUrl);
+        // Signed: a photo nothing points at yet is gated, and the check-in form needs to show it.
+        // FindOrCreateProfileAsync strips the token again before the link is stored.
+        return Ok(QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(uploadResult.FileUrl));
     }
 
     /// <summary>
@@ -1945,7 +1952,7 @@ public class VisitorsController : ControllerBase
                 profile.IdNumber = request.IdNumber;
                 profile.NormalizedIdNumber = VisitorMatching.NormalizeIdNumber(request.IdNumber);
             }
-            if (!string.IsNullOrWhiteSpace(request.PhotoUrl)) profile.PhotoUrl = request.PhotoUrl;
+            if (!string.IsNullOrWhiteSpace(request.PhotoUrl)) profile.PhotoUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Strip(request.PhotoUrl);
             if (!string.IsNullOrWhiteSpace(request.VehiclePlate)) visitor.VehiclePlate = request.VehiclePlate;
 
             // Nullable on the request specifically so "the caller said nothing" keeps whatever the

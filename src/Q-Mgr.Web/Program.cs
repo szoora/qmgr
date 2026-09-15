@@ -97,6 +97,7 @@ builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
+builder.Services.AddScoped<IDocumentShareApiService, DocumentShareApiService>();
 builder.Services.AddScoped<ISpotifyApiService, SpotifyApiService>();
 builder.Services.AddScoped<IOrganizationApiService, OrganizationApiService>();
 builder.Services.AddScoped<ISignalRService, SignalRService>();

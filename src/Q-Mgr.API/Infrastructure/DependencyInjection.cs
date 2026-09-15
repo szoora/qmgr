@@ -43,6 +43,11 @@ public static class DependencyInjection
         services.AddScoped<IQueueService, QueueService>();
         services.AddScoped<IWebhookService, WebhookService>();
         services.AddSingleton<IVisitorBadgeTokenService, VisitorBadgeTokenService>();
+        // Gated uploads (2026-09-15): the token minter is stateless, the authorizer reads the
+        // caller's HTTP context and memoises the student scope, so it is scoped like that service.
+        services.AddSingleton<IUploadAccessService, UploadAccessService>();
+        services.AddScoped<IUploadAuthorizer, UploadAuthorizer>();
+        services.AddScoped<IDocumentShareService, DocumentShareService>();
         services.AddScoped<IVisitorActivityBroadcaster, VisitorActivityBroadcaster>();
         services.AddScoped<QMgr.API.Application.Services.IVisitorReportingService, QMgr.API.Application.Services.VisitorReportingService>();
         services.AddScoped<IRosterImportBroadcaster, RosterImportBroadcaster>();

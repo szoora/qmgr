@@ -1,0 +1,377 @@
+@page "/s/{Slug}"
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@using QMgr.Web.Components.Shared.UI
+@layout PublicLayout
+@attribute [AllowAnonymous]
+@inject IDocumentShareApiService DocShareApi
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+@*
+    The public viewer behind a share link. No login: the whole point is a reader who has none.
+
+    The gates are the server's (PublicDocumentSharesController.Open); this page only walks them.
+    Every state the server can answer with is rendered as words, never as a blank card. The
+    content token lasts sixty seconds and is used at once; the session token is kept in
+    sessionStorage so a reload resumes without a second passcode, and dies with the tab.
+*@
+
+<PageTitle>@(gate?.DocumentName ?? "Shared document") - Q-Mgr</PageTitle>
+
+<div class="sd @(stage == Stage.Viewer ? "sd--viewer" : "")">
+    @if (stage != Stage.Viewer)
+    {
+        <div class="sd-card">
+            <div class="sd-brand"><QIcon Name="file-earmark-lock2" /> <span>Shared securely with Q-Mgr</span></div>
+
+            @if (isLoading)
+            {
+                <div class="sd-state"><QSpinner Size="lg" /><span>Checking this link...</span></div>
+            }
+            else if (gate == null)
+            {
+                <h1>This link is not available</h1>
+                <p class="sd-muted">It may have been typed wrongly, revoked, or it never existed. Ask whoever sent it to you for a new one.</p>
+            }
+            else
+            {
+                <div class="sd-doc">
+                    @if (!string.IsNullOrWhiteSpace(gate.OrganizationName))
+                    {
+                        <div class="sd-org">@gate.OrganizationName</div>
+                    }
+                    <h1>@gate.DocumentName</h1>
+                    @if (!string.IsNullOrWhiteSpace(gate.Summary))
+                    {
+                        <p class="sd-summary">@gate.Summary</p>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(gate.PublishedFrom) || gate.PublishedAt.HasValue)
+                    {
+                        <p class="sd-provenance">
+                            <QIcon Name="clock-history" />
+                            This is a snapshot@(string.IsNullOrWhiteSpace(gate.PublishedFrom) ? "" : $" of {gate.PublishedFrom}")@(gate.PublishedAt.HasValue ? $", published {QDateFormat.D(gate.PublishedAt)}" : ""). It does not update if the source changes.
+                        </p>
+                    }
+                </div>
+
+                @if (gate.State != DocumentShareState.Active)
+                {
+                    <div class="sd-refused">
+                        <QIcon Name="x-circle-fill" />
+                        <div>
+                            <strong>@gate.Message</strong>
+                            @if (gate.State == DocumentShareState.NotYetOpen && gate.NotBefore.HasValue)
+                            {
+                                <div class="sd-muted">It opens on @QDateFormat.DT(gate.NotBefore).</div>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @if (!string.IsNullOrEmpty(error))
+                    {
+                        <div class="sd-error"><QIcon Name="exclamation-triangle-fill" /> @error</div>
+                    }
+
+                    @switch (stage)
+                    {
+                        case Stage.Passcode:
+                            <div class="sd-gate">
+                                <label>This document is protected by a passcode</label>
+                                <QInput TValue="string" @bind-Value="passcode" Type="password" Placeholder="Enter the passcode" ShowPasswordToggle="true" />
+                                <span class="sd-muted">You should have received it separately from the link.</span>
+                                <QButton Text="@(isBusy ? "Checking..." : "Continue")" Icon="arrow-right" Variant="primary" OnClick="@Submit" Disabled="@(isBusy || string.IsNullOrWhiteSpace(passcode))" Block="true" />
+                            </div>
+                            break;
+                        case Stage.Email:
+                            <div class="sd-gate">
+                                <label>Confirm your email address to continue</label>
+                                <QInput TValue="string" @bind-Value="email" Type="email" Placeholder="you@example.com" />
+                                <span class="sd-muted">We will email you a six-digit code. Your address is recorded against this document's activity log@(gate.RequiresEmail ? "" : "").</span>
+                                <QButton Text="@(isBusy ? "Sending..." : "Send me a code")" Icon="envelope" Variant="primary" OnClick="@Submit" Disabled="@(isBusy || string.IsNullOrWhiteSpace(email))" Block="true" />
+                            </div>
+                            break;
+                        case Stage.Code:
+                            <div class="sd-gate">
+                                <label>Enter the code we emailed to @email</label>
+                                <QInput TValue="string" @bind-Value="code" Placeholder="123456" MaxLength="6" />
+                                <span class="sd-muted">It expires in ten minutes. <a href="" @onclick="@ResendCode" @onclick:preventDefault>Send a new one</a>.</span>
+                                <QButton Text="@(isBusy ? "Checking..." : "Open document")" Icon="unlock" Variant="primary" OnClick="@Submit" Disabled="@(isBusy || string.IsNullOrWhiteSpace(code))" Block="true" />
+                            </div>
+                            break;
+                        default:
+                            <div class="sd-gate">
+                                <QButton Text="@(isBusy ? "Opening..." : "Open document")" Icon="unlock" Variant="primary" OnClick="@Submit" Disabled="@isBusy" Block="true" />
+                            </div>
+                            break;
+                    }
+
+                    <ul class="sd-rules">
+                        @if (gate.ExpiresAt.HasValue)
+                        {
+                            @* With the time, in UTC and labelled so: an anonymous reader may be anywhere, and
+                               "17:00" without a zone would be a promise the server cannot keep. *@
+                            <li><QIcon Name="calendar-x" /> This link expires @QDateFormat.DT(gate.ExpiresAt) UTC.</li>
+                        }
+                        <li><QIcon Name="@(gate.AllowDownload ? "download" : "eye")" /> @(gate.AllowDownload ? "You may download the original file." : "View-only: the original file is not offered for download, and each page carries a watermark.")</li>
+                        <li><QIcon Name="journal-check" /> Opening it is recorded for the document's owner.</li>
+                    </ul>
+                }
+            }
+        </div>
+    }
+    else if (open != null && contentUrl != null)
+    {
+        <div class="sd-viewer">
+            <div class="sd-viewer-bar">
+                <div class="sd-viewer-title">
+                    <QIcon Name="file-earmark-lock2" />
+                    <div>
+                        <strong>@open.DocumentName</strong>
+                        <span class="sd-muted">@(string.IsNullOrEmpty(open.ViewerEmail) ? "Viewing as an anonymous reader" : $"Viewing as {open.ViewerEmail}")@(gate?.OrganizationName is { Length: > 0 } o ? $" · shared by {o}" : "")</span>
+                    </div>
+                </div>
+                <div class="sd-viewer-actions">
+                    @if (open.AllowDownload && sessionToken != null)
+                    {
+                        <a class="sd-download" href="@DocShareApi.DownloadUrl(Slug, sessionToken)" target="_blank" rel="noopener"><QIcon Name="download" /> Download</a>
+                    }
+                    else
+                    {
+                        <span class="sd-viewonly" title="The original file is withheld on the server. This does not prevent a screenshot; every page is watermarked so a copy names its source."><QIcon Name="eye" /> View-only</span>
+                    }
+                </div>
+            </div>
+            <div class="sd-viewer-body">
+                <PdfFlipbook Url="@contentUrl"
+                             ShowOpenOriginal="false"
+                             ViewOnly="@(!open.AllowDownload)"
+                             WatermarkText="@open.WatermarkText"
+                             ShowThumbnails="true"
+                             ShowSearch="true"
+                             OnPageViewed="@OnPageViewed"
+                             OnMediaError="@OnViewerError" />
+            </div>
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <div class="sd-error sd-error--bar"><QIcon Name="exclamation-triangle-fill" /> @error</div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .sd { min-height: 100vh; background: #f4f4f6; color: #1f1f24; font-family: var(--qm-font-primary, 'Poppins', sans-serif); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; box-sizing: border-box; }
+    .sd--viewer { padding: 0; align-items: stretch; }
+    .sd-card { width: 100%; max-width: 560px; background: #fff; border: 1px solid #e3e3e8; border-radius: 6px; box-shadow: 0 3px 10px rgba(0,0,0,.08); padding: 1.75rem; display: flex; flex-direction: column; gap: 1.1rem; }
+    .sd-brand { display: flex; align-items: center; gap: .5rem; color: #7a2847; font-weight: 600; font-size: .85rem; letter-spacing: .02em; text-transform: uppercase; }
+    .sd h1 { font-family: var(--qm-font-display, 'Montserrat', sans-serif); font-size: 1.4rem; margin: 0; }
+    .sd-org { font-size: .85rem; color: #666; margin-bottom: .25rem; }
+    .sd-summary { margin: .5rem 0 0; color: #444; }
+    .sd-provenance { margin: .75rem 0 0; font-size: .8rem; color: #666; display: flex; gap: .4rem; align-items: flex-start; background: #faf6f8; border-left: 3px solid #7a2847; padding: .5rem .75rem; }
+    .sd-muted { color: #666; font-size: .85rem; }
+    .sd-state { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 2rem 0; color: #666; }
+    .sd-refused { display: flex; gap: .75rem; align-items: flex-start; padding: 1rem; border: 1px solid #e0b4b4; background: #fdf3f3; border-radius: 4px; color: #7a1f1f; }
+    .sd-error { display: flex; gap: .5rem; align-items: center; padding: .6rem .85rem; background: #fdf3f3; border: 1px solid #e0b4b4; border-radius: 4px; color: #7a1f1f; font-size: .9rem; }
+    .sd-gate { display: flex; flex-direction: column; gap: .6rem; }
+    .sd-gate label { font-weight: 600; }
+    .sd-gate a { color: #7a2847; }
+    .sd-rules { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; font-size: .85rem; color: #555; border-top: 1px solid #eee; padding-top: 1rem; }
+    .sd-rules li { display: flex; gap: .5rem; align-items: flex-start; }
+    .sd-viewer { display: flex; flex-direction: column; width: 100%; height: 100vh; min-width: 0; }
+    .sd-viewer-bar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .6rem 1rem; background: #fff; border-bottom: 1px solid #e3e3e8; flex-wrap: wrap; }
+    .sd-viewer-title { display: flex; gap: .6rem; align-items: center; min-width: 0; }
+    .sd-viewer-title > .q-icon { color: #7a2847; font-size: 1.3rem; }
+    .sd-viewer-title div { display: flex; flex-direction: column; min-width: 0; }
+    .sd-viewer-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sd-viewer-actions { display: flex; gap: .5rem; align-items: center; }
+    .sd-download { display: inline-flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border-radius: 4px; background: #7a2847; color: #fff; text-decoration: none; font-size: .9rem; }
+    .sd-viewonly { display: inline-flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border-radius: 4px; border: 1px solid #ccc; color: #555; font-size: .85rem; cursor: help; }
+    .sd-viewer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: .75rem; }
+    .sd-viewer-body .pdf-flipbook { flex: 1; min-height: 0; }
+    .sd-error--bar { border-radius: 0; }
+    @@media (max-width: 600px) { .sd { padding: 1rem .75rem; } .sd-card { padding: 1.25rem; } }
+</style>
+
+@code {
+    [Parameter] public string Slug { get; set; } = string.Empty;
+
+    /// <summary>The browser's address and agent, relayed to the API so the activity log attributes the READER, not this Web server.</summary>
+    [CascadingParameter] public ViewerRequestInfo? Viewer { get; set; }
+
+    private enum Stage { Gate, Passcode, Email, Code, Viewer }
+
+    private bool isLoading = true;
+    private bool isBusy;
+    private SharedDocumentGateDto? gate;
+    private Stage stage = Stage.Gate;
+    private string? error;
+    private string? passcode, email, code, challenge;
+    private OpenSharedDocumentResponse? open;
+    private string? sessionToken;
+    private string? contentUrl;
+    private bool resumeTried;
+
+    private string StorageKey => $"qmgr-share-session-{Slug}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            gate = await DocShareApi.GetGateAsync(Slug);
+            if (gate != null && gate.State == DocumentShareState.Active)
+                stage = gate.RequiresPasscode ? Stage.Passcode : gate.RequiresEmail ? Stage.Email : Stage.Gate;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// A reload resumes the session (no second passcode). JS interop, so it runs after a render,
+    /// never during one — and NOT gated on firstRender: the first render happens while
+    /// OnInitializedAsync is still awaiting the gate, so on that render <c>gate</c> is null and a
+    /// firstRender-only check would never fire (found in the browser: a reload showed the
+    /// passcode again and the API never received a resume).
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (resumeTried || isLoading || gate == null || gate.State != DocumentShareState.Active || stage == Stage.Viewer) return;
+        resumeTried = true;
+        string? stored = null;
+        try { stored = await JS.InvokeAsync<string?>("sessionStorage.getItem", StorageKey); } catch { }
+        if (string.IsNullOrEmpty(stored)) return;
+
+        try
+        {
+            var result = await DocShareApi.ResumeAsync(Slug, stored, Viewer);
+            if (result.Status == SharedDocumentOpenStatus.Granted)
+            {
+                await Grant(result);
+                StateHasChanged();
+            }
+            else
+            {
+                try { await JS.InvokeVoidAsync("sessionStorage.removeItem", StorageKey); } catch { }
+            }
+        }
+        catch { /* a failed resume simply shows the gates */ }
+    }
+
+    private async Task Submit()
+    {
+        if (isBusy) return;
+        isBusy = true;
+        error = null;
+        try
+        {
+            var request = new OpenSharedDocumentRequest
+            {
+                Passcode = passcode,
+                Email = stage == Stage.Email ? email : null,
+                Code = stage == Stage.Code ? code : null,
+                Challenge = stage == Stage.Code ? challenge : null
+            };
+            var result = await DocShareApi.OpenAsync(Slug, request, Viewer);
+            await Handle(result);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ResendCode()
+    {
+        code = null;
+        challenge = null;
+        stage = Stage.Email;
+        await Submit();
+    }
+
+    private async Task Handle(OpenSharedDocumentResponse result)
+    {
+        switch (result.Status)
+        {
+            case SharedDocumentOpenStatus.Granted:
+                await Grant(result);
+                break;
+            case SharedDocumentOpenStatus.PasscodeRequired:
+                stage = Stage.Passcode;
+                break;
+            case SharedDocumentOpenStatus.PasscodeInvalid:
+                stage = Stage.Passcode;
+                passcode = null;
+                error = result.Message ?? "That passcode is not right.";
+                break;
+            case SharedDocumentOpenStatus.EmailRequired:
+                stage = Stage.Email;
+                if (!string.IsNullOrEmpty(result.Message)) error = result.Message;
+                break;
+            case SharedDocumentOpenStatus.EmailNotAllowed:
+                stage = Stage.Email;
+                error = result.Message ?? "This link was not shared with that address.";
+                break;
+            case SharedDocumentOpenStatus.CodeSent:
+                challenge = result.Challenge;
+                code = null;
+                stage = Stage.Code;
+                break;
+            case SharedDocumentOpenStatus.CodeInvalid:
+                stage = Stage.Code;
+                code = null;
+                error = result.Message ?? "That code is not right.";
+                break;
+            case SharedDocumentOpenStatus.Locked:
+                error = result.Message ?? "Too many failed attempts. Try again in a few minutes.";
+                break;
+            default:
+                // Denied: re-read the gate so the card says WHY (expired, revoked, view limit).
+                gate = await DocShareApi.GetGateAsync(Slug);
+                stage = Stage.Gate;
+                error = result.Message;
+                break;
+        }
+    }
+
+    private async Task Grant(OpenSharedDocumentResponse result)
+    {
+        open = result;
+        sessionToken = result.SessionToken;
+        contentUrl = result.ContentToken != null ? DocShareApi.ContentUrl(Slug, result.ContentToken) : null;
+        stage = Stage.Viewer;
+        error = null;
+        if (sessionToken != null)
+        {
+            try { await JS.InvokeVoidAsync("sessionStorage.setItem", StorageKey, sessionToken); } catch { }
+        }
+    }
+
+    private async Task OnPageViewed(PdfFlipbook.PageViewReport report)
+    {
+        if (sessionToken == null) return;
+        await DocShareApi.RecordPageAsync(Slug, new SharedDocumentEventRequest { SessionToken = sessionToken, Page = report.Page, DwellSeconds = report.DwellSeconds }, Viewer);
+    }
+
+    private Task OnViewerError()
+    {
+        // The sixty-second content token may have died (a slow network, a suspended tab).
+        // Say so, and offer the reload that resumes the session.
+        error = "The document could not be loaded. Reload the page to try again — you will not need to enter the passcode twice.";
+        return Task.CompletedTask;
+    }
+}

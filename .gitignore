@@ -23,3 +23,9 @@ scripts/deploy/secrets.local.json
 # finding must not be published with a working reproduction. Remove the note and
 # fold the detail into the tracker once the fix has shipped.
 *.local.md
+
+# The upload store in development (welfare evidence, visitor photographs, signage media) — moved out
+# of wwwroot on 2026-09-15. Never commit it. The wwwroot/uploads rule above did not stop five
+# dev-tenant uploads from being tracked: they were in the 2026-08-25 baseline snapshot, before the
+# rule existed, and only a `git rm` removes an already-tracked file.
+src/Q-Mgr.API/App_Data/

@@ -80,7 +80,7 @@ public static class EmailTemplates
 {cta}        <p style='margin: 18px 0 0 0;'>Best regards,<br>The {AppName} Team</p>
         </div>
         <hr style='border: none; border-top: 1px solid {Rule}; margin: 24px 0 14px 0;'>
-{footer}        <p style='color: {Muted}; font-size: 12px; margin: 0;'>&copy; {DateTime.UtcNow.Year} {AppName} &middot; Queue Management</p>
+{footer}        <p style='color: {Muted}; font-size: 12px; margin: 0;'>&copy; {DateTime.UtcNow.Year} {AppName} &middot; Front-Office Platform</p>
     </div>
 </body>
 </html>";

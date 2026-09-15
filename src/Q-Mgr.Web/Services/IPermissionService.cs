@@ -237,6 +237,12 @@ public static class Permissions
     public const string ContentEdit = "content.edit";
     public const string ContentDelete = "content.delete";
 
+    // Document Library & secure sharing
+    public const string LibraryPublish = "library.publish";
+    public const string DocumentsShareCreate = "documents.share.create";
+    public const string DocumentsShareManage = "documents.share.manage";
+    public const string DocumentsShareAudit = "documents.share.audit";
+
     // Feedback
     public const string FeedbackView = "feedback.view";
     public const string FeedbackRespond = "feedback.respond";

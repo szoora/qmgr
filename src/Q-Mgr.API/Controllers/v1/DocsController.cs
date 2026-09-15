@@ -135,8 +135,9 @@ public class DocsController : ControllerBase
             Title = request.Title.Trim(),
             Slug = slug,
             Summary = request.Summary,
-            BodyHtml = request.BodyHtml,
-            CoverImageUrl = request.CoverImageUrl,
+            // Images arrive from the editor with signed preview links; the stored article carries the bare ones.
+            BodyHtml = QMgr.Infrastructure.Services.Storage.UploadLinks.StripAll(request.BodyHtml) ?? string.Empty,
+            CoverImageUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Strip(request.CoverImageUrl),
             Industry = request.Industry,
             Status = request.Status,
             DisplayOrder = request.DisplayOrder ?? 0,
@@ -178,8 +179,8 @@ public class DocsController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(request.Title)) article.Title = request.Title.Trim();
         if (request.Summary != null) article.Summary = request.Summary;
-        if (request.BodyHtml != null) article.BodyHtml = request.BodyHtml;
-        if (request.CoverImageUrl != null) article.CoverImageUrl = request.CoverImageUrl;
+        if (request.BodyHtml != null) article.BodyHtml = QMgr.Infrastructure.Services.Storage.UploadLinks.StripAll(request.BodyHtml) ?? string.Empty;
+        if (request.CoverImageUrl != null) article.CoverImageUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Strip(request.CoverImageUrl);
         if (request.Industry.HasValue) article.Industry = request.Industry;
         if (request.DisplayOrder.HasValue) article.DisplayOrder = request.DisplayOrder.Value;
 
@@ -237,7 +238,9 @@ public class DocsController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to store the uploaded file." });
         }
 
-        return Ok(new { url = result.FileUrl });
+        // Signed: until an article references it, the image is an orphan and therefore gated, and
+        // the editor needs to preview it. Saving the article strips the token again.
+        return Ok(new { url = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(result.FileUrl) });
     }
 
     // ---- Helpers ----

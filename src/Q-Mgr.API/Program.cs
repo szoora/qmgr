@@ -236,10 +236,15 @@ app.UseHttpsRedirection();
 app.UseSerilogRequestLogging();
 app.UseMiddleware<QMgr.API.Middleware.RequestMetricsMiddleware>();
 
-// Serves uploaded media (wwwroot/uploads/media/...) written by ContentController's
-// UploadMediaContent action. Public/unauthenticated by design, same as the existing
-// [AllowAnonymous] media-read endpoints — display/kiosk screens need to load this
-// content without a session.
+// wwwroot only. Uploads are NOT here any more: until 2026-09-15 they were written to
+// wwwroot/uploads/media and this line served every welfare attachment and visitor photograph to
+// anyone holding the URL, before UseAuthentication() below had run. The store now lives outside
+// wwwroot (LocalDiskMediaStorageService.ResolveStoreDirectory) and UploadsController serves
+// /uploads/media/{file} with a per-file decision — public for signage, token or record-permission
+// for everything else. UploadStoreRelocation (startup, below) carries an existing store across.
+//
+// Because uploads are a controller now, UseCors() applies to them too — the old note that a
+// local cross-origin fetch of an upload could never work is no longer true.
 app.UseStaticFiles();
 
 app.UseCors("AllowWebUI");
@@ -278,6 +283,10 @@ app.MapHub<NotificationHub>("/hubs/notifications");
 // Health check endpoint (unauthenticated for development - secure in production)
 app.MapHealthChecks("/health");
 
+// Attach the upload-link signer to its static face before anything can map a DTO — see
+// UploadLinks for why the static mappers cannot take it by injection.
+QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredService<IUploadAccessService>());
+
 // Initialize database BEFORE Hangfire tries to connect
 {
     using var scope = app.Services.CreateScope();
@@ -305,6 +314,13 @@ app.MapHealthChecks("/health");
         configuration,
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.UploadLinkRepair>>());
     await uploadLinkRepair.RunAsync();
+
+    // Move any files still under wwwroot/uploads/media into the gated store, and drop the
+    // production symlink that made them reachable as static files. Idempotent; see the class.
+    new QMgr.Infrastructure.Data.UploadStoreRelocation(
+        configuration,
+        app.Environment,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.UploadStoreRelocation>>()).Run();
 
     // Seed demo data (development only)
     if (app.Environment.IsDevelopment())
@@ -348,5 +364,6 @@ VisitorRetentionJobsRegistration.RegisterRecurringJobs();
 VisitorReportSubscriptionJobsRegistration.RegisterRecurringJobs();
 WelfareReminderJobRegistration.RegisterRecurringJobs();
 AppointmentJobsRegistration.RegisterRecurringJobs();
+DocumentShareJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using QMgr.Infrastructure.Data;
@@ -11,9 +12,11 @@ using QMgr.Infrastructure.Data;
 namespace QMgr.Infrastructure.Migrations
 {
     [DbContext(typeof(QMgrDbContext))]
-    partial class QMgrDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260915150334_AddDocumentLibraryAndShares")]
+    partial class AddDocumentLibraryAndShares
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -987,10 +990,6 @@ namespace QMgr.Infrastructure.Migrations
 
                     b.Property<int>("Watermark")
                         .HasColumnType("integer");
-
-                    b.Property<string>("WatermarkText")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
 
                     b.HasKey("Id");
 

@@ -873,7 +873,7 @@ else if (settings != null && settings.Any())
         </div>
         <div class="settings-form-group">
             <label>Secret Key</label>
-            <QInput TValue="string" @bind-Value="editStripe!.SecretKey" Type="password" Placeholder="sk_live_... or sk_test_..." HelperText="Never share this — it can charge cards and issue refunds on your Stripe account." />
+            <QInput TValue="string" @bind-Value="editStripe!.SecretKey" Type="password" Placeholder="sk_live_... or sk_test_..." HelperText="Never share this — it can charge cards and issue refunds on your Stripe account. Shown as dots once saved; leave the dots to keep the saved key." />
         </div>
         <div class="settings-form-group">
             <label>Publishable Key</label>
@@ -881,7 +881,7 @@ else if (settings != null && settings.Any())
         </div>
         <div class="settings-form-group">
             <label>Webhook Secret</label>
-            <QInput TValue="string" @bind-Value="editStripe!.WebhookSecret" Type="password" Placeholder="whsec_..." />
+            <QInput TValue="string" @bind-Value="editStripe!.WebhookSecret" Type="password" Placeholder="whsec_..." HelperText="Shown as dots once saved; leave the dots to keep the saved secret." />
         </div>
         <div class="settings-toggle-group">
             <div class="form-check form-switch">
@@ -910,7 +910,7 @@ else if (settings != null && settings.Any())
         </div>
         <div class="settings-form-group">
             <label>API Key</label>
-            <QInput TValue="string" @bind-Value="editMobileMoney!.ApiKey" Type="password" />
+            <QInput TValue="string" @bind-Value="editMobileMoney!.ApiKey" Type="password" HelperText="Shown as dots once saved; leave the dots to keep the saved key." />
         </div>
     </div>;
 
@@ -956,7 +956,7 @@ else if (settings != null && settings.Any())
             </div>
             <div class="settings-form-group">
                 <label>SMTP Password</label>
-                <QInput TValue="string" @bind-Value="editEmail!.SmtpPassword" Type="password" />
+                <QInput TValue="string" @bind-Value="editEmail!.SmtpPassword" Type="password" HelperText="Shown as dots once saved and never sent back in clear; leave the dots to keep the saved password." />
             </div>
             <div class="settings-form-group">
                 <label>From Email</label>

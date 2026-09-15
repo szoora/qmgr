@@ -1,7 +1,7 @@
 {
-  "name": "Q-Mgr - Queue Management System",
+  "name": "Q-Mgr - Front-Office Platform",
   "short_name": "Q-Mgr",
-  "description": "Modern queue management system for efficient customer flow",
+  "description": "The front-office platform: queues, visitors, signage, welfare and secure documents in one system.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0d1117",

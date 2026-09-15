@@ -98,12 +98,15 @@
                              Title="@(isFullscreen ? "Exit full screen" : "Full screen")"
                              aria-label="@(isFullscreen ? "Exit full screen" : "Full screen")" />
 
-                    <a href="@Url" target="_blank" rel="noopener"
-                       class="pdf-flipbook-toolbar-link"
-                       title="Open the original PDF in a new tab"
-                       aria-label="Open the original PDF in a new tab">
-                        <QIcon Name="box-arrow-up-right" />
-                    </a>
+                    @if (ShowOpenOriginal)
+                    {
+                        <a href="@Url" target="_blank" rel="noopener"
+                           class="pdf-flipbook-toolbar-link"
+                           title="Open the original PDF in a new tab"
+                           aria-label="Open the original PDF in a new tab">
+                            <QIcon Name="box-arrow-up-right" />
+                        </a>
+                    }
                 </div>
             }
 
@@ -148,9 +151,12 @@
         <div class="pdf-flipbook-status">
             <QIcon Name="exclamation-triangle-fill" />
             <span>@errorMessage</span>
-            <a href="@Url" target="_blank" rel="noopener" class="pdf-flipbook-fallback-link">
-                <QIcon Name="box-arrow-up-right" /> Open PDF in new tab
-            </a>
+            @if (ShowOpenOriginal)
+            {
+                <a href="@Url" target="_blank" rel="noopener" class="pdf-flipbook-fallback-link">
+                    <QIcon Name="box-arrow-up-right" /> Open PDF in new tab
+                </a>
+            }
         </div>
     }
 </div>
@@ -180,6 +186,34 @@
     [Parameter] public string CssClass { get; set; } = "";
     [Parameter] public EventCallback OnMediaEnded { get; set; }
     [Parameter] public EventCallback OnMediaError { get; set; }
+
+    /// <summary>
+    /// The "open the original in a new tab" links. Off for a shared document served view-only:
+    /// the download decision is made server-side, and a link to the raw file would be either a
+    /// dead end or a leak, depending on the share's rules.
+    /// </summary>
+    [Parameter] public bool ShowOpenOriginal { get; set; } = true;
+
+    /// <summary>
+    /// Drawn diagonally across every rendered page — the viewer's verified identity and the
+    /// time. Attribution, not prevention: a page on a screen can be photographed, and this is
+    /// what makes a leaked photograph name its source.
+    /// </summary>
+    [Parameter] public string? WatermarkText { get; set; }
+
+    /// <summary>Disables the page context menu. A deterrent for the casual right-click-save, nothing more, and never claimed to be.</summary>
+    [Parameter] public bool ViewOnly { get; set; }
+
+    /// <summary>
+    /// Raised when the reader LEAVES a page, with how long it was on screen. A share link's
+    /// activity log is built from this; signage never sets it.
+    /// </summary>
+    [Parameter] public EventCallback<PageViewReport> OnPageViewed { get; set; }
+
+    public record PageViewReport(int Page, int DwellSeconds);
+
+    private int viewedPage;
+    private DateTime viewedSince;
 
     private const double MinZoom = 0.5;
     private const double MaxZoom = 4.0;
@@ -263,7 +297,9 @@
                 autoAdvance = AutoAdvance,
                 pageDurationSeconds = PageDurationSeconds,
                 loop = Loop,
-                viewMode
+                viewMode,
+                watermark = WatermarkText,
+                viewOnly = ViewOnly
             });
 
             if (result.Success)
@@ -271,6 +307,8 @@
                 pageCount = result.PageCount;
                 currentPage = 1;
                 pageInput = 1;
+                viewedPage = 1;
+                viewedSince = DateTime.UtcNow;
                 if (pageCount == 1) viewMode = "single";
             }
             else
@@ -434,12 +472,26 @@
     }
 
     [JSInvokable]
-    public void OnPageFlipped(int page, int totalPages)
+    public async Task OnPageFlipped(int page, int totalPages)
     {
         currentPage = page;
         pageInput = page;
         pageCount = totalPages;
         StateHasChanged();
+        await ReportPageLeftAsync(page);
+    }
+
+    /// <summary>The page just left, with its dwell. Sub-second flicks (a fast scrub through the thumbnails) are not "reading" and are not reported.</summary>
+    private async Task ReportPageLeftAsync(int nowOn)
+    {
+        if (!OnPageViewed.HasDelegate || viewedPage <= 0) return;
+        var dwell = (int)Math.Round((DateTime.UtcNow - viewedSince).TotalSeconds);
+        var left = viewedPage;
+        viewedPage = nowOn;
+        viewedSince = DateTime.UtcNow;
+        if (left == nowOn || dwell < 1) return;
+        try { await OnPageViewed.InvokeAsync(new PageViewReport(left, dwell)); }
+        catch (Exception ex) { Console.WriteLine($"PDF flipbook page report failed: {ex.Message}"); }
     }
 
     [JSInvokable]
@@ -467,6 +519,10 @@
     {
         searchDebounce?.Cancel();
         searchDebounce?.Dispose();
+
+        // The page the reader was on when they left is a page they read.
+        if (OnPageViewed.HasDelegate && viewedPage > 0)
+            await ReportPageLeftAsync(0);
 
         try
         {

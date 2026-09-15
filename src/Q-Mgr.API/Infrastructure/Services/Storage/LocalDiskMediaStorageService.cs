@@ -4,24 +4,35 @@ using QMgr.Application.Interfaces;
 namespace QMgr.Infrastructure.Services.Storage;
 
 /// <summary>
-/// Default media storage provider — writes to the API's own wwwroot/uploads/media,
-/// same as ContentController's inline logic did before this was extracted behind
-/// IMediaStorageService. Deliberately not the multi-instance-safe choice (see
-/// ContentController.UploadMediaContent's own doc comment on why uploads live on
-/// the API, not the Web instance) — that's what MediaStorage:Provider="S3" is for.
-/// Selected via DependencyInjection.cs when MediaStorage:Provider is unset or "Local".
+/// Default media storage provider — writes to a directory OUTSIDE the API's wwwroot
+/// (MediaStorage:LocalPath; see <see cref="ResolveStoreDirectory"/> for the default), served by
+/// <c>UploadsController</c> with a per-file authorisation decision. Until 2026-09-15 the store
+/// was wwwroot/uploads/media, which the static-file middleware served before authentication
+/// ran — every welfare attachment and visitor photograph was readable by anyone holding its
+/// URL. <see cref="QMgr.Infrastructure.Data.UploadStoreRelocation"/> moves an existing store
+/// across at startup.
+///
+/// Deliberately not the multi-instance-safe choice (see ContentController.UploadMediaContent's
+/// own doc comment on why uploads live on the API, not the Web instance) — that's what
+/// MediaStorage:Provider="S3" is for. Selected via DependencyInjection.cs when
+/// MediaStorage:Provider is unset or "Local".
 /// </summary>
 public class LocalDiskMediaStorageService : IMediaStorageService
 {
-    private readonly IWebHostEnvironment _webHostEnvironment;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<LocalDiskMediaStorageService> _logger;
 
     // The browser-facing origin that serves /uploads/ (production: https://qmgr.cashbook.ug, where
     // nginx routes /uploads/ to this API). Unset in development, where the request host is right.
     private readonly string? _publicBaseUrl;
+    private readonly string _storeDirectory;
 
-    private const string RelativeFolder = "uploads/media";
+    /// <summary>
+    /// The URL path stays <c>uploads/media/{file}</c> even though the disk location moved: every
+    /// stored link in the database carries it, and keeping the route means no link had to be
+    /// rewritten and nothing a customer emailed or printed went dead.
+    /// </summary>
+    private const string RelativeFolder = UploadAccessService.RelativeFolder;
 
     public LocalDiskMediaStorageService(
         IWebHostEnvironment webHostEnvironment,
@@ -29,13 +40,38 @@ public class LocalDiskMediaStorageService : IMediaStorageService
         IConfiguration configuration,
         ILogger<LocalDiskMediaStorageService> logger)
     {
-        _webHostEnvironment = webHostEnvironment;
         _httpContextAccessor = httpContextAccessor;
         _publicBaseUrl = configuration["MediaStorage:PublicBaseUrl"];
+        _storeDirectory = ResolveStoreDirectory(configuration, webHostEnvironment);
         _logger = logger;
     }
 
-    private string UploadsDirectory => Path.Combine(_webHostEnvironment.WebRootPath, "uploads", "media");
+    /// <summary>
+    /// Where the bytes live. MediaStorage:LocalPath when set — production sets it in the API's
+    /// systemd unit to $UploadsPath/media, the directory that already persisted across deploys —
+    /// otherwise App_Data/uploads/media under the content root. Never under wwwroot: anything
+    /// there is served by the static-file middleware ahead of every authorisation check.
+    /// </summary>
+    public static string ResolveStoreDirectory(IConfiguration configuration, IWebHostEnvironment environment)
+    {
+        var configured = configuration["MediaStorage:LocalPath"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(configured);
+        return Path.Combine(environment.ContentRootPath, "App_Data", "uploads", "media");
+    }
+
+    /// <summary>The wwwroot folder the store used to be, so the relocation step and the serving controller agree on it.</summary>
+    public static string LegacyStoreDirectory(IWebHostEnvironment environment)
+        => Path.Combine(environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot"), "uploads", "media");
+
+    private string UploadsDirectory => _storeDirectory;
+
+    /// <summary>Absolute disk path of a stored file name, or null when the name is not a plain file name.</summary>
+    public string? DiskPathFor(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName || fileName.Contains("..")) return null;
+        return Path.Combine(UploadsDirectory, fileName);
+    }
 
     public async Task<MediaUploadResult> UploadAsync(Stream fileStream, string fileName, string contentType, CancellationToken cancellationToken = default)
     {

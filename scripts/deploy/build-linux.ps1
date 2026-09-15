@@ -45,7 +45,13 @@ param(
     [int]$WebPort            = 8582,
 
     [string]$InstallRoot     = '/var/www/sites/qmgr',
-    [string]$UploadsPath     = '/var/www/uploads/qmgr',  # persists across deploys; excluded from the package and from rsync --delete
+    # Persists across deploys; excluded from the package and from rsync --delete. Since 2026-09-15
+    # this is NOT symlinked into the API's wwwroot any more: the API reads and writes
+    # $UploadsPath/media directly (Environment=MediaStorage__LocalPath in the unit) and serves it
+    # through UploadsController with a per-file authorisation check. The symlink was what let the
+    # static-file middleware hand out welfare evidence and visitor photographs to anyone with the
+    # URL, ahead of authentication. install.sh removes a symlink left by an earlier install.
+    [string]$UploadsPath     = '/var/www/uploads/qmgr',
     # Data Protection key ring. MUST live outside $InstallRoot and MUST be in the API unit's
     # ReadWritePaths. Two separate reasons, both found the hard way:
     #   1. ProtectSystem=strict mounts the whole filesystem read-only except ReadWritePaths, and
@@ -443,11 +449,13 @@ server {
         proxy_send_timeout 3600s;
     }
 
-    # ---- Uploaded files (API wwwroot/uploads, a symlink to $UploadsPath) ----
+    # ---- Uploaded files (served by the API's UploadsController from $UploadsPath/media) ----
     # Every upload's link is https://$HostName/uploads/... (MediaStorage:PublicBaseUrl). Without
     # this block the catch-all "location /" sent those requests to Web, which has no such files,
     # so signage PDFs, images and attachments all 404ed. No limit_req: one display loading a
-    # playlist fetches many files from a single IP.
+    # playlist fetches many files from a single IP. Since 2026-09-15 the API answers these with a
+    # per-file authorisation decision (public for signage, signed token or record permission for
+    # everything else) — they are no longer static files.
     location /uploads/ {
         proxy_pass http://127.0.0.1:$ApiPort;
         proxy_http_version 1.1;
@@ -539,6 +547,10 @@ Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://127.0.0.1:$ApiPort
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
 Environment=MediaStorage__PublicBaseUrl=https://$HostName
+# The upload store, outside both wwwroot and $InstallRoot (2026-09-15). In the unit for the same
+# reason as PublicBaseUrl: install.sh preserves the API's appsettings.Production.json, so a key
+# added there never reaches an existing server. The unit is replaced on every install.
+Environment=MediaStorage__LocalPath=$UploadsPath/media
 $emailUnitEnvironment
 MemoryMax=1200M
 
@@ -546,7 +558,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=$InstallRoot/api/wwwroot/uploads $UploadsPath /var/log/qmgr $DataProtectionPath
+ReadWritePaths=$UploadsPath /var/log/qmgr $DataProtectionPath
 
 [Install]
 WantedBy=multi-user.target
@@ -882,7 +894,17 @@ chown -R www-data:www-data "$INSTALL_ROOT/api" "$INSTALL_ROOT/web" "$UPLOADS_PAT
 chmod 700 "$DP_KEYS_PATH"
 chmod -R u+rwX,go+rX,go-w "$INSTALL_ROOT/api" "$INSTALL_ROOT/web"
 chmod +x "$INSTALL_ROOT/api/Q-Mgr.API" "$INSTALL_ROOT/web/Q-Mgr.Web"
-ln -sfn "$UPLOADS_PATH" "$INSTALL_ROOT/api/wwwroot/uploads"
+
+# The upload store is served by the API's UploadsController from $UPLOADS_PATH/media, never as
+# a static file. Earlier installs symlinked wwwroot/uploads -> $UPLOADS_PATH, which is exactly
+# what exposed every upload ahead of authentication; that link is removed here (a leftover real
+# directory is left alone — the API moves its files into the store at startup and logs it).
+mkdir -p "$UPLOADS_PATH/media"
+chown -R www-data:www-data "$UPLOADS_PATH"
+if [ -L "$INSTALL_ROOT/api/wwwroot/uploads" ]; then
+    rm -f "$INSTALL_ROOT/api/wwwroot/uploads"
+    echo -e "${GREEN}    Removed the wwwroot/uploads symlink; uploads now go through the authorising controller${NC}"
+fi
 
 # ---- 6) systemd units ----
 echo -e "${YELLOW}==> [6/9] Installing systemd units${NC}"

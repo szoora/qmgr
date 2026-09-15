@@ -1437,7 +1437,7 @@ public class WelfareController : ControllerBase
         return CreatedAtAction(nameof(GetRecord), new { branchId, recordId }, new WelfareAttachmentDto
         {
             Id = attachment.Id,
-            FileUrl = attachment.FileUrl,
+            FileUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(attachment.FileUrl),
             FileName = attachment.FileName,
             ContentType = attachment.ContentType,
             FileSizeBytes = attachment.FileSizeBytes,
@@ -1639,10 +1639,12 @@ public class WelfareController : ControllerBase
         PerceivedFunction = r.PerceivedFunction,
         AdditionalStudentIds = (r.AdditionalStudentIds ?? Array.Empty<Guid>()).ToList(),
         AdditionalStudentNames = (r.AdditionalStudentIds ?? Array.Empty<Guid>()).Select(id => studentNames.GetValueOrDefault(id, "Unknown")).ToList(),
+        // Evidence links are gated (UploadsController): the token minted here is what lets the
+        // browser open a file this caller has just been allowed to see the record of.
         Attachments = r.Attachments.OrderBy(a => a.CreatedAt).Select(a => new WelfareAttachmentDto
         {
             Id = a.Id,
-            FileUrl = a.FileUrl,
+            FileUrl = QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(a.FileUrl) ?? a.FileUrl,
             FileName = a.FileName,
             ContentType = a.ContentType,
             FileSizeBytes = a.FileSizeBytes,

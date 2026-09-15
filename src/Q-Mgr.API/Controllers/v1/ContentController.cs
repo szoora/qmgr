@@ -48,6 +48,94 @@ public class ContentController : ControllerBase
         _usageTracking = usageTracking;
     }
 
+    private Guid? CurrentUserId()
+    {
+        var raw = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(raw, out var id) ? id : null;
+    }
+
+    // Permissions aren't JWT claims here (see PermissionAuthorizationHandler); resolved by role
+    // lookup, the same shape WelfareController uses.
+    private async Task<bool> HasPermissionAsync(string code)
+    {
+        if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
+        var userId = CurrentUserId();
+        if (userId == null) return false;
+        return await _dbContext.Users
+            .Where(u => u.Id == userId.Value && u.IsActive)
+            .SelectMany(u => u.Role.RolePermissions)
+            .AnyAsync(rp => rp.Permission.Code == code);
+    }
+
+    /// <summary>
+    /// ONE mapper for MediaContent → DTO, used by every media endpoint here and by
+    /// DocumentSharesController. Static and batch-shaped so a list costs three extra queries, not
+    /// three per row: playlist membership (the signage flag), live share-link counts, and the
+    /// publisher's name.
+    ///
+    /// A share-only document's FileUrl is SIGNED here (UploadLinks.Sign): its raw path answers 401
+    /// to the public, and this token is what lets the caller who just listed it preview it.
+    /// </summary>
+    internal static async Task<List<MediaContentDto>> ToDtosAsync(QMgrDbContext db, IReadOnlyList<MediaContent> items)
+    {
+        if (items.Count == 0) return new List<MediaContentDto>();
+        var ids = items.Select(m => m.Id).ToList();
+        var now = DateTime.UtcNow;
+
+        var onSignage = (await db.PlaylistItems
+            .Where(pi => ids.Contains(pi.MediaContentId))
+            .Select(pi => pi.MediaContentId)
+            .Distinct()
+            .ToListAsync()).ToHashSet();
+
+        var activeShares = await db.DocumentShares
+            .Where(s => ids.Contains(s.MediaContentId) && s.RevokedAt == null && s.IsActive
+                        && (s.ExpiresAt == null || s.ExpiresAt > now)
+                        && (s.MaxViews == null || s.ViewCount < s.MaxViews))
+            .GroupBy(s => s.MediaContentId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Count);
+
+        var publisherIds = items.Where(m => m.PublishedByUserId.HasValue).Select(m => m.PublishedByUserId!.Value).Distinct().ToList();
+        var publishers = publisherIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await db.Users.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => publisherIds.Contains(u.Id))
+                .Select(u => new { u.Id, Name = u.FullName ?? u.Username })
+                .ToDictionaryAsync(u => u.Id, u => u.Name);
+
+        return items.Select(m =>
+        {
+            var signage = onSignage.Contains(m.Id);
+            var gated = m.IsShareable && !signage;
+            return new MediaContentDto
+            {
+                Id = m.Id,
+                Name = m.Name,
+                Description = m.Description,
+                ContentType = m.ContentType,
+                MimeType = m.MimeType,
+                FileUrl = gated ? QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(m.FileUrl) : m.FileUrl,
+                ThumbnailUrl = gated ? QMgr.Infrastructure.Services.Storage.UploadLinks.Sign(m.ThumbnailUrl) : m.ThumbnailUrl,
+                FileSizeBytes = m.FileSizeBytes,
+                DurationSeconds = m.DurationSeconds,
+                Tags = m.Tags,
+                CreatedAt = m.CreatedAt,
+                IsShareable = m.IsShareable,
+                Summary = m.Summary,
+                PublishedFrom = m.PublishedFrom,
+                PublishedAt = m.PublishedAt,
+                PublishedByName = m.PublishedByUserId.HasValue ? publishers.GetValueOrDefault(m.PublishedByUserId.Value) : null,
+                OnSignage = signage,
+                ActiveShareCount = activeShares.GetValueOrDefault(m.Id),
+                IsGated = gated
+            };
+        }).ToList();
+    }
+
+    internal static async Task<MediaContentDto> ToDtoAsync(QMgrDbContext db, MediaContent media)
+        => (await ToDtosAsync(db, new[] { media })).First();
+
     /// <summary>
     /// Recomputes an organization's total uploaded-file storage from its actual MediaContent
     /// rows and pushes the new total to the usage-tracking snapshot. Called after any upload
@@ -140,23 +228,10 @@ public class ContentController : ControllerBase
         var media = await _dbContext.MediaContents
             .Where(m => m.OrganizationId == organizationId)
             .OrderByDescending(m => m.CreatedAt)
-            .Select(m => new MediaContentDto
-            {
-                Id = m.Id,
-                Name = m.Name,
-                Description = m.Description,
-                ContentType = m.ContentType,
-                MimeType = m.MimeType,
-                FileUrl = m.FileUrl,
-                ThumbnailUrl = m.ThumbnailUrl,
-                FileSizeBytes = m.FileSizeBytes,
-                DurationSeconds = m.DurationSeconds,
-                Tags = m.Tags,
-                CreatedAt = m.CreatedAt
-            })
+            .OrderByDescending(m => m.CreatedAt)
             .ToListAsync();
 
-        return Ok(media);
+        return Ok(await ToDtosAsync(_dbContext, media));
     }
 
     /// <summary>
@@ -170,26 +245,20 @@ public class ContentController : ControllerBase
     {
         var media = await _dbContext.MediaContents
             .Where(m => m.Id == mediaId)
-            .Select(m => new MediaContentDto
-            {
-                Id = m.Id,
-                Name = m.Name,
-                Description = m.Description,
-                ContentType = m.ContentType,
-                MimeType = m.MimeType,
-                FileUrl = m.FileUrl,
-                ThumbnailUrl = m.ThumbnailUrl,
-                FileSizeBytes = m.FileSizeBytes,
-                DurationSeconds = m.DurationSeconds,
-                Tags = m.Tags,
-                CreatedAt = m.CreatedAt
-            })
             .FirstOrDefaultAsync();
 
         if (media == null)
             return NotFound();
 
-        return Ok(media);
+        var dto = await ToDtoAsync(_dbContext, media);
+
+        // This endpoint is anonymous for the display screens. A share-only document — shareable
+        // and on no playlist — is not for them, and its name and summary are not for a stranger
+        // who guesses an id.
+        if (dto.IsGated && User.Identity?.IsAuthenticated != true)
+            return NotFound();
+
+        return Ok(dto);
     }
 
     /// <summary>
@@ -222,20 +291,7 @@ public class ContentController : ControllerBase
         _dbContext.MediaContents.Add(media);
         await _dbContext.SaveChangesAsync();
 
-        var dto = new MediaContentDto
-        {
-            Id = media.Id,
-            Name = media.Name,
-            Description = media.Description,
-            ContentType = media.ContentType,
-            MimeType = media.MimeType,
-            FileUrl = media.FileUrl,
-            ThumbnailUrl = media.ThumbnailUrl,
-            FileSizeBytes = media.FileSizeBytes,
-            DurationSeconds = media.DurationSeconds,
-            Tags = media.Tags,
-            CreatedAt = media.CreatedAt
-        };
+        var dto = await ToDtoAsync(_dbContext, media);
 
         return CreatedAtAction(nameof(GetMediaContent), new { mediaId = media.Id }, dto);
     }
@@ -265,13 +321,22 @@ public class ContentController : ControllerBase
         IFormFile file,
         [FromForm] string? name,
         [FromForm] string? description,
-        [FromForm] string[]? tags)
+        [FromForm] string[]? tags,
+        [FromForm] string? summary = null,
+        [FromForm] string? publishedFrom = null,
+        [FromForm] bool shareable = false)
     {
         var resolvedOrgId = ResolveOrganizationIdForWrite(organizationId, out var orgError);
         if (orgError != null) return orgError;
 
         if (file == null || file.Length == 0)
             return BadRequest(new { message = "No file was provided." });
+
+        // Publishing into the shareable Library is its own permission: uploading a poster for a
+        // screen (content.create) is not the same act as making a document that can leave the
+        // building (library.publish).
+        if (shareable && !await HasPermissionAsync(Permissions.LibraryPublish))
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "You can upload media, but marking a document as shareable needs the 'Publish to Document Library' permission." });
 
         if (file.Length > MaxUploadSizeBytes)
             return BadRequest(new { message = $"File exceeds the {MaxUploadSizeBytes / 1024 / 1024}MB size limit." });
@@ -330,8 +395,20 @@ public class ContentController : ControllerBase
             FileUrl = fileUrl,
             ThumbnailUrl = contentType == ContentType.Image ? fileUrl : null,
             FileSizeBytes = file.Length,
-            Tags = tags
+            Tags = tags,
+            Summary = string.IsNullOrWhiteSpace(summary) ? null : summary.Trim(),
+            PublishedFrom = string.IsNullOrWhiteSpace(publishedFrom) ? null : publishedFrom.Trim(),
+            CreatedBy = CurrentUserId()
         };
+
+        if (shareable)
+        {
+            if (contentType != ContentType.Pdf)
+                return BadRequest(new { message = "Only PDF documents can be marked as shareable." });
+            media.IsShareable = true;
+            media.PublishedAt = DateTime.UtcNow;
+            media.PublishedByUserId = CurrentUserId();
+        }
 
         _dbContext.MediaContents.Add(media);
         await _dbContext.SaveChangesAsync();
@@ -340,20 +417,7 @@ public class ContentController : ControllerBase
         _logger.LogInformation("Uploaded media {MediaId} ({FileName}, {SizeBytes} bytes) for organization {OrganizationId}",
             media.Id, file.FileName, file.Length, resolvedOrgId.Value);
 
-        var dto = new MediaContentDto
-        {
-            Id = media.Id,
-            Name = media.Name,
-            Description = media.Description,
-            ContentType = media.ContentType,
-            MimeType = media.MimeType,
-            FileUrl = media.FileUrl,
-            ThumbnailUrl = media.ThumbnailUrl,
-            FileSizeBytes = media.FileSizeBytes,
-            DurationSeconds = media.DurationSeconds,
-            Tags = media.Tags,
-            CreatedAt = media.CreatedAt
-        };
+        var dto = await ToDtoAsync(_dbContext, media);
 
         return CreatedAtAction(nameof(GetMediaContent), new { mediaId = media.Id }, dto);
     }
@@ -386,20 +450,7 @@ public class ContentController : ControllerBase
 
         await _dbContext.SaveChangesAsync();
 
-        var dto = new MediaContentDto
-        {
-            Id = media.Id,
-            Name = media.Name,
-            Description = media.Description,
-            ContentType = media.ContentType,
-            MimeType = media.MimeType,
-            FileUrl = media.FileUrl,
-            ThumbnailUrl = media.ThumbnailUrl,
-            FileSizeBytes = media.FileSizeBytes,
-            DurationSeconds = media.DurationSeconds,
-            Tags = media.Tags,
-            CreatedAt = media.CreatedAt
-        };
+        var dto = await ToDtoAsync(_dbContext, media);
 
         return Ok(dto);
     }

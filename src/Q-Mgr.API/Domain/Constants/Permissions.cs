@@ -65,6 +65,13 @@ public static class Permissions
     public const string ContentEdit = "content.edit";
     public const string ContentDelete = "content.delete";
 
+    // Document Library & secure sharing. Publishing is the boundary — nothing is shared in place.
+    public const string LibraryPublish = "library.publish";
+    public const string DocumentsShareCreate = "documents.share.create";
+    public const string DocumentsShareManage = "documents.share.manage";
+    /// <summary>Deliberately narrower than creating a link: an access log is a record of people's behaviour.</summary>
+    public const string DocumentsShareAudit = "documents.share.audit";
+
     // Feedback
     public const string FeedbackView = "feedback.view";
     public const string FeedbackRespond = "feedback.respond";
@@ -200,6 +207,12 @@ public static class Permissions
         new("content.create", "Create Content", "Upload media and create playlists", "Content Management", 2),
         new("content.edit", "Edit Content", "Edit media and playlists", "Content Management", 3),
         new("content.delete", "Delete Content", "Delete media and playlists", "Content Management", 4),
+
+        // Document Library & secure sharing
+        new("library.publish", "Publish to Document Library", "Mark a document as shareable, and publish a generated report into the Library", "Document Library", 1),
+        new("documents.share.create", "Create Share Links", "Issue a secure link to a Library document, with its expiry, passcode and download rules", "Document Library", 2),
+        new("documents.share.manage", "Manage Share Links", "Edit or revoke any share link in the organization, and set the sharing policy", "Document Library", 3),
+        new("documents.share.audit", "View Share Activity", "See who opened a shared document, when, from where, and which pages they read", "Document Library", 4),
 
         // Feedback
         new("feedback.view", "View Feedback", "View customer feedback", "Feedback", 1),

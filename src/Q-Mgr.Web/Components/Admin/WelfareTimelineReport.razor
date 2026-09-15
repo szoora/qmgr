@@ -14,6 +14,8 @@
 @inject IAuthService AuthService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
 
 @*
     The A4 welfare report.
@@ -35,6 +37,15 @@
              OnClick="@(() => Navigation.NavigateTo($"/admin/students/{StudentId}/welfare"))" />
     <div class="wr-toolbar__right">
         <span class="wr-hint">Print, then choose <strong>Save as PDF</strong> as the destination.</span>
+        @if (canPublish)
+        {
+            @* Publishing is the boundary: this is the one way a welfare report reaches the
+               Document Library, and from there a share link. It runs the same permission and
+               row-scope checks as viewing (the report is what the caller could already see), and
+               the published document records what it was generated from and when. *@
+            <QButton Text="@(isPublishing ? "Publishing..." : "Publish to Library")" Icon="file-earmark-lock2" Variant="secondary"
+                     OnClick="@PublishToLibrary" Disabled="@(isLoading || isPublishing || loadError != null)" />
+        }
         <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="primary" OnClick="@Print" Disabled="@isLoading" />
     </div>
 </div>
@@ -52,7 +63,7 @@ else if (loadError != null)
 }
 else
 {
-    <article class="wr-sheet">
+    <article class="wr-sheet" id="wr-sheet">
 
         @* ---------------- Branded header, repeated as the running head on later pages ---------------- *@
         <header class="wr-head">
@@ -457,6 +468,8 @@ else
         {
             var user = await AuthService.GetCurrentUserAsync();
             generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
 
             if (user != null && user.OrganizationId != Guid.Empty)
                 branding = await OrganizationApi.GetOrganizationBrandingAsync(user.OrganizationId);
@@ -498,5 +511,51 @@ else
     {
         try { await JS.InvokeVoidAsync("window.print"); }
         catch (Exception) { /* the toolbar tells the reader to use the browser's own print command */ }
+    }
+
+    private bool canPublish;
+    private bool isPublishing;
+    private Guid organizationId;
+
+    /// <summary>
+    /// Renders the sheet to PDF in the browser (reportPublish.js, html2pdf from the CDN) and
+    /// uploads it into the Document Library as a SHAREABLE snapshot, with what it was generated
+    /// from and when recorded on the row. The document stops tracking this record from here on,
+    /// and the share page says so.
+    /// </summary>
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty) return;
+        isPublishing = true;
+        try
+        {
+            var stamp = QDateFormat.D(DateTime.UtcNow);
+            var name = $"Welfare report — {SubjectName} ({PeriodCaption})";
+            var fileName = $"welfare-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
+
+            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "wr-sheet", fileName);
+            if (bytes == null || bytes.Length == 0)
+                throw new InvalidOperationException("The report rendered to an empty file.");
+
+            using var stream = new MemoryStream(bytes);
+            var doc = await DocShareApi.UploadDocumentAsync(
+                organizationId, stream, fileName,
+                name,
+                summary: $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                publishedFrom: $"Welfare timeline — {SubjectName} ({context?.StudentCode ?? "no code"}), {PeriodCaption}, generated {stamp}",
+                shareable: true);
+
+            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
+                "The report is a snapshot as of now. Create a share link from the Library when you are ready.");
+            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
     }
 }

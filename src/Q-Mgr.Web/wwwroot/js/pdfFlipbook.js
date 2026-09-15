@@ -311,6 +311,31 @@ window.pdfFlipbookInterop = (function () {
         return Math.max(0.4, Math.min(scale, maxByWidth, maxByHeight));
     }
 
+    // Diagonal, repeated, low-contrast text across the whole page. Sized from the page so it
+    // reads the same at every zoom (the bitmap is re-rendered per zoom level, so this runs again).
+    function drawWatermark(ctx, width, height, text) {
+        var size = Math.max(14, Math.round(Math.min(width, height) / 22));
+        ctx.save();
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = '#7a2847';
+        ctx.font = '600 ' + size + 'px Poppins, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.translate(width / 2, height / 2);
+        ctx.rotate(-Math.PI / 5);
+        var stepY = size * 6;
+        var stepX = Math.max(ctx.measureText(text).width + size * 4, size * 12);
+        var span = Math.max(width, height) * 1.5;
+        var row = 0;
+        for (var y = -span; y <= span; y += stepY, row++) {
+            var offset = (row % 2) * (stepX / 2);
+            for (var x = -span + offset; x <= span; x += stepX) {
+                ctx.fillText(text, x, y);
+            }
+        }
+        ctx.restore();
+    }
+
     function renderPage(inst, index, wantedScale) {
         if (index < 0 || index >= inst.pageCount) return Promise.resolve();
 
@@ -333,6 +358,10 @@ window.pdfFlipbookInterop = (function () {
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             await page.render({ canvasContext: ctx, viewport: viewport }).promise;
             if (!alive(inst, gen)) return;
+
+            // Into the bitmap itself, not an overlay element: an overlay is one "delete node"
+            // away in devtools, a watermark baked into every page image is not.
+            if (inst.watermark) drawWatermark(ctx, canvas.width, canvas.height, inst.watermark);
 
             var url = await canvasToObjectUrl(canvas);
             if (!alive(inst, gen)) { releaseUrl(url); return; }
@@ -748,6 +777,10 @@ window.pdfFlipbookInterop = (function () {
                 loop: !!options.loop,
                 pageDuration: options.pageDurationSeconds || 6,
                 mode: options.viewMode === 'single' ? 'single' : 'spread',
+                // Drawn onto every rendered bitmap (see drawWatermark): the viewer's identity,
+                // so a photograph of the screen names its source. Null for signage.
+                watermark: options.watermark || null,
+                viewOnly: !!options.viewOnly,
                 zoom: 1,
                 generation: ++generationSeq,
                 disposed: false,
@@ -800,6 +833,12 @@ window.pdfFlipbookInterop = (function () {
 
                 bindIdle(inst, options.rootId);
                 bindFullscreen(inst);
+                if (inst.viewOnly) {
+                    // A deterrent for the casual right-click-save on a view-only share. Not a
+                    // control and not presented as one — the page says so.
+                    inst.contextHandler = function (e) { e.preventDefault(); };
+                    stage.addEventListener('contextmenu', inst.contextHandler);
+                }
                 startAutoAdvance(inst);
                 backgroundRender(inst);
 
@@ -969,6 +1008,9 @@ window.pdfFlipbookInterop = (function () {
             }
             if (inst.fullscreenHandler) {
                 document.removeEventListener('fullscreenchange', inst.fullscreenHandler);
+            }
+            if (inst.contextHandler && inst.stage) {
+                inst.stage.removeEventListener('contextmenu', inst.contextHandler);
             }
             if (inst.rootEl && inst.idleHandler) {
                 inst.rootEl.removeEventListener('pointermove', inst.idleHandler);

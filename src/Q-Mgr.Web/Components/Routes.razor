@@ -11,7 +11,11 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Pages
 
+@using QMgr.Web.Services
+
 <CascadingAuthenticationState>
+  @* The browser's address and agent, from App.razor's host request (see ViewerRequestInfo). *@
+  <CascadingValue Value="Viewer" IsFixed="true">
     <Router AppAssembly="typeof(Program).Assembly">
         <Found Context="routeData">
             <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
@@ -39,4 +43,10 @@
             </LayoutView>
         </NotFound>
     </Router>
+  </CascadingValue>
 </CascadingAuthenticationState>
+
+@code {
+    /// <summary>Set by App.razor from the host request; null on any render path that has no HttpContext.</summary>
+    [Parameter] public ViewerRequestInfo? Viewer { get; set; }
+}
