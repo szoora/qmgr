@@ -272,6 +272,12 @@ public class ContentController : ControllerBase
         var resolvedOrgId = ResolveOrganizationIdForWrite(organizationId, out var orgError);
         if (orgError != null) return orgError;
 
+        // A LINKED row is for content hosted elsewhere (YouTube, Drive, a CDN). One that points
+        // into our own upload store would be a second row for a file some other record owns —
+        // and the security review showed that was a way to take a gated file public. Refused.
+        if (QMgr.Infrastructure.Services.Storage.UploadAccessService.FileNameOf(request.FileUrl) != null)
+            return BadRequest(new { message = "Files in Q-Mgr's own upload store cannot be added by URL. Upload the file instead." });
+
         var media = new MediaContent
         {
             OrganizationId = resolvedOrgId!.Value,
@@ -371,17 +377,24 @@ public class ContentController : ControllerBase
                 storageQuotaExceeded = true
             });
 
-        var contentType = GetContentTypeFromMime(mimeType, extension);
-
         await using var uploadStream = file.OpenReadStream();
         var uploadResult = await _mediaStorage.UploadAsync(uploadStream, file.FileName, mimeType);
         if (!uploadResult.Success)
         {
+            // The storage layer refuses types outside UploadFileTypes' allow-list and a ".pdf"
+            // without PDF bytes; that is the caller's mistake, not ours.
+            if (uploadResult.ErrorMessage is { } refused && (refused.Contains("not allowed") || refused.Contains("not a PDF")))
+                return BadRequest(new { message = refused });
             _logger.LogError("Media storage upload failed for {FileName}: {Error}", file.FileName, uploadResult.ErrorMessage);
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Failed to store the uploaded file." });
         }
 
         var fileUrl = uploadResult.FileUrl!;
+
+        // What the file IS comes from the extension it was STORED under (allow-listed), never
+        // from the client's declaration — that declaration was echoed back as Content-Type once.
+        var storedMime = QMgr.Infrastructure.Services.Storage.UploadFileTypes.ContentTypeFor(uploadResult.FilePath!) ?? mimeType;
+        var contentType = GetContentTypeFromMime(storedMime, Path.GetExtension(uploadResult.FilePath!));
 
         var media = new MediaContent
         {
@@ -389,7 +402,7 @@ public class ContentController : ControllerBase
             Name = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(file.FileName) : name,
             Description = description,
             ContentType = contentType,
-            MimeType = mimeType,
+            MimeType = storedMime,
             StorageType = StorageType.Local,
             FilePath = uploadResult.FilePath,
             FileUrl = fileUrl,

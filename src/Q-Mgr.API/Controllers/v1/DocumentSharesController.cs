@@ -36,6 +36,7 @@ public class DocumentSharesController : ControllerBase
     private readonly IDocumentShareService _shares;
     private readonly INotificationService _notifications;
     private readonly IUploadAuthorizer _uploadAuthorizer;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<DocumentSharesController> _logger;
 
     public DocumentSharesController(
@@ -44,6 +45,7 @@ public class DocumentSharesController : ControllerBase
         IDocumentShareService shares,
         INotificationService notifications,
         IUploadAuthorizer uploadAuthorizer,
+        IConfiguration configuration,
         ILogger<DocumentSharesController> logger)
     {
         _db = db;
@@ -51,6 +53,7 @@ public class DocumentSharesController : ControllerBase
         _shares = shares;
         _notifications = notifications;
         _uploadAuthorizer = uploadAuthorizer;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -144,6 +147,11 @@ public class DocumentSharesController : ControllerBase
 
         var policy = await PolicyForAsync(media.OrganizationId);
 
+        // Refuse a foreign link origin BEFORE the row exists, so a refusal never leaves a live
+        // link behind that the caller was not told about.
+        if (!string.IsNullOrWhiteSpace(request.LinkBaseUrl) && !TryBuildLink(request.LinkBaseUrl, "probe", out _))
+            return BadRequest(new ProblemDetails { Title = "The link base URL is not one of this deployment's own origins", Detail = "Links are only ever built on the Web app's public address.", Status = StatusCodes.Status400BadRequest });
+
         DocumentShare share;
         string slug;
         try
@@ -156,7 +164,16 @@ public class DocumentSharesController : ControllerBase
         }
 
         string? url = null;
-        if (TryBuildLink(request.LinkBaseUrl, slug, out var built)) url = built;
+        if (!string.IsNullOrWhiteSpace(request.LinkBaseUrl))
+        {
+            if (!TryBuildLink(request.LinkBaseUrl, slug, out var built))
+            {
+                // The link is issued (the row exists) but no URL is built or emailed for it. A
+                // refusal here, not a silent omission, so the caller learns the origin is wrong.
+                return BadRequest(new ProblemDetails { Title = "The link base URL is not one of this deployment's own origins", Detail = "Links are only ever built on the Web app's public address.", Status = StatusCodes.Status400BadRequest });
+            }
+            url = built;
+        }
 
         var sent = 0;
         var failures = new List<string>();
@@ -320,11 +337,20 @@ public class DocumentSharesController : ControllerBase
         return File(Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray(), "text/csv", $"{safeName} - share activity.csv");
     }
 
+    /// <summary>
+    /// One CSV cell. Staff open this file in Excel, and several columns are text an ANONYMOUS
+    /// viewer typed (the address on a rejected email attempt, for one), so a cell that starts
+    /// with a formula character is neutralised with a leading apostrophe — the standard
+    /// defence against CSV injection (`=HYPERLINK(...)`, `=cmd|...`). Found by the security review.
+    /// </summary>
     private static string Csv(string? value)
     {
         if (string.IsNullOrEmpty(value)) return "";
-        var needsQuotes = value.Contains(',') || value.Contains('"') || value.Contains('\n');
-        var escaped = value.Replace("\"", "\"\"");
+        var v = value;
+        if (v[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+            v = "'" + v;
+        var needsQuotes = v.Contains(',') || v.Contains('"') || v.Contains('\n') || v.Contains('\r') || v[0] == '\'';
+        var escaped = v.Replace("\"", "\"\"");
         return needsQuotes ? $"\"{escaped}\"" : escaped;
     }
 
@@ -466,16 +492,34 @@ public class DocumentSharesController : ControllerBase
     }
 
     /// <summary>
-    /// The emailed link is built from the WEB app's public origin, which only the Web app knows
-    /// (it is the browser's own address). Absolute http(s) only: this is a URL a stranger will
-    /// click, so nothing else is accepted.
+    /// The emailed link is built on the WEB app's public origin. The Web app sends its own origin,
+    /// but that value arrives from a client and this is a URL a stranger will click in an email
+    /// sent from the platform's mailbox — so the origin must be one this deployment KNOWS:
+    /// MediaStorage:PublicBaseUrl (the public host in production) or a CORS-allowed origin (the
+    /// Web app's own address, locally). Anything else is refused rather than emailed. The
+    /// security review's point: without this, any tenant could send platform-branded mail whose
+    /// link pointed at a look-alike host.
     /// </summary>
-    private static bool TryBuildLink(string? baseUrl, string slug, out string url)
+    private bool TryBuildLink(string? baseUrl, string slug, out string url)
     {
         url = string.Empty;
         if (string.IsNullOrWhiteSpace(baseUrl)) return false;
         if (!Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out var uri)) return false;
         if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) return false;
+
+        var origin = uri.GetLeftPart(UriPartial.Authority);
+        var allowed = new List<string>();
+        var publicBase = _configuration["MediaStorage:PublicBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(publicBase) && Uri.TryCreate(publicBase, UriKind.Absolute, out var pb))
+            allowed.Add(pb.GetLeftPart(UriPartial.Authority));
+        allowed.AddRange(_configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>());
+
+        if (!allowed.Any(a => string.Equals(a.TrimEnd('/'), origin, StringComparison.OrdinalIgnoreCase)))
+        {
+            _logger.LogWarning("Refused a share-link base URL outside the allowed origins: {Origin}", origin);
+            return false;
+        }
+
         url = new Uri(uri, $"/s/{slug}").ToString();
         return true;
     }

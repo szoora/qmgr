@@ -89,10 +89,32 @@ builder.Services.AddHttpContextAccessor(); // needed by LocalDiskMediaStorageSer
 // in production (same pattern as the media_uploads volume in docker-compose.yml) — without a
 // persisted key ring, a container redeploy makes previously-encrypted tokens undecryptable and
 // the platform Spotify connection would need to be reconnected.
+var keyRingPath = builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(AppContext.BaseDirectory, "dataprotection-keys");
 builder.Services.AddDataProtection()
     .SetApplicationName("QMgr")
-    .PersistKeysToFileSystem(new DirectoryInfo(
-        builder.Configuration["DataProtection:KeyPath"] ?? Path.Combine(AppContext.BaseDirectory, "dataprotection-keys")));
+    .PersistKeysToFileSystem(new DirectoryInfo(keyRingPath));
+
+// Say so at startup if the key ring cannot be written, rather than letting the first Protect()
+// call — a visitor check-in, an upload link, a share token — be the thing that finds out with a
+// 500. Seen live on 2026-09-15: DataProtection:KeyPath had been written into the generated
+// appsettings.Production.json, which install.sh preserves from the server's own copy, so the
+// live API never received it and persisted keys under the read-only install root. The path now
+// also travels as Environment=DataProtection__KeyPath in both systemd units. Logged, not fatal:
+// a loud, specific error beats an API that refuses to start.
+try
+{
+    Directory.CreateDirectory(keyRingPath);
+    var probe = Path.Combine(keyRingPath, ".write-probe");
+    File.WriteAllText(probe, DateTime.UtcNow.ToString("O"));
+    File.Delete(probe);
+}
+catch (Exception ex)
+{
+    Log.Error(ex,
+        "The Data Protection key ring at {KeyRingPath} is NOT writable. Every IDataProtector.Protect call (visitor badges, upload links, share tokens) will fail with a 500 until it is. " +
+        "Set DataProtection__KeyPath in the service unit to a writable directory listed in ReadWritePaths (the deploy script uses /var/lib/qmgr/dataprotection-keys).",
+        keyRingPath);
+}
 
 // Add API services
 builder.Services.AddControllers()
@@ -314,6 +336,11 @@ QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredSer
         configuration,
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.UploadLinkRepair>>());
     await uploadLinkRepair.RunAsync();
+
+    // Legacy uploads get their FilePath, the only column UploadAuthorizer classifies media by.
+    await new QMgr.Infrastructure.Data.MediaFilePathBackfill(
+        db,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.MediaFilePathBackfill>>()).RunAsync();
 
     // Move any files still under wwwroot/uploads/media into the gated store, and drop the
     // production symlink that made them reachable as static files. Idempotent; see the class.

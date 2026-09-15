@@ -114,15 +114,15 @@ public class UploadAuthorizer : IUploadAuthorizer
         var relative = UploadAccessService.RelativeFolder + "/" + fileName;
         var suffix = "/" + relative;
 
-        // 1. Signage media and Library documents. Public unless share-only.
-        var media = await _db.MediaContents.IgnoreQueryFilters().AsNoTracking()
-            .Where(m => m.FilePath == relative || (m.FileUrl != null && m.FileUrl.EndsWith(suffix)))
-            .Select(m => new { m.OrganizationId, m.IsShareable, OnSignage = m.PlaylistItems.Any() })
-            .FirstOrDefaultAsync(ct);
-        if (media != null)
-            return new UploadClassification(UploadOwnerKind.Media, IsPublic: !media.IsShareable || media.OnSignage, media.OrganizationId);
+        // ORDER MATTERS, and it is the most restrictive owner first. The security review found
+        // the previous order (media first, matched on a client-writable FileUrl) let anyone with
+        // content.create publish a welfare attachment: a URL-linked media row pointing at the
+        // file's name won the classification and the file went public for ever. Now the gated
+        // owners are looked up first, and media matches ONLY on FilePath — the column the server
+        // writes on upload and a client can never set (CreateMediaContent also refuses a FileUrl
+        // inside our own store, and MediaFilePathBackfill filled FilePath for legacy uploads).
 
-        // 2. Welfare evidence. The record's own visibility rung and student travel with it.
+        // 1. Welfare evidence. The record's own visibility rung and student travel with it.
         var welfare = await _db.WelfareAttachments.IgnoreQueryFilters().AsNoTracking()
             .Where(a => a.FileUrl.EndsWith(suffix))
             .Select(a => new { a.Record!.OrganizationId, a.Record.BranchId, a.Record.StudentId, a.Record.Visibility })
@@ -130,23 +130,7 @@ public class UploadAuthorizer : IUploadAuthorizer
         if (welfare != null)
             return new UploadClassification(UploadOwnerKind.WelfareAttachment, IsPublic: false, welfare.OrganizationId, welfare.BranchId, welfare.StudentId, welfare.Visibility);
 
-        // 3. Broadcast attachments go out to contacts as links in email/Telegram/WhatsApp; the
-        //    recipients have no login. Public by the sender's own choice.
-        var broadcast = await _db.BroadcastAttachments.IgnoreQueryFilters().AsNoTracking()
-            .Where(a => a.FilePath == relative || a.Url.EndsWith(suffix))
-            .Select(a => new { a.Broadcast!.OrganizationId })
-            .FirstOrDefaultAsync(ct);
-        if (broadcast != null)
-            return new UploadClassification(UploadOwnerKind.BroadcastAttachment, IsPublic: true, broadcast.OrganizationId);
-
-        // 4. Help-centre images: the cover column, or embedded in an article body. The help
-        //    centre is readable without a login, so its images are too.
-        var docs = await _db.DocArticles.IgnoreQueryFilters().AsNoTracking()
-            .AnyAsync(d => (d.CoverImageUrl != null && d.CoverImageUrl.EndsWith(suffix)) || d.BodyHtml.Contains(suffix), ct);
-        if (docs)
-            return new UploadClassification(UploadOwnerKind.DocsImage, IsPublic: true);
-
-        // 5. Student photographs: roster-gated and row-scoped.
+        // 2. Student photographs: roster-gated and row-scoped.
         var student = await _db.Students.IgnoreQueryFilters().AsNoTracking()
             .Where(s => s.PhotoUrl != null && s.PhotoUrl.EndsWith(suffix))
             .Select(s => new { s.OrganizationId, s.BranchId, s.Id })
@@ -154,13 +138,38 @@ public class UploadAuthorizer : IUploadAuthorizer
         if (student != null)
             return new UploadClassification(UploadOwnerKind.StudentPhoto, IsPublic: false, student.OrganizationId, student.BranchId, student.Id);
 
-        // 6. Visitor photographs.
+        // 3. Visitor photographs.
         var visitor = await _db.VisitorProfiles.IgnoreQueryFilters().AsNoTracking()
             .Where(p => p.PhotoUrl != null && p.PhotoUrl.EndsWith(suffix))
             .Select(p => new { p.OrganizationId })
             .FirstOrDefaultAsync(ct);
         if (visitor != null)
             return new UploadClassification(UploadOwnerKind.VisitorPhoto, IsPublic: false, visitor.OrganizationId);
+
+        // 4. Signage media and Library documents. Public unless share-only. FilePath only.
+        var media = await _db.MediaContents.IgnoreQueryFilters().AsNoTracking()
+            .Where(m => m.FilePath == relative)
+            .Select(m => new { m.OrganizationId, m.IsShareable, OnSignage = m.PlaylistItems.Any() })
+            .FirstOrDefaultAsync(ct);
+        if (media != null)
+            return new UploadClassification(UploadOwnerKind.Media, IsPublic: !media.IsShareable || media.OnSignage, media.OrganizationId);
+
+        // 5. Broadcast attachments go out to contacts as links in email/Telegram/WhatsApp; the
+        //    recipients have no login. Public by the sender's own choice. FilePath only, same reason.
+        var broadcast = await _db.BroadcastAttachments.IgnoreQueryFilters().AsNoTracking()
+            .Where(a => a.FilePath == relative)
+            .Select(a => new { a.Broadcast!.OrganizationId })
+            .FirstOrDefaultAsync(ct);
+        if (broadcast != null)
+            return new UploadClassification(UploadOwnerKind.BroadcastAttachment, IsPublic: true, broadcast.OrganizationId);
+
+        // 6. Help-centre images: the cover column, or embedded in an article body. The help
+        //    centre is readable without a login, so its images are too. Written only by a
+        //    platform.docs.manage holder (DocsController), so the match on a URL is not a door.
+        var docs = await _db.DocArticles.IgnoreQueryFilters().AsNoTracking()
+            .AnyAsync(d => (d.CoverImageUrl != null && d.CoverImageUrl.EndsWith(suffix)) || d.BodyHtml.Contains(suffix), ct);
+        if (docs)
+            return new UploadClassification(UploadOwnerKind.DocsImage, IsPublic: true);
 
         return UploadClassification.Orphan;
     }

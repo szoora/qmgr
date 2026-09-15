@@ -98,7 +98,8 @@ ahead of the viewer's identity, refused with 400 when the text is blank; **expir
 time of day** (`QDatePicker ShowTime`; a date left at midnight still means the whole day); and the
 access mode made an **explicit "Reader can" choice** (view only / view and download) with the
 view-only explanation attached to it — the user's point was that the form described view-only but
-nothing in it was visibly that choice. e2e is 154 assertions after the two watermark ones.
+nothing in it was visibly that choice. e2e is 154 assertions after the two watermark ones (165
+after the evening's section 13 — see the backlog sweep below).
 
 **Two of those shipped broken on first look, both caught by the user in Chrome, not by me:**
 `QDatePicker ShowTime` is time-of-day ONLY (it replaces the calendar with a native time field), so
@@ -181,6 +182,84 @@ module's name and correct. The queue-ticket header fallback ("Queue Management")
 printed on a queue ticket. `scripts/deploy/dist/` still carries the old manifest until the next
 build. Suggested tagline for a landing page, not applied anywhere yet: *"Queues, visitors, signage,
 welfare and secure documents — one system for the front office."*
+
+### Backlog sweep (2026-09-15, evening) — every open `[ ]` / `[!]` item from Phases 25–55, re-checked
+
+Asked to "fix all open backlog". Each item below was verified against the code, not carried forward:
+
+- **Login bounce on the anonymous share page** (seen once after an API restart): **not reproduced.**
+  Planted garbage `access_token`/`refresh_token` beside a kept `user_info` in the reader's browser
+  and walked the gate, the open and the download — all fine. The only two sources of
+  `/login?returnUrl=` are `MainLayout` and `RedirectToLogin`, neither in the share page's tree.
+  Recorded as unreproduced, not fixed.
+- **Landing-page tagline** — applied on the login page footer above "Powered by SACC Software".
+- **Cross-tenant isolation and privilege escalation "not yet tested"** (Phases 46/48/55) — now e2e
+  section 13: a class teacher against user creation, platform settings, the tenant list, module
+  grants, the sharing policy and notification settings (all 403); a tenant admin against another
+  tenant's record and modules (403), its media list (empty — the query filter holds), an upload
+  addressed to it (pinned to the caller's own tenant, then deleted), and a share against a foreign
+  document id (404). Uses the `secondtest` tenant left live for this purpose.
+- **Five uploads in public git history** — opened all five: four are screenshots of other apps'
+  admin screens (an ERP user list, an events-booking app) plus this app's own dashboard, and one
+  68-byte stub. **No photograph of a person, nothing personal; no history rewrite.** Removed from
+  the tree in fd26814; that is enough.
+- **Security review** of the branch: see the subsection that follows.
+- **Hardcoded default branch id on the public display path** (Phase 27) — stale: none remains;
+  `PublicDisplayRoute` resolves the branch from the URL.
+- **`ReportsOverview` export buttons are client-side stubs** (Phase 48) — stale: a real CSV export
+  over the same range as the screen exists (`GenerateReport`, `ReportExportKind`).
+- **Cloud media storage "not implemented"** (Phase 48) — stale: `S3MediaStorageService` exists,
+  wired by `MediaStorage:Provider=S3`; never run against a real bucket, and not needed now that the
+  local store is gated. Left as an option.
+- **`GetRecentErrors` / `LastBackup` gap** (Phase 46) — stale: both exist in `HealthController`.
+- **Backup cron never wired** (Phase 25) — stale: `install.sh` installs `/etc/cron.d/qmgr-backup`
+  (02:30 daily, 30-day retention). **A restore drill is still the one thing only the server can
+  prove**, and it has not been run.
+- **CORS to the real domain, secrets out of appsettings** (Phase 25) — done by `build-linux.ps1`
+  (CORS locked to the host; SMTP password and the rest in the unit).
+- **`TransferTokenCommand` no-op** (Phase 27) — stale since Phase 71.
+- **Chrome extension not connecting** (Phase 46) — resolved 2026-09-09.
+- **Clinic-system integration adapters not DI-registered** (Phase 48) — still scaffolding, still a
+  product decision, not a bug. **PPT rendering** — Office Online embed by decision (no server
+  converter). **Load test, restore drill, physical-device check, partner/compliance outreach** —
+  need the server, a phone, or a person; not engineering this side.
+
+### Security review of the branch (2026-09-15, evening) — five findings, all fixed the same evening
+
+Run with `/security-review` over the day's changes. Every finding was real and each is now an
+e2e assertion (section 12d3), so it cannot come back quietly:
+
+1. **HIGH — share content served with the client-declared MIME type, inline.** A `.pdf` whose bytes
+   were HTML, declared `text/html`, was accepted (the PDF check keyed on the extension) and
+   `PublicDocumentSharesController.Serve` streamed it as `Content-Type: text/html` — a script on
+   the app's own origin for whoever opened the link, with a 4-hour session token as the key. Now:
+   a share streams as `application/pdf` unconditionally, and the upload path checks `%PDF-`.
+2. **HIGH — classification-order bypass in `UploadAuthorizer`.** Media was matched first, on
+   `FileUrl`, which `CreateMediaContent` lets a client set: a URL-linked media row naming a welfare
+   attachment's file made it public for ever. Now the gated owners are looked up first, media
+   matches on `FilePath` only (server-written; `MediaFilePathBackfill` filled it for legacy rows),
+   and a linked row pointing into our own store is refused with 400.
+3. **HIGH — `.xml` served inline as `text/xml`.** The upload gate checked the declared MIME while the
+   stored name kept the client's extension, and the serving side typed by extension. Now the stored
+   extension comes from `UploadFileTypes`' allow-list (or the upload is refused), and
+   `UploadsController` renders inline only what is on that list.
+4. **MEDIUM — CSV formula injection** through a rejected email address an anonymous viewer typed.
+   Cells starting with `= + - @` are neutralised, and a string that is not an email is never logged.
+5. **MEDIUM — the emailed link's host was caller-chosen**, so any tenant could send platform-branded
+   mail pointing at a look-alike. The origin must now be `MediaStorage:PublicBaseUrl` or a CORS
+   origin, checked before the row is created.
+
+### PRODUCTION 500 on the first share opened (2026-09-15, 20:40 server time) — a deploy gap, fixed
+
+`POST /public/shares/{slug}/open` 500ed on the live host with `IOException: Read-only file system:
+/var/www/sites/qmgr/api/dataprotection-keys`. The API was persisting its key ring under the install
+root — the framework default — because `DataProtection:KeyPath` had only ever been written into the
+generated `appsettings.Production.json`, which `install.sh` preserves from the server's copy on
+every upgrade. It never reached the server; every `Protect()` (badge QR, upload links, share
+tokens) threw. **Hotfix given to the user: add `Environment=DataProtection__KeyPath=/var/lib/qmgr/
+dataprotection-keys` to both units, `daemon-reload`, restart.** Permanent: both units now carry it
+from `build-linux.ps1`, and the API probes the key ring for writability at startup and logs a loud
+error naming the fix. Third instance of the "unit, not appsettings" trap — recorded in CLAUDE.md.
 
 ### Stale notes verified against the code before any work started
 

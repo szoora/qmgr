@@ -589,6 +589,27 @@ echo "$G4" | grep -q '"watermarkText":"CONFIDENTIAL - E2E board pack · Anonymou
   || bad "custom watermark" "CONFIDENTIAL - E2E board pack · Anonymous viewer ..." "$(jget "$G4" watermarkText)"
 eq "a custom watermark with no text is refused (400)" "$(code "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"blank","expiresAt":"'"$EXP"'","watermark":"Custom"}')" "400"
 
+# --- 12d3. What the security review found (2026-09-15), asserted so it cannot come back ---------
+# An upload is what its STORED extension says, never what the client declared; a share streams
+# as application/pdf whatever the row's MimeType; a linked media row cannot point into our own
+# store (that was a way to make a gated file public); the emailed link's host must be ours.
+XMLF="${TEMP:-/tmp}/qmgr-e2e-$$.xml"; printf '<html xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></html>' > "$XMLF"
+eq "an .xml declared text/xml is refused (400)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $AD" -F "file=@$XMLF;filename=x.xml;type=text/xml")" "400"
+FAKE="${TEMP:-/tmp}/qmgr-e2e-$$-fake.pdf"; printf '<script>alert(1)</script>' > "$FAKE"
+eq "a .pdf that is not a PDF is refused (400)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $AD" -F "file=@$FAKE;filename=evil.pdf;type=text/html")" "400"
+XU=$(curl -s -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $AD" -F "file=@$XMLF;filename=x.xml;type=image/png")
+XU_URL=$(jget "$XU" fileUrl); XU_ID=$(jget "$XU" id)
+echo "$XU_URL" | grep -q '\.png' && ok "an .xml declared image/png is STORED as .png (served inert)" || bad "stored extension follows the type" ".png" "$XU_URL"
+[ -n "$XU_ID" ] && code "$AD" DELETE "/api/v1/media/$XU_ID" > /dev/null
+rm -f "$XMLF" "$FAKE"
+eq "a linked media row pointing into our own store is refused (400)" "$(code "$AD" POST "/api/v1/organizations/$ORG_ID/media" '{"name":"probe","contentType":0,"storageType":3,"fileUrl":"http://127.0.0.1:5001/uploads/media/'"$(basename "$(strip_token "$SHARED_URL")")"'"}')" "400"
+CT_HDR=$(curl -s -D - -o /dev/null "$API$P4/content?t=$(jget "$(popen "$P4" '{}')" contentToken)" | grep -i '^content-type:' | tr -d '\r')
+echo "$CT_HDR" | grep -qi "application/pdf" && ok "share content is served as application/pdf, not the row's MimeType" || bad "share content type" "application/pdf" "$CT_HDR"
+eq "a share link with a foreign base URL is refused (400)" "$(code "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"phish","expiresAt":"'"$EXP"'","linkBaseUrl":"https://qmgr-lookalike.example"}')" "400"
+popen "$P3" '{"email":"=HYPERLINK(\"https://attacker\")"}' | grep -q '"status":"EmailRequired"' && ok "a spreadsheet formula is not an email and is never logged" || bad "formula email" "EmailRequired" "$(popen "$P3" '{"email":"=HYPERLINK(\"https://attacker\")"}' | head -c 120)"
+CSV=$(body "$AD" GET "/api/v1/media/$SHARED_ID/activity/export")
+echo "$CSV" | grep -q "HYPERLINK" && bad "the CSV carries no formula" "no HYPERLINK" "present" || ok "the CSV carries no formula"
+
 # --- 12e. The activity log, its permission, and the policy cap ----------------------------
 eq "a class teacher cannot read share activity (403)" "$(code "$T4" GET "/api/v1/media/$SHARED_ID/activity")" "403"
 ACT=$(body "$AD" GET "/api/v1/media/$SHARED_ID/activity")
@@ -614,6 +635,40 @@ eq "and its raw path is public again (no longer share-only)" "$(raw "$(strip_tok
 ES=$(body "$SA" GET "/api/v1/platform/settings/Email")
 if echo "$ES" | grep -q 'SmtpPassword\\":\\"\(\(\\\\u2022\)\{8\}\|\)\\"'; then ok "the platform SMTP password is masked (or unset) in the settings API"
 else bad "smtp password masked" "eight dots or empty" "$(echo "$ES" | grep -o 'SmtpPassword[^,]*' | head -1)"; fi
+
+# =============================================================================
+hdr "13. PRIVILEGE ESCALATION and CROSS-TENANT ISOLATION"
+# Carried as "not yet tested" since the 2026-08 backlog. A class teacher (the least-privileged
+# staff role with a login) tries the administrator's and the platform's doors; a tenant admin
+# tries another tenant's. The second tenant is the 'secondtest' organization the registration
+# work left live for exactly this purpose (tracker, Phase 55).
+OTHER_ORG="${OTHER_ORG:-2f4b274d-6f69-4a01-9be8-16d02687bbd6}"
+
+# --- 13a. A class teacher cannot reach administration ------------------------------------
+eq "class teacher cannot create users (403)"             "$(code "$T4" POST "/api/v1/users" '{"email":"e2e.escalate@qmgr.local","username":"e2e.escalate","password":"Escalate!2026","fullName":"Nope","roleId":"00000000-0000-0000-0000-000000000000"}')" "403"
+eq "class teacher cannot read platform settings (403)"   "$(code "$T4" GET "/api/v1/platform/settings")" "403"
+eq "class teacher cannot list tenants (403)"             "$(code "$T4" GET "/api/v1/admin/tenants")" "403"
+eq "class teacher cannot grant a module (403)"           "$(code "$T4" PUT "/api/v1/admin/tenants/$ORG_ID/modules/engagement-communications" '{"note":"nope"}')" "403"
+eq "class teacher cannot change the sharing policy (403)" "$(code "$T4" PUT "/api/v1/organizations/$ORG_ID/document-sharing/policy" '{"maxLinkDays":30,"attributionRetentionDays":180}')" "403"
+eq "class teacher cannot change notification settings (403)" "$(code "$T4" PUT "/api/v1/notifications/settings" '{"emailEnabled":false}')" "403"
+
+# --- 13b. A tenant admin cannot reach another tenant ------------------------------------
+eq "tenant admin cannot read another tenant's record (403)" "$(code "$AD" GET "/api/v1/admin/tenants/$OTHER_ORG")" "403"
+eq "tenant admin cannot grant a module to another tenant (403)" "$(code "$AD" PUT "/api/v1/admin/tenants/$OTHER_ORG/modules/core-queue" '{"note":"nope"}')" "403"
+OM=$(body "$AD" GET "/api/v1/organizations/$OTHER_ORG/media")
+if [ "$(count "$OM")" = "0" ]; then ok "another tenant's media list is empty for this tenant's admin (query filter holds)"; else bad "cross-tenant media" "0 rows" "$(count "$OM") rows"; fi
+# ^ ResolveOrganizationIdForWrite pins a tenant caller to its OWN organization whatever the route
+#   says, so the upload lands in org1, not org2. Asserted directly:
+XT=$(curl -s -X POST "$API/api/v1/organizations/$OTHER_ORG/media/upload" -H "Authorization: Bearer $AD" -F "file=@$E2E_PDF;filename=e2e.pdf;type=application/pdf" -F "name=E2E cross-tenant probe")
+XT_ID=$(jget "$XT" id)
+if [ -n "$XT_ID" ]; then
+  body "$AD" GET "/api/v1/organizations/$ORG_ID/media" | grep -q "$XT_ID" && ok "an upload addressed to another tenant is pinned to the caller's own tenant" \
+    || bad "upload pinned to own tenant" "row in org $ORG_ID" "row not found in own org"
+  code "$AD" DELETE "/api/v1/media/$XT_ID" > /dev/null
+else
+  ok "an upload addressed to another tenant is refused outright"
+fi
+eq "a share cannot be issued against a document id of another tenant (404)" "$(code "$AD" POST "/api/v1/media/00000000-0000-0000-0000-000000000001/shares" '{"label":"x","expiresAt":"'"$EXP"'"}')" "404"
 
 # --- Cleanup: the media rows go; the welfare record stays (append-only, labelled dummy) --------
 eq "cleanup: shared document deleted" "$(code "$AD" DELETE "/api/v1/media/$SHARED_ID")" "204"

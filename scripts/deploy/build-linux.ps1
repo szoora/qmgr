@@ -547,6 +547,12 @@ Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://127.0.0.1:$ApiPort
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
 Environment=MediaStorage__PublicBaseUrl=https://$HostName
+# The key ring path MUST travel in the unit, not only in appsettings.Production.json: install.sh
+# preserves the server's copy of that file on every upgrade, so the KeyPath written there on
+# 2026-09-10 never reached the live server — it kept persisting keys under $InstallRoot/api,
+# read-only under ProtectSystem=strict, and every Protect() call (badge QR, upload links, share
+# tokens) threw a 500. Seen live on 2026-09-15: POST /public/shares/{slug}/open responded 500.
+Environment=DataProtection__KeyPath=$DataProtectionPath
 # The upload store, outside both wwwroot and $InstallRoot (2026-09-15). In the unit for the same
 # reason as PublicBaseUrl: install.sh preserves the API's appsettings.Production.json, so a key
 # added there never reaches an existing server. The unit is replaced on every install.
@@ -583,6 +589,8 @@ RestartSec=5
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://127.0.0.1:$WebPort
 Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+# Same key ring as the API, and for the same reason it is in the unit: see the API unit above.
+Environment=DataProtection__KeyPath=$DataProtectionPath
 MemoryMax=800M
 
 NoNewPrivileges=true

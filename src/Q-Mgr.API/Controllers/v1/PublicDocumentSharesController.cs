@@ -178,6 +178,13 @@ public class PublicDocumentSharesController : ControllerBase
             else if (!string.IsNullOrWhiteSpace(request.Email))
             {
                 var email = request.Email.Trim().ToLowerInvariant();
+
+                // Not an address at all: refused without writing it to the log. The log's Email
+                // column is exported to CSV by staff, and the security review found this branch
+                // recorded any text a stranger typed — including a spreadsheet formula.
+                if (email.Length > 320 || !System.Net.Mail.MailAddress.TryCreate(email, out var parsed) || parsed.Address != email)
+                    return Ok(new OpenSharedDocumentResponse { Status = SharedDocumentOpenStatus.EmailRequired, Message = "Enter a valid email address." });
+
                 if (!_shares.IsEmailAllowed(share, email))
                 {
                     // The same wording as a wrong code — confirming an address is off the list
@@ -296,8 +303,14 @@ public class PublicDocumentSharesController : ControllerBase
 
         Response.Headers[HeaderNames.CacheControl] = "private, no-store";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
-        var contentType = doc.MimeType ?? "application/pdf";
-        var downloadName = (doc.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? doc.Name : doc.Name + Path.GetExtension(fileName)).Replace("\"", "");
+
+        // Sharing is PDF-only (UpdatePublishing refuses anything else) and the upload path has
+        // checked the bytes start with %PDF-, so the served type is a constant. It used to echo
+        // doc.MimeType — the client's own declaration at upload — which the security review
+        // showed could be text/html: a "PDF" that was really a script, rendered inline on this
+        // origin for whoever opened the link.
+        const string contentType = "application/pdf";
+        var downloadName = (doc.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? doc.Name : doc.Name + ".pdf").Replace("\"", "");
 
         if (download)
             return PhysicalFile(diskPath, contentType, downloadName, enableRangeProcessing: true);

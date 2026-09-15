@@ -79,7 +79,13 @@ public class LocalDiskMediaStorageService : IMediaStorageService
         {
             Directory.CreateDirectory(UploadsDirectory);
 
-            var extension = Path.GetExtension(fileName);
+            // The STORED extension comes from the allow-list, never from the client's file name
+            // alone: the serving side derives Content-Type from it (see UploadFileTypes for the
+            // XSS this closed). A type on no list is refused here, whatever the controller allowed.
+            var extension = UploadFileTypes.ResolveStoredExtension(fileName, contentType);
+            if (extension == null)
+                return new MediaUploadResult { Success = false, ErrorMessage = $"File type '{(string.IsNullOrEmpty(contentType) ? Path.GetExtension(fileName) : contentType)}' is not allowed." };
+
             var uniqueFileName = $"{Guid.NewGuid()}{extension}";
             var diskPath = Path.Combine(UploadsDirectory, uniqueFileName);
             var relativePath = $"{RelativeFolder}/{uniqueFileName}";
@@ -87,6 +93,14 @@ public class LocalDiskMediaStorageService : IMediaStorageService
             await using (var destination = new FileStream(diskPath, FileMode.Create))
             {
                 await fileStream.CopyToAsync(destination, cancellationToken);
+            }
+
+            // A ".pdf" that is not a PDF is served as application/pdf and rendered by pdf.js — or,
+            // declared as something else, would once have been served as whatever the client said.
+            if (extension == ".pdf" && !UploadFileTypes.HasPdfMagic(diskPath))
+            {
+                File.Delete(diskPath);
+                return new MediaUploadResult { Success = false, ErrorMessage = "The file is not a PDF." };
             }
 
             return new MediaUploadResult

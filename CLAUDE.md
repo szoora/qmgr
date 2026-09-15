@@ -363,6 +363,18 @@ photograph of an injured child**, so that lookup lives in one place.
   The static mappers are why it has a static face; `Program.cs` attaches the singleton at startup.
 - **Add a new upload surface and you must classify it** in `UploadAuthorizer.LookUpAsync`, or it
   is an orphan: token-only, which breaks the page that shows it. A new *kind* fails closed there.
+- **What a file IS comes from the extension it is STORED under, chosen from `UploadFileTypes`'
+  allow-list — never from the client's declared type or file name.** The security review of
+  2026-09-15 found `x.xml` declared as `image/png` was stored as `.xml` and served as `text/xml`
+  (an XHTML-namespaced `<script>` runs on this origin), and the share endpoint echoed the row's
+  client-declared `MimeType` as its `Content-Type`. Now: the storage layer refuses a type on no
+  list, a `.pdf` must start with `%PDF-`, `UploadsController` renders inline only the raster
+  image / video / audio / PDF types on that list and downloads everything else, and a share
+  always streams as `application/pdf`. **Media is classified by `FilePath` only** — the column the
+  server writes on upload — because matching on the client-writable `FileUrl` let a URL-linked
+  media row take a welfare attachment public; `CreateMediaContent` refuses a `FileUrl` inside our
+  own store, and `MediaFilePathBackfill` filled the column for legacy uploads at startup. The
+  gated owners (welfare, student, visitor) are looked up before media, most restrictive first.
 - `get:/uploads/*` is whitelisted from IP rate limiting in code (`PostConfigure<IpRateLimitOptions>`),
   because the DB "RateLimiting" row replaces the config section wholesale and an administrator's
   edit must not be able to black out a signage screen.
@@ -450,7 +462,7 @@ The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md`; the rules that are easy to 
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **152 assertions** (one more on a tenant that still needs the module granted; 94 until
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **165 assertions** (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
 2026-09-15, 72 until 2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the
 reports gate, the notification preferences, the delivery log, the three leak shapes above, real
 email delivery, and — since 2026-09-15, section 12 — gated uploads and secure document sharing
@@ -817,6 +829,16 @@ A key-ring change is **four** changes and they must land together:
 3. the path in **that unit's** `ReadWritePaths`;
 4. the directory created, `chown`ed and `chmod 700`ed by `install.sh` (already true here — both
    units run as `www-data`, so it was checked, not changed).
+
+**The key path MUST also travel in the systemd unit as `Environment=DataProtection__KeyPath`
+(both units), and does since 2026-09-15.** The 2026-09-10 fix wrote it into the generated
+`appsettings.Production.json` — the one file `install.sh` deliberately preserves from the server's
+own copy on every upgrade — so the live API never received it, kept persisting keys under the
+read-only install root, and every `Protect()` call 500ed: found live the evening the sharing
+feature was deployed, as `POST /public/shares/{slug}/open responded 500`. **Any setting an
+existing server must pick up goes in the unit, never only in appsettings** — this is now the
+third instance of the same trap (`MediaStorage__PublicBaseUrl`, `Email__*`, and this). The API
+also probes the key ring for writability at startup and logs a loud, specific error naming the fix.
 
 **`SetApplicationName("QMgr")` must match across both processes.** The application name is part of
 the key-derivation purpose chain, so two processes sharing a ring but disagreeing on it cannot read

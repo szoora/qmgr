@@ -93,8 +93,17 @@ public class UploadsController : ControllerBase
 
     private IActionResult Serve(string diskPath, bool isPublic)
     {
-        if (!ContentTypes.TryGetContentType(diskPath, out var contentType))
-            contentType = "application/octet-stream";
+        // The Content-Type comes from the STORED extension, which the upload path chose from
+        // UploadFileTypes' allow-list. A file that is somehow not on that list (a legacy upload
+        // with an extension the list never had) is never rendered inline: the security review
+        // showed `.xml` served as text/xml runs an XHTML-namespaced script on this origin, and
+        // an allow-list is the only shape of guard that does not need to know every such type.
+        var contentType = UploadFileTypes.ContentTypeFor(diskPath);
+        var inline = contentType != null && UploadFileTypes.IsInlineSafe(contentType);
+        if (contentType == null)
+        {
+            contentType = ContentTypes.TryGetContentType(diskPath, out var guessed) ? guessed : "application/octet-stream";
+        }
 
         var info = new FileInfo(diskPath);
         var lastModified = new DateTimeOffset(info.LastWriteTimeUtc);
@@ -105,10 +114,10 @@ public class UploadsController : ControllerBase
             : "private, no-store";
         Response.Headers["X-Content-Type-Options"] = "nosniff";
 
-        // An uploaded SVG or HTML document rendered inline on this origin would run its scripts
-        // here. Anything that can carry script is offered as a download, never rendered.
-        if (contentType is "image/svg+xml" or "text/html" or "application/xhtml+xml")
+        if (!inline)
         {
+            // Offered as a download, and as an opaque type, so nothing that can carry script is
+            // ever rendered on this origin.
             Response.Headers[HeaderNames.ContentDisposition] = $"attachment; filename=\"{info.Name}\"";
             contentType = "application/octet-stream";
         }
