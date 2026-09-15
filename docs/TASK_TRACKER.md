@@ -5,6 +5,46 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
+## ▶ NEXT SESSION — start here (written 2026-09-15, end of day)
+
+**State: everything below is committed, pushed and DEPLOYED to `qmgr.cashbook.ug`, and the user
+confirmed it on a real phone** — "share link reloads fine now and book toggle works on phone".
+Last commit `390e5c0` on `phase-82-scope-sweep-and-platform-email`; package
+`qmgr-0.2.0-20260915.2207.tar.gz` (version `0.2.0+20260915.2207.390e5c0`) is what is live.
+e2e: **173 passed, 0 failed** on that build.
+
+What shipped today, in order (each has its own section under Phase 84 below):
+
+1. The open upload store closed; secure document sharing built (all six phases); platform
+   secrets masked; five security-review findings fixed; the Data Protection key path moved into
+   BOTH systemd units after a production 500 on the first share opened.
+2. Scroll mode for the PDF viewer on phones (fit-to-width column, pinch zoom, 3× render).
+3. **The deploy-time login bounce, root-caused and fixed** — every open share link bounced to
+   sign-in the moment a new build came up; `AuthorizeRouteView` was rendering its Authorizing
+   state inside `MainLayout`. Public pages now go through plain `RouteView`. This was written up
+   as "not reproducible" for an hour first; the lesson is in CLAUDE.md: reproduce a deploy by
+   restarting the process under an open tab, not by a fresh navigation.
+4. A Book / Scroll toggle in the viewer, remembered per browser; the thumbnail rail rebuilt after
+   hide/show; page-flip's leftover inline positioning neutralised.
+
+**Genuinely open — all user decisions or user-side actions, nothing blocked on code:**
+
+- `[!]` Merge `phase-82-scope-sweep-and-platform-email` into `master`. Everything since
+  2026-09-10 is on this branch; master is far behind. The user has not said when.
+- `[!]` The five dev-tenant images in public git history (see "Found on the way out" below).
+  Conclusion recorded: no PII in them, scrubbing history not needed — but it is the user's call.
+- `[ ]` Restore drill from `qmgr-backup-db.sh` output, and a load test — never run.
+- `[ ]` SuperAdmin with no organization chosen sees an empty Category list on the welfare create
+  form until reload (noted 2026-09-11, not investigated).
+
+**Do not re-plan:** a test project (decided against), per-display theme (per-organization is
+settled), PPTX rendering (no server dependencies), pg extensions (none).
+
+**Local environment note:** the API and Web were left running on 127.0.0.1:5001 / :5003 from
+`bin/Debug` at the end of the session; if they are gone, the recipe is in CLAUDE.md under
+"Running it locally". The e2e needs `BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f`.
+
+---
 ## 🧭 SESSION HANDOVER (written 2026-09-15) — Phase 84: the open upload store closed, secure document sharing built, platform secrets masked
 
 The request was to read the handover, then *"fix all gaps and bugs, implement all pending tasks and
@@ -158,7 +198,8 @@ value on PUT wherever the mask comes back. Verified live: `GET /platform/setting
 `build-linux.ps1`: `MediaStorage__LocalPath` in the API unit; `ReadWritePaths` no longer lists
 `wwwroot/uploads`; `install.sh` creates `$UPLOADS_PATH/media`, removes the old symlink. Same
 commands as before (`-ApiPort 8586 -WebPort 8587`, stop both apps first, **back up the database**:
-this release carries a migration too). Nothing was committed, pushed or deployed this session.
+this release carries a migration too). ~~Nothing was committed, pushed or deployed this session.~~
+**Superseded later the same day: committed, pushed and deployed — see "NEXT SESSION" at the top.**
 
 ### Found on the way out, NOT fixed: five dev-tenant uploads are in the public git history
 
