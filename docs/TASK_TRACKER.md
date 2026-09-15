@@ -261,6 +261,34 @@ dataprotection-keys` to both units, `daemon-reload`, restart.** Permanent: both 
 from `build-linux.ps1`, and the API probes the key ring for writability at startup and logs a loud
 error naming the fix. Third instance of the "unit, not appsettings" trap — recorded in CLAUDE.md.
 
+### Shared documents on a phone — scroll mode (2026-09-15, late evening, commit 718478f)
+
+After the deploy the user opened a share on a real phone: the page rendered, but the text was
+about 6px tall. The flip-book letterboxes a whole A4 page into a stage shorter than the screen, so
+on a 390px viewport the page is ~180px wide. The readability answer the mainstream readers agree on
+(Drive, Adobe's mobile reader, DocSend) is **fit-to-width, continuous vertical scroll, native
+pinch-zoom** — a book metaphor is a desktop/signage treatment, not a phone one.
+
+- `pdfFlipbook.js` gains `mode: 'scroll'`, chosen at init when `(max-width: 900px)` matches and the
+  viewer is not signage. Pages stack at stage width; an `IntersectionObserver` reports the current
+  page; pinch and double-tap zoom re-render at the new scale; the DPR cap rose 2 → 3 so a modern
+  phone renders 1:1; the watermark is lighter and sparser below 900px so it does not cover the text
+  it sits over. `next`/`prev`/`goToPage`/`setViewMode` have scroll branches; the spread toggle and
+  the thumbnail rail are withheld in scroll mode; `dispose` drops the observer and touch listeners.
+- `SharedDocument.razor`: compact bar and gate below 600px, viewer at `100dvh`, gate expiry through
+  `QDateFormat.DT` with UTC stated.
+- **Verified in Chrome** by patching `matchMedia` before init on the dev-tenant share (the tool
+  cannot resize the viewport): stage carried `--scroll`, both pages rendered at the 490px stage
+  width and stacked 1431px tall inside a 637px scrolling stage, compact toolbar, watermark present.
+- **Not verified on a physical device** — that is the user's check after the next deploy. The
+  package built after this commit (`scripts/deploy/dist/`) is the one to ship; the 20:48 package
+  predates scroll mode and the key-ring unit fix.
+
+The login-bounce reported alongside it was **not reproducible**: `/s/{slug}` with stale admin
+tokens planted renders the gate, and the failed refresh clears the tokens. The `[MainLayout]`
+redirect fires only for genuinely protected shell pages, which is correct. The probe
+instrumentation added to trace it was removed before commit.
+
 ### Stale notes verified against the code before any work started
 
 - `TransferTokenCommand` "no-op 500" (Phase 27 list) — **stale**: `TransferTokenCommandHandler` exists in
