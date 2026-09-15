@@ -421,12 +421,74 @@
     pointer-events: none;
 }
 
-@media (max-width: 720px) {
+/*
+    Scroll mode (phones): pages stacked at fit-to-width, vertical scroll, native-feeling pinch.
+    The stage stops centring (a column of pages starts at the top) and lets both axes scroll so a
+    zoomed page can be panned. touch-action keeps single-finger pan native while the viewer's own
+    pointer handlers take the two-finger pinch.
+*/
+.pdf-flipbook-stage--scroll {
+    display: block;
+    overflow: auto;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+    background: var(--qm-bg-secondary, #ececef);
+}
+
+.pdf-flipbook-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 0 24px;
+    margin: 0;
+}
+
+.pdf-flipbook-scroll .pdf-flipbook-page {
+    width: 100%;
+    height: auto;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+.pdf-flipbook-scroll .pdf-flipbook-page img {
+    height: auto;
+    aspect-ratio: inherit;
+}
+
+@media (max-width: 900px) {
+    /* Compact chrome: one row of icons, no zoom readout, the search box only as wide as it must
+       be, and every control at least 44px — the touch-target floor. */
+    .pdf-flipbook-toolbar {
+        gap: 4px;
+        padding: 6px 8px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        justify-content: flex-start;
+        scrollbar-width: none;
+    }
+
+    .pdf-flipbook-toolbar .q-btn,
+    .pdf-flipbook-controls .q-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .pdf-flipbook-zoom-level {
+        display: none;
+    }
+
+    .pdf-flipbook-search input {
+        width: 110px;
+    }
+
     .pdf-flipbook-thumbs {
         width: 78px;
     }
 
-    .pdf-flipbook-search input {
-        width: 120px;
+    .pdf-flipbook-controls {
+        padding: 6px 10px;
+    }
+
+    .pdf-flipbook-page-indicator input {
+        min-height: 44px;
     }
 }

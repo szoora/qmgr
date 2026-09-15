@@ -195,7 +195,20 @@
     .sd-viewer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: .75rem; }
     .sd-viewer-body .pdf-flipbook { flex: 1; min-height: 0; }
     .sd-error--bar { border-radius: 0; }
-    @@media (max-width: 600px) { .sd { padding: 1rem .75rem; } .sd-card { padding: 1.25rem; } }
+    @@media (max-width: 600px) {
+        .sd { padding: 1rem .75rem; }
+        .sd-card { padding: 1.25rem; }
+        /* On a phone the document gets the screen: dvh (not vh) so the browser's own bars do not
+           hide the page controls, a one-line title bar, and no padding around the stage. */
+        .sd--viewer { padding: 0; }
+        .sd-viewer { height: 100dvh; }
+        .sd-viewer-bar { padding: .4rem .6rem; gap: .5rem; flex-wrap: nowrap; }
+        .sd-viewer-title strong { font-size: .9rem; }
+        .sd-viewer-title .sd-muted { font-size: .7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sd-viewer-title > .q-icon { display: none; }
+        .sd-download, .sd-viewonly { padding: .4rem .6rem; font-size: .8rem; white-space: nowrap; }
+        .sd-viewer-body { padding: 0; }
+    }
 </style>
 
 @code {

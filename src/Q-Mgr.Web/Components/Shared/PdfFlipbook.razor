@@ -70,15 +70,18 @@
                         <div class="pdf-flipbook-toolbar-sep"></div>
                     }
 
-                    <div class="pdf-flipbook-toolbar-group">
-                        <QButton Icon="@(viewMode == "single" ? "file-earmark" : "book")"
-                                 Variant="secondary" Size="sm" OnClick="@ToggleViewMode"
-                                 Disabled="@(pageCount <= 1)"
-                                 Title="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")"
-                                 aria-label="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")" />
-                    </div>
+                    @if (viewMode != "scroll")
+                    {
+                        <div class="pdf-flipbook-toolbar-group">
+                            <QButton Icon="@(viewMode == "single" ? "file-earmark" : "book")"
+                                     Variant="secondary" Size="sm" OnClick="@ToggleViewMode"
+                                     Disabled="@(pageCount <= 1)"
+                                     Title="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")"
+                                     aria-label="@(viewMode == "single" ? "Switch to two-page spread" : "Switch to single page")" />
+                        </div>
 
-                    <div class="pdf-flipbook-toolbar-sep"></div>
+                        <div class="pdf-flipbook-toolbar-sep"></div>
+                    }
 
                     <div class="pdf-flipbook-toolbar-group">
                         <QButton Icon="dash-lg" Variant="secondary" Size="sm" OnClick="@ZoomOut"
@@ -310,6 +313,14 @@
                 viewedPage = 1;
                 viewedSince = DateTime.UtcNow;
                 if (pageCount == 1) viewMode = "single";
+                // "scroll" on a narrow screen: fit-to-width pages stacked vertically (see
+                // pdfFlipbook.js). No spread toggle applies, and the thumbnail rail would take a
+                // fifth of a phone's width from the page it is meant to help with.
+                if (result.Mode == "scroll")
+                {
+                    viewMode = "scroll";
+                    showThumbRail = false;
+                }
             }
             else
             {
@@ -541,6 +552,16 @@
         public bool Success { get; init; }
         public int PageCount { get; init; }
         public string? ErrorMessage { get; init; }
+        /// <summary>"spread", "single" or "scroll" — the viewer picks scroll on a narrow screen.</summary>
+        public string? Mode { get; init; }
+    }
+
+    /// <summary>Pinch or double-tap changed the zoom in scroll mode; keep the toolbar's figure honest.</summary>
+    [JSInvokable]
+    public void OnZoomChanged(double zoom)
+    {
+        zoomLevel = zoom;
+        StateHasChanged();
     }
 
     private record SearchResult

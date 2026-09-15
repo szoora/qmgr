@@ -145,6 +145,11 @@ window.pdfFlipbookInterop = (function () {
     // Render.calculateBoundsRect so render quality is chosen for the size actually drawn.
     function pageBox(inst) {
         var ratio = inst.pageW / inst.pageH;
+        if (inst.mode === 'scroll') {
+            // Fit-to-width: the page is as wide as the surface and as tall as its aspect says.
+            var sw = Math.max(1, inst.surfaceW || 1);
+            return { w: sw, h: Math.max(1, sw / ratio) };
+        }
         var w = inst.mode === 'spread' ? inst.surfaceW / 2 : inst.surfaceW;
         var h = w / ratio;
         if (h > inst.surfaceH) {
@@ -169,6 +174,18 @@ window.pdfFlipbookInterop = (function () {
 
     function applyLayout(inst, recenter) {
         if (!inst.stage || !inst.surfaceEl) return;
+
+        if (inst.mode === 'scroll') {
+            // Width only; height is each page's own. The stage scrolls vertically, and
+            // horizontally too once zoomed past the screen.
+            var stageW = inst.stage.clientWidth;
+            if (stageW < 40) return;
+            inst.surfaceW = Math.round(stageW * inst.zoom);
+            inst.surfaceH = 0;
+            inst.surfaceEl.style.width = inst.surfaceW + 'px';
+            scheduleQualityPass(inst);
+            return;
+        }
 
         var fit = measureStage(inst);
         if (fit.w < 40 || fit.h < 40) return;
@@ -222,7 +239,122 @@ window.pdfFlipbookInterop = (function () {
         }
     }
 
+    /*
+        Scroll mode: the pages stacked vertically at fit-to-width, no page-flip at all. The same
+        page elements and bitmaps as the book (so search highlights, thumbnails and the quality
+        pass all keep working); what changes is the surface they sit in, how "current page" is
+        found (an IntersectionObserver on the stage), and how zoom is driven (pinch and double-tap,
+        because the app's viewport meta forbids browser zoom for the kiosk screens' sake).
+    */
+    function buildScroll(inst) {
+        if (inst.surfaceEl && inst.surfaceEl.parentNode) {
+            inst.surfaceEl.parentNode.removeChild(inst.surfaceEl);
+        }
+        inst.stage.classList.add('pdf-flipbook-stage--scroll');
+
+        var surface = document.createElement('div');
+        surface.className = 'pdf-flipbook-scroll';
+        inst.stage.appendChild(surface);
+        inst.surfaceEl = surface;
+
+        var ratio = inst.pageW / inst.pageH;
+        for (var i = 0; i < inst.pageEls.length; i++) {
+            var el = inst.pageEls[i];
+            el.style.aspectRatio = String(ratio);
+            el.style.height = 'auto';
+            surface.appendChild(el);
+        }
+
+        // The page that covers the middle of the stage is the current one.
+        if (inst.pageObserver) { try { inst.pageObserver.disconnect(); } catch (e) { } }
+        inst.pageObserver = new IntersectionObserver(function (entries) {
+            var best = null;
+            for (var k = 0; k < entries.length; k++) {
+                var en = entries[k];
+                if (!en.isIntersecting) continue;
+                if (!best || en.intersectionRatio > best.intersectionRatio) best = en;
+            }
+            if (best) {
+                var idx = parseInt(best.target.getAttribute('data-page'), 10);
+                if (!isNaN(idx)) notifyPage(inst, idx, true);
+            }
+        }, { root: inst.stage, threshold: [0.25, 0.5, 0.75] });
+        for (var j = 0; j < inst.pageEls.length; j++) inst.pageObserver.observe(inst.pageEls[j]);
+
+        bindPinch(inst);
+        applyLayout(inst, false);
+        notifyPage(inst, Math.min(inst.currentPage, inst.pageCount - 1), false);
+    }
+
+    // Pinch-to-zoom and double-tap, driving the same zoom the toolbar buttons do. Two pointers'
+    // distance ratio scales the surface width; a double tap toggles 1x / 2x on the tapped spot.
+    function bindPinch(inst) {
+        var stage = inst.stage;
+        var pointers = new Map();
+        var startDist = 0, startZoom = 1, lastTap = 0;
+
+        function dist() {
+            var pts = Array.from(pointers.values());
+            var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        inst.pinchDown = function (e) {
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pointers.size === 2) { startDist = dist(); startZoom = inst.zoom; }
+            if (pointers.size === 1 && e.pointerType === 'touch') {
+                var now = Date.now();
+                if (now - lastTap < 300) {
+                    var target = Math.abs(inst.zoom - 1) < 0.05 ? 2 : 1;
+                    var rect = stage.getBoundingClientRect();
+                    var fx = (stage.scrollLeft + (e.clientX - rect.left)) / Math.max(1, stage.scrollWidth);
+                    var fy = (stage.scrollTop + (e.clientY - rect.top)) / Math.max(1, stage.scrollHeight);
+                    inst.zoom = target;
+                    applyLayout(inst, false);
+                    stage.scrollLeft = fx * stage.scrollWidth - (e.clientX - rect.left);
+                    stage.scrollTop = fy * stage.scrollHeight - (e.clientY - rect.top);
+                    invoke(inst, 'OnZoomChanged', inst.zoom);
+                    lastTap = 0;
+                } else {
+                    lastTap = now;
+                }
+            }
+        };
+        inst.pinchMove = function (e) {
+            if (!pointers.has(e.pointerId)) return;
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (pointers.size === 2 && startDist > 0) {
+                e.preventDefault();
+                var z = Math.max(0.5, Math.min(4, startZoom * (dist() / startDist)));
+                if (Math.abs(z - inst.zoom) > 0.02) {
+                    var rect = stage.getBoundingClientRect();
+                    var pts = Array.from(pointers.values());
+                    var cx = (pts[0].x + pts[1].x) / 2 - rect.left, cy = (pts[0].y + pts[1].y) / 2 - rect.top;
+                    var fx = (stage.scrollLeft + cx) / Math.max(1, stage.scrollWidth);
+                    var fy = (stage.scrollTop + cy) / Math.max(1, stage.scrollHeight);
+                    inst.zoom = z;
+                    applyLayout(inst, false);
+                    stage.scrollLeft = fx * stage.scrollWidth - cx;
+                    stage.scrollTop = fy * stage.scrollHeight - cy;
+                }
+            }
+        };
+        inst.pinchUp = function (e) {
+            pointers.delete(e.pointerId);
+            if (pointers.size < 2) {
+                if (startDist > 0) invoke(inst, 'OnZoomChanged', inst.zoom);
+                startDist = 0;
+            }
+        };
+        stage.addEventListener('pointerdown', inst.pinchDown);
+        stage.addEventListener('pointermove', inst.pinchMove, { passive: false });
+        stage.addEventListener('pointerup', inst.pinchUp);
+        stage.addEventListener('pointercancel', inst.pinchUp);
+    }
+
     function buildBook(inst) {
+        if (inst.mode === 'scroll') { buildScroll(inst); return; }
+
         // Park the page elements somewhere safe first: PageFlip.destroy() takes its wrapper — and
         // everything inside it — out of the DOM, and these elements carry the rendered bitmaps.
         if (inst.pageEls) {
@@ -300,7 +432,8 @@ window.pdfFlipbookInterop = (function () {
 
     function baseScale(inst) {
         var box = pageBox(inst);
-        var dpr = Math.min(window.devicePixelRatio || 1, 2);
+        // Phones are 3x; a 2x cap left text soft exactly where it is smallest.
+        var dpr = Math.min(window.devicePixelRatio || 1, 3);
         var scale = (box.w * dpr) / inst.pageW;
         return Math.max(0.5, Math.min(scale, 5));
     }
@@ -316,14 +449,18 @@ window.pdfFlipbookInterop = (function () {
     function drawWatermark(ctx, width, height, text) {
         var size = Math.max(14, Math.round(Math.min(width, height) / 22));
         ctx.save();
-        ctx.globalAlpha = 0.16;
+        // A small render (a phone at fit-width) has 9pt body text at a few pixels; the same
+        // watermark density that reads as a tint on a desktop page competes with the words there.
+        // Lighter and sparser below ~900px, still on every page.
+        var small = Math.min(width, height) < 900;
+        ctx.globalAlpha = small ? 0.11 : 0.16;
         ctx.fillStyle = '#7a2847';
         ctx.font = '600 ' + size + 'px Poppins, Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.translate(width / 2, height / 2);
         ctx.rotate(-Math.PI / 5);
-        var stepY = size * 6;
+        var stepY = size * (small ? 9 : 6);
         var stepX = Math.max(ctx.measureText(text).width + size * 4, size * 12);
         var span = Math.max(width, height) * 1.5;
         var row = 0;
@@ -535,7 +672,16 @@ window.pdfFlipbookInterop = (function () {
         through `PageCollection.show()` and lands exactly.
     */
     function goToPageIndex(inst, index) {
-        if (!inst.pageFlip || index < 0 || index >= inst.pageCount) return;
+        if (index < 0 || index >= inst.pageCount) return;
+
+        if (inst.mode === 'scroll') {
+            var el = inst.pageEls[index];
+            if (el) inst.stage.scrollTop = el.offsetTop - 8;
+            notifyPage(inst, index, true);
+            return;
+        }
+
+        if (!inst.pageFlip) return;
 
         // Land any flip that is still animating BEFORE deciding where we are.
         //
@@ -815,6 +961,17 @@ window.pdfFlipbookInterop = (function () {
 
                 if (inst.pageCount === 1) inst.mode = 'single';
 
+                // SCROLL MODE on a phone. A flip-book letterboxes a whole A4 page into a stage
+                // shorter than the screen, which on a 390px phone puts body text at about 6px —
+                // seen in the field on 2026-09-15. The industry answer (Drive, Adobe's mobile
+                // reader, DocSend) is fit-to-width with continuous vertical scroll and native
+                // pinch-zoom, so that is what narrow screens get. Signage keeps the book: a screen
+                // on a wall is not a phone, and the auto-advance loop is built on page turns.
+                if (options.scrollOnNarrow !== false && !inst.autoAdvance &&
+                    window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+                    inst.mode = 'scroll';
+                }
+
                 buildPageElements(inst);
                 buildThumbRail(inst);
                 buildBook(inst);
@@ -842,7 +999,7 @@ window.pdfFlipbookInterop = (function () {
                 startAutoAdvance(inst);
                 backgroundRender(inst);
 
-                return { success: true, pageCount: inst.pageCount, errorMessage: null };
+                return { success: true, pageCount: inst.pageCount, errorMessage: null, mode: inst.mode };
             } catch (e) {
                 console.error('PDF flipbook init failed:', e);
                 return {
@@ -855,7 +1012,9 @@ window.pdfFlipbookInterop = (function () {
 
         next: function (containerId) {
             var inst = instances.get(containerId);
-            if (inst && inst.pageFlip) {
+            if (!inst) return;
+            if (inst.mode === 'scroll') { goToPageIndex(inst, inst.currentPage + 1); return; }
+            if (inst.pageFlip) {
                 inst.pageFlip.flipNext();
                 if (inst.autoTimer) startAutoAdvance(inst);
             }
@@ -863,7 +1022,9 @@ window.pdfFlipbookInterop = (function () {
 
         prev: function (containerId) {
             var inst = instances.get(containerId);
-            if (inst && inst.pageFlip) {
+            if (!inst) return;
+            if (inst.mode === 'scroll') { goToPageIndex(inst, inst.currentPage - 1); return; }
+            if (inst.pageFlip) {
                 inst.pageFlip.flipPrev();
                 if (inst.autoTimer) startAutoAdvance(inst);
             }
@@ -887,6 +1048,7 @@ window.pdfFlipbookInterop = (function () {
 
         setViewMode: function (containerId, mode) {
             var inst = instances.get(containerId);
+            if (inst && inst.mode === 'scroll') return 'scroll';
             if (!inst || !inst.pageFlip) return 'spread';
 
             var wanted = mode === 'single' ? 'single' : 'spread';
@@ -1011,6 +1173,16 @@ window.pdfFlipbookInterop = (function () {
             }
             if (inst.contextHandler && inst.stage) {
                 inst.stage.removeEventListener('contextmenu', inst.contextHandler);
+            }
+            if (inst.pageObserver) {
+                try { inst.pageObserver.disconnect(); } catch (e) { }
+            }
+            if (inst.pinchDown && inst.stage) {
+                inst.stage.removeEventListener('pointerdown', inst.pinchDown);
+                inst.stage.removeEventListener('pointermove', inst.pinchMove);
+                inst.stage.removeEventListener('pointerup', inst.pinchUp);
+                inst.stage.removeEventListener('pointercancel', inst.pinchUp);
+                inst.stage.classList.remove('pdf-flipbook-stage--scroll');
             }
             if (inst.rootEl && inst.idleHandler) {
                 inst.rootEl.removeEventListener('pointermove', inst.idleHandler);

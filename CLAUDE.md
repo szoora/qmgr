@@ -1047,6 +1047,16 @@ not a flip book", never as an error.
   three seconds later the document has moved on. Any real interaction stops the timer; the same idle
   timeout that fades the chrome back out resumes it. `bindIdle`'s initial call passes `fromUser:
   false` so an untouched screen starts flipping at once instead of waiting out the first window.
+- **On a narrow screen the viewer is not a flip-book at all (2026-09-15).** A whole A4 page
+  letterboxed into a phone-height stage puts body text at ~6px — seen in the field on the first
+  shared document. Below 900px (and never on signage, which is built on page turns)
+  `pdfFlipbook.js` picks `mode: 'scroll'`: the same page elements stacked vertically at
+  fit-to-width, current page from an `IntersectionObserver`, render at up to 3× device pixels,
+  pinch and double-tap zoom handled by the viewer itself (the app's viewport meta forbids browser
+  zoom for the kiosk's sake), a compact one-row toolbar with 44px targets, thumbnails off by
+  default, and a lighter, sparser watermark below ~900px of render. **A PDF cannot reflow**;
+  fit-width plus zoom is the ceiling for a self-hosted viewer, and the page should not pretend
+  otherwise. `setViewMode` is a no-op in scroll mode and the spread toggle is hidden.
 - **`pageFlip.flip()` animates correctly ONLY to an adjacent spread — anything further needs
   `turnToPage()`.** `flipToPage` primes `currentSpreadIndex` to one-before-target and then animates
   from whatever is actually *rendered*, so a multi-spread jump moves exactly one spread and stops.
