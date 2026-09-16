@@ -1,0 +1,47 @@
+@namespace QMgr.Web.Components.Admin.Staff
+
+@*
+    The scoped-caller banner, byte-for-byte the shape of WelfareReports' .wr-scope-note: a head of
+    department reading their own department's total as the school's is a wrong conclusion drawn
+    from a correct query, and nothing on the page used to say which it was. Renders nothing for an
+    unscoped caller (an empty list), so every staff page can drop it in unconditionally.
+*@
+
+@if (Departments is { Count: > 0 })
+{
+    <div class="wr-scope-note">
+        <QIcon Name="funnel-fill" />
+        <span>
+            These @Noun cover <strong>@string.Join(", ", Departments)</strong> only —
+            the department@(Departments.Count == 1 ? "" : "s") you head. They are not
+            branch-wide @(Noun == "figures" ? "totals" : Noun).
+        </span>
+    </div>
+}
+
+<style>
+    /* Deliberately quiet — a standing fact about the caller's role, not a problem to fix. Tinted
+       from --qm-primary-rgb so it follows the theme without a [data-theme="light"] override. */
+    .wr-scope-note {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 11px 14px;
+        margin-bottom: 16px;
+        border: 1px solid var(--qm-border);
+        border-left: 3px solid var(--qm-primary);
+        border-radius: var(--qm-radius-md);
+        background: rgba(var(--qm-primary-rgb), 0.07);
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--qm-text-secondary);
+    }
+    .wr-scope-note i, .wr-scope-note span:first-child { color: var(--qm-primary); flex-shrink: 0; margin-top: 2px; }
+    .wr-scope-note strong { color: var(--qm-text-primary); }
+</style>
+
+@code {
+    /// <summary>ScopedToDepartments from any staff DTO. Empty for an unscoped caller.</summary>
+    [Parameter] public IReadOnlyList<string>? Departments { get; set; }
+
+    /// <summary>"figures", "records", "people" — whatever the page is showing.</summary>
+    [Parameter] public string Noun { get; set; } = "figures";
+}

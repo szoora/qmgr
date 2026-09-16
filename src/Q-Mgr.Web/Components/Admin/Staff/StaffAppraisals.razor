@@ -1,0 +1,260 @@
+@page "/admin/staff/appraisals"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Appraisals - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Appraisals</h1>
+            <p class="subtitle">The termly appraisal board: who is at which stage, and what the evidence says so far.</p>
+        </div>
+        <div class="header-actions">
+            <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+                     TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="sa-period" />
+            @if (canApprove && board != null && board.ScopedToDepartments.Count == 0)
+            {
+                <QButton Text="Open appraisals for this period" Icon="folder-plus" Variant="primary" OnClick="@OpenDialog" />
+            }
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(board?.ScopedToDepartments)" Noun="appraisals" />
+
+    @if (isLoading && board == null)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the board...</span></div>
+    }
+    else if (board == null)
+    {
+        <QEmptyState Icon="clipboard-x" Title="The board could not be loaded" Text="Try another period, or reload the page." />
+    }
+    else
+    {
+        <QStatRow>
+            @foreach (var stage in Enum.GetValues<AppraisalStage>())
+            {
+                var count = board.ByStage.TryGetValue(stage.ToString(), out var c) ? c : 0;
+                <QStatTile Value="@count.ToString()" Label="@StaffDisplay.StageLabel(stage)" Variant="@(count > 0 ? StaffDisplay.StageVariant(stage) : "default")" />
+            }
+        </QStatRow>
+
+        @if (board.Items.Count == 0)
+        {
+            <QEmptyState Icon="clipboard-check" Title="@($"No appraisals open for {board.Period.Name}")"
+                         Text="@(canApprove ? "Open appraisals for this period to start the cycle: targets first, then self-assessment, appraiser review, moderation and sign-off." : "An approver opens the period's appraisals. Nothing has been opened yet.")">
+                <Action>
+                    @if (canApprove && board.ScopedToDepartments.Count == 0)
+                    {
+                        <QButton Text="Open appraisals" Icon="folder-plus" Variant="primary" OnClick="@OpenDialog" />
+                    }
+                </Action>
+            </QEmptyState>
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table sa-table">
+                        <thead>
+                            <tr>
+                                <th>Subject</th>
+                                <th>Departments</th>
+                                <th>Appraiser</th>
+                                <th>Stage</th>
+                                <th>Live composite</th>
+                                <th>Final rating</th>
+                                <th>Last movement</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var a in board.Items.OrderBy(a => (int)a.Stage).ThenBy(a => a.SubjectName))
+                            {
+                                <tr class="sa-row" @onclick="@(() => Navigation.NavigateTo($"/admin/staff/appraisals/{a.Id}"))" title="Open this appraisal">
+                                    <td><div class="sa-person"><QAvatar Name="@a.SubjectName" Size="sm" /><span>@a.SubjectName</span></div></td>
+                                    <td>@(a.SubjectDepartmentNames ?? "—")</td>
+                                    <td>@a.AppraiserName</td>
+                                    <td><QChip Text="@StaffDisplay.StageLabel(a.Stage)" Variant="@StaffDisplay.StageVariant(a.Stage)" Size="sm" /></td>
+                                    <td>
+                                        @{ var live = a.Stage == AppraisalStage.Signed ? a.ComputedScore : a.LiveScore?.Composite; }
+                                        @StaffDisplay.Composite(live)
+                                        @if (a.LiveScore?.BandName != null && a.Stage != AppraisalStage.Signed) { <span class="sa-muted"> · @a.LiveScore.BandName</span> }
+                                    </td>
+                                    <td>
+                                        @if (a.FinalRating.HasValue)
+                                        {
+                                            <QChip Text="@($"{a.FinalRating} · {a.FinalRatingName}")" Variant="@StaffDisplay.BandVariant(a.FinalRating)" Size="sm" />
+                                        }
+                                        else { <span class="sa-muted">—</span> }
+                                    </td>
+                                    <td class="sa-muted">@QDateFormat.D((a.SignedAt ?? a.ModeratedAt ?? a.AppraiserSubmittedAt ?? a.SelfSubmittedAt ?? a.CreatedAt).ToLocalTime())</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showOpenDialog" Title="@($"Open appraisals — {board?.Period.Name ?? period}")" Icon="folder-plus" Size="md">
+    <ChildContent>
+        <p class="form-hint">One appraisal per person for the period, appraised by their line manager (falling back to their department head). Anyone who already has one for this period is skipped.</p>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@openForEveryone" Label="Every active member of staff on this branch" />
+        </div>
+        @if (!openForEveryone)
+        {
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@selectedSubjects" SelectedValuesChanged="@(v => selectedSubjects = v.ToList())"
+                              Items="@directory" TextSelector="@(m => m.FullName)" ValueSelector="@(m => m.UserId)" Label="Staff" Placeholder="Choose people" />
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showOpenDialog = false)" />
+        <QButton Text="Open appraisals" Icon="check-lg" Variant="primary" OnClick="@OpenAppraisals" Loading="@isOpening" Disabled="@(!openForEveryone && selectedSubjects.Count == 0)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .sa-period { min-width: 220px; }
+    .table-wrap { overflow-x: auto; }
+    .sa-row { cursor: pointer; }
+    .sa-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+    .sa-person { display: flex; align-items: center; gap: 8px; }
+    .sa-muted { color: var(--qm-text-muted); font-size: 12.5px; }
+    .form-group { margin-bottom: 14px; }
+</style>
+
+@code {
+    private Guid branchId;
+    private bool isLoading = true;
+    private bool canApprove;
+    private AppraisalBoardDto? board;
+    private string period = StaffPeriods.CurrentKey();
+    private IReadOnlyList<StaffPeriods.Option> periodOptions = StaffPeriods.Options();
+    private List<StaffMemberDto> directory = new();
+
+    private bool showOpenDialog, isOpening, openForEveryone = true;
+    private List<Guid> selectedSubjects = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasAnyPermissionAsync(Permissions.StaffAppraisalsConduct, Permissions.StaffAppraisalsApprove))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canApprove = await PermissionService.HasPermissionAsync(Permissions.StaffAppraisalsApprove);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        try
+        {
+            var policy = await StaffApi.GetPolicyAsync();
+            periodOptions = StaffPeriods.Options(policy.Periods);
+            if (periodOptions.All(o => o.Key != period)) period = periodOptions.First().Key;
+        }
+        catch (Exception)
+        {
+            // The derived terms are a fine default; the policy read is a refinement.
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            board = await StaffApi.GetAppraisalBoardAsync(branchId, period);
+        }
+        catch (Exception ex)
+        {
+            board = null;
+            Toast.Notify(ToastSeverity.Error, "Could not load the board", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPeriodChanged(string value)
+    {
+        period = value;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    private async Task OpenDialog()
+    {
+        openForEveryone = true;
+        selectedSubjects = new();
+        if (directory.Count == 0)
+        {
+            try { directory = (await StaffApi.GetDirectoryAsync(branchId, period)).Items.OrderBy(m => m.FullName).ToList(); }
+            catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message); }
+        }
+        showOpenDialog = true;
+    }
+
+    private async Task OpenAppraisals()
+    {
+        isOpening = true;
+        try
+        {
+            var opened = await StaffApi.OpenAppraisalsAsync(branchId, new OpenAppraisalsRequest
+            {
+                PeriodKey = period,
+                SubjectUserIds = openForEveryone ? null : selectedSubjects
+            });
+            showOpenDialog = false;
+            Toast.Notify(ToastSeverity.Success, $"{opened.Count} appraisal{(opened.Count == 1 ? "" : "s")} opened",
+                opened.Count == 0 ? "Everyone chosen already has an appraisal for this period." : "Each subject has been asked to agree targets.");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not open appraisals", ex.Message);
+        }
+        finally
+        {
+            isOpening = false;
+        }
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

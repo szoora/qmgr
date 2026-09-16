@@ -1,0 +1,440 @@
+@namespace QMgr.Web.Components.Admin.Staff
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IPermissionService PermissionService
+@inject IToastService Toast
+
+@*
+    The one "Log a record" form, shared by the directory, the timeline and the records page. The
+    shape follows the parameter's kind: an outcome for attendance and duty, a rubric rating for an
+    observation, signed points for contribution and conduct, nothing scored for wellbeing. After a
+    successful create the Attach Evidence dialog opens, exactly as StudentWelfareTimeline does.
+*@
+
+<QModal Visible="@Visible" VisibleChanged="@OnVisibleChanged" Title="Log a staff record" Icon="journal-plus" Size="lg">
+    <ChildContent>
+        @if (isLoadingParameters)
+        {
+            <div class="srd-loading"><QSpinner Size="md" /><span>Loading parameters...</span></div>
+        }
+        else
+        {
+            @if (!SubjectUserId.HasValue)
+            {
+                <div class="form-group">
+                    <QSelect TValue="Guid?" TItem="StaffMemberDto" Value="@subjectId" ValueChanged="@OnSubjectChanged" Items="@Subjects"
+                             TextSelector="@(s => s.FullName)" ValueSelector="@(s => (Guid?)s.UserId)" Label="Who is this about" Required="true"
+                             Placeholder="Choose a member of staff" HasError="@subjectError" ErrorMessage="Choose the member of staff the record is about." />
+                </div>
+            }
+            else if (Subject != null)
+            {
+                <p class="srd-subject">
+                    <QAvatar Name="@Subject.FullName" Size="sm" />
+                    <strong>@Subject.FullName</strong>
+                    @if (!string.IsNullOrWhiteSpace(Subject.JobTitle))
+                    {
+                        <span class="srd-muted">· @Subject.JobTitle</span>
+                    }
+                </p>
+            }
+
+            <div class="form-group">
+                <QSelect TValue="Guid?" TItem="PerformanceParameterDto" Value="@parameterId" ValueChanged="@OnParameterChanged" Items="@ApplicableParameters"
+                         TextSelector="@(p => $"{p.Name} — {StaffDisplay.KindLabel(p.Kind)}")" ValueSelector="@(p => (Guid?)p.Id)" Label="Parameter" Required="true"
+                         Placeholder="What is being recorded" HasError="@parameterError" ErrorMessage="Choose a parameter." />
+                @if (ApplicableParameters.Count == 0)
+                {
+                    <small class="srd-muted">No active parameter applies to this member of staff. A holder of the parameters permission can add one under Staff Performance → Parameters.</small>
+                }
+            </div>
+
+            @if (SelectedParameter != null)
+            {
+                @switch (SelectedParameter.Kind)
+                {
+                    case ParameterKind.Attendance:
+                    case ParameterKind.Duty:
+                        <div class="form-row">
+                            <div class="form-group">
+                                <QSelect TValue="DutyOutcome" TItem="DutyOutcome" @bind-Value="@outcome" Items="@OutcomeOptions"
+                                         TextSelector="@(o => StaffDisplay.OutcomeLabel(o))" ValueSelector="@(o => o)" Label="Outcome" Required="true" />
+                            </div>
+                            <div class="form-group">
+                                <label>Points</label>
+                                <div class="srd-readonly">@(SelectedParameter.DefaultPoints.HasValue ? StaffDisplay.Points(SelectedParameter.DefaultPoints) : "—")</div>
+                                <small class="srd-muted">Set by the outcome on save, from the parameter's default. Correctable afterwards from the timeline.</small>
+                            </div>
+                        </div>
+                        break;
+
+                    case ParameterKind.Observation:
+                        <div class="form-group">
+                            <label>Rating <span class="q-input__required">*</span></label>
+                            <QRating @bind-Value="@rating" Max="@(SelectedParameter.RatingScale ?? 4)" Labels="@RubricLabels" ShowLabels="true" Size="lg"
+                                     AriaLabel="Observation rating" EmptyLabel="Choose a level on the rubric" />
+                            @if (ratingError)
+                            {
+                                <span class="q-input__error">Choose a level on the rubric.</span>
+                            }
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <QDatePicker @bind-Value="@preObservationAt" ShowTime="true" Label="Pre-observation meeting" Clearable="true" Placeholder="When you met beforehand" />
+                            </div>
+                            <div class="form-group">
+                                <QDatePicker @bind-Value="@feedbackSessionAt" ShowTime="true" Label="Feedback session" Clearable="true" Placeholder="When feedback is scheduled" />
+                            </div>
+                        </div>
+                        break;
+
+                    case ParameterKind.Contribution:
+                    case ParameterKind.Conduct:
+                        <div class="form-group">
+                            <QInput TValue="int?" @bind-Value="@pointsMagnitude" Type="number" Min="0" Max="@SelectedParameter.MaxPointsPerEntry.ToString()"
+                                    Label="@(SelectedParameter.Kind == ParameterKind.Conduct ? "Points deducted" : "Points awarded")"
+                                    HasError="@pointsError" ErrorMessage="@($"Between 0 and {SelectedParameter.MaxPointsPerEntry}.")"
+                                    HelperText="@PointsHelp" />
+                        </div>
+                        break;
+
+                    case ParameterKind.Wellbeing:
+                        <div class="srd-note">
+                            <QIcon Name="heart" />
+                            <span>A wellbeing record is <strong>never scored</strong>. It carries no points and never reaches the composite; it exists so a bereavement, a workload concern or a health matter is on file for the people who need to know.</span>
+                        </div>
+                        break;
+                }
+            }
+
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@description" Type="textarea" Rows="4" Label="What happened" Required="true" MaxLength="2000"
+                        Placeholder="Describe it plainly, as you would want it read back to you." HasError="@descriptionError"
+                        ErrorMessage="At least 10 characters." />
+                <small class="srd-counter @(DescriptionLength < 10 ? "srd-counter--short" : "")">@DescriptionLength / 2000 — minimum 10</small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <QDatePicker @bind-Value="@occurredAt" ShowTime="true" Label="When it happened" Required="true" Max="@DateTime.Now" />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@visibility" Items="@ReadableVisibilities"
+                             TextSelector="@(v => StaffDisplay.VisibilityLabel(v))" ValueSelector="@(v => v)" Label="Visibility" Required="true"
+                             HelperText="@VisibilityHelp" />
+                </div>
+            </div>
+
+            @if (IsLateEntry)
+            {
+                <div class="warning-banner">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    <span>This date is more than 14 days ago. The record will say so on its face. Confirm this is correct before saving.</span>
+                    <QCheckbox @bind-Value="@acknowledgeLateEntry" Label="Yes, this is a late entry" />
+                </div>
+            }
+
+            @if (SelectedParameter != null && !string.IsNullOrWhiteSpace(SelectedParameter.Purpose))
+            {
+                <p class="srd-purpose"><QIcon Name="info-circle" /> <span>Collected for @PurposeText.</span></p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@Close" Disabled="@isSaving" />
+        <QButton Text="Save as draft" Icon="pencil-fill" Variant="ghost" OnClick="@(() => Save(asDraft: true))" Disabled="@isSaving" />
+        <QButton Text="Save record" Icon="check-lg" Variant="primary" OnClick="@(() => Save(asDraft: false))" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Attach Evidence (shown right after a record is created) ---------------- *@
+<QModal @bind-Visible="showAttachDialog" Title="Attach evidence (optional)" Size="md">
+    <ChildContent>
+        <p class="form-hint">Attach a photo, PDF, short video or audio clip as supporting evidence — a signed register, a lesson plan, a photograph of the display. You can skip this and add it later.</p>
+        @if (createdRecordId.HasValue)
+        {
+            <QFileUpload UploadUrl="@($"api/v1/branches/{BranchId}/staff/records/{createdRecordId}/attachments")"
+                         Accept="image/*,application/pdf,video/*,audio/*" Multiple="true" MaxSizeBytes="26214400" HintText="Images, PDF, video, or audio — up to 25MB"
+                         OnUploaded="@OnAttachmentUploaded" OnError="@OnAttachmentError" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Done" Icon="check-lg" Variant="primary" OnClick="@CloseAttachDialog" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .srd-loading { display: flex; align-items: center; gap: 10px; padding: 24px 0; color: var(--qm-text-muted); }
+    .srd-subject { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--qm-text-primary); }
+    .srd-muted { color: var(--qm-text-muted); font-size: 12.5px; }
+    .srd-readonly { padding: 9px 12px; border: 1px dashed var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); color: var(--qm-text-primary); font-weight: 600; }
+    .srd-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); font-size: 13px; color: var(--qm-text-secondary); }
+    .srd-counter { display: block; margin-top: 4px; font-size: 12px; color: var(--qm-text-muted); text-align: right; }
+    .srd-counter--short { color: var(--qm-warning); }
+    .srd-purpose { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 0; font-size: 12.5px; color: var(--qm-text-muted); }
+    .form-row { display: flex; flex-wrap: wrap; gap: 14px; }
+    .form-row .form-group { flex: 1 1 220px; min-width: 0; }
+    .form-group { margin-bottom: 14px; }
+    .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
+    .warning-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-warning); border-radius: var(--qm-radius-md); background: rgba(var(--qm-warning-rgb), 0.08); font-size: 13px; color: var(--qm-text-secondary); }
+    .warning-banner i { color: var(--qm-warning); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>Pre-selected subject (the timeline). Null on the directory and records pages, where the form asks.</summary>
+    [Parameter] public Guid? SubjectUserId { get; set; }
+
+    /// <summary>The directory, so the form can offer a subject and filter parameters to their staff group.</summary>
+    [Parameter] public IReadOnlyList<StaffMemberDto> Subjects { get; set; } = Array.Empty<StaffMemberDto>();
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>Raised with the created record after the evidence dialog closes.</summary>
+    [Parameter] public EventCallback<StaffPerformanceRecordDto> OnCreated { get; set; }
+
+    private static readonly IReadOnlyList<DutyOutcome> OutcomeOptions = new[]
+    {
+        DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Absent, DutyOutcome.Excused, DutyOutcome.Recovered
+    };
+
+    private List<PerformanceParameterDto> allParameters = new();
+    private bool isLoadingParameters, parametersLoaded, isSaving;
+    private bool canConfidential, canRestricted, rungsLoaded;
+
+    private Guid? subjectId;
+    private Guid? parameterId;
+    private DutyOutcome outcome = DutyOutcome.Present;
+    private int rating;
+    private int? pointsMagnitude;
+    private DateTime? preObservationAt, feedbackSessionAt;
+    private string description = string.Empty;
+    private DateTime? occurredAt = DateTime.Now;
+    private WelfareVisibility visibility = WelfareVisibility.Standard;
+    private bool acknowledgeLateEntry;
+
+    private bool subjectError, parameterError, ratingError, pointsError, descriptionError;
+
+    private bool showAttachDialog;
+    private Guid? createdRecordId;
+    private StaffPerformanceRecordDto? createdRecord;
+    private bool wasVisible;
+
+    private StaffMemberDto? Subject => Subjects.FirstOrDefault(s => s.UserId == (SubjectUserId ?? subjectId));
+    private PerformanceParameterDto? SelectedParameter => allParameters.FirstOrDefault(p => p.Id == parameterId);
+    private int DescriptionLength => description?.Length ?? 0;
+    private bool IsLateEntry => occurredAt.HasValue && occurredAt.Value < DateTime.Now.AddDays(-14);
+    private string PurposeText => (SelectedParameter?.Purpose ?? string.Empty).TrimEnd('.');
+
+    private string PointsHelp
+    {
+        get
+        {
+            var p = SelectedParameter;
+            if (p == null) return string.Empty;
+            var sign = p.Kind == ParameterKind.Conduct ? "Recorded as a negative figure." : "Recorded as a positive figure.";
+            var period = p.MaxPointsPerPeriod.HasValue ? $", {p.MaxPointsPerPeriod} per period" : string.Empty;
+            return $"{sign} Up to {p.MaxPointsPerEntry} per entry{period}.";
+        }
+    }
+
+    /// <summary>Active, not Recognition (that has its own form and budget), and applying to the subject's staff group.</summary>
+    private List<PerformanceParameterDto> ApplicableParameters
+    {
+        get
+        {
+            var group = Subject?.StaffGroup;
+            return allParameters
+                .Where(p => p.IsActive && p.Kind != ParameterKind.Recognition)
+                .Where(p => group == null || p.AppliesTo == StaffGroup.AllStaff || p.AppliesTo == group)
+                .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
+                .ToList();
+        }
+    }
+
+    private IReadOnlyList<string>? RubricLabels =>
+        SelectedParameter?.Rubric is { Count: > 0 } r ? r : null;
+
+    /// <summary>
+    /// The rungs the caller can read. A rung the caller could not read back is withheld rather than
+    /// greyed: QSelect has no per-item disabled state, and offering a level that would hide the
+    /// record from its own author is the same mistake either way.
+    /// </summary>
+    private IReadOnlyList<WelfareVisibility> ReadableVisibilities
+    {
+        get
+        {
+            var list = new List<WelfareVisibility> { WelfareVisibility.Standard };
+            if (canConfidential) list.Add(WelfareVisibility.Confidential);
+            if (canRestricted) list.Add(WelfareVisibility.Restricted);
+            return list;
+        }
+    }
+
+    private string VisibilityHelp => visibility switch
+    {
+        WelfareVisibility.Restricted => "Administrators only. The subject is not told.",
+        WelfareVisibility.Confidential => "Line managers and above. The subject sees that a record exists and its title, not its content.",
+        _ => "Everyone who may read this person's file, including the subject."
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !wasVisible)
+        {
+            ResetForm();
+            if (!rungsLoaded)
+            {
+                canConfidential = await PermissionService.HasPermissionAsync(Permissions.StaffConfidentialView);
+                canRestricted = await PermissionService.HasPermissionAsync(Permissions.StaffRestrictedView);
+                rungsLoaded = true;
+            }
+            if (!parametersLoaded) await LoadParametersAsync();
+        }
+        wasVisible = Visible;
+    }
+
+    private async Task LoadParametersAsync()
+    {
+        isLoadingParameters = true;
+        try
+        {
+            allParameters = await StaffApi.GetParametersAsync();
+            parametersLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load parameters", ex.Message);
+        }
+        finally
+        {
+            isLoadingParameters = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        subjectId = SubjectUserId;
+        parameterId = null;
+        outcome = DutyOutcome.Present;
+        rating = 0;
+        pointsMagnitude = null;
+        preObservationAt = feedbackSessionAt = null;
+        description = string.Empty;
+        occurredAt = DateTime.Now;
+        visibility = WelfareVisibility.Standard;
+        acknowledgeLateEntry = false;
+        subjectError = parameterError = ratingError = pointsError = descriptionError = false;
+    }
+
+    private void OnSubjectChanged(Guid? value)
+    {
+        subjectId = value;
+        // A parameter that does not apply to the new subject's group would be refused on save.
+        if (parameterId.HasValue && ApplicableParameters.All(p => p.Id != parameterId)) parameterId = null;
+    }
+
+    private void OnParameterChanged(Guid? value)
+    {
+        parameterId = value;
+        var p = SelectedParameter;
+        if (p == null) return;
+        rating = 0;
+        pointsMagnitude = p.DefaultPoints.HasValue ? Math.Abs(p.DefaultPoints.Value) : null;
+        // Default from the parameter, clamped to the highest rung the caller can read back.
+        visibility = ReadableVisibilities.Contains(p.DefaultVisibility) ? p.DefaultVisibility : ReadableVisibilities.Last();
+    }
+
+    private Task OnVisibleChanged(bool value)
+    {
+        Visible = value;
+        return VisibleChanged.InvokeAsync(value);
+    }
+
+    private Task Close() => OnVisibleChanged(false);
+
+    private async Task Save(bool asDraft)
+    {
+        var p = SelectedParameter;
+        var subject = SubjectUserId ?? subjectId;
+
+        subjectError = subject == null;
+        parameterError = p == null;
+        descriptionError = DescriptionLength < 10;
+        ratingError = p?.Kind == ParameterKind.Observation && rating < 1;
+        pointsError = p is { Kind: ParameterKind.Contribution or ParameterKind.Conduct }
+            && (pointsMagnitude == null || pointsMagnitude < 0 || pointsMagnitude > p.MaxPointsPerEntry);
+
+        if (subjectError || parameterError || descriptionError || ratingError || pointsError) return;
+
+        if (!asDraft && IsLateEntry && !acknowledgeLateEntry)
+        {
+            Toast.Notify(ToastSeverity.Warning, "This looks like a late entry", "Tick the confirmation under the date, or change the date, then save again.");
+            return;
+        }
+
+        var request = new CreateStaffRecordRequest
+        {
+            SubjectUserId = subject!.Value,
+            ParameterId = p!.Id,
+            Description = description.Trim(),
+            OccurredAt = (occurredAt ?? DateTime.Now).ToUniversalTime(),
+            Visibility = visibility,
+            SaveAsDraft = asDraft,
+            Outcome = p.Kind is ParameterKind.Attendance or ParameterKind.Duty ? outcome : DutyOutcome.NotApplicable,
+            Rating = p.Kind == ParameterKind.Observation ? rating : null,
+            Points = p.Kind switch
+            {
+                ParameterKind.Contribution => pointsMagnitude,
+                ParameterKind.Conduct => pointsMagnitude.HasValue ? -Math.Abs(pointsMagnitude.Value) : null,
+                _ => null
+            },
+            PreObservationMeetingAt = p.Kind == ParameterKind.Observation ? preObservationAt?.ToUniversalTime() : null,
+            FeedbackSessionAt = p.Kind == ParameterKind.Observation ? feedbackSessionAt?.ToUniversalTime() : null
+        };
+
+        isSaving = true;
+        try
+        {
+            createdRecord = await StaffApi.CreateRecordAsync(BranchId, request);
+            createdRecordId = createdRecord.Id;
+            Toast.Notify(ToastSeverity.Success, asDraft ? "Draft saved" : "Record saved",
+                $"{createdRecord.ParameterName} for {createdRecord.SubjectName}.");
+            await OnVisibleChanged(false);
+            showAttachDialog = true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the record", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private Task OnAttachmentUploaded(QFileUpload.UploadedFileResult result)
+    {
+        Toast.Notify(ToastSeverity.Success, "Uploaded", $"{result.FileName} attached");
+        return Task.CompletedTask;
+    }
+
+    private Task OnAttachmentError(string error)
+    {
+        Toast.Notify(ToastSeverity.Error, "Upload failed", error);
+        return Task.CompletedTask;
+    }
+
+    private async Task CloseAttachDialog()
+    {
+        showAttachDialog = false;
+        createdRecordId = null;
+        var created = createdRecord;
+        createdRecord = null;
+        if (created != null) await OnCreated.InvokeAsync(created);
+    }
+}

@@ -1,0 +1,602 @@
+@page "/admin/staff/notices"
+@implements IDisposable
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>Staff Notices - Q-Mgr</PageTitle>
+
+@*
+    Notices (plan §8): published to a branch, a set of departments, a set of roles or a staff
+    group; optionally pinned, optionally requiring acknowledgement, with Library documents attached.
+    Publishing fans out one Notification per recipient, so the read receipt is the Notification row
+    plus the notice row — "acknowledged 38 of 52" needs no third table.
+*@
+
+<div class="admin-page notices-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Staff notices</h1>
+            <p class="subtitle">Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged.</p>
+        </div>
+        <div class="header-actions">
+            <QCheckbox @bind-Value="@includeInactive" @bind-Value:after="LoadAsync" Label="Show withdrawn and expired" />
+            <QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading notices...</span></div>
+    }
+    else if (branchId == Guid.Empty)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="Notices are published to a branch. Pick one in the switcher above." />
+    }
+    else if (!notices.Any())
+    {
+        <QEmptyState Icon="megaphone" Title="@(includeInactive ? "No notices at all" : "No live notices")"
+                     Text="A notice reaches every recipient's bell and, by their own preference, their email. Pin it to keep it at the top of the portal; require acknowledgement when you need to know it was read.">
+            <Action><QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        <div class="notice-list">
+            @foreach (var n in notices.OrderByDescending(n => n.IsActive).ThenByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt))
+            {
+                var live = IsLive(n);
+                <QCard Class="@($"notice-card {(n.IsActive ? "" : "notice-card--off")} {(n.IsPinned && live ? "notice-card--pinned" : "")}")">
+                    <div class="notice-card__row">
+                        <div class="notice-card__main">
+                            <div class="notice-card__title">
+                                <strong>@n.Title</strong>
+                                @if (!n.IsActive) { <QChip Text="Withdrawn" Size="sm" Variant="muted" Icon="x-circle" /> }
+                                else if (n.PublishAt > DateTime.UtcNow) { <QChip Text="@($"Scheduled {QDateFormat.LocalDT(n.PublishAt)}")" Size="sm" Variant="info" Icon="clock" /> }
+                                else if (n.ExpiresAt.HasValue && n.ExpiresAt < DateTime.UtcNow) { <QChip Text="Expired" Size="sm" Variant="muted" Icon="calendar-x" /> }
+                                else { <QChip Text="Live" Size="sm" Variant="success" Icon="broadcast" /> }
+                                @if (n.IsPinned) { <QChip Text="Pinned" Size="sm" Variant="primary" Icon="pin-angle" /> }
+                                @if (n.RequiresAcknowledgement) { <QChip Text="Acknowledgement required" Size="sm" Variant="warning" Icon="hand-index" /> }
+                            </div>
+                            <div class="notice-card__facts">
+                                <span><QIcon Name="people" Size="sm" /> @AudienceSummary(n)</span>
+                                <span><QIcon Name="calendar-event" Size="sm" /> Published @QDateFormat.LocalDT(n.PublishAt)@(n.ExpiresAt.HasValue ? $" · expires {QDateFormat.D(Local(n.ExpiresAt.Value))}" : "")</span>
+                                <span><QIcon Name="person" Size="sm" /> @n.PublishedByName</span>
+                                @if (n.Attachments.Any()) { <span><QIcon Name="paperclip" Size="sm" /> @n.Attachments.Count attachment(s)</span> }
+                            </div>
+                            @if (n.RecipientCount > 0)
+                            {
+                                var pct = n.RequiresAcknowledgement ? (int)Math.Round(100.0 * n.AcknowledgedCount / n.RecipientCount) : 0;
+                                <div class="notice-card__ack">
+                                    @if (n.RequiresAcknowledgement)
+                                    {
+                                        <span class="notice-card__ack-text">Acknowledged <strong>@n.AcknowledgedCount</strong> of @n.RecipientCount</span>
+                                        <div class="notice-progress" role="progressbar" aria-valuenow="@pct" aria-valuemin="0" aria-valuemax="100" aria-label="Acknowledgement progress">
+                                            <div class="notice-progress__fill @(pct >= 100 ? "notice-progress__fill--done" : "")" style="width: @pct%"></div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="notice-card__ack-text">Sent to <strong>@n.RecipientCount</strong> @(n.RecipientCount == 1 ? "person" : "people")</span>
+                                    }
+                                </div>
+                            }
+                            else if (n.NotificationsSentAt == null && n.IsActive)
+                            {
+                                <span class="notice-card__ack-text">Not sent yet — recipients are notified at the publish time.</span>
+                            }
+                        </div>
+                        <div class="notice-card__actions">
+                            <QButton Text="Acknowledgements" Icon="list-check" Size="sm" Variant="secondary" OnClick="@(() => OpenAcks(n))" Disabled="@(n.RecipientCount == 0)" />
+                            @if (n.IsActive)
+                            {
+                                <QButton Text="Edit" Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenEdit(n))" />
+                                <QButton Text="Withdraw" Icon="x-circle" Size="sm" Variant="outline-danger" OnClick="@(() => AskWithdraw(n))" />
+                            }
+                        </div>
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+@* ---- New / edit notice ------------------------------------------------------------------- *@
+<QModal @bind-Visible="showEditor" Title="@(editingId.HasValue ? "Edit notice" : "New notice")" Icon="megaphone" Size="lg">
+    <ChildContent>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Title" Label="Title" Required="true" MaxLength="200" Placeholder="Short and specific — it is the notification's title too"
+                    HasError="@formErrors.Contains("title")" ErrorMessage="Give the notice a title" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.BodyHtml" Type="textarea" Rows="8" Label="Body" Required="true"
+                    Placeholder="The notice itself. Plain text is fine; simple HTML (paragraphs, bold, lists, links) is allowed."
+                    HelperText="Plain HTML is accepted — <p>, <strong>, <ul>, <a> and the like. Scripts, styles and event attributes are stripped by the server before anything is shown."
+                    HasError="@formErrors.Contains("body")" ErrorMessage="Write the notice" />
+        </div>
+
+        <div class="form-group">
+            <QSelect TValue="string" TItem="AudienceOption" @bind-Value="@audienceMode" Items="@AudienceModes"
+                     TextSelector="@(a => a.Label)" ValueSelector="@(a => a.Key)" Label="Audience" Required="true"
+                     HelperText="Who receives the notification and sees it on their portal." />
+        </div>
+        @if (audienceMode == "departments")
+        {
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="DepartmentDto" SelectedValues="@formDepartments" SelectedValuesChanged="@(v => formDepartments = v.ToList())"
+                              Items="@departments" ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Label="Departments" Required="true"
+                              Placeholder="Choose one or more departments" HasError="@formErrors.Contains("audience")" ErrorMessage="Choose at least one department" />
+            </div>
+        }
+        else if (audienceMode == "roles")
+        {
+            <div class="form-group">
+                <QMultiSelect TValue="string" TItem="RoleOption" SelectedValues="@formRoles" SelectedValuesChanged="@(v => formRoles = v.ToList())"
+                              Items="@roles" ValueSelector="@(r => r.Code)" TextSelector="@(r => r.Name)" Label="Roles" Required="true"
+                              Placeholder="Choose one or more roles" HasError="@formErrors.Contains("audience")" ErrorMessage="Choose at least one role" />
+            </div>
+        }
+        else if (audienceMode == "group")
+        {
+            <div class="form-group">
+                <QSelect TValue="StaffGroup?" TItem="GroupOption" @bind-Value="@formGroup" Items="@GroupOptions"
+                         TextSelector="@(g => g.Label)" ValueSelector="@(g => (StaffGroup?)g.Value)" Label="Staff group" Required="true"
+                         HasError="@formErrors.Contains("audience")" ErrorMessage="Choose a staff group" />
+            </div>
+        }
+
+        <div class="form-row">
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formPublishAt" ShowTime="true" Label="Publish at" Required="true"
+                             HelperText="Recipients are notified at this moment. Leave it as now to publish immediately."
+                             HasError="@formErrors.Contains("publish")" ErrorMessage="When should it go out?" />
+            </div>
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formExpiresAt" Label="Expires" Clearable="true" Min="@formPublishAt" Placeholder="Never"
+                             HelperText="After this date it leaves the portal. Acknowledgements are kept."
+                             HasError="@formErrors.Contains("expires")" ErrorMessage="Expiry must be after publication" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><QCheckbox @bind-Value="@form.IsPinned" Label="Pin to the top of the portal" /></div>
+            <div class="form-group"><QCheckbox @bind-Value="@form.RequiresAcknowledgement" Label="Require acknowledgement" /></div>
+        </div>
+
+        <div class="form-group">
+            <label class="notice-attach__label">Attachments</label>
+            <div class="notice-attach">
+                @foreach (var a in formAttachments)
+                {
+                    <QChip Text="@a.Name" Icon="file-earmark-pdf" Variant="muted" Removable="true" OnRemove="@(() => formAttachments.Remove(a))" RemoveLabel="@($"Remove {a.Name}")" />
+                }
+                <QButton Text="Add from Library" Icon="folder2-open" Size="sm" Variant="ghost" OnClick="@(() => showPicker = true)" />
+            </div>
+            <p class="form-hint">Attachments are Library documents (PDF). Publish the file to the Library first; the same file can then also go on signage or a share link.</p>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showEditor = false)" />
+        <QButton Text="@(editingId.HasValue ? "Save changes" : "Publish notice")" Icon="@(editingId.HasValue ? "check-lg" : "send")" Variant="primary" Loading="@saving" OnClick="@SaveAsync" />
+    </FooterContent>
+</QModal>
+
+<QLibraryPicker @bind-Visible="showPicker" OrganizationId="@organizationId" OnlyType="ContentType.Pdf" Multiple="true"
+                Title="Attach from the Library" ConfirmText="Attach" SelectedIds="@formAttachments.Select(a => a.Id)"
+                OnPicked="@(picked => { formAttachments = picked.Select(p => new AttachmentRef(p.Id, p.Name)).ToList(); })" />
+
+@* ---- Acknowledgements -------------------------------------------------------------------- *@
+<QModal @bind-Visible="showAcks" Title="@($"Who has read: {acksNotice?.Title}")" Icon="list-check" Size="lg">
+    <ChildContent>
+        @if (acksLoading)
+        {
+            <div class="loading-container loading-container--sm"><QSpinner Size="md" /><span>Loading...</span></div>
+        }
+        else if (acksNotice != null)
+        {
+            <div class="acks-summary">
+                <QChip Text="@($"{acks.Count} recipient(s)")" Icon="people" Variant="muted" />
+                <QChip Text="@($"{acks.Count(a => a.IsRead)} read")" Icon="eye" Variant="info" />
+                @if (acksNotice.RequiresAcknowledgement)
+                {
+                    <QChip Text="@($"{acks.Count(a => a.AcknowledgedAt.HasValue)} acknowledged")" Icon="check2-circle" Variant="success" />
+                    <QChip Text="@($"{acks.Count(a => !a.AcknowledgedAt.HasValue)} outstanding")" Icon="hourglass" Variant="@(acks.Any(a => !a.AcknowledgedAt.HasValue) ? "warning" : "muted")" />
+                }
+                <span class="acks-summary__export">
+                    <QDataExport TItem="NoticeAcknowledgementDto" Title="@($"Acknowledgements — {acksNotice.Title}")" FileStem="notice-acknowledgements"
+                                 Subtitle="@($"Published {QDateFormat.LocalDT(acksNotice.PublishAt)} by {acksNotice.PublishedByName}")"
+                                 Columns="@AckColumns" RowProvider="@(() => Task.FromResult(new ExportRows<NoticeAcknowledgementDto>(acks, false)))"
+                                 Formats="ExportFormat.Csv" Text="CSV" Disabled="@(!acks.Any())" DisabledReason="Nobody has received this notice yet." />
+                </span>
+            </div>
+            @if (!acks.Any())
+            {
+                <QEmptyState Icon="people" Title="No recipients yet" Text="Recipients appear here once the notice has been sent at its publish time." />
+            }
+            else
+            {
+                <div class="acks-table-wrap">
+                    <table class="data-table acks-table">
+                        <thead>
+                            <tr><th>Name</th><th>Read</th>@if (acksNotice.RequiresAcknowledgement) { <th>Acknowledged</th> }</tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var a in acks.OrderBy(a => a.AcknowledgedAt.HasValue).ThenBy(a => a.IsRead).ThenBy(a => a.FullName))
+                            {
+                                <tr>
+                                    <td><span class="acks-name"><QAvatar Name="@a.FullName" Size="sm" /> @a.FullName</span></td>
+                                    <td>@(a.IsRead ? "Yes" : "Not yet")</td>
+                                    @if (acksNotice.RequiresAcknowledgement)
+                                    {
+                                        <td>@(a.AcknowledgedAt.HasValue ? QDateFormat.LocalDT(a.AcknowledgedAt.Value) : "—")</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Icon="x-lg" Variant="ghost" OnClick="@(() => showAcks = false)" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog @bind-IsVisible="showWithdraw" Title="Withdraw this notice?"
+               Message="@($"\"{withdrawTarget?.Title}\" leaves every portal now. The notifications already sent stay in people's bells, and the acknowledgements are kept.")"
+               ConfirmText="Withdraw" ConfirmButtonClass="btn-danger" OnClose="@WithdrawConfirmedAsync" />
+
+<style>
+    .notices-page { max-width: 1100px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .notice-list { display: flex; flex-direction: column; gap: 10px; }
+    .notice-card--pinned { border-left: 3px solid var(--qm-primary); }
+    .notice-card--off { opacity: 0.7; }
+    .notice-card__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .notice-card__main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .notice-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
+    .notice-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--qm-text-secondary); }
+    .notice-card__facts span { display: inline-flex; align-items: center; gap: 4px; }
+    .notice-card__ack { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .notice-card__ack-text { font-size: 13px; color: var(--qm-text-secondary); }
+    .notice-progress { flex: 1 1 160px; max-width: 320px; height: 8px; border-radius: 4px; background: var(--qm-bg-secondary); overflow: hidden; }
+    .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: 4px; transition: width var(--qm-transition-base, 0.2s); }
+    .notice-progress__fill--done { background: var(--qm-success); }
+    .notice-card__actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
+    .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }
+    .notice-attach__label { display: block; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); margin-bottom: 6px; }
+    .notice-attach { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .acks-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .acks-summary__export { margin-left: auto; }
+    .acks-table-wrap { overflow-x: auto; }
+    .acks-name { display: inline-flex; align-items: center; gap: 8px; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .loading-container--sm { padding: 24px; border: 0; }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool includeInactive;
+    private Guid branchId;
+    private Guid organizationId;
+    private List<StaffNoticeDto> notices = new();
+    private List<DepartmentDto> departments = new();
+    private List<RoleOption> roles = new();
+    private bool lookupsLoaded;
+
+    private bool showEditor;
+    private bool saving;
+    private Guid? editingId;
+    private SaveStaffNoticeRequest form = new();
+    private string audienceMode = "branch";
+    private List<Guid> formDepartments = new();
+    private List<string> formRoles = new();
+    private StaffGroup? formGroup;
+    private DateTime? formPublishAt;
+    private DateTime? formExpiresAt;
+    private List<AttachmentRef> formAttachments = new();
+    private readonly HashSet<string> formErrors = new();
+    private bool showPicker;
+
+    private bool showAcks;
+    private bool acksLoading;
+    private StaffNoticeDto? acksNotice;
+    private List<NoticeAcknowledgementDto> acks = new();
+
+    private bool showWithdraw;
+    private StaffNoticeDto? withdrawTarget;
+
+    private sealed record AudienceOption(string Key, string Label);
+    private sealed record GroupOption(StaffGroup Value, string Label);
+    private sealed record RoleOption(string Code, string Name);
+    private sealed record AttachmentRef(Guid Id, string Name);
+    private sealed record RoleApiDto(Guid Id, string Name, string Code, bool IsActive);
+
+    private static readonly List<AudienceOption> AudienceModes = new()
+    {
+        new("branch", "Everyone in the branch"),
+        new("departments", "Specific departments"),
+        new("roles", "Specific roles"),
+        new("group", "A staff group (teaching or support)")
+    };
+
+    private static readonly List<GroupOption> GroupOptions = new()
+    {
+        new(StaffGroup.TeachingStaff, "Teaching staff"),
+        new(StaffGroup.SupportStaff, "Support staff")
+    };
+
+    private static readonly List<ExportColumn<NoticeAcknowledgementDto>> AckColumns = new()
+    {
+        new("Name", a => a.FullName, ExportType.Text, 28),
+        new("Read", a => a.IsRead ? "Yes" : "No", ExportType.Text, 8),
+        new("Acknowledged at", a => a.AcknowledgedAt.HasValue ? Local(a.AcknowledgedAt.Value) : null, ExportType.Date, 20)
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffNoticesManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        var me = await AuthService.GetCurrentUserAsync();
+        organizationId = me?.OrganizationId ?? Guid.Empty;
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            var next = BranchState.CurrentBranchId;
+            if (next == branchId) return;
+            branchId = next;
+            lookupsLoaded = false;
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadAsync()
+    {
+        if (branchId == Guid.Empty) { isLoading = false; notices = new(); return; }
+        isLoading = true;
+        try
+        {
+            notices = await StaffApi.GetManagedNoticesAsync(branchId, includeInactive);
+            // Department names are needed for the audience summary on every row, not only the editor.
+            if (!lookupsLoaded) await EnsureLookupsAsync();
+        }
+        catch (Exception ex)
+        {
+            notices = new();
+            Toast.Notify(ToastSeverity.Error, "Could not load notices", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task EnsureLookupsAsync()
+    {
+        if (lookupsLoaded) return;
+        try
+        {
+            departments = (await StaffApi.GetDepartmentsAsync(branchId)).Where(d => d.IsActive).OrderBy(d => d.SortOrder).ThenBy(d => d.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load departments", ex.Message);
+        }
+        try
+        {
+            // Same call UsersSetup makes; only Name and Code are needed here.
+            var response = await Http.GetAsync("api/v1/roles");
+            if (response.IsSuccessStatusCode)
+            {
+                var apiRoles = await response.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
+                roles = apiRoles.Where(r => r.IsActive).Select(r => new RoleOption(r.Code, r.Name)).OrderBy(r => r.Name).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load roles", ex.Message);
+        }
+        lookupsLoaded = true;
+    }
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+
+    private static bool IsLive(StaffNoticeDto n) => n.IsActive && n.PublishAt <= DateTime.UtcNow && (!n.ExpiresAt.HasValue || n.ExpiresAt > DateTime.UtcNow);
+
+    private string AudienceSummary(StaffNoticeDto n)
+    {
+        if (n.AudienceDepartmentIds is { Count: > 0 } deptIds)
+        {
+            var names = deptIds.Select(id => departments.FirstOrDefault(d => d.Id == id)?.Name ?? "a department").ToList();
+            return "Departments: " + string.Join(", ", names);
+        }
+        if (n.AudienceRoleCodes is { Count: > 0 } codes)
+        {
+            var names = codes.Select(c => roles.FirstOrDefault(r => r.Code == c)?.Name ?? c).ToList();
+            return "Roles: " + string.Join(", ", names);
+        }
+        if (n.AudienceStaffGroup.HasValue && n.AudienceStaffGroup != StaffGroup.AllStaff)
+            return n.AudienceStaffGroup == StaffGroup.TeachingStaff ? "Teaching staff" : "Support staff";
+        return "Everyone in the branch";
+    }
+
+    // ---- Create / edit -----------------------------------------------------------------------
+
+    private async Task OpenCreate()
+    {
+        editingId = null;
+        form = new SaveStaffNoticeRequest { BranchId = branchId };
+        audienceMode = "branch";
+        formDepartments = new();
+        formRoles = new();
+        formGroup = null;
+        var now = DateTime.Now;
+        formPublishAt = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0);
+        formExpiresAt = null;
+        formAttachments = new();
+        formErrors.Clear();
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private async Task OpenEdit(StaffNoticeDto n)
+    {
+        editingId = n.Id;
+        form = new SaveStaffNoticeRequest
+        {
+            BranchId = n.BranchId ?? branchId,
+            Title = n.Title,
+            BodyHtml = n.BodyHtml,
+            IsPinned = n.IsPinned,
+            RequiresAcknowledgement = n.RequiresAcknowledgement
+        };
+        formDepartments = n.AudienceDepartmentIds?.ToList() ?? new();
+        formRoles = n.AudienceRoleCodes?.ToList() ?? new();
+        formGroup = n.AudienceStaffGroup is StaffGroup g && g != StaffGroup.AllStaff ? g : null;
+        audienceMode = formDepartments.Any() ? "departments" : formRoles.Any() ? "roles" : formGroup.HasValue ? "group" : "branch";
+        formPublishAt = Local(n.PublishAt);
+        formExpiresAt = n.ExpiresAt.HasValue ? Local(n.ExpiresAt.Value) : null;
+        formAttachments = n.Attachments.Select(a => new AttachmentRef(a.MediaContentId, a.Name)).ToList();
+        formErrors.Clear();
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        formErrors.Clear();
+        if (string.IsNullOrWhiteSpace(form.Title)) formErrors.Add("title");
+        if (string.IsNullOrWhiteSpace(form.BodyHtml)) formErrors.Add("body");
+        if (!formPublishAt.HasValue) formErrors.Add("publish");
+        if (formExpiresAt.HasValue && formPublishAt.HasValue && formExpiresAt.Value.Date < formPublishAt.Value.Date) formErrors.Add("expires");
+        if (audienceMode == "departments" && !formDepartments.Any()) formErrors.Add("audience");
+        if (audienceMode == "roles" && !formRoles.Any()) formErrors.Add("audience");
+        if (audienceMode == "group" && !formGroup.HasValue) formErrors.Add("audience");
+        if (formErrors.Any()) return;
+
+        form.Title = form.Title.Trim();
+        form.AudienceDepartmentIds = audienceMode == "departments" ? formDepartments.ToList() : null;
+        form.AudienceRoleCodes = audienceMode == "roles" ? formRoles.ToList() : null;
+        form.AudienceStaffGroup = audienceMode == "group" ? formGroup : null;
+        form.PublishAt = ToUtc(formPublishAt!.Value);
+        // An expiry is a date: it runs to the end of that local day.
+        form.ExpiresAt = formExpiresAt.HasValue ? ToUtc(formExpiresAt.Value.Date.AddDays(1).AddTicks(-1)) : null;
+        form.AttachmentMediaContentIds = formAttachments.Select(a => a.Id).ToList();
+
+        saving = true;
+        try
+        {
+            if (editingId.HasValue)
+            {
+                await StaffApi.UpdateNoticeAsync(branchId, editingId.Value, form);
+                Toast.Notify(ToastSeverity.Success, "Notice updated", form.Title);
+            }
+            else
+            {
+                var created = await StaffApi.CreateNoticeAsync(branchId, form);
+                Toast.Notify(ToastSeverity.Success, created.PublishAt > DateTime.UtcNow ? "Notice scheduled" : "Notice published",
+                    created.PublishAt > DateTime.UtcNow ? $"Goes out {QDateFormat.LocalDT(created.PublishAt)}." : $"Sent to {created.RecipientCount} {(created.RecipientCount == 1 ? "person" : "people")}.");
+            }
+            showEditor = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, editingId.HasValue ? "Could not update the notice" : "Could not publish the notice", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    // ---- Withdraw ----------------------------------------------------------------------------
+
+    private void AskWithdraw(StaffNoticeDto n)
+    {
+        withdrawTarget = n;
+        showWithdraw = true;
+    }
+
+    private async Task WithdrawConfirmedAsync(bool confirmed)
+    {
+        if (!confirmed || withdrawTarget == null) return;
+        try
+        {
+            await StaffApi.WithdrawNoticeAsync(branchId, withdrawTarget.Id);
+            Toast.Notify(ToastSeverity.Success, "Notice withdrawn", withdrawTarget.Title);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not withdraw the notice", ex.Message);
+        }
+        finally
+        {
+            withdrawTarget = null;
+        }
+    }
+
+    // ---- Acknowledgements --------------------------------------------------------------------
+
+    private async Task OpenAcks(StaffNoticeDto n)
+    {
+        acksNotice = n;
+        acks = new();
+        showAcks = true;
+        acksLoading = true;
+        try
+        {
+            acks = await StaffApi.GetNoticeAcknowledgementsAsync(branchId, n.Id);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the acknowledgements", ex.Message);
+        }
+        finally
+        {
+            acksLoading = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+    }
+}

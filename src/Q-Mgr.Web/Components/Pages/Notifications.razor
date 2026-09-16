@@ -1,0 +1,349 @@
+@page "/notifications"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@inject INotificationApiService NotificationApi
+@inject INotificationClientService NotificationHub
+@inject IToastService Toast
+@inject NavigationManager Navigation
+
+<PageTitle>Notifications - Q-Mgr</PageTitle>
+
+@*
+    The notification centre (plan §10): the full list, grouped by NotificationEventKeys category,
+    mark-all-read per group, paged. The bell stays the twenty-item preview. Base product — no module
+    gate, only signed-in. A group tab exists only for a category that has at least one notification,
+    built from the keys actually loaded; a key the catalogue does not know goes under "Other".
+
+    Paging: "All" and a single-key group page on the server. A category that spans several keys
+    (Staff Performance has nine) is fetched key by key and paged here, because the API filters on
+    one key at a time and interleaving per-key offsets would skip and repeat rows.
+*@
+
+<div class="admin-page notif-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Notifications</h1>
+            <p class="subtitle">Everything you have been told, newest first. The bell shows the latest twenty; this is all of them.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="@(activeGroup == AllKey ? "Mark all read" : "Mark this group read")" Icon="check2-all" Variant="secondary" Size="sm"
+                     Disabled="@(!pageItems.Any(n => !n.IsRead))" Loading="@markingAll" OnClick="@MarkGroupReadAsync" />
+            <QButton Text="Preferences" Icon="sliders" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/profile/notifications"))" />
+        </div>
+    </div>
+
+    @if (tabs.Count > 1)
+    {
+        <QTabs Tabs="@tabs" ActiveKey="@activeGroup" ActiveKeyChanged="@SwitchGroupAsync" AriaLabel="Notification groups" Class="notif-tabs" />
+    }
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading notifications...</span></div>
+    }
+    else if (loadError != null)
+    {
+        <QEmptyState Icon="exclamation-triangle" Title="Notifications could not be loaded" Text="@loadError">
+            <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" OnClick="@(() => LoadPageAsync(0))" /></Action>
+        </QEmptyState>
+    }
+    else if (!pageItems.Any())
+    {
+        <QEmptyState Icon="bell-slash" Title="@(activeGroup == AllKey ? "No notifications yet" : $"Nothing under {activeGroup}")"
+                     Text="When something needs your attention — a duty, a record about you, a visitor at the desk — it will be listed here." />
+    }
+    else
+    {
+        <QCard NoPadding="true" Class="notif-card">
+            <ul class="notif-list">
+                @foreach (var n in pageItems)
+                {
+                    <li>
+                        <button type="button" class="notif-row @(n.IsRead ? "" : "notif-row--unread")" @onclick="@(() => OpenAsync(n))"
+                                aria-label="@($"{n.Title}{(n.IsRead ? "" : ", unread")}")">
+                            <span class="notif-row__icon notif-row__icon--@TypeClass(n.Type)"><QIcon Name="@IconFor(n)" /></span>
+                            <span class="notif-row__main">
+                                <span class="notif-row__title">@n.Title</span>
+                                <span class="notif-row__message">@n.Message</span>
+                                <span class="notif-row__meta">
+                                    @QDateFormat.LocalDT(n.CreatedAt)
+                                    @if (!string.IsNullOrEmpty(n.EventKey)) { <text> · @EventName(n.EventKey)</text> }
+                                    @if (n.ReadAt.HasValue) { <text> · read @QDateFormat.LocalDT(n.ReadAt.Value)</text> }
+                                </span>
+                            </span>
+                            @if (!n.IsRead) { <span class="notif-row__dot" aria-hidden="true"></span> }
+                            @if (!string.IsNullOrEmpty(n.ActionUrl)) { <QIcon Name="chevron-right" Class="notif-row__go" /> }
+                        </button>
+                    </li>
+                }
+            </ul>
+        </QCard>
+
+        <div class="notif-pager">
+            <span class="notif-pager__caption">Showing @(offset + 1)–@(offset + pageItems.Count)@(clientPaged ? $" of {clientBuffer.Count}" : hasMore ? " · more available" : "")</span>
+            <QPager Count="@PagerCount" PageSize="@PageSize" PageIndex="@(offset / PageSize)" PageIndexChanged="@(i => LoadPageAsync(i * PageSize))" ShowCaption="false" />
+        </div>
+    }
+</div>
+
+<style>
+    .notif-page { max-width: 960px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .notif-tabs { margin-bottom: 12px; }
+    .notif-card { margin-bottom: 12px; }
+    .notif-list { list-style: none; margin: 0; padding: 0; }
+    .notif-list li + li { border-top: 1px solid var(--qm-border); }
+    .notif-row { display: flex; align-items: flex-start; gap: 12px; width: 100%; min-height: 56px; padding: 12px 16px; text-align: left; background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer; }
+    .notif-row:hover { background: var(--qm-bg-secondary); }
+    .notif-row--unread { background: rgba(var(--qm-primary-rgb), 0.04); }
+    .notif-row__icon { width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; background: var(--qm-bg-secondary); color: var(--qm-text-secondary); }
+    .notif-row__icon--success { background: rgba(var(--qm-success-rgb), 0.12); color: var(--qm-success); }
+    .notif-row__icon--warning { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-warning); }
+    .notif-row__icon--error { background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); }
+    .notif-row__icon--info { background: rgba(var(--qm-info-rgb), 0.12); color: var(--qm-info); }
+    .notif-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .notif-row__title { font-weight: 600; color: var(--qm-text-primary); }
+    .notif-row--unread .notif-row__title { color: var(--qm-primary); }
+    .notif-row__message { color: var(--qm-text-secondary); font-size: 14px; overflow-wrap: anywhere; }
+    .notif-row__meta { color: var(--qm-text-muted); font-size: 12px; }
+    .notif-row__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--qm-primary); margin-top: 8px; flex: 0 0 auto; }
+    .notif-row__go { color: var(--qm-text-muted); margin-top: 8px; }
+    .notif-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--qm-text-muted); }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+</style>
+
+@code {
+    private const string AllKey = "All";
+    private const string OtherKey = "Other";
+    private const int PageSize = 50;
+
+    private bool isLoading = true;
+    private string? loadError;
+    private bool markingAll;
+
+    private string activeGroup = AllKey;
+    private int offset;
+    private bool hasMore;
+    private List<NotificationDto> pageItems = new();
+
+    // Groups seen so far: category -> distinct event keys under it. Built from every page loaded,
+    // so a tab appears the moment a notification of its category is seen.
+    private readonly Dictionary<string, HashSet<string>> groupKeys = new();
+    private List<QTab> tabs = new();
+
+    // Client-side paging buffer for a multi-key category.
+    private bool clientPaged;
+    private List<NotificationDto> clientBuffer = new();
+
+    private int PagerCount => clientPaged ? clientBuffer.Count : offset + pageItems.Count + (hasMore ? PageSize : 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        NotificationHub.OnNotificationReceived -= HandleReceived;
+        NotificationHub.OnNotificationReceived += HandleReceived;
+        await LoadPageAsync(0);
+    }
+
+    private async Task SwitchGroupAsync(string key)
+    {
+        activeGroup = key;
+        await LoadPageAsync(0);
+    }
+
+    private async Task LoadPageAsync(int newOffset)
+    {
+        isLoading = true;
+        loadError = null;
+        offset = Math.Max(0, newOffset);
+        try
+        {
+            var keys = activeGroup == AllKey ? null : (groupKeys.TryGetValue(activeGroup, out var k) ? k.ToList() : new List<string>());
+
+            if (keys == null || keys.Count == 1)
+            {
+                clientPaged = false;
+                clientBuffer = new();
+                var page = await NotificationApi.GetNotificationsAsync(keys?.Single(), offset, PageSize);
+                pageItems = page.Items;
+                hasMore = page.HasMore;
+                Absorb(pageItems);
+            }
+            else
+            {
+                // Several keys: pull each key's rows (bounded) and page the merged list here.
+                clientPaged = true;
+                if (offset == 0 || !clientBuffer.Any())
+                {
+                    var merged = new List<NotificationDto>();
+                    foreach (var key in keys)
+                    {
+                        var keyOffset = 0;
+                        for (var i = 0; i < 4; i++)
+                        {
+                            var page = await NotificationApi.GetNotificationsAsync(key, keyOffset, 199);
+                            merged.AddRange(page.Items);
+                            if (!page.HasMore) break;
+                            keyOffset += 199;
+                        }
+                    }
+                    clientBuffer = merged.OrderByDescending(n => n.CreatedAt).ToList();
+                    Absorb(clientBuffer);
+                }
+                pageItems = clientBuffer.Skip(offset).Take(PageSize).ToList();
+                hasMore = clientBuffer.Count > offset + PageSize;
+            }
+            RebuildTabs();
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+            pageItems = new();
+            Toast.Notify(ToastSeverity.Error, "Could not load notifications", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Absorb(IEnumerable<NotificationDto> items)
+    {
+        foreach (var n in items)
+        {
+            var category = CategoryOf(n.EventKey);
+            if (!groupKeys.TryGetValue(category, out var set)) groupKeys[category] = set = new HashSet<string>();
+            set.Add(n.EventKey ?? OtherKey);
+        }
+    }
+
+    private void RebuildTabs()
+    {
+        var list = new List<QTab> { new(AllKey, "All", "bell") };
+        list.AddRange(groupKeys.Keys
+            .OrderBy(c => c == OtherKey ? 1 : 0).ThenBy(c => c)
+            .Select(c => new QTab(c, c, CategoryIcon(c))));
+        tabs = list;
+    }
+
+    private static string CategoryOf(string? eventKey)
+    {
+        if (string.IsNullOrEmpty(eventKey)) return OtherKey;
+        return NotificationEventKeys.All.FirstOrDefault(d => d.Key == eventKey)?.Category ?? OtherKey;
+    }
+
+    private static string EventName(string eventKey) => NotificationEventKeys.All.FirstOrDefault(d => d.Key == eventKey)?.Name ?? eventKey;
+
+    private static string CategoryIcon(string category) => category switch
+    {
+        "Staff Performance" => "person-badge",
+        "Student Welfare" => "heart-pulse",
+        "Visitors" => "person-walking",
+        "Documents" => "file-earmark-lock",
+        OtherKey => "three-dots",
+        _ => "tag"
+    };
+
+    private static string TypeClass(string type) => type.ToLowerInvariant() switch
+    {
+        "success" => "success",
+        "warning" => "warning",
+        "error" or "danger" or "alert" => "error",
+        "info" or "information" => "info",
+        _ => "default"
+    };
+
+    private static string IconFor(NotificationDto n)
+    {
+        // IconClass arrives as a Bootstrap Icons class ("bi-bell") when the sender set one; QIcon takes the bare name.
+        if (!string.IsNullOrWhiteSpace(n.IconClass))
+        {
+            var cls = n.IconClass.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(c => c.StartsWith("bi-"));
+            if (cls != null) return cls[3..];
+        }
+        return n.EventKey switch
+        {
+            NotificationEventKeys.StaffRecordLogged => "journal-text",
+            NotificationEventKeys.StaffPointsEarned => "lightning-charge",
+            NotificationEventKeys.StaffRecognitionReceived => "award",
+            NotificationEventKeys.StaffDutyReminder => "calendar-event",
+            NotificationEventKeys.StaffRegisterDue => "clipboard-check",
+            NotificationEventKeys.StaffAppraisalStage => "clipboard2-check",
+            NotificationEventKeys.StaffNoticePublished => "megaphone",
+            NotificationEventKeys.StaffProfileChanged => "person-gear",
+            NotificationEventKeys.StaffWeeklyDigest => "envelope-paper",
+            NotificationEventKeys.WelfareRecordLogged => "heart-pulse",
+            NotificationEventKeys.WelfareActionOverdue => "alarm",
+            NotificationEventKeys.WelfareFlagReviewOverdue => "flag",
+            NotificationEventKeys.VisitorArrived => "person-walking",
+            NotificationEventKeys.DocumentShareOpened => "file-earmark-lock",
+            _ => "bell"
+        };
+    }
+
+    private async Task OpenAsync(NotificationDto n)
+    {
+        if (!n.IsRead)
+        {
+            await NotificationApi.MarkAsReadAsync(n.Id);
+            n.IsRead = true;
+            n.ReadAt = DateTime.UtcNow;
+        }
+        if (!string.IsNullOrEmpty(n.ActionUrl))
+            Navigation.NavigateTo(n.ActionUrl);
+    }
+
+    private async Task MarkGroupReadAsync()
+    {
+        markingAll = true;
+        try
+        {
+            if (activeGroup == AllKey)
+            {
+                await NotificationApi.MarkAllAsReadAsync((string?)null);
+            }
+            else if (groupKeys.TryGetValue(activeGroup, out var keys))
+            {
+                // One call per key rather than one for everything: "mark this group read" must not
+                // also clear the groups the person has not looked at.
+                foreach (var key in keys.Where(k => k != OtherKey))
+                    await NotificationApi.MarkAllAsReadAsync(key);
+            }
+            foreach (var n in pageItems) { n.IsRead = true; n.ReadAt ??= DateTime.UtcNow; }
+            foreach (var n in clientBuffer) { n.IsRead = true; n.ReadAt ??= DateTime.UtcNow; }
+            Toast.Notify(ToastSeverity.Success, "Marked as read", activeGroup == AllKey ? "Every notification is now read." : $"Everything under {activeGroup} is now read.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not mark notifications as read", ex.Message);
+        }
+        finally
+        {
+            markingAll = false;
+        }
+    }
+
+    private async Task HandleReceived(NotificationDto n)
+    {
+        await InvokeAsync(() =>
+        {
+            Absorb(new[] { n });
+            RebuildTabs();
+            var belongs = activeGroup == AllKey || CategoryOf(n.EventKey) == activeGroup;
+            if (belongs && offset == 0 && pageItems.All(x => x.Id != n.Id))
+            {
+                pageItems.Insert(0, n);
+                if (clientPaged) clientBuffer.Insert(0, n);
+                if (pageItems.Count > PageSize) { pageItems.RemoveAt(pageItems.Count - 1); hasMore = true; }
+            }
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        NotificationHub.OnNotificationReceived -= HandleReceived;
+    }
+}

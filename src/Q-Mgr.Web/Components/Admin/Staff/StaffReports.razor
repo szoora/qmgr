@@ -1,0 +1,391 @@
+@page "/admin/staff/reports"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Staff Reports - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Staff Performance Reports</h1>
+            <p class="subtitle">
+                @if (reports?.ScopedToDepartments.Any() == true)
+                {
+                    <text>How the departments you head are doing this period, by department, parameter and observer.</text>
+                }
+                else
+                {
+                    <text>How the branch is doing this period, by department, parameter, band and observer.</text>
+                }
+            </p>
+        </div>
+        <div class="header-actions">
+            <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+                     TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
+            <QButton Text="Print / publish" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/reports/report?period={Uri.EscapeDataString(period)}"))" Disabled="@(reports == null)" />
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(reports?.ScopedToDepartments)" Noun="figures" />
+
+    @if (isLoading && reports == null)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Building the reports...</span></div>
+    }
+    else if (reports == null)
+    {
+        <QEmptyState Icon="bar-chart" Title="The reports could not be built" Text="Try another period, or reload the page." />
+    }
+    else
+    {
+        <QStatRow>
+            <QStatTile Value="@reports.StaffCount.ToString()" Label="Staff" Icon="people" />
+            <QStatTile Value="@reports.RecordCount.ToString()" Label="Records" Icon="journal-text" />
+            <QStatTile Value="@reports.RecognitionCount.ToString()" Label="Recognition" Icon="award" Variant="success" />
+            <QStatTile Value="@reports.DutyCount.ToString()" Label="Duties" Icon="clipboard-check" />
+            <QStatTile Value="@reports.RegistersNotTaken.ToString()" Label="Registers not taken" Icon="clipboard-x" Variant="@(reports.RegistersNotTaken > 0 ? "warning" : "default")"
+                       Sub="@(reports.RegistersNotTaken > 0 ? "duties whose register was never closed" : null)" />
+        </QStatRow>
+
+        <QTabs Tabs="@Tabs" ActiveKey="@activeTab" ActiveKeyChanged="@(k => activeTab = k)" AriaLabel="Report sections" />
+
+        @if (activeTab == "overview")
+        {
+            <div class="report-columns">
+                <QCard Title="By department" Icon="diagram-3" Class="rp-card">
+                    @if (!reports.ByDepartment.Any())
+                    {
+                        <p class="chart-empty">No department has scored evidence in this period.</p>
+                    }
+                    else
+                    {
+                        <div class="table-wrap">
+                            <table class="data-table rp-table">
+                                <thead><tr><th>Department</th><th class="rp-num">Staff</th><th class="rp-num">Avg composite</th><th class="rp-num">Attendance</th><th class="rp-num">Recognition</th></tr></thead>
+                                <tbody>
+                                    @foreach (var d in reports.ByDepartment.OrderByDescending(d => d.AverageComposite ?? -1))
+                                    {
+                                        <tr>
+                                            <td>@d.Name</td>
+                                            <td class="rp-num">@d.StaffCount</td>
+                                            <td class="rp-num">@StaffDisplay.Composite(d.AverageComposite)</td>
+                                            <td class="rp-num">@(d.AttendanceRate.HasValue ? $"{d.AttendanceRate.Value:0}%" : "—")</td>
+                                            <td class="rp-num">@d.RecognitionCount</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </QCard>
+
+                <QCard Title="Band distribution" Icon="bar-chart-steps" Class="chart-card rp-card">
+                    @if (reports.BandDistribution.Sum(b => b.Count) == 0)
+                    {
+                        <p class="chart-empty">Nobody has enough evidence to be banded yet this period.</p>
+                    }
+                    else
+                    {
+                        <RadzenChart Style="height: 260px;">
+                            <RadzenColumnSeries Data="@BandChartData" CategoryProperty="Name" ValueProperty="Count" Title="Staff" />
+                            <RadzenCategoryAxis />
+                            <RadzenValueAxis Min="0" Step="1"><RadzenGridLines Visible="true" /></RadzenValueAxis>
+                        </RadzenChart>
+                    }
+                </QCard>
+            </div>
+
+            <QCard Title="Trend by week" Icon="graph-up" Class="chart-card rp-card">
+                @if (!reports.TrendByWeek.Any(t => t.Records > 0))
+                {
+                    <p class="chart-empty">No records were logged in this period, so there is no trend to draw yet.</p>
+                }
+                else
+                {
+                    <RadzenChart Style="height: 260px;">
+                        <RadzenLineSeries Data="@TrendChartData" CategoryProperty="Week" ValueProperty="Records" Title="Records" Smooth="true" />
+                        <RadzenLineSeries Data="@TrendChartData" CategoryProperty="Week" ValueProperty="Points" Title="Net points" Smooth="true" />
+                        <RadzenCategoryAxis />
+                        <RadzenValueAxis><RadzenGridLines Visible="true" /></RadzenValueAxis>
+                    </RadzenChart>
+                }
+            </QCard>
+        }
+        else if (activeTab == "parameters")
+        {
+            <QCard Title="Records by parameter" Icon="list-check" Class="rp-card">
+                <QBarList Items="@ParameterBars" EmptyText="No records against any parameter in this period." />
+                <p class="form-hint rp-hint">The figure after each bar is the average score (0–100) of the people who have evidence on that parameter, where the kind is scored.</p>
+            </QCard>
+        }
+        else if (activeTab == "observers")
+        {
+            <QCard Title="Observer dispersion" Icon="eye" Class="rp-card">
+                <p class="form-hint">Each observer's mean rating against the school's. A gap of half a point or more either way is worth a conversation about the rubric, not a verdict on the observer.</p>
+                @if (!reports.ObserverDispersion.Any())
+                {
+                    <p class="chart-empty">No lesson observations were logged in this period.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table rp-table">
+                            <thead><tr><th>Observer</th><th class="rp-num">Observations</th><th class="rp-num">Mean rating</th><th class="rp-num">School mean</th><th>Difference</th></tr></thead>
+                            <tbody>
+                                @foreach (var o in reports.ObserverDispersion.OrderByDescending(o => Math.Abs(o.MeanRating - o.SchoolMean)))
+                                {
+                                    var diff = o.MeanRating - o.SchoolMean;
+                                    <tr>
+                                        <td><div class="rp-person"><QAvatar Name="@o.Name" Size="sm" /><span>@o.Name</span></div></td>
+                                        <td class="rp-num">@o.Observations</td>
+                                        <td class="rp-num">@o.MeanRating.ToString("0.00")</td>
+                                        <td class="rp-num">@o.SchoolMean.ToString("0.00")</td>
+                                        <td><QChip Text="@((diff >= 0 ? "+" : "") + diff.ToString("0.00"))" Variant="@(Math.Abs(diff) >= 0.5m ? "warning" : "muted")" Size="sm" Icon="@(Math.Abs(diff) >= 0.5m ? "exclamation-triangle" : null)" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </QCard>
+        }
+        else if (activeTab == "loggers")
+        {
+            <QCard Title="Who logs what" Icon="person-lines-fill" Class="rp-card">
+                <p class="form-hint">Who's logging what, and how often — a school's own process-consistency check, not an evaluation of any one person or department.</p>
+                <QBarList Items="@LoggerBars" EmptyText="Nobody has logged a record in this period." />
+            </QCard>
+        }
+        else if (activeTab == "leaderboard")
+        {
+            <QCard Title="Leaderboard" Icon="trophy" Class="rp-card">
+                @if (reports.LeaderboardMode == LeaderboardMode.Public && reports.Leaderboard.Any())
+                {
+                    <div class="table-wrap">
+                        <table class="data-table rp-table">
+                            <thead><tr><th class="rp-num">#</th><th>Name</th><th>Department</th><th class="rp-num">Composite</th><th>Band</th></tr></thead>
+                            <tbody>
+                                @foreach (var row in reports.Leaderboard.OrderBy(r => r.Rank))
+                                {
+                                    <tr class="rp-row" @onclick="@(() => Navigation.NavigateTo($"/admin/staff/{row.UserId}/timeline"))">
+                                        <td class="rp-num">@row.Rank</td>
+                                        <td><div class="rp-person"><QAvatar Name="@row.Name" Size="sm" /><span>@row.Name</span></div></td>
+                                        <td>@(row.DepartmentName ?? "—")</td>
+                                        <td class="rp-num">@StaffDisplay.Composite(row.Composite)</td>
+                                        <td><QChip Text="@row.BandName" Variant="@StaffDisplay.BandVariant(row.Band)" Size="sm" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <p class="rp-muted">
+                        @if (reports.LeaderboardMode == LeaderboardMode.Public)
+                        {
+                            <text>The leaderboard is switched on for this organisation but nobody has enough scored evidence this period to appear on it.</text>
+                        }
+                        else
+                        {
+                            <text>Individual rankings are not shown. This organisation's setting is <strong>@StaffDisplay.LeaderboardLabel(reports.LeaderboardMode)</strong>. A holder of the parameters permission can change it under Staff Performance → Policy; the research the module rests on is why it is off by default.</text>
+                        }
+                    </p>
+                }
+            </QCard>
+        }
+        else if (activeTab == "coverage")
+        {
+            var c = reports.Coverage;
+            <div class="rp-coverage">
+                <QCard Title="@($"Departments without a head ({c.DepartmentsWithoutHead.Count})")" Icon="diagram-3" Class="rp-card">
+                    @if (!c.DepartmentsWithoutHead.Any()) { <p class="rp-muted">Every active department has a head.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var d in c.DepartmentsWithoutHead) { <li><a href="/admin/staff/structure">@d.Name</a> <span class="rp-muted">· @d.MemberCount member@(d.MemberCount == 1 ? "" : "s")</span></li> }</ul>
+                    }
+                </QCard>
+                <QCard Title="@($"Staff without a department ({c.StaffWithoutDepartment.Count})")" Icon="person-dash" Class="rp-card">
+                    @if (!c.StaffWithoutDepartment.Any()) { <p class="rp-muted">Everyone is in at least one department.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var m in c.StaffWithoutDepartment) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a> <span class="rp-muted">· @m.RoleName</span></li> }</ul>
+                        <a class="rp-link" href="/admin/staff/structure">Fix under Structure → Staff</a>
+                    }
+                </QCard>
+                <QCard Title="@($"Staff without a line manager ({c.StaffWithoutLineManager.Count})")" Icon="person-x" Class="rp-card">
+                    @if (!c.StaffWithoutLineManager.Any()) { <p class="rp-muted">Everyone reports to somebody.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var m in c.StaffWithoutLineManager) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a> <span class="rp-muted">· @(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : m.RoleName)</span></li> }</ul>
+                        <a class="rp-link" href="/admin/staff/structure">Fix under Structure → Staff</a>
+                    }
+                </QCard>
+                <QCard Title="@($"No appraisal this period ({c.StaffWithoutAppraiserThisPeriod.Count})")" Icon="clipboard-x" Class="rp-card">
+                    @if (!c.StaffWithoutAppraiserThisPeriod.Any()) { <p class="rp-muted">Everyone has an appraisal open for @c.PeriodKey.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var m in c.StaffWithoutAppraiserThisPeriod) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a></li> }</ul>
+                        <a class="rp-link" href="/admin/staff/appraisals">Open appraisals</a>
+                    }
+                </QCard>
+                <QCard Title="@($"Not observed this period ({c.StaffWithoutObservationThisPeriod.Count})")" Icon="eye-slash" Class="rp-card">
+                    @if (!c.StaffWithoutObservationThisPeriod.Any()) { <p class="rp-muted">Every teacher has had a lesson observation this period.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var m in c.StaffWithoutObservationThisPeriod) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a> <span class="rp-muted">· @(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : m.RoleName)</span></li> }</ul>
+                    }
+                </QCard>
+                <QCard Title="@($"Parameters with no records ({c.ParametersWithNoRecordsThisPeriod.Count})")" Icon="list-check" Class="rp-card">
+                    @if (!c.ParametersWithNoRecordsThisPeriod.Any()) { <p class="rp-muted">Every active parameter has evidence this period.</p> }
+                    else
+                    {
+                        <ul class="rp-list">@foreach (var p in c.ParametersWithNoRecordsThisPeriod) { <li><a href="/admin/staff/parameters">@p.Name</a> <span class="rp-muted">· @StaffDisplay.KindLabel(p.Kind)</span></li> }</ul>
+                        <p class="rp-muted rp-hint">A parameter nobody logs against either is not being measured or should be retired.</p>
+                    }
+                </QCard>
+            </div>
+        }
+    }
+</div>
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .rp-period { min-width: 220px; }
+    .report-columns { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+    .report-columns > * { flex: 1 1 380px; min-width: 0; }
+    .rp-card { min-width: 0; margin-bottom: 16px; }
+    .chart-card h4 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
+    .chart-empty { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
+    .table-wrap { overflow-x: auto; }
+    .rp-table th { white-space: nowrap; }
+    .rp-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .rp-person { display: flex; align-items: center; gap: 8px; }
+    .rp-row { cursor: pointer; }
+    .rp-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+    .rp-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; line-height: 1.5; }
+    .rp-hint { margin-top: 10px; font-size: 12px; }
+    .rp-coverage { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .rp-list { margin: 0; padding-left: 18px; font-size: 13.5px; display: flex; flex-direction: column; gap: 4px; }
+    .rp-list a { color: var(--qm-text-primary); font-weight: 500; }
+    .rp-list a:hover { color: var(--qm-primary); }
+    .rp-link { display: inline-block; margin-top: 10px; font-size: 13px; color: var(--qm-primary); }
+</style>
+
+@code {
+    private static readonly IReadOnlyList<QTab> Tabs = new[]
+    {
+        new QTab("overview", "Overview", "grid"),
+        new QTab("parameters", "Parameters", "list-check"),
+        new QTab("observers", "Observers", "eye"),
+        new QTab("loggers", "Who logs what", "person-lines-fill"),
+        new QTab("leaderboard", "Leaderboard", "trophy"),
+        new QTab("coverage", "Coverage", "shield-check")
+    };
+
+    private record BandPoint(string Name, int Count);
+    private record TrendPoint(string Week, int Records, int Points);
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private StaffReportsDto? reports;
+    private string period = StaffPeriods.CurrentKey();
+    private IReadOnlyList<StaffPeriods.Option> periodOptions = StaffPeriods.Options();
+    private string activeTab = "overview";
+
+    private List<BandPoint> BandChartData =>
+        reports?.BandDistribution.OrderByDescending(b => b.Rating).Select(b => new BandPoint($"{b.Rating} {b.Name}", b.Count)).ToList() ?? new();
+
+    private List<TrendPoint> TrendChartData =>
+        reports?.TrendByWeek.OrderBy(t => t.WeekStart).Select(t => new TrendPoint(QDateFormat.C(t.WeekStart), t.Records, t.Points)).ToList() ?? new();
+
+    private IReadOnlyList<QBarItem> ParameterBars =>
+        reports?.ByParameter.OrderByDescending(p => p.RecordCount)
+            .Select(p => new QBarItem(p.Name, p.RecordCount,
+                Count: p.AverageScore.HasValue ? $"{p.RecordCount} · avg {p.AverageScore.Value:0}" : p.RecordCount.ToString(),
+                Color: p.Color ?? StaffDisplay.KindColor(p.Kind),
+                Hint: StaffDisplay.KindLabel(p.Kind)))
+            .ToList() ?? new List<QBarItem>();
+
+    private IReadOnlyList<QBarItem> LoggerBars =>
+        reports?.WhoLogsWhat.OrderByDescending(l => l.Count)
+            .Select(l => new QBarItem(l.Name, l.Count,
+                Count: l.Count.ToString(),
+                Href: $"/admin/staff/{l.UserId}/timeline",
+                Hint: l.ByKind.Any() ? string.Join(", ", l.ByKind.OrderByDescending(k => k.Value).Select(k => $"{k.Value} {k.Key.ToLowerInvariant()}")) : null))
+            .ToList() ?? new List<QBarItem>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffReportsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        try
+        {
+            var policy = await StaffApi.GetPolicyAsync();
+            periodOptions = StaffPeriods.Options(policy.Periods);
+            if (periodOptions.All(o => o.Key != period)) period = periodOptions.First().Key;
+        }
+        catch (Exception) { }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            reports = await StaffApi.GetReportsAsync(branchId, period);
+        }
+        catch (Exception ex)
+        {
+            reports = null;
+            Toast.Notify(ToastSeverity.Error, "Could not build the reports", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPeriodChanged(string value)
+    {
+        period = value;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

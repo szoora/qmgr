@@ -1,0 +1,435 @@
+@page "/admin/staff/parameters"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Performance Parameters - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Performance Parameters</h1>
+            <p class="subtitle">What is measured: the taxonomy every staff record is logged against, with its points, caps, weight and default visibility. Organisation-wide.</p>
+        </div>
+        <div class="header-actions">
+            <QCheckbox @bind-Value="@showInactive" Label="Show retired" />
+            <QButton Text="New parameter" Icon="plus-lg" Variant="primary" OnClick="@ShowCreate" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading parameters...</span></div>
+    }
+    else if (!Visible.Any())
+    {
+        <QEmptyState Icon="list-check" Title="No parameters yet"
+                     Text="Every tenant is seeded with the MoES set (lesson attendance, observation, exam and prep supervision, meetings, co-curricular, records, recognition, CPD, conduct, wellbeing). If that seed did not run, add the first parameter here.">
+            <Action><QButton Text="Add the first parameter" Icon="plus-lg" Variant="primary" OnClick="@ShowCreate" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        <p class="pp-weights">
+            Total weight of active scored parameters: <strong>@TotalWeight.ToString("0.#")</strong>.
+            The policy refuses any single parameter above <strong>@maxWeightPercent%</strong> of the total (the MET ceiling); the share column shows where each one stands.
+        </p>
+        <QCard NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table pp-table">
+                    <thead>
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Kind</th>
+                            <th>Applies to</th>
+                            <th class="pp-num">Default points</th>
+                            <th class="pp-num">Cap / entry</th>
+                            <th class="pp-num">Cap / period</th>
+                            <th class="pp-num">Weight</th>
+                            <th class="pp-num">Share</th>
+                            <th class="pp-num">Scale</th>
+                            <th>Default visibility</th>
+                            <th>Active</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in Visible)
+                        {
+                            var share = TotalWeight > 0 && p.IsActive && p.Kind != ParameterKind.Wellbeing ? p.Weight / TotalWeight * 100 : 0;
+                            <tr class="@(p.IsActive ? "" : "pp-row--inactive")">
+                                <td>
+                                    <div class="pp-name">
+                                        <span class="pp-swatch" style="background: @(p.Color ?? StaffDisplay.KindColor(p.Kind))"></span>
+                                        <div>
+                                            <strong>@p.Name</strong>
+                                            @if (p.IsSystemSource) { <QChip Text="Automatic" Variant="info" Size="sm" Icon="cpu" /> }
+                                            @if (!string.IsNullOrWhiteSpace(p.Description)) { <div class="pp-desc">@p.Description</div> }
+                                        </div>
+                                    </div>
+                                </td>
+                                <td><QChip Text="@StaffDisplay.KindLabel(p.Kind)" Color="@StaffDisplay.KindColor(p.Kind)" Icon="@StaffDisplay.KindIcon(p.Kind)" Size="sm" /></td>
+                                <td>@GroupLabel(p.AppliesTo)</td>
+                                <td class="pp-num">@(p.DefaultPoints.HasValue ? StaffDisplay.Points(p.DefaultPoints) : "—")</td>
+                                <td class="pp-num">@(p.Kind == ParameterKind.Wellbeing ? "—" : p.MaxPointsPerEntry.ToString())</td>
+                                <td class="pp-num">@(p.MaxPointsPerPeriod?.ToString() ?? "—")</td>
+                                <td class="pp-num">@(p.Kind == ParameterKind.Wellbeing ? "—" : p.Weight.ToString("0.#"))</td>
+                                <td class="pp-num @(share > maxWeightPercent ? "pp-over" : "")">@(p.Kind == ParameterKind.Wellbeing || !p.IsActive ? "—" : $"{share:0}%")</td>
+                                <td class="pp-num">@(p.RatingScale?.ToString() ?? "—")</td>
+                                <td><QChip Text="@StaffDisplay.VisibilityLabel(p.DefaultVisibility)" Variant="@StaffDisplay.VisibilityVariant(p.DefaultVisibility)" Size="sm" /></td>
+                                <td>@(p.IsActive ? "Yes" : "Retired")</td>
+                                <td>
+                                    <div class="pp-actions">
+                                        <QButton Icon="pencil-fill" Variant="ghost" Size="sm" OnClick="@(() => ShowEdit(p))" Title="Edit" />
+                                        <QButton Icon="@(p.IsActive ? "eye-slash-fill" : "eye-fill")" Variant="ghost" Size="sm" OnClick="@(() => Toggle(p))" Title="@(p.IsActive ? "Retire" : "Reactivate")" />
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+    }
+</div>
+
+<QModal @bind-Visible="showDialog" Title="@(editing == null ? "New parameter" : $"Edit — {editing.Name}")" Icon="list-check" Size="lg">
+    <ChildContent>
+        <div class="form-row">
+            <div class="form-group pp-grow">
+                <QInput TValue="string" @bind-Value="@form.Name" Label="Name" Required="true" MaxLength="120" Placeholder="e.g. Lesson Observation" HasError="@nameError" ErrorMessage="A name is required." />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="ParameterKind" TItem="ParameterKind" Value="@form.Kind" ValueChanged="@OnKindChanged" Items="@Kinds"
+                         TextSelector="@(k => StaffDisplay.KindLabel(k))" ValueSelector="@(k => k)" Label="Kind" Required="true" Disabled="@(editing != null)"
+                         HelperText="@(editing != null ? "The kind decides the sign rule and the formula, so it cannot change once records exist." : KindHelp(form.Kind))" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Description" Type="textarea" Rows="2" Label="Description" MaxLength="1000" Placeholder="What counts, in a sentence." />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="StaffGroup" TItem="StaffGroup" @bind-Value="@form.AppliesTo" Items="@Groups" TextSelector="@(g => GroupLabel(g))" ValueSelector="@(g => g)" Label="Applies to" Required="true" />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@form.DefaultVisibility" Items="@Visibilities"
+                         TextSelector="@(v => StaffDisplay.VisibilityLabel(v))" ValueSelector="@(v => v)" Label="Default visibility" Required="true"
+                         HelperText="@(form.Kind == ParameterKind.Observation ? "Observations are developmental; Confidential is the MoES-aligned default." : null)" />
+            </div>
+        </div>
+
+        @if (form.Kind != ParameterKind.Wellbeing)
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="int?" @bind-Value="@form.DefaultPoints" Type="number" Label="Default points" Placeholder="Signed" HelperText="@SignHelp(form.Kind)" HasError="@pointsError" ErrorMessage="@pointsErrorText" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="int" @bind-Value="@form.MaxPointsPerEntry" Type="number" Min="0" Label="Cap per entry" Required="true" HelperText="The most one record may carry." />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="int?" @bind-Value="@form.MaxPointsPerPeriod" Type="number" Min="0" Label="Cap per period" Placeholder="No cap" HelperText="Stops one parameter dominating a term." />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="decimal" @bind-Value="@form.Weight" Type="number" Min="0" Step="0.5" Label="Weight" Required="true" HelperText="Share of the composite. 0 = evidence only, never scored." />
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="pp-note"><QIcon Name="heart" /><span>Wellbeing parameters are never scored: no points, no weight, no caps. They exist so a concern about a member of staff is on file for the people who need to know.</span></div>
+        }
+
+        @if (form.Kind == ParameterKind.Observation)
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="int?" Value="@form.RatingScale" ValueChanged="@OnScaleChanged" Type="number" Min="2" Max="10" Label="Rating scale" Required="true" HelperText="4 for the MoES lesson-observation rubric." HasError="@scaleError" ErrorMessage="Between 2 and 10." />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Rubric — one descriptor per level, lowest first</label>
+                @for (var i = 0; i < form.Rubric.Count; i++)
+                {
+                    var idx = i;
+                    <div class="pp-rubric-row">
+                        <span class="pp-rubric-level">@(idx + 1)</span>
+                        <QInput TValue="string" @bind-Value="@form.Rubric[idx]" Placeholder="@RubricPlaceholder(idx, form.Rubric.Count)" MaxLength="300" Class="pp-grow" />
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Purpose" Type="textarea" Rows="2" Label="Purpose" Required="true" MaxLength="300"
+                    Placeholder="e.g. cover planning and appraisal evidence"
+                    HelperText="Shown on every record as “Collected for …”. A member of staff reading their own file should be able to see why this is kept about them." HasError="@purposeError" ErrorMessage="Say what this is collected for." />
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label>Colour</label>
+                <div class="pp-colors">
+                    <button type="button" class="pp-color @(form.Color == null ? "selected" : "")" style="background: @StaffDisplay.KindColor(form.Kind)" title="Kind default" @onclick="@(() => form.Color = null)"></button>
+                    @foreach (var c in Colors)
+                    {
+                        <button type="button" class="pp-color @(form.Color == c ? "selected" : "")" style="background: @c" title="@c" @onclick="@(() => form.Color = c)"></button>
+                    }
+                </div>
+            </div>
+            <div class="form-group">
+                <QInput TValue="int" @bind-Value="@form.SortOrder" Type="number" Min="0" Max="999" Label="Sort order" />
+            </div>
+        </div>
+
+        <div class="form-group">
+            <QCheckbox @bind-Value="@form.IsSystemSource" Label="System source" />
+            <small class="pp-help">Credited automatically from welfare/queue/visitor activity when the scoring policy allows it. Records it creates are labelled “Automatic” on every timeline so nobody mistakes them for a colleague's judgement.</small>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showDialog = false)" Disabled="@isSaving" />
+        <QButton Text="@(editing == null ? "Create" : "Save")" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@isSaving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .pp-weights { margin: 0 0 12px; font-size: 13px; color: var(--qm-text-secondary); }
+    .table-wrap { overflow-x: auto; }
+    .pp-table th { white-space: nowrap; }
+    .pp-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .pp-over { color: var(--qm-danger); font-weight: 700; }
+    .pp-row--inactive td { opacity: 0.6; }
+    .pp-name { display: flex; gap: 10px; align-items: flex-start; min-width: 200px; }
+    .pp-swatch { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+    .pp-desc { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
+    .pp-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 14px; }
+    .form-row .form-group { flex: 1 1 160px; min-width: 0; }
+    .form-group { margin-bottom: 14px; }
+    .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
+    .pp-grow { flex: 2 1 240px !important; }
+    .pp-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); font-size: 13px; color: var(--qm-text-secondary); }
+    .pp-rubric-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .pp-rubric-level { width: 24px; height: 24px; border-radius: 50%; background: var(--qm-bg-secondary); color: var(--qm-text-secondary); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .pp-colors { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pp-color { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+    .pp-color.selected { border-color: var(--qm-text-primary); }
+    .pp-help { display: block; margin-top: 4px; font-size: 12px; color: var(--qm-text-muted); }
+</style>
+
+@code {
+    private static readonly IReadOnlyList<ParameterKind> Kinds = Enum.GetValues<ParameterKind>();
+    private static readonly IReadOnlyList<StaffGroup> Groups = Enum.GetValues<StaffGroup>();
+    private static readonly IReadOnlyList<WelfareVisibility> Visibilities = Enum.GetValues<WelfareVisibility>();
+    private static readonly string[] Colors =
+    {
+        "#8c2f52", "#2f6f8c", "#2f8c5a", "#8c6f2f", "#6f2f8c", "#8c452f", "#2f8c86", "#5a5a5a"
+    };
+
+    private bool isLoading = true, isSaving, showInactive, showDialog;
+    private List<PerformanceParameterDto> parameters = new();
+    private PerformanceParameterDto? editing;
+    private SavePerformanceParameterRequest form = new();
+    private int maxWeightPercent = 50;
+    private bool nameError, purposeError, pointsError, scaleError;
+    private string pointsErrorText = "";
+
+    private IEnumerable<PerformanceParameterDto> Visible =>
+        parameters.Where(p => showInactive || p.IsActive).OrderBy(p => p.SortOrder).ThenBy(p => p.Name);
+
+    private decimal TotalWeight => parameters.Where(p => p.IsActive && p.Kind != ParameterKind.Wellbeing).Sum(p => p.Weight);
+
+    private static string GroupLabel(StaffGroup g) => g switch
+    {
+        StaffGroup.TeachingStaff => "Teaching staff",
+        StaffGroup.SupportStaff => "Support staff",
+        _ => "All staff"
+    };
+
+    private static string KindHelp(ParameterKind k) => k switch
+    {
+        ParameterKind.Attendance => "Scored by outcome ratio: present, late (half), recovered over expected; excused leaves the denominator.",
+        ParameterKind.Duty => "A duty carried out or not; scored by outcome ratio like attendance.",
+        ParameterKind.Observation => "A rated observation on a written rubric; scored by mean rating over the scale.",
+        ParameterKind.Contribution => "Positive points for something done, capped per entry and per period.",
+        ParameterKind.Recognition => "Positive points from a colleague within the monthly budget.",
+        ParameterKind.Conduct => "Negative points for a conduct matter.",
+        ParameterKind.Wellbeing => "Never scored.",
+        _ => ""
+    };
+
+    private static string SignHelp(ParameterKind k) => k switch
+    {
+        ParameterKind.Conduct => "Conduct points are negative.",
+        ParameterKind.Contribution or ParameterKind.Recognition => "Positive.",
+        ParameterKind.Attendance or ParameterKind.Duty => "Applied per outcome on the register; leave blank to score the ratio only.",
+        _ => "Optional."
+    };
+
+    private static string RubricPlaceholder(int idx, int count) =>
+        idx == 0 ? "e.g. Needs significant support" : idx == count - 1 ? "e.g. Outstanding — a model for others" : $"Descriptor for level {idx + 1}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        try
+        {
+            var policy = await StaffApi.GetPolicyAsync();
+            maxWeightPercent = policy.MaxParameterWeightPercent;
+        }
+        catch (Exception) { }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            parameters = await StaffApi.GetParametersAsync(includeInactive: true);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load parameters", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowCreate()
+    {
+        editing = null;
+        form = new SavePerformanceParameterRequest { SortOrder = parameters.Count == 0 ? 0 : parameters.Max(p => p.SortOrder) + 10 };
+        ClearErrors();
+        showDialog = true;
+    }
+
+    private void ShowEdit(PerformanceParameterDto p)
+    {
+        editing = p;
+        form = new SavePerformanceParameterRequest
+        {
+            Name = p.Name, Description = p.Description, Kind = p.Kind, AppliesTo = p.AppliesTo,
+            DefaultPoints = p.DefaultPoints, MaxPointsPerEntry = p.MaxPointsPerEntry, MaxPointsPerPeriod = p.MaxPointsPerPeriod,
+            Weight = p.Weight, RatingScale = p.RatingScale, Rubric = new List<string>(p.Rubric),
+            DefaultVisibility = p.DefaultVisibility, Purpose = p.Purpose, Color = p.Color, SortOrder = p.SortOrder, IsSystemSource = p.IsSystemSource
+        };
+        if (p.Kind == ParameterKind.Observation) ResizeRubric(p.RatingScale ?? 4);
+        ClearErrors();
+        showDialog = true;
+    }
+
+    private void ClearErrors() { nameError = purposeError = pointsError = scaleError = false; pointsErrorText = ""; }
+
+    private void OnKindChanged(ParameterKind kind)
+    {
+        form.Kind = kind;
+        switch (kind)
+        {
+            case ParameterKind.Observation:
+                form.RatingScale ??= 4;
+                form.DefaultVisibility = WelfareVisibility.Confidential;
+                ResizeRubric(form.RatingScale.Value);
+                break;
+            case ParameterKind.Wellbeing:
+                form.DefaultPoints = null; form.Weight = 0; form.MaxPointsPerPeriod = null; form.RatingScale = null; form.Rubric.Clear();
+                form.DefaultVisibility = WelfareVisibility.Confidential;
+                break;
+            case ParameterKind.Conduct:
+                if (form.DefaultPoints > 0) form.DefaultPoints = -form.DefaultPoints;
+                form.RatingScale = null; form.Rubric.Clear();
+                break;
+            default:
+                if (form.DefaultPoints < 0) form.DefaultPoints = -form.DefaultPoints;
+                form.RatingScale = null; form.Rubric.Clear();
+                break;
+        }
+    }
+
+    private void OnScaleChanged(int? scale)
+    {
+        form.RatingScale = scale;
+        if (scale is >= 2 and <= 10) ResizeRubric(scale.Value);
+    }
+
+    private void ResizeRubric(int size)
+    {
+        while (form.Rubric.Count < size) form.Rubric.Add(string.Empty);
+        while (form.Rubric.Count > size) form.Rubric.RemoveAt(form.Rubric.Count - 1);
+    }
+
+    private async Task Save()
+    {
+        nameError = string.IsNullOrWhiteSpace(form.Name);
+        purposeError = string.IsNullOrWhiteSpace(form.Purpose);
+        scaleError = form.Kind == ParameterKind.Observation && form.RatingScale is not (>= 2 and <= 10);
+        pointsError = false;
+        if (form.Kind == ParameterKind.Conduct && form.DefaultPoints > 0) { pointsError = true; pointsErrorText = "Conduct points are negative."; }
+        if (form.Kind is ParameterKind.Contribution or ParameterKind.Recognition && form.DefaultPoints < 0) { pointsError = true; pointsErrorText = "These points are positive."; }
+        if (form.DefaultPoints.HasValue && Math.Abs(form.DefaultPoints.Value) > form.MaxPointsPerEntry) { pointsError = true; pointsErrorText = "The default cannot exceed the per-entry cap."; }
+        if (nameError || purposeError || scaleError || pointsError) return;
+
+        if (form.Kind != ParameterKind.Observation) { form.RatingScale = null; form.Rubric = new(); }
+        else form.Rubric = form.Rubric.Select(r => r?.Trim() ?? string.Empty).ToList();
+
+        isSaving = true;
+        try
+        {
+            if (editing == null) await StaffApi.CreateParameterAsync(form);
+            else await StaffApi.UpdateParameterAsync(editing.Id, form);
+            Toast.Notify(ToastSeverity.Success, editing == null ? "Parameter created" : "Parameter saved", form.Name);
+            showDialog = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            // The API's weight-cap message ("no single parameter above N% of the total") arrives here verbatim.
+            Toast.Notify(ToastSeverity.Error, "Could not save the parameter", ex.Message, 9000);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task Toggle(PerformanceParameterDto p)
+    {
+        try
+        {
+            await StaffApi.ToggleParameterAsync(p.Id);
+            Toast.Notify(ToastSeverity.Success, p.IsActive ? "Parameter retired" : "Parameter reactivated", p.Name);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not change the parameter", ex.Message);
+        }
+    }
+}

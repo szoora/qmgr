@@ -1,0 +1,477 @@
+@page "/portal/appraisals/{Id:guid}"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>My Appraisal - Q-Mgr</PageTitle>
+
+@*
+    The subject's view of their own appraisal. The API answers the subject, the appraiser and the
+    moderator from one route; this page renders only what the subject does — read, self-assess,
+    appeal — and leaves the appraiser's and moderator's forms to /admin/staff/appraisals/{id}.
+*@
+
+<div class="admin-page appr-page">
+    <div class="page-header">
+        <div class="header-content">
+            <QButton Text="Back to my portal" Icon="arrow-left" Variant="ghost" Size="sm" Class="appr-back" OnClick="@(() => Navigation.NavigateTo("/portal"))" />
+            <h1>My appraisal</h1>
+            @if (ap != null)
+            {
+                <p class="subtitle">@ap.PeriodKey · @QDateFormat.Range(ap.PeriodStart, ap.PeriodEnd) · Appraiser: @ap.AppraiserName@(ap.ModeratorName != null ? $" · Moderator: {ap.ModeratorName}" : "")</p>
+            }
+        </div>
+        <div class="header-actions">
+            @if (ap != null)
+            {
+                <QChip Text="@StaffDisplay.StageLabel(ap.Stage)" Variant="@StaffDisplay.StageVariant(ap.Stage)" />
+                <QButton Text="Print" Icon="printer" Variant="secondary" Size="sm"
+                         OnClick="@(() => Navigation.NavigateTo($"/admin/staff/appraisals/{ap.Id}/report"))" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading your appraisal...</span></div>
+    }
+    else if (ap == null)
+    {
+        <QEmptyState Icon="clipboard2-x" Title="This appraisal could not be opened"
+                     Text="@(loadError ?? "It may belong to another period or another person.")">
+            <Action><QButton Text="Back to my portal" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/portal"))" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        @* ---- Stage stepper ------------------------------------------------------------------ *@
+        <QCard Class="appr-card" NoPadding="true">
+            <ol class="appr-steps" aria-label="Appraisal stages">
+                @foreach (var step in Steps)
+                {
+                    var state = StepState(step);
+                    <li class="appr-step appr-step--@state">
+                        <span class="appr-step__dot"><QIcon Name="@(state == "done" ? "check-lg" : state == "current" ? "circle-fill" : "circle")" Size="sm" /></span>
+                        <span class="appr-step__label">@StaffDisplay.StageLabel(step)</span>
+                    </li>
+                }
+                @if (ap.Stage == AppraisalStage.Appealed)
+                {
+                    <li class="appr-step appr-step--appealed">
+                        <span class="appr-step__dot"><QIcon Name="exclamation-lg" Size="sm" /></span>
+                        <span class="appr-step__label">Appealed — back to moderation</span>
+                    </li>
+                }
+            </ol>
+        </QCard>
+
+        <div class="appr-grid">
+            @* ---- Targets ---------------------------------------------------------------------- *@
+            <QCard Title="Targets for this period" Icon="bullseye" Class="appr-card">
+                @if (!ap.Targets.Any())
+                {
+                    <QEmptyState Icon="bullseye" Title="No targets agreed yet" Text="Your appraiser sets these with you at the start of the period." />
+                }
+                else
+                {
+                    <ul class="appr-targets">
+                        @foreach (var t in ap.Targets)
+                        {
+                            <li class="@(t.Achieved ? "appr-target--done" : "")">
+                                <QIcon Name="@(t.Achieved ? "check-circle-fill" : "circle")" Class="appr-target__tick" />
+                                <span>@t.Text @if (t.ParameterId.HasValue) { <em class="appr-muted">· @ParameterName(t.ParameterId.Value)</em> }</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </QCard>
+
+            @* ---- Live score -------------------------------------------------------------------- *@
+            <QCard Title="@(ap.Stage == AppraisalStage.Signed ? "Score at signing" : "Live score")" Icon="bar-chart-line" Class="appr-card"
+                   Subtitle="@(ap.Stage == AppraisalStage.Signed ? "Frozen when the appraisal was signed" : "Updates as records are logged; the rating is a decision, the score is evidence")">
+                <div class="appr-score">
+                    <span class="appr-score__value">@StaffDisplay.Composite(LiveScore?.Composite ?? ap.ComputedScore)</span>
+                    @if ((LiveScore?.Band ?? null) is int band)
+                    {
+                        <QChip Text="@(LiveScore!.BandName ?? $"Band {band}")" Variant="@StaffDisplay.BandVariant(band)" />
+                    }
+                </div>
+                @if (!Breakdown.Any())
+                {
+                    <p class="appr-muted">No evidence in this period yet.</p>
+                }
+                else
+                {
+                    <QBarList Items="@BreakdownBars" Max="100" />
+                }
+            </QCard>
+        </div>
+
+        @* ---- Self-assessment ---------------------------------------------------------------- *@
+        <QCard Title="Self-assessment" Icon="person-check" Class="appr-card"
+               Subtitle="@(ap.SelfSubmittedAt.HasValue ? $"Submitted {QDateFormat.LocalDT(ap.SelfSubmittedAt.Value)}" : ap.CanISelfAssess ? "Rate yourself honestly on each parameter; your appraiser sees this beside the evidence" : "Opens when the appraisal reaches the self-assessment stage")">
+            @if (ap.CanISelfAssess)
+            {
+                <div class="appr-self">
+                    @if (!Breakdown.Any())
+                    {
+                        <p class="appr-muted">There are no parameters with evidence to rate yet — you can still give an overall rating and comments.</p>
+                    }
+                    @foreach (var p in Breakdown)
+                    {
+                        var current = selfRatings.TryGetValue(p.ParameterId, out var v) ? v : 0;
+                        <div class="appr-self__row">
+                            <div class="appr-self__param">
+                                <strong>@p.Name</strong>
+                                <small class="appr-muted">Score @(p.Score.HasValue ? p.Score.Value.ToString("0.#") : "—") · @p.EvidenceCount item(s)</small>
+                            </div>
+                            <QRating Value="@current" ValueChanged="@(r => selfRatings[p.ParameterId] = r)" Max="5" Labels="@BandLabels" ShowLabels="true"
+                                     AriaLabel="@($"Self rating for {p.Name}")" EmptyLabel="Tap a star" />
+                        </div>
+                    }
+                    <div class="appr-self__row appr-self__row--overall">
+                        <div class="appr-self__param">
+                            <strong>Overall</strong>
+                            <small class="appr-muted">Your own rating for the whole period</small>
+                        </div>
+                        <QRating @bind-Value="selfOverall" Max="5" Labels="@BandLabels" ShowLabels="true" Size="lg" AriaLabel="Overall self rating" EmptyLabel="Tap a star" />
+                    </div>
+                    <div class="form-group">
+                        <QInput TValue="string" @bind-Value="@selfComments" Type="textarea" Rows="5" Label="Comments" MaxLength="4000"
+                                Placeholder="What went well, what did not, what you need. Your appraiser reads this before rating." />
+                    </div>
+                    <div class="appr-actions">
+                        <QButton Text="Submit self-assessment" Icon="send" Variant="primary" Loading="@submittingSelf" OnClick="@SubmitSelfAsync"
+                                 Disabled="@(selfOverall < 1)" />
+                        @if (selfOverall < 1) { <span class="appr-muted">Give an overall rating to submit.</span> }
+                    </div>
+                </div>
+            }
+            else if (ap.SelfSubmittedAt.HasValue)
+            {
+                <div class="appr-readonly">
+                    @foreach (var r in ap.SelfRatings)
+                    {
+                        <div class="appr-readonly__row">
+                            <span>@ParameterName(r.ParameterId)</span>
+                            <QRating Value="@r.Rating" ReadOnly="true" Size="sm" Labels="@BandLabels" />
+                        </div>
+                    }
+                    <div class="appr-readonly__row appr-readonly__row--overall">
+                        <span><strong>Overall</strong></span>
+                        <QRating Value="@(ap.SelfRating ?? 0)" ReadOnly="true" Labels="@BandLabels" ShowLabels="true" />
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(ap.SelfComments))
+                    {
+                        <blockquote class="appr-quote">@ap.SelfComments</blockquote>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="appr-muted">Not yet due.</p>
+            }
+        </QCard>
+
+        @* ---- Appraiser's review ------------------------------------------------------------- *@
+        @if (ap.AppraiserSubmittedAt.HasValue)
+        {
+            <QCard Title="Appraiser's review" Icon="clipboard2-check" Class="appr-card" Subtitle="@($"{ap.AppraiserName} · {QDateFormat.LocalDT(ap.AppraiserSubmittedAt.Value)}")">
+                <div class="appr-readonly">
+                    <div class="appr-readonly__row appr-readonly__row--overall">
+                        <span><strong>Appraiser's rating</strong></span>
+                        <QRating Value="@(ap.AppraiserRating ?? 0)" ReadOnly="true" Labels="@BandLabels" ShowLabels="true" />
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(ap.AppraiserComments)) { <blockquote class="appr-quote">@ap.AppraiserComments</blockquote> }
+                    <div class="appr-two">
+                        <section>
+                            <h5>Strengths</h5>
+                            <p>@(string.IsNullOrWhiteSpace(ap.Strengths) ? "—" : ap.Strengths)</p>
+                        </section>
+                        <section>
+                            <h5>Development areas</h5>
+                            <p>@(string.IsNullOrWhiteSpace(ap.DevelopmentAreas) ? "—" : ap.DevelopmentAreas)</p>
+                        </section>
+                    </div>
+                    @if (ap.SupportPlan.Any())
+                    {
+                        <h5>Support plan</h5>
+                        <div class="appr-table-wrap">
+                            <table class="data-table">
+                                <thead><tr><th>Gap</th><th>Support</th><th>By when</th></tr></thead>
+                                <tbody>
+                                    @foreach (var s in ap.SupportPlan)
+                                    {
+                                        <tr><td>@s.Gap</td><td>@s.Support</td><td>@QDateFormat.D(s.ByWhen)</td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    @if (ap.NextTargets.Any())
+                    {
+                        <h5>Targets for next period</h5>
+                        <ul class="appr-targets">
+                            @foreach (var t in ap.NextTargets)
+                            {
+                                <li><QIcon Name="arrow-right-circle" Class="appr-target__tick" /><span>@t.Text @if (t.ParameterId.HasValue) { <em class="appr-muted">· @ParameterName(t.ParameterId.Value)</em> }</span></li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </QCard>
+        }
+
+        @* ---- Outcome ------------------------------------------------------------------------- *@
+        @if (ap.Stage is AppraisalStage.Signed or AppraisalStage.Appealed || ap.ModeratedAt.HasValue)
+        {
+            <QCard Title="Outcome" Icon="patch-check" Class="appr-card">
+                <div class="appr-outcome">
+                    @if (ap.FinalRating.HasValue)
+                    {
+                        <div class="appr-outcome__rating">
+                            <QRating Value="@ap.FinalRating.Value" ReadOnly="true" Size="lg" Labels="@BandLabels" />
+                            <strong>@(ap.FinalRatingName ?? BandLabels.ElementAtOrDefault(ap.FinalRating.Value - 1) ?? $"Rating {ap.FinalRating}")</strong>
+                        </div>
+                    }
+                    <dl class="appr-dl">
+                        @if (ap.ModeratedAt.HasValue) { <dt>Moderated</dt><dd>@QDateFormat.LocalDT(ap.ModeratedAt.Value)@(ap.ModeratorName != null ? $" by {ap.ModeratorName}" : "")</dd> }
+                        @if (!string.IsNullOrWhiteSpace(ap.ModerationReason)) { <dt>Moderator's note</dt><dd>@ap.ModerationReason</dd> }
+                        @if (ap.SignedAt.HasValue) { <dt>Signed</dt><dd>@QDateFormat.LocalDT(ap.SignedAt.Value)@(ap.SignedByName != null ? $" by {ap.SignedByName}" : "")</dd> }
+                        @if (!string.IsNullOrWhiteSpace(ap.AppealNote)) { <dt>Your appeal</dt><dd>@ap.AppealNote</dd> }
+                    </dl>
+                    @if (ap.CanIAppeal)
+                    {
+                        <div class="appr-actions">
+                            <QButton Text="Appeal this outcome" Icon="flag" Variant="outline-danger" OnClick="@(() => { appealNote = string.Empty; appealError = false; showAppeal = true; })" />
+                            <span class="appr-muted">An appeal reopens the appraisal to moderation. Say what you disagree with and why.</span>
+                        </div>
+                    }
+                </div>
+            </QCard>
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showAppeal" Title="Appeal this appraisal" Icon="flag" Size="md">
+    <ChildContent>
+        <p class="form-hint">Your note goes to the moderator and is kept on the appraisal. Be specific: which rating, which evidence, what you believe was missed.</p>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@appealNote" Type="textarea" Rows="6" Label="Grounds for appeal" Required="true" MaxLength="2000"
+                    HasError="@appealError" ErrorMessage="Write at least 10 characters" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showAppeal = false)" />
+        <QButton Text="Submit appeal" Icon="flag" Variant="danger" Loading="@appealing" OnClick="@AppealAsync" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .appr-page { max-width: 1100px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .appr-back { margin-left: -8px; margin-bottom: 4px; }
+    .appr-card { margin-bottom: 16px; }
+    .appr-grid { display: grid; grid-template-columns: 1fr; gap: 0 16px; }
+    @@media (min-width: 760px) { .appr-grid { grid-template-columns: 1fr 1fr; } }
+    .appr-grid > * { min-width: 0; }
+    .appr-muted { color: var(--qm-text-muted); font-size: 13px; font-style: normal; }
+
+    .appr-steps { list-style: none; margin: 0; padding: 14px 16px; display: flex; gap: 8px; overflow-x: auto; }
+    .appr-step { display: flex; align-items: center; gap: 8px; flex: 1 0 auto; white-space: nowrap; font-size: 13px; color: var(--qm-text-muted); }
+    .appr-step:not(:last-child)::after { content: ""; flex: 1; height: 2px; min-width: 16px; background: var(--qm-border); }
+    .appr-step--done:not(:last-child)::after { background: var(--qm-success); }
+    .appr-step__dot { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 2px solid var(--qm-border); flex: 0 0 auto; }
+    .appr-step--done .appr-step__dot { border-color: var(--qm-success); color: var(--qm-success); }
+    .appr-step--current .appr-step__dot { border-color: var(--qm-primary); color: var(--qm-primary); }
+    .appr-step--current .appr-step__label { color: var(--qm-text-primary); font-weight: 600; }
+    .appr-step--appealed .appr-step__dot { border-color: var(--qm-danger); color: var(--qm-danger); }
+    .appr-step--appealed .appr-step__label { color: var(--qm-danger); }
+
+    .appr-targets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .appr-targets li { display: flex; gap: 8px; align-items: flex-start; }
+    .appr-target__tick { color: var(--qm-text-muted); margin-top: 3px; flex: 0 0 auto; }
+    .appr-target--done .appr-target__tick { color: var(--qm-success); }
+
+    .appr-score { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .appr-score__value { font-family: var(--qm-font-display); font-size: 32px; font-weight: 700; color: var(--qm-text-primary); }
+
+    .appr-self { display: flex; flex-direction: column; gap: 14px; }
+    .appr-self__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
+    .appr-self__row--overall { background: var(--qm-bg-secondary); }
+    .appr-self__param { display: flex; flex-direction: column; min-width: 0; }
+    .appr-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+    .appr-readonly { display: flex; flex-direction: column; gap: 10px; }
+    .appr-readonly h5 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .appr-readonly__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .appr-readonly__row--overall { padding-top: 8px; border-top: 1px solid var(--qm-border); }
+    .appr-quote { margin: 4px 0 0; padding: 10px 14px; border-left: 3px solid var(--qm-primary); background: var(--qm-bg-secondary); border-radius: 0 var(--qm-radius-sm) var(--qm-radius-sm) 0; white-space: pre-wrap; color: var(--qm-text-secondary); }
+    .appr-two { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @@media (min-width: 640px) { .appr-two { grid-template-columns: 1fr 1fr; } }
+    .appr-two section p { margin: 0; white-space: pre-wrap; color: var(--qm-text-secondary); }
+    .appr-table-wrap { overflow-x: auto; }
+
+    .appr-outcome { display: flex; flex-direction: column; gap: 12px; }
+    .appr-outcome__rating { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 18px; }
+    .appr-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+    .appr-dl dt { color: var(--qm-text-muted); }
+    .appr-dl dd { margin: 0; color: var(--qm-text-primary); white-space: pre-wrap; }
+    @@media (max-width: 480px) { .appr-dl { grid-template-columns: 1fr; } .appr-dl dd { margin-bottom: 6px; } }
+
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .form-hint { font-size: 13px; color: var(--qm-text-muted); margin: 0 0 12px; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true;
+    private string? loadError;
+    private Guid branchId;
+    private StaffAppraisalDto? ap;
+    private List<PerformanceParameterDto> parameters = new();
+    private List<string> bandLabels = new();
+
+    private readonly Dictionary<Guid, int> selfRatings = new();
+    private int selfOverall;
+    private string selfComments = string.Empty;
+    private bool submittingSelf;
+
+    private bool showAppeal;
+    private bool appealing;
+    private bool appealError;
+    private string appealNote = string.Empty;
+
+    private static readonly AppraisalStage[] Steps =
+    {
+        AppraisalStage.Open, AppraisalStage.SelfAssessment, AppraisalStage.AppraiserReview, AppraisalStage.Moderation, AppraisalStage.Signed
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        try
+        {
+            // The portal DTO carries the caller's branch, which is the right one for a SuperAdmin
+            // who has not chosen a branch in the switcher.
+            branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+                branchId = (await StaffApi.GetPortalAsync()).BranchId;
+
+            ap = await StaffApi.GetAppraisalAsync(branchId, Id);
+            parameters = await StaffApi.GetParametersAsync(includeInactive: true);
+            var policy = await StaffApi.GetPolicyAsync();
+            bandLabels = policy.Bands.OrderBy(b => b.Rating).Select(b => b.Name).ToList();
+            PrefillSelf();
+        }
+        catch (Exception ex)
+        {
+            ap = null;
+            loadError = ex.Message;
+            Toast.Notify(ToastSeverity.Error, "Could not open the appraisal", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void PrefillSelf()
+    {
+        selfRatings.Clear();
+        if (ap == null) return;
+        foreach (var r in ap.SelfRatings) selfRatings[r.ParameterId] = r.Rating;
+        selfOverall = ap.SelfRating ?? 0;
+        selfComments = ap.SelfComments ?? string.Empty;
+    }
+
+    private StaffScoreDto? LiveScore => ap?.LiveScore;
+
+    private List<ParameterScoreDto> Breakdown => (ap?.Stage == AppraisalStage.Signed ? ap.ComputedBreakdown : (LiveScore?.Breakdown ?? ap?.ComputedBreakdown)) ?? new();
+
+    private IReadOnlyList<QBarItem> BreakdownBars => Breakdown
+        .OrderByDescending(b => b.Weight)
+        .Select(b => new QBarItem(b.Name, b.Score ?? 0,
+            Count: b.Score.HasValue ? $"{b.Score.Value:0.#} · weight {b.Weight:0.#}" : $"— · weight {b.Weight:0.#}",
+            Color: b.Color ?? StaffDisplay.KindColor(b.Kind),
+            Hint: b.EvidenceCount == 0 ? "no evidence yet" : null))
+        .ToList();
+
+    /// <summary>Band names lowest first (1 Poor … 5 Excellent), or MoES's defaults when the policy has none.</summary>
+    private IReadOnlyList<string> BandLabels => bandLabels.Count == 5 ? bandLabels : new[] { "Poor", "Fair", "Good", "Very Good", "Excellent" };
+
+    private string ParameterName(Guid id) => parameters.FirstOrDefault(p => p.Id == id)?.Name ?? "Parameter";
+
+    private string StepState(AppraisalStage step)
+    {
+        if (ap == null) return "todo";
+        var current = ap.Stage == AppraisalStage.Appealed ? AppraisalStage.Moderation : ap.Stage;
+        if (step == current) return ap.Stage == AppraisalStage.Signed ? "done" : "current";
+        return (int)step < (int)current ? "done" : "todo";
+    }
+
+    private async Task SubmitSelfAsync()
+    {
+        if (ap == null || selfOverall < 1) return;
+        submittingSelf = true;
+        try
+        {
+            var request = new SubmitSelfAssessmentRequest
+            {
+                Ratings = selfRatings.Where(kv => kv.Value > 0).Select(kv => new ParameterRatingDto { ParameterId = kv.Key, Rating = kv.Value }).ToList(),
+                SelfRating = selfOverall,
+                Comments = string.IsNullOrWhiteSpace(selfComments) ? null : selfComments.Trim()
+            };
+            ap = await StaffApi.SubmitSelfAssessmentAsync(branchId, ap.Id, request);
+            PrefillSelf();
+            Toast.Notify(ToastSeverity.Success, "Self-assessment submitted", "Your appraiser has been told it is ready.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not submit your self-assessment", ex.Message);
+        }
+        finally
+        {
+            submittingSelf = false;
+        }
+    }
+
+    private async Task AppealAsync()
+    {
+        if (ap == null) return;
+        appealError = (appealNote?.Trim().Length ?? 0) < 10;
+        if (appealError) return;
+        appealing = true;
+        try
+        {
+            ap = await StaffApi.AppealAppraisalAsync(branchId, ap.Id, new AppealAppraisalRequest { Note = appealNote.Trim() });
+            showAppeal = false;
+            Toast.Notify(ToastSeverity.Success, "Appeal submitted", "The appraisal is back with the moderator.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not submit your appeal", ex.Message);
+        }
+        finally
+        {
+            appealing = false;
+        }
+    }
+}

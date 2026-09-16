@@ -1,0 +1,575 @@
+@page "/admin/staff/{UserId:guid}/timeline"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>@(timeline?.Subject.FullName ?? "Staff") — Timeline - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    @if (isLoading && timeline == null)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the timeline...</span></div>
+    }
+    else if (timeline == null)
+    {
+        <QEmptyState Icon="person-x" Title="This member of staff is not available to you"
+                     Text="Either they are not on this branch, or your role does not reach their file. Return to the directory and pick someone from your departments.">
+            <Action>
+                <QButton Text="Back to directory" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff"))" />
+            </Action>
+        </QEmptyState>
+    }
+    else
+    {
+        var s = timeline.Subject;
+        var score = timeline.Score;
+
+        <div class="page-header">
+            <div class="st-head">
+                <QAvatar Name="@s.FullName" Size="lg" />
+                <div class="st-head__text">
+                    <h1>@s.FullName</h1>
+                    <p class="subtitle">
+                        @if (!string.IsNullOrWhiteSpace(s.JobTitle)) { <text>@s.JobTitle · </text> }
+                        <QChip Text="@s.RoleName" Color="@s.RoleColor" Size="sm" />
+                        @if (s.DepartmentNames.Any()) { <text> · @string.Join(", ", s.DepartmentNames)</text> }
+                        @if (!string.IsNullOrWhiteSpace(s.LineManagerName)) { <text> · reports to @s.LineManagerName</text> }
+                    </p>
+                    <div class="st-head__score">
+                        @if (score?.Band != null)
+                        {
+                            <QChip Text="@($"{score.BandName} · {StaffDisplay.Composite(score.Composite)}")" Variant="@StaffDisplay.BandVariant(score.Band)" Icon="award" />
+                        }
+                        else
+                        {
+                            <QChip Text="No evidence this period yet" Variant="muted" />
+                        }
+                        @if (score != null)
+                        {
+                            <span class="st-head__points">@StaffDisplay.Points(score.Points) points · @score.Period.Name</span>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <QButton Text="Back" Icon="arrow-left" Variant="ghost" OnClick="@(() => Navigation.NavigateTo("/admin/staff"))" />
+                <QButton Text="Print / report" Icon="printer" Variant="secondary" OnClick="@OpenReport" />
+                @if (canCreate && !timeline.IsSelf)
+                {
+                    <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" />
+                }
+            </div>
+        </div>
+
+        <QFilterBar Wrap="true">
+            <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Presets="@TimelinePresets" />
+        </QFilterBar>
+
+        <QTabs Tabs="@Tabs" ActiveKey="@activeTab" ActiveKeyChanged="@(k => activeTab = k)" AriaLabel="Timeline sections" />
+
+        <div class="st-columns">
+            <div class="st-main">
+                @if (activeTab == "records")
+                {
+                    <QTimeline GroupByDay="true" EmptyText="@EmptyText">
+                        @foreach (var r in timeline.Records.OrderByDescending(x => x.OccurredAt))
+                        {
+                            <QTimelineItem MarkerColor="@(r.ParameterColor ?? StaffDisplay.KindColor(r.ParameterKind))"
+                                           MarkerIcon="@StaffDisplay.KindIcon(r.ParameterKind)"
+                                           Date="@r.OccurredAt.ToLocalTime()"
+                                           Modifier="@(r.Status == StaffRecordStatus.Draft ? "draft" : r.Status == StaffRecordStatus.Annulled ? "annulled" : null)">
+                                <TitleContent>
+                                    <strong>@r.ParameterName</strong>
+                                    @if (r.Outcome != DutyOutcome.NotApplicable)
+                                    {
+                                        <QChip Text="@StaffDisplay.OutcomeLabel(r.Outcome)" Variant="@StaffDisplay.OutcomeVariant(r.Outcome)" Size="sm" />
+                                    }
+                                    @if (r.Points.HasValue && r.Points != 0)
+                                    {
+                                        <QChip Text="@($"{StaffDisplay.Points(r.Points)} pts")" Variant="@(r.Points > 0 ? "success" : "danger")" Size="sm" />
+                                    }
+                                    @if (r.Rating.HasValue)
+                                    {
+                                        <QRating Value="@r.Rating.Value" Max="@(r.RatingScale ?? 4)" ReadOnly="true" Size="sm" AriaLabel="Rating" />
+                                    }
+                                    @if (r.Visibility != WelfareVisibility.Standard)
+                                    {
+                                        <QChip Text="@StaffDisplay.VisibilityLabel(r.Visibility)" Variant="@StaffDisplay.VisibilityVariant(r.Visibility)" Size="sm" Icon="lock" />
+                                    }
+                                    @if (r.Status != StaffRecordStatus.Final)
+                                    {
+                                        <QChip Text="@StaffDisplay.StatusLabel(r.Status)" Variant="@(r.Status == StaffRecordStatus.Annulled ? "danger" : "muted")" Size="sm" />
+                                    }
+                                    @if (r.Source == RecordSource.System)
+                                    {
+                                        <QChip Text="Automatic" Variant="info" Size="sm" Icon="cpu" Title="Credited automatically from system activity, not a colleague's judgement" />
+                                    }
+                                </TitleContent>
+                                <ChildContent>
+                                    <p class="st-desc">@r.Description</p>
+                                    <div class="st-meta">
+                                        <span>Logged by @r.LoggedByName</span>
+                                        <span>· @StaffDisplay.SourceLabel(r.Source)</span>
+                                        @if (!string.IsNullOrWhiteSpace(r.DutyTitle)) { <span>· @r.DutyTitle</span> }
+                                        @if (r.AcknowledgedAt.HasValue) { <span>· seen by the subject @QDateFormat.LocalDT(r.AcknowledgedAt)</span> }
+                                        @if (r.IsLateEntry)
+                                        {
+                                            <span class="st-late"><QIcon Name="exclamation-triangle-fill" /> Late entry — logged @QDateFormat.LocalDT(r.CreatedAt), well after it happened</span>
+                                        }
+                                    </div>
+
+                                    @if (r.Notes.Any())
+                                    {
+                                        <div class="st-notes">
+                                            @foreach (var n in r.Notes.OrderBy(n => n.CreatedAt))
+                                            {
+                                                <div class="st-note @(n.Kind == StaffNoteKind.Response ? "st-note--response" : "")">
+                                                    <span class="st-note__kind">@NoteKindLabel(n.Kind)</span>
+                                                    <span class="st-note__by">@n.AuthorName · @QDateFormat.CDT(n.CreatedAt.ToLocalTime())</span>
+                                                    <p>@n.Body</p>
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+
+                                    @if (r.Attachments.Any())
+                                    {
+                                        <div class="st-attachments">
+                                            @foreach (var a in r.Attachments)
+                                            {
+                                                <QChip Text="@a.FileName" Icon="paperclip" Href="@a.FileUrl" Size="sm" Title="@($"{a.ContentType} · {a.FileSizeBytes / 1024} KB")" />
+                                            }
+                                        </div>
+                                    }
+                                </ChildContent>
+                                <Actions>
+                                    @if (r.Status == StaffRecordStatus.Draft && currentUserId == r.LoggedByUserId)
+                                    {
+                                        <QButton Text="Finalise" Icon="check2-circle" Size="sm" Variant="primary" OnClick="@(() => Finalize(r))" />
+                                    }
+                                    @if (canEdit && r.Status != StaffRecordStatus.Annulled)
+                                    {
+                                        <QButton Text="Add note" Icon="chat-left-text" Size="sm" Variant="ghost" OnClick="@(() => OpenNote(r))" />
+                                        <QButton Text="Change visibility" Icon="lock" Size="sm" Variant="ghost" OnClick="@(() => OpenVisibility(r))" />
+                                        @if (r.ParameterKind != ParameterKind.Wellbeing)
+                                        {
+                                            <QButton Text="Correct points" Icon="123" Size="sm" Variant="ghost" OnClick="@(() => OpenPoints(r))" />
+                                        }
+                                        <QButton Text="Annul" Icon="x-octagon" Size="sm" Variant="ghost" OnClick="@(() => OpenAnnul(r))" />
+                                    }
+                                </Actions>
+                            </QTimelineItem>
+                        }
+                    </QTimeline>
+                }
+                else
+                {
+                    <QActivityLog Rows="@ActivityRows" TableTitle="Actions on this file" EmptyText="Nothing has been done to this file in the period." />
+                }
+            </div>
+
+            <aside class="st-side">
+                <QCard Title="@($"Score breakdown — {score?.Period.Name ?? "this period"}")" Icon="bar-chart">
+                    @if (score == null || !score.Breakdown.Any())
+                    {
+                        <p class="st-muted">No scored evidence in this period. Attendance, duties, observations and points appear here as they are logged.</p>
+                    }
+                    else
+                    {
+                        <QBarList Items="@BreakdownBars" Max="100" EmptyText="No scored evidence in this period." />
+                        <p class="st-muted st-foot">Each bar is that parameter's 0–100 score; the figure after it is its weight in the composite. A parameter with no evidence drops out of the denominator rather than scoring zero.</p>
+                    }
+                    @if (score != null)
+                    {
+                        <dl class="st-facts">
+                            <div><dt>Duties</dt><dd>@score.DutiesAttended / @score.DutiesExpected attended</dd></div>
+                            <div><dt>Recognition</dt><dd>@score.RecognitionReceived received</dd></div>
+                            @if (score.RankInBranch.HasValue)
+                            {
+                                <div><dt>Rank</dt><dd>@score.RankInBranch of @score.RankedOutOf</dd></div>
+                            }
+                        </dl>
+                    }
+                </QCard>
+            </aside>
+        </div>
+    }
+</div>
+
+@if (timeline != null)
+{
+    <StaffRecordDialog BranchId="@branchId" SubjectUserId="@UserId" Subjects="@(new[] { timeline.Subject })"
+                       @bind-Visible="showRecordDialog" OnCreated="@(_ => LoadAsync())" />
+}
+
+@* ---------------- Add note ---------------- *@
+<QModal @bind-Visible="showNoteDialog" Title="Add a note" Size="md">
+    <ChildContent>
+        <QInput TValue="string" @bind-Value="@noteBody" Type="textarea" Rows="4" Label="Note" Required="true" MaxLength="4000"
+                Placeholder="A follow-up, a clarification, what was agreed." HasError="@noteError" ErrorMessage="At least 2 characters." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNoteDialog = false)" />
+        <QButton Text="Add note" Icon="check-lg" Variant="primary" OnClick="@SaveNote" Loading="@isActing" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Change visibility ---------------- *@
+<QModal @bind-Visible="showVisibilityDialog" Title="Change visibility" Size="md">
+    <ChildContent>
+        <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@newVisibility" Items="@ReadableVisibilities"
+                 TextSelector="@(v => StaffDisplay.VisibilityLabel(v))" ValueSelector="@(v => v)" Label="Visibility" Required="true"
+                 HelperText="Only the rungs you can read yourself are offered." />
+        <QInput TValue="string" @bind-Value="@visibilityReason" Type="textarea" Rows="3" Label="Reason" MaxLength="1000"
+                Placeholder="Required when lowering the visibility." HasError="@visibilityReasonError" ErrorMessage="Say why the visibility is being lowered." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showVisibilityDialog = false)" />
+        <QButton Text="Change" Icon="check-lg" Variant="primary" OnClick="@SaveVisibility" Loading="@isActing" />
+    </FooterContent>
+</QModal>
+
+@* ---------------- Correct points ---------------- *@
+<QModal @bind-Visible="showPointsDialog" Title="Correct points" Size="md">
+    <ChildContent>
+        <p class="form-hint">The record itself is never rewritten; the correction is recorded on it with your reason, and scoring uses the corrected figure.</p>
+        @if (actingRecord?.RatingScale != null)
+        {
+            <div class="form-group">
+                <label>Rating</label>
+                <QRating @bind-Value="@newRating" Max="@actingRecord.RatingScale.Value" ShowLabels="false" AriaLabel="Corrected rating" />
+            </div>
+        }
+        else
+        {
+            <QInput TValue="int?" @bind-Value="@newPoints" Type="number" Label="Points" Placeholder="Signed: negative for a deduction" />
+        }
+        <QInput TValue="string" @bind-Value="@pointsReason" Type="textarea" Rows="3" Label="Reason" Required="true" MaxLength="1000"
+                HasError="@pointsReasonError" ErrorMessage="At least 5 characters." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showPointsDialog = false)" />
+        <QButton Text="Correct" Icon="check-lg" Variant="primary" OnClick="@SavePoints" Loading="@isActing" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog @bind-IsVisible="showAnnulDialog" Title="Annul this record?"
+               Message="@($"The row stays on the file marked Annulled, with your reason, and drops out of scoring. {(actingRecord?.ParameterName ?? "")} — {(actingRecord == null ? "" : QDateFormat.D(actingRecord.OccurredAt.ToLocalTime()))}")"
+               ConfirmText="Annul" ConfirmButtonClass="btn-danger" RequireReason="true" ReasonLabel="Reason *"
+               @bind-Reason="annulReason" OnClose="@ConfirmAnnul" />
+
+<style>
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .st-head { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+    .st-head__text { min-width: 0; }
+    .st-head__text h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .st-head__text .subtitle { margin: 0 0 8px; color: var(--qm-text-muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .st-head__score { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .st-head__points { font-size: 13px; color: var(--qm-text-secondary); }
+    .st-columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+    .st-main { flex: 1 1 520px; min-width: 0; }
+    .st-side { flex: 0 1 320px; min-width: 260px; }
+    .st-desc { margin: 6px 0; white-space: pre-wrap; color: var(--qm-text-primary); }
+    .st-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 12.5px; color: var(--qm-text-muted); }
+    .st-late { color: var(--qm-warning); display: inline-flex; gap: 4px; align-items: center; }
+    .st-notes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .st-note { border-left: 3px solid var(--qm-border); padding: 6px 10px; background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); }
+    .st-note--response { border-left-color: var(--qm-primary); background: rgba(var(--qm-primary-rgb), 0.06); }
+    .st-note__kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-right: 8px; }
+    .st-note--response .st-note__kind { color: var(--qm-primary); font-weight: 600; }
+    .st-note__by { font-size: 12px; color: var(--qm-text-muted); }
+    .st-note p { margin: 2px 0 0; white-space: pre-wrap; font-size: 13.5px; }
+    .st-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .st-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; }
+    .st-foot { margin-top: 10px; font-size: 12px; }
+    .st-facts { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 14px 0 0; }
+    .st-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 0; }
+    .st-facts dd { margin: 0; font-size: 14px; color: var(--qm-text-primary); }
+    .form-group { margin-bottom: 14px; }
+    .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
+</style>
+
+@code {
+    [Parameter] public Guid UserId { get; set; }
+
+    private static readonly IReadOnlyList<QTab> Tabs = new[] { new QTab("records", "Records", "journal-text"), new QTab("activity", "Activity", "activity") };
+
+    private static readonly IReadOnlyList<DateRangePreset> TimelinePresets = new DateRangePreset[]
+    {
+        new("Last 30 days", () => DateRange.LastDays(30)),
+        new("Last 90 days", () => DateRange.LastDays(90)),
+        new("This year", () => new DateRange(new DateOnly(DateTime.Today.Year, 1, 1), DateOnly.FromDateTime(DateTime.Today))),
+        new("Complete record", () => DateRange.AllTime())
+    };
+
+    private Guid branchId;
+    private Guid currentUserId;
+    private bool isLoading = true;
+    private bool canCreate, canEdit, canConfidential, canRestricted;
+    private StaffTimelineDto? timeline;
+    private DateRange range = DateRange.AllTime();
+    private string activeTab = "records";
+    private Guid loadedFor;
+
+    private bool showRecordDialog;
+    private bool showNoteDialog, showVisibilityDialog, showPointsDialog, showAnnulDialog;
+    private bool isActing;
+    private StaffPerformanceRecordDto? actingRecord;
+    private string noteBody = string.Empty;
+    private bool noteError;
+    private WelfareVisibility newVisibility;
+    private string visibilityReason = string.Empty;
+    private bool visibilityReasonError;
+    private int? newPoints;
+    private int newRating;
+    private string pointsReason = string.Empty;
+    private bool pointsReasonError;
+    private string annulReason = string.Empty;
+
+    private string EmptyText => range.IsAllTime
+        ? "No records on this file yet. Log one, or take a register on a duty they were expected at."
+        : "No records in this period. Widen the range to see older ones.";
+
+    private IReadOnlyList<WelfareVisibility> ReadableVisibilities
+    {
+        get
+        {
+            var list = new List<WelfareVisibility> { WelfareVisibility.Standard };
+            if (canConfidential) list.Add(WelfareVisibility.Confidential);
+            if (canRestricted) list.Add(WelfareVisibility.Restricted);
+            return list;
+        }
+    }
+
+    private IReadOnlyList<QBarItem> BreakdownBars =>
+        timeline?.Score?.Breakdown
+            .OrderByDescending(b => b.Weight)
+            .Select(b => new QBarItem(
+                b.Name,
+                b.Score ?? 0,
+                Count: b.Score.HasValue ? $"{b.Score.Value:0} · w{b.Weight:0.#}" : $"no evidence · w{b.Weight:0.#}",
+                Color: b.Color ?? StaffDisplay.KindColor(b.Kind),
+                Hint: b.EvidenceCount > 0 ? $"{b.EvidenceCount} record{(b.EvidenceCount == 1 ? "" : "s")}" : null))
+            .ToList() ?? new List<QBarItem>();
+
+    private IReadOnlyList<QActivityRow> ActivityRows =>
+        timeline?.Activity
+            .OrderByDescending(a => a.OccurredAt)
+            .Select(a => new QActivityRow(
+                a.OccurredAt.ToLocalTime(),
+                a.ActorName ?? "System",
+                a.Summary,
+                null,
+                string.Join(" · ", new[] { a.IpAddress, a.UserAgent }.Where(x => !string.IsNullOrWhiteSpace(x)))))
+            .ToList() ?? new List<QActivityRow>();
+
+    private static string NoteKindLabel(StaffNoteKind kind) => kind switch
+    {
+        StaffNoteKind.Response => "Subject's response",
+        StaffNoteKind.VisibilityChange => "Visibility change",
+        StaffNoteKind.Annulment => "Annulment",
+        StaffNoteKind.Moderation => "Moderation",
+        _ => "Note"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        currentUserId = user?.Id ?? Guid.Empty;
+
+        // Self is never scope: a person may always open their own timeline. Anyone else needs the view permission.
+        if (currentUserId != UserId && !await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsEdit);
+        canConfidential = await PermissionService.HasPermissionAsync(Permissions.StaffConfidentialView);
+        canRestricted = await PermissionService.HasPermissionAsync(Permissions.StaffRestrictedView);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Navigating from one person's timeline straight to another's reuses this component.
+        if (loadedFor != Guid.Empty && loadedFor != UserId && branchId != Guid.Empty) await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadedFor = UserId;
+        try
+        {
+            DateTime? from = range.IsAllTime ? null : range.From.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+            DateTime? to = range.IsAllTime ? null : range.To.ToDateTime(TimeOnly.MaxValue).ToUniversalTime();
+            timeline = await StaffApi.GetTimelineAsync(branchId, UserId, from, to);
+        }
+        catch (Exception ex)
+        {
+            timeline = null;
+            Toast.Notify(ToastSeverity.Error, "Could not load the timeline", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    private void OpenReport()
+    {
+        var q = range.IsAllTime ? "" : $"?from={QDateFormat.Iso8601(range.From)}&to={QDateFormat.Iso8601(range.To)}";
+        Navigation.NavigateTo($"/admin/staff/{UserId}/timeline/report{q}");
+    }
+
+    // ---------------- Record actions ----------------
+
+    private async Task Finalize(StaffPerformanceRecordDto r)
+    {
+        try
+        {
+            await StaffApi.FinalizeRecordAsync(branchId, r.Id);
+            Toast.Notify(ToastSeverity.Success, "Record finalised", $"{r.ParameterName} is now on the file.");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not finalise", ex.Message);
+        }
+    }
+
+    private void OpenNote(StaffPerformanceRecordDto r)
+    {
+        actingRecord = r;
+        noteBody = string.Empty;
+        noteError = false;
+        showNoteDialog = true;
+    }
+
+    private async Task SaveNote()
+    {
+        noteError = noteBody.Trim().Length < 2;
+        if (noteError || actingRecord == null) return;
+        await Act(() => StaffApi.AddNoteAsync(branchId, actingRecord.Id, new AddStaffNoteRequest { Body = noteBody.Trim() }), "Note added", () => showNoteDialog = false);
+    }
+
+    private void OpenVisibility(StaffPerformanceRecordDto r)
+    {
+        actingRecord = r;
+        newVisibility = ReadableVisibilities.Contains(r.Visibility) ? r.Visibility : WelfareVisibility.Standard;
+        visibilityReason = string.Empty;
+        visibilityReasonError = false;
+        showVisibilityDialog = true;
+    }
+
+    private async Task SaveVisibility()
+    {
+        if (actingRecord == null) return;
+        var lowering = (int)newVisibility < (int)actingRecord.Visibility;
+        visibilityReasonError = lowering && visibilityReason.Trim().Length < 5;
+        if (visibilityReasonError) return;
+        await Act(() => StaffApi.UpdateVisibilityAsync(branchId, actingRecord.Id, new UpdateStaffRecordVisibilityRequest
+        {
+            Visibility = newVisibility,
+            Reason = string.IsNullOrWhiteSpace(visibilityReason) ? null : visibilityReason.Trim()
+        }), "Visibility changed", () => showVisibilityDialog = false);
+    }
+
+    private void OpenPoints(StaffPerformanceRecordDto r)
+    {
+        actingRecord = r;
+        newPoints = r.Points;
+        newRating = r.Rating ?? 0;
+        pointsReason = string.Empty;
+        pointsReasonError = false;
+        showPointsDialog = true;
+    }
+
+    private async Task SavePoints()
+    {
+        if (actingRecord == null) return;
+        pointsReasonError = pointsReason.Trim().Length < 5;
+        if (pointsReasonError) return;
+        var isRating = actingRecord.RatingScale != null;
+        await Act(() => StaffApi.CorrectPointsAsync(branchId, actingRecord.Id, new CorrectStaffRecordPointsRequest
+        {
+            Points = isRating ? null : newPoints,
+            Rating = isRating ? newRating : null,
+            Reason = pointsReason.Trim()
+        }), "Points corrected", () => showPointsDialog = false);
+    }
+
+    private void OpenAnnul(StaffPerformanceRecordDto r)
+    {
+        actingRecord = r;
+        annulReason = string.Empty;
+        showAnnulDialog = true;
+    }
+
+    private async Task ConfirmAnnul(bool confirmed)
+    {
+        if (!confirmed || actingRecord == null) return;
+        await Act(() => StaffApi.AnnulAsync(branchId, actingRecord.Id, new AnnulStaffRecordRequest { Reason = annulReason.Trim() }), "Record annulled", null);
+    }
+
+    private async Task Act(Func<Task<StaffPerformanceRecordDto>> action, string successTitle, Action? onDone)
+    {
+        isActing = true;
+        try
+        {
+            await action();
+            Toast.Notify(ToastSeverity.Success, successTitle);
+            onDone?.Invoke();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "That did not go through", ex.Message);
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

@@ -99,6 +99,20 @@ public interface INotificationApiService
     Task MarkAllAsReadAsync();
 
     /// <summary>
+    /// The notification centre's page: <c>GET api/v1/notifications?eventKey=&amp;offset=&amp;limit=</c>.
+    /// A null <paramref name="eventKey"/> is every notification. Returns the page and whether a
+    /// further page exists. THROWS on failure with the server's message — the centre is a page
+    /// of its own and must say why it is empty, unlike the bell preview above.
+    /// </summary>
+    Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit);
+
+    /// <summary>
+    /// Mark every notification of one event key as read (<c>POST api/v1/notifications/read-all?eventKey=</c>);
+    /// null marks all. THROWS on failure.
+    /// </summary>
+    Task MarkAllAsReadAsync(string? eventKey);
+
+    /// <summary>
     /// Delete a notification
     /// </summary>
     Task DeleteAsync(Guid notificationId);
@@ -132,3 +146,9 @@ public interface INotificationApiService
     /// </summary>
     Task<List<NotificationDeliveryDto>> GetDeliveriesAsync(bool failuresOnly = false, int limit = 100);
 }
+
+/// <summary>
+/// One page of the notification centre. The API returns a bare array with no total, so the page
+/// asks for one more row than it shows and reports <see cref="HasMore"/> instead of a count.
+/// </summary>
+public record NotificationPageResult(List<NotificationDto> Items, bool HasMore);

@@ -1,0 +1,262 @@
+@page "/admin/staff/policy"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Staff Performance Policy - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Scoring Policy</h1>
+            <p class="subtitle">Periods, bands, caps, the leaderboard switch, budgets, lead times and retention — one setting per decision, organisation-wide.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Save policy" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@isSaving" Disabled="@(policy == null)" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the policy...</span></div>
+    }
+    else if (policy == null)
+    {
+        <QEmptyState Icon="sliders" Title="The policy could not be loaded" Text="Reload the page; if it keeps failing, the API's staff policy route is refusing this account." />
+    }
+    else
+    {
+        <div class="pol-grid">
+            <QCard Title="Periods" Icon="calendar-range" Class="pol-card pol-card--wide">
+                <p class="form-hint">Leave this empty to use the derived Ugandan terms: <strong>T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec</strong>, with an annual roll-up per year. Define rows here only when your calendar differs. Keys are stored on appraisals, so change a key only before its period is opened.</p>
+                @if (policy.Periods.Any())
+                {
+                    <div class="table-wrap">
+                        <table class="data-table pol-table">
+                            <thead><tr><th>Key</th><th>Name</th><th>Start</th><th>End</th><th></th></tr></thead>
+                            <tbody>
+                                @for (var i = 0; i < periodDrafts.Count; i++)
+                                {
+                                    var idx = i;
+                                    <tr>
+                                        <td><QInput TValue="string" @bind-Value="@periodDrafts[idx].Key" Placeholder="2026-T1" MaxLength="20" /></td>
+                                        <td><QInput TValue="string" @bind-Value="@periodDrafts[idx].Name" Placeholder="Term 1 2026" MaxLength="60" /></td>
+                                        <td><QDatePicker Value="@periodDrafts[idx].Start" ValueChanged="@(d => periodDrafts[idx].Start = d)" Placeholder="Start" /></td>
+                                        <td><QDatePicker Value="@periodDrafts[idx].End" ValueChanged="@(d => periodDrafts[idx].End = d)" Placeholder="End" /></td>
+                                        <td><QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => RemovePeriod(idx))" Title="Remove" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                <QButton Text="Add period" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddPeriod" Class="pol-add" />
+            </QCard>
+
+            <QCard Title="Bands" Icon="bar-chart-steps" Class="pol-card">
+                <p class="form-hint">Five bands, MoES's scale. The <strong>count is fixed</strong> so a stored rating means the same thing across periods; the names and thresholds are yours. Thresholds are the minimum composite (0–100) for the band.</p>
+                <div class="table-wrap">
+                    <table class="data-table pol-table">
+                        <thead><tr><th class="pol-num">Rating</th><th>Name</th><th class="pol-num">Min score</th></tr></thead>
+                        <tbody>
+                            @for (var i = 0; i < bandDrafts.Count; i++)
+                            {
+                                var idx = i;
+                                <tr>
+                                    <td class="pol-num"><strong>@bandDrafts[idx].Rating</strong></td>
+                                    <td><QInput TValue="string" @bind-Value="@bandDrafts[idx].Name" MaxLength="40" /></td>
+                                    <td><QInput TValue="decimal" @bind-Value="@bandDrafts[idx].MinScore" Type="number" Min="0" Max="100" Step="1" Disabled="@(bandDrafts[idx].Rating == 1)" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (bandError != null) { <p class="pol-error">@bandError</p> }
+            </QCard>
+
+            <QCard Title="Weights and points" Icon="sliders" Class="pol-card">
+                <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="100" Label="Weight cap (%)"
+                        HelperText="No single parameter may carry more than this share of the composite. 50 is the MET ceiling." />
+                <QInput TValue="int" @bind-Value="@policy.RecognitionMonthlyBudget" Type="number" Min="0" Max="100" Label="Recognition budget per person per month"
+                        HelperText="How many recognitions a member of staff may give a month. Self-recognition is always refused." />
+                <QCheckbox @bind-Value="@policy.SystemAwardsEnabled" Label="Credit system activity automatically" />
+                <small class="pol-help">Off by default. When on, finalising a welfare record, serving a queue ticket or hosting a visitor credits the matching system-source parameter — low points, capped per period, and labelled <em>Automatic</em> on the timeline so nobody mistakes it for a colleague's judgement.</small>
+            </QCard>
+
+            <QCard Title="Leaderboard" Icon="trophy" Class="pol-card">
+                <QSelect TValue="LeaderboardMode" TItem="LeaderboardMode" @bind-Value="@policy.LeaderboardMode" Items="@Modes"
+                         TextSelector="@(m => StaffDisplay.LeaderboardLabel(m))" ValueSelector="@(m => m)" Label="Who sees rankings" />
+                @if (policy.LeaderboardMode == LeaderboardMode.Public)
+                {
+                    <QInput TValue="int" @bind-Value="@policy.LeaderboardTopN" Type="number" Min="3" Max="50" Label="Top N shown" />
+                }
+                <small class="pol-help">Private is the default for a reason: public ranking of individuals is the pattern the research says undermines the intrinsic motivation this module is meant to support. Department comparison stays available to the reports permission under every setting.</small>
+            </QCard>
+
+            <QCard Title="Timing" Icon="clock" Class="pol-card">
+                <QInput TValue="int" @bind-Value="@policy.DutyReminderLeadHours" Type="number" Min="1" Max="168" Label="Duty reminder lead (hours)" HelperText="How long before a duty its expected attendees are reminded." />
+                <QInput TValue="int" @bind-Value="@policy.LateEntryThresholdDays" Type="number" Min="1" Max="90" Label="Late-entry threshold (days)" HelperText="A record dated further back than this is marked as a late entry on its face." />
+                <div class="form-row">
+                    <QSelect TValue="DayOfWeek" TItem="DayOfWeek" @bind-Value="@policy.DigestWeekday" Items="@Weekdays" TextSelector="@(d => d.ToString())" ValueSelector="@(d => d)" Label="Digest weekday" />
+                    <QInput TValue="int" @bind-Value="@policy.DigestHour" Type="number" Min="0" Max="23" Label="Digest hour (0–23)" />
+                    <QInput TValue="int" @bind-Value="@policy.SummaryHour" Type="number" Min="0" Max="23" Label="Monthly summary hour (0–23)" />
+                </div>
+                @if (policy.LastSummarySentAt.HasValue) { <small class="pol-help">Last administrator summary sent @QDateFormat.LocalDT(policy.LastSummarySentAt).</small> }
+            </QCard>
+
+            <QCard Title="Data protection" Icon="shield-lock" Class="pol-card">
+                <QInput TValue="int" @bind-Value="@policy.ActivityAttributionRetentionDays" Type="number" Min="30" Max="3650" Label="Activity attribution retention (days)"
+                        HelperText="After this many days an activity event keeps its row but loses the address and browser that made it. 365 is the proposed default." />
+                <QInput TValue="string" @bind-Value="@policy.DataProtectionOfficerContact" Label="Data protection officer contact" MaxLength="200" Placeholder="Name and email or phone"
+                        HelperText="Shown on a member of staff's own file export so they know who to ask about what is held on them." />
+            </QCard>
+        </div>
+    }
+</div>
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .pol-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+    .pol-card { min-width: 0; }
+    .pol-card--wide { grid-column: 1 / -1; }
+    .pol-card .q-input-wrapper, .pol-card .q-select-wrapper { margin-bottom: 12px; }
+    .table-wrap { overflow-x: auto; }
+    .pol-table td { vertical-align: middle; }
+    .pol-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pol-add { margin-top: 8px; }
+    .pol-help { display: block; margin-top: 6px; font-size: 12px; color: var(--qm-text-muted); line-height: 1.5; }
+    .pol-error { margin: 8px 0 0; font-size: 12.5px; color: var(--qm-danger); }
+    .form-row { display: flex; flex-wrap: wrap; gap: 12px; }
+    .form-row > * { flex: 1 1 140px; min-width: 0; }
+</style>
+
+@code {
+    private sealed class PeriodDraft { public string Key = ""; public string Name = ""; public DateTime? Start; public DateTime? End; }
+    private sealed class BandDraft { public int Rating; public string Name = ""; public decimal MinScore; }
+
+    private static readonly IReadOnlyList<LeaderboardMode> Modes = Enum.GetValues<LeaderboardMode>();
+    private static readonly IReadOnlyList<DayOfWeek> Weekdays = Enum.GetValues<DayOfWeek>();
+
+    private bool isLoading = true, isSaving;
+    private StaffPerformancePolicyDto? policy;
+    private List<PeriodDraft> periodDrafts = new();
+    private List<BandDraft> bandDrafts = new();
+    private string? bandError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        try
+        {
+            policy = await StaffApi.GetPolicyAsync();
+            periodDrafts = policy.Periods.Select(p => new PeriodDraft { Key = p.Key, Name = p.Name, Start = p.Start.ToDateTime(TimeOnly.MinValue), End = p.End.ToDateTime(TimeOnly.MinValue) }).ToList();
+            var bands = policy.Bands.Count == 5 ? policy.Bands : new StaffPerformancePolicyDto().Bands;
+            bandDrafts = bands.OrderByDescending(b => b.Rating).Select(b => new BandDraft { Rating = b.Rating, Name = b.Name, MinScore = b.MinScore }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the policy", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void AddPeriod()
+    {
+        var year = DateTime.Today.Year;
+        var n = periodDrafts.Count + 1;
+        periodDrafts.Add(new PeriodDraft { Key = $"{year}-T{Math.Min(n, 3)}", Name = $"Term {Math.Min(n, 3)} {year}" });
+        policy!.Periods.Add(new PerformancePeriodDto());
+    }
+
+    private void RemovePeriod(int idx)
+    {
+        periodDrafts.RemoveAt(idx);
+        if (policy!.Periods.Count > 0) policy.Periods.RemoveAt(policy.Periods.Count - 1);
+    }
+
+    private async Task Save()
+    {
+        if (policy == null) return;
+
+        // Bands: 5 rows, rating 1 always starts at 0, thresholds strictly increasing with the rating.
+        bandError = null;
+        var ordered = bandDrafts.OrderBy(b => b.Rating).ToList();
+        ordered[0].MinScore = 0;
+        for (var i = 1; i < ordered.Count; i++)
+        {
+            if (ordered[i].MinScore <= ordered[i - 1].MinScore || ordered[i].MinScore > 100)
+            {
+                bandError = $"Band {ordered[i].Rating} must start above band {ordered[i - 1].Rating} and at or below 100.";
+                return;
+            }
+        }
+        if (ordered.Any(b => string.IsNullOrWhiteSpace(b.Name)))
+        {
+            bandError = "Every band needs a name.";
+            return;
+        }
+
+        var periods = new List<PerformancePeriodDto>();
+        foreach (var d in periodDrafts)
+        {
+            if (string.IsNullOrWhiteSpace(d.Key) && string.IsNullOrWhiteSpace(d.Name) && d.Start == null && d.End == null) continue;
+            if (string.IsNullOrWhiteSpace(d.Key) || d.Start == null || d.End == null)
+            {
+                Toast.Notify(ToastSeverity.Warning, "A period is incomplete", "Each period needs a key, a start and an end — or remove the row to fall back to the derived terms.");
+                return;
+            }
+            var s = DateOnly.FromDateTime(d.Start.Value);
+            var e = DateOnly.FromDateTime(d.End.Value);
+            if (e < s) (s, e) = (e, s);
+            periods.Add(new PerformancePeriodDto { Key = d.Key.Trim(), Name = string.IsNullOrWhiteSpace(d.Name) ? d.Key.Trim() : d.Name.Trim(), Start = s, End = e });
+        }
+        if (periods.Select(p => p.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != periods.Count)
+        {
+            Toast.Notify(ToastSeverity.Warning, "Duplicate period key", "Each period key must be unique.");
+            return;
+        }
+
+        policy.Periods = periods;
+        policy.Bands = ordered.Select(b => new ScoreBandDto { Rating = b.Rating, Name = b.Name.Trim(), MinScore = b.MinScore }).ToList();
+
+        isSaving = true;
+        try
+        {
+            policy = await StaffApi.UpdatePolicyAsync(policy);
+            periodDrafts = policy.Periods.Select(p => new PeriodDraft { Key = p.Key, Name = p.Name, Start = p.Start.ToDateTime(TimeOnly.MinValue), End = p.End.ToDateTime(TimeOnly.MinValue) }).ToList();
+            Toast.Notify(ToastSeverity.Success, "Policy saved", "Scores are recomputed from the new bands and caps the next time they are read.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the policy", ex.Message, 9000);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

@@ -1,0 +1,167 @@
+@page "/portal/notices/{Id:guid}"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>Notice - Q-Mgr</PageTitle>
+
+@*
+    One notice in full. There is no single-notice GET — the API answers "my notices" for the branch
+    and this page picks the one in the route, which also means a notice not addressed to the caller
+    reads as missing rather than as forbidden.
+*@
+
+<div class="admin-page ntc-page">
+    <div class="page-header">
+        <div class="header-content">
+            <QButton Text="Back to my portal" Icon="arrow-left" Variant="ghost" Size="sm" Class="ntc-back" OnClick="@(() => Navigation.NavigateTo("/portal"))" />
+            <h1>@(notice?.Title ?? "Notice")</h1>
+            @if (notice != null)
+            {
+                <p class="subtitle">Published by @notice.PublishedByName · @QDateFormat.LocalDT(notice.PublishAt)@(notice.ExpiresAt.HasValue ? $" · until {QDateFormat.D(Local(notice.ExpiresAt.Value))}" : "")</p>
+            }
+        </div>
+        <div class="header-actions">
+            @if (notice != null && notice.RequiresAcknowledgement && notice.AcknowledgedByMeAt == null)
+            {
+                <QButton Text="Acknowledge" Icon="check2-circle" Variant="primary" Loading="@acknowledging" OnClick="@AcknowledgeAsync" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the notice...</span></div>
+    }
+    else if (notice == null)
+    {
+        <QEmptyState Icon="megaphone" Title="This notice could not be found" Text="@(loadError ?? "It may have expired, been withdrawn, or not be addressed to you.")">
+            <Action><QButton Text="Back to my portal" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/portal"))" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        <QCard Class="ntc-card">
+            <div class="ntc-chips">
+                @if (notice.IsPinned) { <QChip Text="Pinned" Icon="pin-angle" Variant="primary" /> }
+                @if (notice.RequiresAcknowledgement)
+                {
+                    if (notice.AcknowledgedByMeAt.HasValue)
+                    {
+                        <QChip Text="@($"You acknowledged this {QDateFormat.LocalDT(notice.AcknowledgedByMeAt.Value)}")" Icon="check2" Variant="success" />
+                    }
+                    else
+                    {
+                        <QChip Text="Acknowledgement required" Icon="hand-index" Variant="warning" />
+                    }
+                }
+                @if (notice.AudienceStaffGroup.HasValue && notice.AudienceStaffGroup != StaffGroup.AllStaff)
+                {
+                    <QChip Text="@(notice.AudienceStaffGroup == StaffGroup.TeachingStaff ? "Teaching staff" : "Support staff")" Icon="people" Variant="muted" />
+                }
+            </div>
+
+            <div class="ntc-body">@((MarkupString)notice.BodyHtml)</div>
+
+            @if (notice.Attachments.Any())
+            {
+                <h5>Attachments</h5>
+                <div class="ntc-attachments">
+                    @foreach (var a in notice.Attachments)
+                    {
+                        <QChip Text="@a.Name" Icon="paperclip" Variant="muted" Href="@a.FileUrl" />
+                    }
+                </div>
+            }
+        </QCard>
+    }
+</div>
+
+<style>
+    .ntc-page { max-width: 860px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 24px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .ntc-back { margin-left: -8px; margin-bottom: 4px; }
+    .ntc-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .ntc-body { font-size: 15px; line-height: 1.6; color: var(--qm-text-primary); overflow-wrap: anywhere; }
+    .ntc-body img { max-width: 100%; }
+    .ntc-body table { max-width: 100%; }
+    .ntc-card h5 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .ntc-attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true;
+    private string? loadError;
+    private Guid branchId;
+    private StaffNoticeDto? notice;
+    private bool acknowledging;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+                branchId = (await StaffApi.GetPortalAsync()).BranchId;
+            var mine = await StaffApi.GetMyNoticesAsync(branchId);
+            notice = mine.FirstOrDefault(n => n.Id == Id);
+        }
+        catch (Exception ex)
+        {
+            notice = null;
+            loadError = ex.Message;
+            Toast.Notify(ToastSeverity.Error, "Could not load the notice", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    private async Task AcknowledgeAsync()
+    {
+        if (notice == null) return;
+        acknowledging = true;
+        try
+        {
+            await StaffApi.AcknowledgeNoticeAsync(notice.Id);
+            Toast.Notify(ToastSeverity.Success, "Acknowledged", "Thank you — the publisher can see you have read it.");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not acknowledge the notice", ex.Message);
+        }
+        finally
+        {
+            acknowledging = false;
+        }
+    }
+}

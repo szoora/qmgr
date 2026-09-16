@@ -1,0 +1,266 @@
+@page "/admin/staff/records"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Staff Records - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Staff Records</h1>
+            <p class="subtitle">Every record in the ledger for this branch — search it, log to it, open a person's timeline from it.</p>
+        </div>
+        <div class="header-actions">
+            @if (canCreate)
+            {
+                <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory.Count == 0)" />
+            }
+            <QDataExport TItem="StaffPerformanceRecordDto" Title="Staff records" FileStem="staff-records" Subtitle="@ExportSubtitle"
+                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(result == null || result.Items.Count == 0)" DisabledReason="Nothing matches the current filters." />
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(result?.ScopedToDepartments)" Noun="records" />
+
+    <QFilterBar Wrap="true">
+        <QInput TValue="string" @bind-Value="@search" Placeholder="Search descriptions" IconLeft="search" Clearable="true" Class="sr-search" />
+        <QSelect TValue="Guid?" TItem="StaffMemberDto" @bind-Value="@subjectFilter" Items="@directory" TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)"
+                 Placeholder="Anyone" AllowClear="true" Class="sr-filter" />
+        <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@parameterFilter" Items="@parameters" TextSelector="@(p => p.Name)" ValueSelector="@(p => (Guid?)p.Id)"
+                 Placeholder="Any parameter" AllowClear="true" Class="sr-filter" />
+        <QSelect TValue="string" TItem="(string Value, string Label)" @bind-Value="@statusFilter" Items="@StatusOptions" TextSelector="@(s => s.Label)" ValueSelector="@(s => s.Value)"
+                 Placeholder="Any status" AllowClear="true" Class="sr-filter" />
+        <QDateRangePicker Range="@range" RangeChanged="@(r => range = r)" ShowCaption="false" Presets="@RecordPresets" />
+        <QButton Text="Search" Icon="search" Variant="secondary" OnClick="@(() => Search(resetPage: true))" Loading="@isLoading" />
+    </QFilterBar>
+
+    @if (isLoading && result == null)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Searching the ledger...</span></div>
+    }
+    else if (result == null || result.Items.Count == 0)
+    {
+        <QEmptyState Icon="journal-text" Title="No records match"
+                     Text="@(HasFilters ? "Widen the date range or clear a filter to see more of the ledger." : "Nothing has been logged on this branch yet. Log a record, or take a register on a duty.")" />
+    }
+    else
+    {
+        <QCard NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table sr-table">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Subject</th>
+                            <th>Parameter</th>
+                            <th>Outcome / points</th>
+                            <th>Visibility</th>
+                            <th>Status</th>
+                            <th>Logged by</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in result.Items)
+                        {
+                            <tr class="sr-row @(r.Status == StaffRecordStatus.Annulled ? "sr-row--annulled" : "")" @onclick="@(() => Navigation.NavigateTo($"/admin/staff/{r.SubjectUserId}/timeline"))" title="Open this person's timeline">
+                                <td class="sr-nowrap">
+                                    @QDateFormat.D(r.OccurredAt.ToLocalTime())
+                                    @if (r.IsLateEntry) { <QIcon Name="exclamation-triangle-fill" Class="sr-late" /> }
+                                </td>
+                                <td><div class="sr-person"><QAvatar Name="@r.SubjectName" Size="sm" /> <span>@r.SubjectName</span></div></td>
+                                <td><QChip Text="@r.ParameterName" Color="@(r.ParameterColor ?? StaffDisplay.KindColor(r.ParameterKind))" Icon="@StaffDisplay.KindIcon(r.ParameterKind)" Size="sm" /></td>
+                                <td class="sr-nowrap">
+                                    @if (r.Outcome != DutyOutcome.NotApplicable)
+                                    {
+                                        <QChip Text="@StaffDisplay.OutcomeLabel(r.Outcome)" Variant="@StaffDisplay.OutcomeVariant(r.Outcome)" Size="sm" />
+                                    }
+                                    @if (r.Points.HasValue && r.Points != 0)
+                                    {
+                                        <span class="@(r.Points > 0 ? "sr-pos" : "sr-neg")">@StaffDisplay.Points(r.Points)</span>
+                                    }
+                                    @if (r.Rating.HasValue)
+                                    {
+                                        <span class="sr-muted">@r.Rating/@(r.RatingScale ?? 4)</span>
+                                    }
+                                    @if (r.Outcome == DutyOutcome.NotApplicable && (r.Points ?? 0) == 0 && !r.Rating.HasValue)
+                                    {
+                                        <span class="sr-muted">—</span>
+                                    }
+                                </td>
+                                <td><QChip Text="@StaffDisplay.VisibilityLabel(r.Visibility)" Variant="@StaffDisplay.VisibilityVariant(r.Visibility)" Size="sm" /></td>
+                                <td>
+                                    @StaffDisplay.StatusLabel(r.Status)
+                                    @if (r.Source == RecordSource.System) { <span class="sr-muted"> · automatic</span> }
+                                </td>
+                                <td>@r.LoggedByName</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+        <QPager Count="@result.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" ItemLabel="records" />
+    }
+</div>
+
+<StaffRecordDialog BranchId="@branchId" Subjects="@directory" @bind-Visible="showRecordDialog" OnCreated="@(_ => Search(resetPage: true))" />
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .sr-search { flex: 1 1 220px; min-width: 0; }
+    .sr-filter { flex: 0 1 190px; min-width: 150px; }
+    .table-wrap { overflow-x: auto; }
+    .sr-row { cursor: pointer; }
+    .sr-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+    .sr-row--annulled td { opacity: 0.6; text-decoration: line-through; }
+    .sr-nowrap { white-space: nowrap; }
+    .sr-person { display: flex; align-items: center; gap: 8px; }
+    .sr-late { color: var(--qm-warning); margin-left: 4px; }
+    .sr-pos { color: var(--qm-success); font-weight: 600; margin-left: 4px; }
+    .sr-neg { color: var(--qm-danger); font-weight: 600; margin-left: 4px; }
+    .sr-muted { color: var(--qm-text-muted); font-size: 12.5px; margin-left: 4px; }
+</style>
+
+@code {
+    private const int pageSize = 25;
+
+    private static readonly IReadOnlyList<(string Value, string Label)> StatusOptions = new[]
+    {
+        ("Draft", "Draft"), ("Final", "Final"), ("Annulled", "Annulled")
+    };
+
+    private static readonly IReadOnlyList<DateRangePreset> RecordPresets = new DateRangePreset[]
+    {
+        new("Last 7 days", () => DateRange.LastDays(7)),
+        new("Last 30 days", () => DateRange.LastDays(30)),
+        new("Last 90 days", () => DateRange.LastDays(90)),
+        new("This year", () => new DateRange(new DateOnly(DateTime.Today.Year, 1, 1), DateOnly.FromDateTime(DateTime.Today))),
+        new("Complete record", () => DateRange.AllTime())
+    };
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private bool canCreate;
+    private List<StaffMemberDto> directory = new();
+    private List<PerformanceParameterDto> parameters = new();
+    private StaffRecordSearchResultDto? result;
+
+    private string search = string.Empty;
+    private Guid? subjectFilter, parameterFilter;
+    private string? statusFilter;
+    private DateRange range = DateRange.LastDays(90);
+    private int pageIndex;
+    private bool showRecordDialog;
+
+    private bool HasFilters => !string.IsNullOrWhiteSpace(search) || subjectFilter != null || parameterFilter != null || statusFilter != null || !range.IsAllTime;
+
+    private string ExportSubtitle => $"{BranchState.CurrentBranchName} · {range.Caption} · page {pageIndex + 1} ({result?.Items.Count ?? 0} of {result?.TotalCount ?? 0} records)";
+
+    private static readonly List<ExportColumn<StaffPerformanceRecordDto>> ExportColumns = new()
+    {
+        new("Occurred", r => r.OccurredAt.ToLocalTime(), ExportType.Date, 18),
+        new("Subject", r => r.SubjectName, ExportType.Text, 26),
+        new("Parameter", r => r.ParameterName, ExportType.Text, 24),
+        new("Kind", r => r.ParameterKind, ExportType.Text, 14),
+        new("Outcome", r => r.Outcome == DutyOutcome.NotApplicable ? null : StaffDisplay.OutcomeLabel(r.Outcome), ExportType.Text, 12),
+        new("Points", r => r.Points, ExportType.Number, 8),
+        new("Rating", r => r.Rating, ExportType.Number, 8),
+        new("Visibility", r => r.Visibility, ExportType.Text, 14),
+        new("Status", r => r.Status, ExportType.Text, 12),
+        new("Source", r => r.Source, ExportType.Text, 12),
+        new("Logged by", r => r.LoggedByName, ExportType.Text, 22),
+        new("Late entry", r => r.IsLateEntry, ExportType.Bool, 10),
+        new("Description", r => r.Description, ExportType.Text, 50)
+    };
+
+    /// <summary>The page on screen: the ledger is paged server-side, so this is what the caller is looking at.</summary>
+    private Task<ExportRows<StaffPerformanceRecordDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<StaffPerformanceRecordDto>(result?.Items ?? new List<StaffPerformanceRecordDto>(), (result?.TotalCount ?? 0) > (result?.Items.Count ?? 0)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsCreate);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadLookups();
+        await Search(resetPage: true);
+    }
+
+    private async Task LoadLookups()
+    {
+        try
+        {
+            directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.FullName).ToList();
+            parameters = (await StaffApi.GetParametersAsync(includeInactive: true)).OrderBy(p => p.SortOrder).ThenBy(p => p.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the filters", ex.Message);
+        }
+    }
+
+    private async Task Search(bool resetPage)
+    {
+        if (resetPage) pageIndex = 0;
+        isLoading = true;
+        try
+        {
+            DateTime? from = range.IsAllTime ? null : range.From.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+            DateTime? to = range.IsAllTime ? null : range.To.ToDateTime(TimeOnly.MaxValue).ToUniversalTime();
+            result = await StaffApi.SearchRecordsAsync(branchId, subjectFilter, parameterFilter, from, to, statusFilter,
+                string.IsNullOrWhiteSpace(search) ? null : search.Trim(), pageIndex + 1, pageSize);
+        }
+        catch (Exception ex)
+        {
+            result = null;
+            Toast.Notify(ToastSeverity.Error, "Search failed", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPageChanged(int index)
+    {
+        pageIndex = index;
+        await Search(resetPage: false);
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadLookups(); await Search(resetPage: true); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

@@ -1,0 +1,193 @@
+@page "/admin/staff/activity"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IDataExportService DataExport
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Staff Activity Log - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Activity Log</h1>
+            <p class="subtitle">Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here.</p>
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(log?.ScopedToDepartments)" Noun="events" />
+
+    <QFilterBar Wrap="true">
+        <QSelect TValue="Guid?" TItem="StaffMemberDto" @bind-Value="@personFilter" Items="@directory" TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)"
+                 Placeholder="Anyone" AllowClear="true" Class="al-filter" />
+        <QSelect TValue="string" TItem="(string Value, string Label)" @bind-Value="@actionFilter" Items="@ActionOptions" TextSelector="@(a => a.Label)" ValueSelector="@(a => a.Value)"
+                 Placeholder="Any action" AllowClear="true" Class="al-filter" />
+        <QDateRangePicker Range="@range" RangeChanged="@(r => range = r)" ShowCaption="false" />
+        <QButton Text="Apply" Icon="funnel-fill" Variant="secondary" OnClick="@(() => LoadAsync(resetPage: true))" Loading="@isLoading" />
+    </QFilterBar>
+
+    <QActivityLog Rows="@Rows" Tiles="@Tiles" RetentionNote="@RetentionNote" Loading="@(isLoading && log == null)"
+                  TableTitle="Events" EmptyText="@EmptyText" OnExportCsv="@ExportCsv" Exporting="@isExporting" />
+
+    @if (log != null && log.TotalCount > 0)
+    {
+        <QPager Count="@log.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" ItemLabel="events" />
+        @if (!range.IsAllTime)
+        {
+            <p class="al-note">The date range is applied to the page in view; the count above is the API's total for the person and action filters.</p>
+        }
+    }
+</div>
+
+<style>
+    .al-filter { flex: 0 1 220px; min-width: 160px; }
+    .al-note { margin: 6px 0 0; font-size: 12px; color: var(--qm-text-muted); }
+</style>
+
+@code {
+    private const int pageSize = 50;
+
+    private Guid branchId;
+    private bool isLoading = true, isExporting;
+    private ActivityLogPageDto? log;
+    private List<StaffMemberDto> directory = new();
+    private Guid? personFilter;
+    private string? actionFilter;
+    private DateRange range = DateRange.AllTime();
+    private int pageIndex;
+
+    private static readonly IReadOnlyList<(string Value, string Label)> ActionOptions =
+        typeof(ActivityActions).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => ((string)f.GetRawConstantValue()!, ActionLabel((string)f.GetRawConstantValue()!)))
+            .OrderBy(x => x.Item2)
+            .ToList();
+
+    /// <summary>"staff.record.visibility-changed" → "Record visibility changed".</summary>
+    private static string ActionLabel(string action)
+    {
+        var parts = action.Split('.');
+        var tail = string.Join(' ', parts.Skip(parts[0] == "staff" ? 1 : 0)).Replace('-', ' ');
+        return tail.Length == 0 ? action : char.ToUpperInvariant(tail[0]) + tail[1..];
+    }
+
+    private IReadOnlyList<QActivityRow> Rows =>
+        log?.Items
+            .Where(e => range.IsAllTime || (DateOnly.FromDateTime(e.OccurredAt.ToLocalTime()) >= range.From && DateOnly.FromDateTime(e.OccurredAt.ToLocalTime()) <= range.To))
+            .OrderByDescending(e => e.OccurredAt)
+            .Select(e => new QActivityRow(
+                e.OccurredAt.ToLocalTime(),
+                e.ActorName ?? "System",
+                e.Summary,
+                e.SubjectName != null && e.SubjectName != e.ActorName ? $"About {e.SubjectName}" : null,
+                string.Join(" · ", new[] { e.IpAddress, e.UserAgent }.Where(x => !string.IsNullOrWhiteSpace(x))),
+                Ref: ActionLabel(e.Action)))
+            .ToList() ?? new List<QActivityRow>();
+
+    private IReadOnlyList<(string Label, string Value)>? Tiles =>
+        log?.CountsByAction.OrderByDescending(kv => kv.Value).Take(4).Select(kv => (ActionLabel(kv.Key), kv.Value.ToString("N0"))).ToList();
+
+    private string? RetentionNote => log == null ? null
+        : $"Events are kept for ever; the address and browser on each are blanked after {log.AttributionRetentionDays} days. The row stays.";
+
+    private string EmptyText => personFilter != null || actionFilter != null || !range.IsAllTime
+        ? "No events match these filters."
+        : "Nothing has happened in the module on this branch yet.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        try { directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.FullName).ToList(); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message); }
+
+        await LoadAsync(resetPage: true);
+    }
+
+    private async Task LoadAsync(bool resetPage)
+    {
+        if (resetPage) pageIndex = 0;
+        isLoading = true;
+        try
+        {
+            log = await StaffApi.GetActivityAsync(branchId, pageIndex + 1, pageSize, personFilter, actionFilter);
+        }
+        catch (Exception ex)
+        {
+            log = null;
+            Toast.Notify(ToastSeverity.Error, "Could not load the activity log", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPageChanged(int index)
+    {
+        pageIndex = index;
+        await LoadAsync(resetPage: false);
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(resetPage: true); StateHasChanged(); });
+    }
+
+    private static readonly List<ExportColumn<QActivityRow>> ExportColumns = new()
+    {
+        new("When", r => r.At, ExportType.Date, 18),
+        new("Action", r => r.Ref, ExportType.Text, 26),
+        new("Who", r => r.Actor, ExportType.Text, 24),
+        new("Event", r => r.Summary, ExportType.Text, 60),
+        new("Detail", r => r.Detail, ExportType.Text, 24),
+        new("Where", r => r.Where, ExportType.Text, 30)
+    };
+
+    private async Task ExportCsv()
+    {
+        isExporting = true;
+        try
+        {
+            var result = await DataExport.ExportAsync(ExportFormat.Csv, "staff-activity", "Staff activity log", ExportColumns,
+                new ExportRows<QActivityRow>(Rows, (log?.TotalCount ?? 0) > Rows.Count),
+                $"{BranchState.CurrentBranchName} · page {pageIndex + 1} · {Rows.Count} of {log?.TotalCount ?? 0} events");
+            Toast.Notify(result.Success ? ToastSeverity.Success : ToastSeverity.Error, result.Success ? "Exported" : "Export failed", result.Message);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Export failed", ex.Message);
+        }
+        finally
+        {
+            isExporting = false;
+        }
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

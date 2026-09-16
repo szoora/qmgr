@@ -1,0 +1,544 @@
+@page "/admin/staff/duties"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+
+<PageTitle>Duties & Registers - Q-Mgr</PageTitle>
+
+@*
+    The duty roster by week (plan §10). Everyone with the module may open it: the API narrows the
+    list to the duties the caller is expected at or records, so a teacher with none of the staff
+    permissions sees their own week and nothing else. Create / edit / duplicate / cancel need
+    staff.duties.manage; "Take register" follows the duty's own CanIRecord.
+*@
+
+<div class="admin-page duties-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Duties & registers</h1>
+            <p class="subtitle">@(canManage ? "Plan the week's duties, name who records each register, and see which registers are still open." : "The duties you are expected at this week, and the registers you take.")</p>
+        </div>
+        <div class="header-actions">
+            @if (canManage)
+            {
+                <QButton Text="New duty" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
+            }
+        </div>
+    </div>
+
+    <QFilterBar Wrap="true">
+        <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Presets="@WeekPresets" Max="null" CaptionPrefix="Week of" />
+    </QFilterBar>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading duties...</span></div>
+    }
+    else if (branchId == Guid.Empty)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="Duties belong to a branch. Pick one in the switcher above to see its roster." />
+    }
+    else if (!duties.Any())
+    {
+        <QEmptyState Icon="calendar-x" Title="@(canManage ? "No duties this week" : "Nothing expected of you this week")"
+                     Text="@(canManage ? "Create a duty — a staff meeting, exam supervision, a lesson block — and name who takes its register." : "Duties you are expected at, and registers you take, will appear here for the chosen week.")">
+            <Action>
+                @if (canManage)
+                {
+                    <QButton Text="New duty" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" />
+                }
+            </Action>
+        </QEmptyState>
+    }
+    else
+    {
+        @foreach (var day in duties.GroupBy(d => Local(d.StartsAt).Date).OrderBy(g => g.Key))
+        {
+            <section class="duty-day">
+                <h2 class="duty-day__head">
+                    @QDateFormat.LongDay(day.Key)
+                    <small>@day.Count() @(day.Count() == 1 ? "duty" : "duties")</small>
+                </h2>
+                <div class="duty-list">
+                    @foreach (var duty in day.OrderBy(d => d.StartsAt))
+                    {
+                        var state = RegisterState(duty);
+                        <QCard Class="@($"duty-card {(state.Variant == "danger" ? "duty-card--late" : "")}")">
+                            <div class="duty-card__row">
+                                <div class="duty-card__main">
+                                    <div class="duty-card__title">
+                                        <strong>@duty.Title</strong>
+                                        <QChip Text="@duty.ParameterName" Size="sm" Color="@StaffDisplay.KindColor(duty.ParameterKind)" Icon="@StaffDisplay.KindIcon(duty.ParameterKind)" />
+                                        <QChip Text="@state.Label" Size="sm" Variant="@state.Variant" Icon="@state.Icon" />
+                                        @if (duty.IsExpectedOfMe) { <QChip Text="You are expected" Size="sm" Variant="primary" Icon="person-check" /> }
+                                        @if (duty.MyOutcome.HasValue && duty.MyOutcome != DutyOutcome.NotApplicable)
+                                        {
+                                            <QChip Text="@($"You: {StaffDisplay.OutcomeLabel(duty.MyOutcome.Value)}")" Size="sm" Variant="@StaffDisplay.OutcomeVariant(duty.MyOutcome.Value)" />
+                                        }
+                                    </div>
+                                    <div class="duty-card__facts">
+                                        <span><QIcon Name="clock" Size="sm" /> @QDateFormat.T(Local(duty.StartsAt)) – @QDateFormat.T(Local(duty.EndsAt))@(Local(duty.EndsAt).Date != Local(duty.StartsAt).Date ? $" ({QDateFormat.C(Local(duty.EndsAt))})" : "")</span>
+                                        @if (!string.IsNullOrEmpty(duty.Location)) { <span><QIcon Name="geo-alt" Size="sm" /> @duty.Location</span> }
+                                        <span><QIcon Name="people" Size="sm" /> @(duty.ExpectedUserIds == null ? $"Everyone in the branch ({duty.ExpectedCount})" : $"{duty.ExpectedCount} expected")</span>
+                                        <span><QIcon Name="pencil-square" Size="sm" /> @(duty.RecorderNames.Any() ? $"Recorded by {string.Join(", ", duty.RecorderNames)}" : "No recorder named")</span>
+                                        @if (duty.RegisterClosedAt.HasValue)
+                                        {
+                                            <span><QIcon Name="check2-circle" Size="sm" /> @duty.MarkedCount of @duty.ExpectedCount marked · closed @QDateFormat.LocalDT(duty.RegisterClosedAt.Value)@(duty.RegisterClosedByName != null ? $" by {duty.RegisterClosedByName}" : "")</span>
+                                        }
+                                        else if (duty.MarkedCount > 0)
+                                        {
+                                            <span><QIcon Name="hourglass-split" Size="sm" /> @duty.MarkedCount of @duty.ExpectedCount marked so far</span>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(duty.Description))
+                                    {
+                                        <p class="duty-card__desc">@duty.Description</p>
+                                    }
+                                    @if (duty.MinutesMediaContentId.HasValue)
+                                    {
+                                        <div class="duty-card__minutes">
+                                            <QChip Text="Minutes" Icon="file-earmark-pdf" Size="sm" Variant="muted" Href="@duty.MinutesFileUrl" Title="Open the minutes in the Library" />
+                                        </div>
+                                    }
+                                </div>
+                                <div class="duty-card__actions">
+                                    @if (duty.CanIRecord)
+                                    {
+                                        <QButton Text="@(duty.RegisterClosedAt.HasValue ? "View register" : "Take register")" Icon="clipboard-check" Size="sm"
+                                                 Variant="@(duty.RegisterClosedAt.HasValue ? "secondary" : "primary")"
+                                                 OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{duty.Id}/register"))" />
+                                    }
+                                    @if (duty.CanIRecord || canManage)
+                                    {
+                                        <QButton Text="@(duty.MinutesMediaContentId.HasValue ? "Replace minutes" : "Minutes")" Icon="file-earmark-text" Size="sm" Variant="ghost"
+                                                 OnClick="@(() => OpenMinutes(duty))" />
+                                    }
+                                    @if (canManage)
+                                    {
+                                        <QButton Text="Edit" Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenEdit(duty))" />
+                                        <QButton Text="Duplicate to next week" Icon="copy" Size="sm" Variant="ghost" Loading="@(busyDutyId == duty.Id)" OnClick="@(() => DuplicateAsync(duty))" />
+                                        <QButton Text="Cancel" Icon="x-circle" Size="sm" Variant="outline-danger" OnClick="@(() => AskCancel(duty))" />
+                                    }
+                                </div>
+                            </div>
+                        </QCard>
+                    }
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@* ---- New / edit duty --------------------------------------------------------------------- *@
+<QModal @bind-Visible="showEditor" Title="@(editingId.HasValue ? "Edit duty" : "New duty")" Icon="calendar-plus" Size="lg">
+    <ChildContent>
+        <div class="form-group">
+            <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@formParameterId" Items="@dutyParameters"
+                     TextSelector="@(p => $"{p.Name} ({StaffDisplay.KindLabel(p.Kind)})")" ValueSelector="@(p => (Guid?)p.Id)"
+                     Label="Parameter" Required="true" Placeholder="What kind of duty is this?"
+                     HelperText="Only Attendance and Duty parameters can carry a register. Closing it writes one record per person on this parameter."
+                     HasError="@formErrors.Contains("parameter")" ErrorMessage="Choose a parameter" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Title" Label="Title" Required="true" MaxLength="200" Placeholder="e.g. Staff briefing, P5 Maths, Evening prep supervision"
+                    HasError="@formErrors.Contains("title")" ErrorMessage="Give the duty a title" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@form.Description" Type="textarea" Rows="3" Label="Description" MaxLength="2000" Placeholder="Optional — agenda, room notes, what to bring" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="@form.Location" Label="Location" MaxLength="200" Placeholder="Staff room, Hall, Room 12" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formStartsAt" ShowTime="true" Label="Starts" Required="true" HasError="@formErrors.Contains("starts")" ErrorMessage="When does it start?" />
+            </div>
+            <div class="form-group">
+                <QDatePicker @bind-Value="@formEndsAt" ShowTime="true" Label="Ends" Required="true" Min="@formStartsAt"
+                             HasError="@formErrors.Contains("ends")" ErrorMessage="The end must be after the start" />
+            </div>
+        </div>
+        <div class="form-group">
+            <QCheckbox @bind-Value="@formEveryone" Label="Everyone in the branch is expected" />
+        </div>
+        @if (!formEveryone)
+        {
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@formExpected" SelectedValuesChanged="@(v => formExpected = v.ToList())"
+                              Items="@staff" ValueSelector="@(s => s.UserId)" TextSelector="@StaffLabel" Label="Expected" Required="true"
+                              Placeholder="@(staffUnavailable ? "The staff list is not available to you" : "Choose who is expected")" Disabled="@staffUnavailable"
+                              HelperText="@(staffUnavailable ? "You cannot read the staff directory, so this duty can only expect everyone." : null)"
+                              HasError="@formErrors.Contains("expected")" ErrorMessage="Name at least one person, or tick everyone" />
+            </div>
+        }
+        <div class="form-group">
+            <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@formRecorders" SelectedValuesChanged="@(v => formRecorders = v.ToList())"
+                          Items="@staff" ValueSelector="@(s => s.UserId)" TextSelector="@StaffLabel" Label="Recorders"
+                          Placeholder="@(staffUnavailable ? "The staff list is not available to you" : "Who takes the register?")" Disabled="@staffUnavailable"
+                          HelperText="A recorder can open this duty's register on their phone. Anyone with the duties permission can too." />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showEditor = false)" />
+        <QButton Text="@(editingId.HasValue ? "Save changes" : "Create duty")" Icon="check-lg" Variant="primary" Loading="@saving" OnClick="@SaveAsync" />
+    </FooterContent>
+</QModal>
+
+@* ---- Minutes ----------------------------------------------------------------------------- *@
+<QLibraryPicker @bind-Visible="showMinutes" OrganizationId="@organizationId" OnlyType="ContentType.Pdf"
+                Title="@($"Minutes for {minutesDuty?.Title}")" ConfirmText="Attach as minutes"
+                SelectedIds="@(minutesDuty?.MinutesMediaContentId is Guid mid ? new[] { mid } : null)"
+                EmptyText="Minutes are a Library document. Publish the PDF to the Library first (Content → Library), then attach it here — it can then also go on a playlist or a share link."
+                OnPicked="@AttachMinutesAsync" />
+
+<ConfirmDialog @bind-IsVisible="showCancel" Title="Cancel this duty?"
+               Message="@($"\"{cancelTarget?.Title}\" will be removed from the roster and its reminders stop. Records already written from its register are kept.")"
+               ConfirmText="Cancel duty" ConfirmButtonClass="btn-danger" OnClose="@CancelConfirmedAsync" />
+
+<style>
+    .duties-page { max-width: 1100px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .duty-day { margin-top: 20px; }
+    .duty-day__head { font-size: 15px; font-weight: 600; color: var(--qm-text-primary); margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
+    .duty-day__head small { font-weight: 400; color: var(--qm-text-muted); font-size: 12px; }
+    .duty-list { display: flex; flex-direction: column; gap: 10px; }
+    .duty-card--late { border-left: 3px solid var(--qm-danger); }
+    .duty-card__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .duty-card__main { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .duty-card__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; }
+    .duty-card__facts { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 13px; color: var(--qm-text-secondary); }
+    .duty-card__facts span { display: inline-flex; align-items: center; gap: 4px; }
+    .duty-card__desc { margin: 0; font-size: 13px; color: var(--qm-text-muted); white-space: pre-wrap; }
+    .duty-card__minutes { display: flex; gap: 6px; flex-wrap: wrap; }
+    .duty-card__actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private bool canManage;
+    private bool canViewRecords;
+    private Guid branchId;
+    private Guid organizationId;
+    private DateRange range = ThisWeek();
+    private List<StaffDutyDto> duties = new();
+    private List<PerformanceParameterDto> dutyParameters = new();
+    private List<StaffMemberDto> staff = new();
+    private bool staffUnavailable;
+    private bool lookupsLoaded;
+
+    private bool showEditor;
+    private bool saving;
+    private Guid? editingId;
+    private SaveStaffDutyRequest form = new();
+    private Guid? formParameterId;
+    private DateTime? formStartsAt;
+    private DateTime? formEndsAt;
+    private bool formEveryone = true;
+    private List<Guid> formExpected = new();
+    private List<Guid> formRecorders = new();
+    private readonly HashSet<string> formErrors = new();
+
+    private bool showMinutes;
+    private StaffDutyDto? minutesDuty;
+
+    private bool showCancel;
+    private StaffDutyDto? cancelTarget;
+    private Guid? busyDutyId;
+
+    private static readonly IReadOnlyList<DateRangePreset> WeekPresets = new List<DateRangePreset>
+    {
+        new("Last week", () => WeekOf(DateTime.Today.AddDays(-7))),
+        new("This week", ThisWeek),
+        new("Next week", () => WeekOf(DateTime.Today.AddDays(7))),
+        new("This month", () => { var t = DateTime.Today; var first = new DateOnly(t.Year, t.Month, 1); return new DateRange(first, first.AddMonths(1).AddDays(-1)); }),
+        new("Next month", () => { var t = DateTime.Today; var first = new DateOnly(t.Year, t.Month, 1).AddMonths(1); return new DateRange(first, first.AddMonths(1).AddDays(-1)); }),
+    };
+
+    private static DateRange ThisWeek() => WeekOf(DateTime.Today);
+
+    /// <summary>Monday to Sunday of the week containing <paramref name="day"/>. Monday-first, as QDatePicker's calendar is.</summary>
+    private static DateRange WeekOf(DateTime day)
+    {
+        var offset = ((int)day.DayOfWeek + 6) % 7;
+        var monday = DateOnly.FromDateTime(day.AddDays(-offset));
+        return new DateRange(monday, monday.AddDays(6));
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canManage = await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        canViewRecords = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView);
+        var me = await AuthService.GetCurrentUserAsync();
+        organizationId = me?.OrganizationId ?? Guid.Empty;
+
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            var next = BranchState.CurrentBranchId;
+            if (next == branchId) return;
+            branchId = next;
+            lookupsLoaded = false;
+            staff.Clear();
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadAsync()
+    {
+        if (branchId == Guid.Empty) { isLoading = false; duties = new(); return; }
+        isLoading = true;
+        try
+        {
+            var from = ToUtc(range.From.ToDateTime(TimeOnly.MinValue));
+            var to = ToUtc(range.To.ToDateTime(TimeOnly.MaxValue));
+            duties = await StaffApi.GetDutiesAsync(branchId, from, to);
+        }
+        catch (Exception ex)
+        {
+            duties = new();
+            Toast.Notify(ToastSeverity.Error, "Could not load duties", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    /// <summary>Parameters and the staff directory, fetched the first time the editor opens rather than on every page load.</summary>
+    private async Task EnsureLookupsAsync()
+    {
+        if (lookupsLoaded) return;
+        try
+        {
+            var all = await StaffApi.GetParametersAsync();
+            dutyParameters = all.Where(p => p.IsActive && p.Kind is ParameterKind.Attendance or ParameterKind.Duty).OrderBy(p => p.SortOrder).ThenBy(p => p.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load parameters", ex.Message);
+        }
+        try
+        {
+            var dir = await StaffApi.GetDirectoryAsync(branchId);
+            staff = dir.Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+            staffUnavailable = false;
+        }
+        catch (Exception)
+        {
+            // The directory is gated on staff.records.view; a duties manager without it can still
+            // create a duty that expects everyone, so this is a narrowed form, not a failure.
+            staff = new();
+            staffUnavailable = true;
+        }
+        lookupsLoaded = true;
+    }
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        await LoadAsync();
+    }
+
+    // ---- Display helpers ---------------------------------------------------------------------
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+
+    private static string StaffLabel(StaffMemberDto s) => string.IsNullOrEmpty(s.JobTitle) ? s.FullName : $"{s.FullName} — {s.JobTitle}";
+
+    private static (string Label, string Variant, string Icon) RegisterState(StaffDutyDto d)
+    {
+        if (!d.IsActive) return ("Cancelled", "muted", "x-circle");
+        if (d.RegisterClosedAt.HasValue) return ("Closed", "success", "check2-circle");
+        if (d.EndsAt < DateTime.UtcNow) return ("Register not taken", "danger", "exclamation-circle");
+        if (d.RegisterOpenedAt.HasValue || d.MarkedCount > 0) return ("Open", "info", "pencil-square");
+        return ("Upcoming", "muted", "clock");
+    }
+
+    // ---- Create / edit -----------------------------------------------------------------------
+
+    private async Task OpenCreate()
+    {
+        editingId = null;
+        form = new SaveStaffDutyRequest();
+        formParameterId = null;
+        var start = DateTime.Now.AddHours(1);
+        start = new DateTime(start.Year, start.Month, start.Day, start.Hour, 0, 0);
+        if (range.From > DateOnly.FromDateTime(start)) start = range.From.ToDateTime(new TimeOnly(8, 0));
+        formStartsAt = start;
+        formEndsAt = start.AddHours(1);
+        formEveryone = true;
+        formExpected = new();
+        formRecorders = new();
+        formErrors.Clear();
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private async Task OpenEdit(StaffDutyDto duty)
+    {
+        editingId = duty.Id;
+        form = new SaveStaffDutyRequest { Title = duty.Title, Description = duty.Description, Location = duty.Location };
+        formParameterId = duty.ParameterId;
+        formStartsAt = Local(duty.StartsAt);
+        formEndsAt = Local(duty.EndsAt);
+        formEveryone = duty.ExpectedUserIds == null || duty.ExpectedUserIds.Count == 0;
+        formExpected = duty.ExpectedUserIds?.ToList() ?? new();
+        formRecorders = duty.RecorderUserIds.ToList();
+        formErrors.Clear();
+        showEditor = true;
+        await EnsureLookupsAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        formErrors.Clear();
+        if (formParameterId is null || formParameterId == Guid.Empty) formErrors.Add("parameter");
+        if (string.IsNullOrWhiteSpace(form.Title)) formErrors.Add("title");
+        if (!formStartsAt.HasValue) formErrors.Add("starts");
+        if (!formEndsAt.HasValue || (formStartsAt.HasValue && formEndsAt <= formStartsAt)) formErrors.Add("ends");
+        if (!formEveryone && !formExpected.Any()) formErrors.Add("expected");
+        if (formErrors.Any()) return;
+
+        form.ParameterId = formParameterId!.Value;
+        form.Title = form.Title.Trim();
+        form.StartsAt = ToUtc(formStartsAt!.Value);
+        form.EndsAt = ToUtc(formEndsAt!.Value);
+        form.ExpectedUserIds = formEveryone ? null : formExpected.ToList();
+        form.RecorderUserIds = formRecorders.ToList();
+
+        saving = true;
+        try
+        {
+            if (editingId.HasValue)
+            {
+                await StaffApi.UpdateDutyAsync(branchId, editingId.Value, form);
+                Toast.Notify(ToastSeverity.Success, "Duty updated", form.Title);
+            }
+            else
+            {
+                await StaffApi.CreateDutyAsync(branchId, form);
+                Toast.Notify(ToastSeverity.Success, "Duty created", $"{form.Title} · {QDateFormat.DT(formStartsAt.Value)}");
+            }
+            showEditor = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, editingId.HasValue ? "Could not update the duty" : "Could not create the duty", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DuplicateAsync(StaffDutyDto duty)
+    {
+        busyDutyId = duty.Id;
+        try
+        {
+            var copy = await StaffApi.DuplicateDutyAsync(branchId, duty.Id, new DuplicateStaffDutyRequest { NewStartsAt = duty.StartsAt.AddDays(7) });
+            Toast.Notify(ToastSeverity.Success, "Duty duplicated", $"{copy.Title} · {QDateFormat.LocalDT(copy.StartsAt)}");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not duplicate the duty", ex.Message);
+        }
+        finally
+        {
+            busyDutyId = null;
+        }
+    }
+
+    private void AskCancel(StaffDutyDto duty)
+    {
+        cancelTarget = duty;
+        showCancel = true;
+    }
+
+    private async Task CancelConfirmedAsync(bool confirmed)
+    {
+        if (!confirmed || cancelTarget == null) return;
+        try
+        {
+            await StaffApi.CancelDutyAsync(branchId, cancelTarget.Id);
+            Toast.Notify(ToastSeverity.Success, "Duty cancelled", cancelTarget.Title);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not cancel the duty", ex.Message);
+        }
+        finally
+        {
+            cancelTarget = null;
+        }
+    }
+
+    // ---- Minutes -----------------------------------------------------------------------------
+
+    private void OpenMinutes(StaffDutyDto duty)
+    {
+        minutesDuty = duty;
+        showMinutes = true;
+    }
+
+    private async Task AttachMinutesAsync(IReadOnlyList<MediaContentDto> picked)
+    {
+        if (minutesDuty == null) return;
+        var doc = picked.FirstOrDefault();
+        try
+        {
+            await StaffApi.AttachMinutesAsync(branchId, minutesDuty.Id, new AttachMinutesRequest { MediaContentId = doc?.Id });
+            Toast.Notify(ToastSeverity.Success, "Minutes attached", doc?.Name ?? minutesDuty.Title);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not attach the minutes", ex.Message);
+        }
+        finally
+        {
+            minutesDuty = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+    }
+}

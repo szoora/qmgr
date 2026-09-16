@@ -1,0 +1,354 @@
+@page "/admin/staff/reports/report"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+
+@*
+    The branch's staff performance summary for a period, on A4. Tables only — a bar chart prints as
+    grey blocks on the office mono printer, and the same numbers in a table read better on paper.
+    Individual names appear only where the on-screen report would show them to this caller
+    (observers, loggers, the leaderboard when the policy allows it).
+*@
+
+<PageTitle>Staff Performance Summary - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="rpp-sheet"
+             Title="@($"Staff Performance Summary — {PeriodName}")"
+             Class="rpp-sheet"
+             Ready="@(!isLoading && loadError == null && r != null)"
+             BackText="Back to reports"
+             OnBack="@(() => Navigation.NavigateTo("/admin/staff/reports"))"
+             CanPublish="@canPublish"
+             Publishing="@isPublishing"
+             OnPublish="@PublishToLibrary"
+             OnPrint="@Print"
+             Disabled="@(isLoading || loadError != null)">
+
+    @if (r != null)
+    {
+        <header class="rpp-head">
+            <div class="rpp-head__brand">
+                @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl))
+                {
+                    <img class="rpp-logo" src="@branding!.LogoUrl" alt="" />
+                }
+                <div>
+                    <div class="rpp-org">@OrganizationName</div>
+                    <div class="rpp-doc">Staff Performance Summary</div>
+                </div>
+            </div>
+            <div class="rpp-head__meta">
+                <div><span>Branch</span><strong>@(BranchState.CurrentBranchName ?? "—")</strong></div>
+                <div><span>Period</span><strong>@PeriodName · @QDateFormat.Range(r.Period.Start, r.Period.End)</strong></div>
+                <div><span>Generated</span><strong>@QDateFormat.Long(DateTime.Now)</strong></div>
+                @if (!string.IsNullOrWhiteSpace(generatedBy)) { <div><span>By</span><strong>@generatedBy</strong></div> }
+            </div>
+        </header>
+
+        @if (r.ScopedToDepartments.Any())
+        {
+            <p class="rpp-scope">These figures cover <strong>@string.Join(", ", r.ScopedToDepartments)</strong> only, not the whole branch.</p>
+        }
+
+        <section>
+            <h2>Summary</h2>
+            <div class="rpp-tiles">
+                <div class="rpp-tile"><span class="rpp-tile__n">@r.StaffCount</span><span class="rpp-tile__l">Staff</span></div>
+                <div class="rpp-tile"><span class="rpp-tile__n">@r.RecordCount</span><span class="rpp-tile__l">Records</span></div>
+                <div class="rpp-tile"><span class="rpp-tile__n">@r.RecognitionCount</span><span class="rpp-tile__l">Recognition</span></div>
+                <div class="rpp-tile"><span class="rpp-tile__n">@r.DutyCount</span><span class="rpp-tile__l">Duties</span></div>
+                <div class="rpp-tile"><span class="rpp-tile__n">@r.RegistersNotTaken</span><span class="rpp-tile__l">Registers not taken</span></div>
+            </div>
+            @if (r.AppraisalsByStage.Any())
+            {
+                <p class="rpp-muted rpp-note">Appraisals: @string.Join(" · ", r.AppraisalsByStage.Select(kv => $"{kv.Value} {kv.Key}"))</p>
+            }
+        </section>
+
+        <section>
+            <h2>By department</h2>
+            @if (!r.ByDepartment.Any()) { <p class="rpp-empty">No department has scored evidence in this period.</p> }
+            else
+            {
+                <table class="rpp-table">
+                    <thead><tr><th>Department</th><th class="rpp-num">Staff</th><th class="rpp-num">Avg composite</th><th class="rpp-num">Attendance</th><th class="rpp-num">Recognition</th></tr></thead>
+                    <tbody>
+                        @foreach (var d in r.ByDepartment.OrderByDescending(d => d.AverageComposite ?? -1))
+                        {
+                            <tr><td>@d.Name</td><td class="rpp-num">@d.StaffCount</td><td class="rpp-num">@StaffDisplay.Composite(d.AverageComposite)</td><td class="rpp-num">@(d.AttendanceRate.HasValue ? $"{d.AttendanceRate.Value:0}%" : "—")</td><td class="rpp-num">@d.RecognitionCount</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section>
+            <h2>Band distribution</h2>
+            @if (r.BandDistribution.Sum(b => b.Count) == 0) { <p class="rpp-empty">Nobody has enough evidence to be banded yet.</p> }
+            else
+            {
+                <table class="rpp-table rpp-table--narrow">
+                    <thead><tr><th>Band</th><th class="rpp-num">Staff</th><th class="rpp-num">Share</th></tr></thead>
+                    <tbody>
+                        @{ var total = r.BandDistribution.Sum(b => b.Count); }
+                        @foreach (var b in r.BandDistribution.OrderByDescending(b => b.Rating))
+                        {
+                            <tr><td>@b.Rating — @b.Name</td><td class="rpp-num">@b.Count</td><td class="rpp-num">@(total == 0 ? "—" : $"{100m * b.Count / total:0}%")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section>
+            <h2>By parameter</h2>
+            @if (!r.ByParameter.Any()) { <p class="rpp-empty">No records against any parameter in this period.</p> }
+            else
+            {
+                <table class="rpp-table">
+                    <thead><tr><th>Parameter</th><th>Kind</th><th class="rpp-num">Records</th><th class="rpp-num">Average score</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in r.ByParameter.OrderByDescending(p => p.RecordCount))
+                        {
+                            <tr><td>@p.Name</td><td>@StaffDisplay.KindLabel(p.Kind)</td><td class="rpp-num">@p.RecordCount</td><td class="rpp-num">@(p.AverageScore.HasValue ? p.AverageScore.Value.ToString("0") : "—")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section>
+            <h2>Trend by week</h2>
+            @if (!r.TrendByWeek.Any(t => t.Records > 0)) { <p class="rpp-empty">No records were logged in this period.</p> }
+            else
+            {
+                <table class="rpp-table rpp-table--narrow">
+                    <thead><tr><th>Week beginning</th><th class="rpp-num">Records</th><th class="rpp-num">Net points</th></tr></thead>
+                    <tbody>
+                        @foreach (var t in r.TrendByWeek.OrderBy(t => t.WeekStart))
+                        {
+                            <tr><td>@QDateFormat.D(t.WeekStart)</td><td class="rpp-num">@t.Records</td><td class="rpp-num">@StaffDisplay.Points(t.Points)</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section>
+            <h2>Observer dispersion</h2>
+            @if (!r.ObserverDispersion.Any()) { <p class="rpp-empty">No lesson observations were logged in this period.</p> }
+            else
+            {
+                <table class="rpp-table">
+                    <thead><tr><th>Observer</th><th class="rpp-num">Observations</th><th class="rpp-num">Mean</th><th class="rpp-num">School mean</th><th class="rpp-num">Difference</th></tr></thead>
+                    <tbody>
+                        @foreach (var o in r.ObserverDispersion.OrderByDescending(o => Math.Abs(o.MeanRating - o.SchoolMean)))
+                        {
+                            var diff = o.MeanRating - o.SchoolMean;
+                            <tr class="@(Math.Abs(diff) >= 0.5m ? "rpp-flag" : "")"><td>@o.Name</td><td class="rpp-num">@o.Observations</td><td class="rpp-num">@o.MeanRating.ToString("0.00")</td><td class="rpp-num">@o.SchoolMean.ToString("0.00")</td><td class="rpp-num">@((diff >= 0 ? "+" : "") + diff.ToString("0.00"))</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <p class="rpp-muted rpp-note">Rows in bold differ from the school mean by half a point or more — a prompt for a conversation about the rubric, not a verdict.</p>
+            }
+        </section>
+
+        <section>
+            <h2>Who logs what</h2>
+            @if (!r.WhoLogsWhat.Any()) { <p class="rpp-empty">Nobody has logged a record in this period.</p> }
+            else
+            {
+                <table class="rpp-table">
+                    <thead><tr><th>Logged by</th><th class="rpp-num">Records</th><th>By kind</th></tr></thead>
+                    <tbody>
+                        @foreach (var l in r.WhoLogsWhat.OrderByDescending(l => l.Count))
+                        {
+                            <tr><td>@l.Name</td><td class="rpp-num">@l.Count</td><td>@string.Join(", ", l.ByKind.OrderByDescending(k => k.Value).Select(k => $"{k.Value} {k.Key}"))</td></tr>
+                        }
+                    </tbody>
+                </table>
+                <p class="rpp-muted rpp-note">A process-consistency check, not an evaluation of any one person.</p>
+            }
+        </section>
+
+        @if (r.LeaderboardMode == LeaderboardMode.Public && r.Leaderboard.Any())
+        {
+            <section>
+                <h2>Leaderboard</h2>
+                <table class="rpp-table">
+                    <thead><tr><th class="rpp-num">#</th><th>Name</th><th>Department</th><th class="rpp-num">Composite</th><th>Band</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in r.Leaderboard.OrderBy(x => x.Rank))
+                        {
+                            <tr><td class="rpp-num">@row.Rank</td><td>@row.Name</td><td>@(row.DepartmentName ?? "—")</td><td class="rpp-num">@StaffDisplay.Composite(row.Composite)</td><td>@row.BandName</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+        }
+
+        <section>
+            <h2>Coverage</h2>
+            <dl class="rpp-facts">
+                <div><dt>Departments without a head</dt><dd>@r.Coverage.DepartmentsWithoutHead.Count</dd></div>
+                <div><dt>Staff without a department</dt><dd>@r.Coverage.StaffWithoutDepartment.Count</dd></div>
+                <div><dt>Staff without a line manager</dt><dd>@r.Coverage.StaffWithoutLineManager.Count</dd></div>
+                <div><dt>No appraisal this period</dt><dd>@r.Coverage.StaffWithoutAppraiserThisPeriod.Count</dd></div>
+                <div><dt>Not observed this period</dt><dd>@r.Coverage.StaffWithoutObservationThisPeriod.Count</dd></div>
+                <div><dt>Parameters with no records</dt><dd>@r.Coverage.ParametersWithNoRecordsThisPeriod.Count</dd></div>
+            </dl>
+        </section>
+
+        <footer class="rpp-foot">
+            <p><strong>Internal.</strong> Aggregate figures for management use. Where individuals are named, they are named because the on-screen report shows them to the person who generated this; treat the sheet accordingly.</p>
+            <p class="rpp-muted">@OrganizationName · @(BranchState.CurrentBranchName ?? "") · @PeriodName · generated @QDateFormat.DT(DateTime.Now)</p>
+        </footer>
+    }
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="rpp-state no-print"><QSpinner Size="lg" /><span>Building the summary...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="rpp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .rpp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .rpp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
+    .rpp-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .rpp-logo { height: 42px; width: auto; max-width: 150px; object-fit: contain; }
+    .rpp-org { font-family: var(--qm-font-display, inherit); font-size: 15pt; font-weight: 700; line-height: 1.15; }
+    .rpp-doc { font-size: 10pt; letter-spacing: .08em; text-transform: uppercase; color: #5b524d; }
+    .rpp-head__meta { display: flex; flex-direction: column; gap: 2px; font-size: 9pt; text-align: right; }
+    .rpp-head__meta span { color: #5b524d; margin-right: 6px; }
+    .rpp-scope { margin: 12px 0 0; padding: 6px 10px; border: 1px solid #14110f; border-left-width: 4px; font-size: 9.5pt; }
+    .rpp-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 12pt; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
+    .rpp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+    .rpp-tile { border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
+    .rpp-tile__n { display: block; font-size: 15pt; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .rpp-tile__l { display: block; font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+    .rpp-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; }
+    .rpp-table--narrow { max-width: 420px; }
+    .rpp-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
+    .rpp-table td { border-bottom: 1px solid #e3dcd8; padding: 5px 7px; vertical-align: top; }
+    .rpp-flag td { font-weight: 700; }
+    .rpp-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .rpp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 0; }
+    .rpp-facts dt { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .rpp-facts dd { margin: 0; font-size: 12pt; font-weight: 700; }
+    .rpp-note { font-size: 8.5pt; margin: 6px 0 0; }
+    .rpp-muted { color: #5b524d; }
+    .rpp-empty { font-style: italic; color: #5b524d; margin: 0; }
+    .rpp-foot { margin-top: 22px; padding-top: 10px; border-top: 2px solid #14110f; font-size: 8.5pt; }
+    .rpp-foot p { margin: 0 0 4px; }
+    @@media print {
+        .rpp-sheet section, .rpp-tile, .rpp-foot { break-inside: avoid; page-break-inside: avoid; }
+        .rpp-sheet h2 { break-after: avoid; page-break-after: avoid; }
+    }
+    @@media (max-width: 480px) { .rpp-head__meta { text-align: left; } }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "period")] public string? PeriodQuery { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private StaffReportsDto? r;
+    private OrganizationBrandingDto? branding;
+
+    private string PeriodName => r?.Period.Name ?? PeriodQuery ?? StaffPeriods.CurrentKey();
+    private string OrganizationName =>
+        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
+        : "Staff Performance";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffReportsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            if (organizationId != Guid.Empty)
+                branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
+
+            r = await StaffApi.GetReportsAsync(branchId, string.IsNullOrWhiteSpace(PeriodQuery) ? null : PeriodQuery);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the summary: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); }
+        catch (Exception) { }
+    }
+
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || r == null) return;
+        isPublishing = true;
+        try
+        {
+            var stamp = QDateFormat.D(DateTime.UtcNow);
+            var name = $"Staff performance summary — {BranchState.CurrentBranchName} ({PeriodName})";
+            var fileName = $"staff-summary-{r.Period.Key}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
+
+            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "rpp-sheet", fileName);
+            if (bytes == null || bytes.Length == 0)
+                throw new InvalidOperationException("The report rendered to an empty file.");
+
+            using var stream = new MemoryStream(bytes);
+            var doc = await DocShareApi.UploadDocumentAsync(
+                organizationId, stream, fileName,
+                name,
+                summary: $"Staff performance summary for {BranchState.CurrentBranchName}, {PeriodName}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                publishedFrom: $"Staff reports — {BranchState.CurrentBranchName}, {PeriodName}{(r.ScopedToDepartments.Any() ? $" (scoped to {string.Join(", ", r.ScopedToDepartments)})" : "")}, generated {stamp}",
+                shareable: true);
+
+            Toast.Notify(ToastSeverity.Success, "Published to the Document Library", "A snapshot as of now. Create a share link from the Library when you are ready.");
+            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

@@ -1279,6 +1279,89 @@ Three rules that are easy to break by accident:
   "apply to existing subscribers" option or its repricing will be silent where module repricing
   is not.
 
+## Staff Performance Monitor: a second subject for the welfare machinery (built 2026-09-16)
+
+The plan is `docs/plans/STAFF_PERFORMANCE_MONITOR.md` (artifact linked at its top). The user asked
+for it to be built "fully, word for word" in one pass, with tests afterwards, so **the ten §13
+decisions were taken as proposed**: the five new roles rank below `manager`; individual ranks are
+private and a public board is a tenant switch that is off; a Confidential record tells its subject
+that it exists and what it is called, nothing more; system-source awards exist but are off by
+default; support staff hold the portal and recognition and are appraised by their line manager;
+activity attribution is blanked after 12 months and appraisals are never purged; the module ships
+at a placeholder price with `MaxUsersPerBranch = 250`; periods default to three Ugandan terms
+(T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec) with an annual roll-up; rewards are certificates, notices and
+the private rank; no wellbeing pulse. **Nothing was verified live**: it is a clean build of both
+projects plus one generated migration. The e2e section 14 the plan describes has not been written.
+
+- **`Role` now carries TWO scope columns.** `DataScope` (students, `RoleDataScope`) and
+  `StaffScope` (other staff, `StaffDataScope { Organization, AssignedDepartments, DirectReports,
+  SelfOnly }`). One enum could not say "all students, my department's staff". `IStaffScopeService`
+  (`Infrastructure/Services/StaffScopeService.cs`) is the ONLY reader of `StaffScope`, mirrors
+  `IStudentScopeService` shape for shape, fails closed (a head with no department sees nobody),
+  answers 404 never 403, and is per-request memoised, never cached. **Self is always visible and is
+  not scope**: every caller reads their own file through `api/v1/staff/portal`, which carries no
+  permission code (the `ProfileController` rule). The role editor in Users & Roles now sets both
+  scopes on a custom role; system roles are repaired by `RbacSeeder` on every start.
+- **Delegation is not scope.** Taking a register on a `StaffDuty` is authorised by
+  `caller ∈ RecorderUserIds` (or `staff.duties.manage`) and writes records only for that duty's
+  expected list, synchronously in the controller, never in a job. A teacher named recorder for one
+  meeting can mark the Director of Studies absent from that meeting and nothing else.
+- **The staff record is `WelfareRecord`'s shape on a different subject, and `WelfareVisibility` is
+  reused as the type.** Append-only; an edit is a `StaffPerformanceNote`; the subject's right of
+  reply is a note of kind `Response`; a void is `Status = Annulled` plus a note, and the row drops
+  out of scoring. Who is told lives in one early return in `StaffAlertService`: Standard → subject
+  in full plus their line manager / heads (unless they logged it); Confidential → subject,
+  existence and title only; Restricted → nobody. **The author keeps read access to a Confidential
+  record they wrote** (the seeded head-of-department role can file a Confidential lesson
+  observation it could not otherwise read); Restricted has no author exception.
+- **The score is evidence, the rating is a decision.** `IStaffScoringService` computes per person
+  per period on read and nothing stores a score except `StaffAppraisal.ComputedScore` /
+  `ComputedBreakdownJson`, frozen at Signed. `FinalRating` (1–5, MoES's scale) is set by a person.
+  A parameter with no evidence drops out of the denominator; Wellbeing is never scored; the policy
+  refuses a single weight above `MaxParameterWeightPercent` (50, the MET ceiling).
+- **`Organization.Settings["StaffPerformance"]` has one reader**, `IStaffPerformancePolicyService`
+  (`ReadPolicy` / `WritePolicy`, periods, bands, `BandFor`, `GroupFor`, `DefaultParameters`).
+- **`ActivityEvent` is written by explicit `IActivityLogger.RecordAsync` calls, never an EF
+  interceptor**, with the summary at the actor's visibility. Its address and agent come from
+  `X-Viewer-Ip` / `X-Viewer-Agent`, which the Web now relays on EVERY authenticated call
+  (`ViewerRequestContext` set by `Routes.razor`, headers added in `AuthenticationMessageHandler`);
+  the API stores them through `DocumentShareService.TruncateIp` / `CoarseUserAgent`, the one rule
+  for what an address in a log looks like. Attribution is blanked by `StaffPerformanceJobs` after
+  the policy window; the row stays.
+- **`Notification.EventKey` is persisted now**, and `CreateNotificationRequest.EmailHtmlBody`
+  sends an HTML email verbatim through `NotificationDispatchJob.DispatchHtmlEmailAsync` (the plain
+  path HTML-encodes). `GET api/v1/notifications` takes `eventKey` and `offset`; `POST read-all`
+  takes `eventKey` and returns the remaining unread count. `/notifications` is the full centre.
+- **Mapping and labels each have one home**: `Application/Services/StaffPerformanceMapping.cs`
+  (every entity → DTO, signs every upload link) and `Web/Components/Admin/Staff/StaffDisplay.cs`
+  (every enum's label, colour and chip variant). `StaffCoverageBuilder`, `StaffReportBuilder`,
+  `StaffNoticeFanOut` and `StaffLookups` are the shared computations both controllers and jobs use.
+- **`UploadOwnerKind.StaffEvidence`** is classified before media, carries the record's rung and
+  its subject (in the classification's `StudentId` slot, "the person this file is about"), and the
+  subject may read their own Standard/Confidential evidence.
+- **The module catalog is now seeded in every environment** by `ModuleCatalogDefaults` (Program.cs,
+  after the RBAC seeder). `DbSeeder.SeedModulesAsync` delegates to it. Until this, a module added
+  to the code never appeared in a production catalog.
+- **One migration carried the whole schema**, `20260916173550_AddStaffPerformanceGroundwork`,
+  rather than the six the plan's phases name: the entities were all in the model before the first
+  `migrations add`, and splitting them would have meant removing DbSets to fake history. Nine
+  tables, four columns, one appended enum value (`RosterImportKind.Staff`), nothing dropped.
+- **The shared component library was consolidated first** (plan §9): `QTimeline`, `QStatTile` /
+  `QStatRow`, `QBarList`, `QTabs`, `QChip`, `QEmptyState`, `QActivityLog`, `QRating`, `QFilterBar`,
+  `QAvatar`, `QPrintSheet`, and `QPager` adopted. The student timeline, welfare reports, dashboard
+  tiles, document activity modal, welfare print sheet, feedback and kiosk star ratings, the two
+  hand-rolled pagers and three tab strips were moved onto them. Two visible consequences: Dashboard
+  tiles lost their left colour stripe and hover glow (in line with the flat decision), and the
+  feedback page's stars now render at the 36px the dead rule intended. `WelfareStatusColor()` still
+  exists in two pages and should get one home.
+- **Three pre-existing bugs fixed on the way**, all in the Roles tab: permission counts always read
+  0 (the list DTO has no permission list), the grouped permissions response was read as flat, and
+  Save Permissions posted codes where the API wanted ids and would have wiped the role's
+  permissions. Also: `RolesController.UpdateRolePermissions` refuses system roles, so the UI now
+  shows "View Permissions" there.
+- **Staff import job reads are `api/v1/branches/{b}/staff/import-jobs…`**, gated on
+  `staff.structure.manage`, not the student ones (which are gated on the student scope).
+
 ## Process note for future sessions
 
 Design/reference decisions like the one above must be written here (or somewhere durable) at the

@@ -1,0 +1,193 @@
+@namespace QMgr.Web.Components.Shared.UI
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@inject IContentApiService ContentApi
+
+@*
+    A modal that picks one or more documents out of the media Library (MediaContent). Built for the
+    Staff Performance module — a duty's minutes and a notice's attachments are both Library rows,
+    which is what lets them also go on a playlist or a share link with no new code — but nothing in
+    it is staff-specific. OnlyType narrows the list (PDF by default); Multiple switches the rows
+    from radio to checkbox behaviour. The caller receives the chosen rows in OnPicked and owns
+    what happens to them.
+*@
+
+<QModal Visible="@Visible" VisibleChanged="@VisibleChanged" Title="@Title" Icon="folder2-open" Size="md">
+    <ChildContent>
+        <div class="q-libpick__search">
+            <QInput TValue="string" @bind-Value="@search" Placeholder="Search by name" IconLeft="search" Clearable="true" />
+        </div>
+
+        @if (loading)
+        {
+            <div class="q-libpick__loading"><QSpinner Size="md" /><span>Loading the Library...</span></div>
+        }
+        else if (loadError != null)
+        {
+            <QEmptyState Icon="exclamation-triangle" Title="The Library could not be loaded" Text="@loadError">
+                <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" Size="sm" OnClick="@LoadAsync" /></Action>
+            </QEmptyState>
+        }
+        else if (!Filtered.Any())
+        {
+            <QEmptyState Icon="folder2-open" Title="Nothing to choose from"
+                         Text="@(string.IsNullOrWhiteSpace(search) ? EmptyText : $"No document matches \"{search}\".")" />
+        }
+        else
+        {
+            <ul class="q-libpick__list" role="listbox" aria-multiselectable="@(Multiple ? "true" : "false")">
+                @foreach (var item in Filtered)
+                {
+                    var isChosen = chosen.Contains(item.Id);
+                    <li>
+                        <button type="button" role="option" aria-selected="@(isChosen ? "true" : "false")"
+                                class="q-libpick__row @(isChosen ? "q-libpick__row--on" : "")" @onclick="@(() => Toggle(item.Id))">
+                            <QIcon Name="@(isChosen ? (Multiple ? "check-square-fill" : "record-circle-fill") : (Multiple ? "square" : "circle"))" Class="q-libpick__tick" />
+                            <QIcon Name="@TypeIcon(item.ContentType)" Class="q-libpick__type" />
+                            <span class="q-libpick__main">
+                                <strong>@item.Name</strong>
+                                <small>
+                                    @item.ContentType
+                                    @if (item.FileSizeBytes.HasValue) { <text> · @Size(item.FileSizeBytes.Value)</text> }
+                                    · @QDateFormat.D(item.CreatedAt.Kind == DateTimeKind.Utc ? item.CreatedAt.ToLocalTime() : item.CreatedAt)
+                                    @if (!string.IsNullOrEmpty(item.PublishedByName)) { <text> · @item.PublishedByName</text> }
+                                </small>
+                            </span>
+                            @if (item.OnSignage) { <QChip Text="On signage" Size="sm" Variant="info" /> }
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    </ChildContent>
+    <FooterContent>
+        <span class="q-libpick__count">@(chosen.Count == 0 ? "Nothing chosen" : Multiple ? $"{chosen.Count} chosen" : "1 chosen")</span>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@Cancel" />
+        <QButton Text="@ConfirmText" Icon="check-lg" Variant="primary" Disabled="@(chosen.Count == 0)" OnClick="@Confirm" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .q-libpick__search { margin-bottom: 12px; }
+    .q-libpick__loading { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 32px 0; color: var(--qm-text-muted); }
+    .q-libpick__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+    .q-libpick__row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; text-align: left; padding: 8px 10px;
+                      border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); cursor: pointer; font: inherit; }
+    .q-libpick__row:hover { background: var(--qm-bg-secondary); }
+    .q-libpick__row--on { border-color: var(--qm-primary); background: rgba(var(--qm-primary-rgb), 0.06); }
+    .q-libpick__tick { color: var(--qm-primary); flex: 0 0 auto; }
+    .q-libpick__type { color: var(--qm-text-muted); flex: 0 0 auto; }
+    .q-libpick__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .q-libpick__main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .q-libpick__main small { color: var(--qm-text-muted); font-size: 12px; }
+    .q-libpick__count { margin-right: auto; font-size: 13px; color: var(--qm-text-muted); align-self: center; }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    /// <summary>The Library belongs to the organization, not the branch.</summary>
+    [Parameter, EditorRequired] public Guid OrganizationId { get; set; }
+
+    /// <summary>Restrict to one content type. Null lists everything; the default is PDF, the shape a minutes file or a notice attachment takes.</summary>
+    [Parameter] public ContentType? OnlyType { get; set; } = ContentType.Pdf;
+
+    [Parameter] public bool Multiple { get; set; }
+
+    /// <summary>Rows already attached, shown as chosen when the picker opens.</summary>
+    [Parameter] public IEnumerable<Guid>? SelectedIds { get; set; }
+
+    [Parameter] public string Title { get; set; } = "Choose from the Library";
+    [Parameter] public string ConfirmText { get; set; } = "Attach";
+    [Parameter] public string EmptyText { get; set; } = "Publish a PDF to the Library first (Content → Library), then pick it here.";
+
+    /// <summary>The chosen rows, in Library order. Fired on Confirm only.</summary>
+    [Parameter] public EventCallback<IReadOnlyList<MediaContentDto>> OnPicked { get; set; }
+
+    private bool loading;
+    private string? loadError;
+    private string search = string.Empty;
+    private List<MediaContentDto> items = new();
+    private readonly HashSet<Guid> chosen = new();
+    private bool wasVisible;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !wasVisible)
+        {
+            chosen.Clear();
+            foreach (var id in SelectedIds ?? Enumerable.Empty<Guid>()) chosen.Add(id);
+            search = string.Empty;
+            if (!items.Any()) await LoadAsync();
+        }
+        wasVisible = Visible;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (OrganizationId == Guid.Empty)
+        {
+            loadError = "No organization is selected, so there is no Library to read.";
+            return;
+        }
+        loading = true;
+        loadError = null;
+        try
+        {
+            items = await ContentApi.GetMediaContentsAsync(OrganizationId);
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private IEnumerable<MediaContentDto> Filtered => items
+        .Where(i => OnlyType == null || i.ContentType == OnlyType)
+        .Where(i => string.IsNullOrWhiteSpace(search) || i.Name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(i => i.CreatedAt);
+
+    private void Toggle(Guid id)
+    {
+        if (chosen.Contains(id)) { chosen.Remove(id); return; }
+        if (!Multiple) chosen.Clear();
+        chosen.Add(id);
+    }
+
+    private async Task Confirm()
+    {
+        var picked = items.Where(i => chosen.Contains(i.Id)).ToList();
+        await OnPicked.InvokeAsync(picked);
+        await Close();
+    }
+
+    private Task Cancel() => Close();
+
+    private async Task Close()
+    {
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+
+    private static string TypeIcon(ContentType t) => t switch
+    {
+        ContentType.Pdf => "file-earmark-pdf",
+        ContentType.Image => "file-earmark-image",
+        ContentType.Video => "file-earmark-play",
+        ContentType.Audio => "file-earmark-music",
+        ContentType.PowerPoint => "file-earmark-slides",
+        _ => "file-earmark"
+    };
+
+    private static string Size(long bytes) => bytes switch
+    {
+        >= 1_048_576 => $"{bytes / 1_048_576.0:0.#} MB",
+        >= 1024 => $"{bytes / 1024.0:0} KB",
+        _ => $"{bytes} B"
+    };
+}

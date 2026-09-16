@@ -1,0 +1,362 @@
+@page "/admin/staff/duties/{Id:guid}/register"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>Register - Q-Mgr</PageTitle>
+
+@*
+    The register (plan §6 item 2): one row per expected person, one tap per person, an optional
+    note, close. It replaces the class monitor's paper register, so it is built for a phone first:
+    44px targets, a sticky footer, nothing wider than 390px. Closing writes one Final record per
+    person; reopening a closed register appends annulments and new rows rather than editing, and
+    the confirm dialog says so before the rows unlock.
+*@
+
+<div class="admin-page reg-page @(editable ? "reg-page--editing" : "")">
+    <div class="page-header">
+        <div class="header-content">
+            <QButton Text="Back to duties" Icon="arrow-left" Variant="ghost" Size="sm" Class="reg-back" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" />
+            <h1>@(register?.Duty.Title ?? "Register")</h1>
+            @if (register != null)
+            {
+                var d = register.Duty;
+                <p class="subtitle">
+                    @d.ParameterName · @QDateFormat.DD(Local(d.StartsAt)) · @QDateFormat.T(Local(d.StartsAt))–@QDateFormat.T(Local(d.EndsAt))
+                    @if (!string.IsNullOrEmpty(d.Location)) { <text> · @d.Location</text> }
+                </p>
+            }
+        </div>
+        <div class="header-actions">
+            @if (register != null)
+            {
+                if (register.Duty.RegisterClosedAt.HasValue && !editable)
+                {
+                    <QChip Text="@($"Closed {QDateFormat.LocalDT(register.Duty.RegisterClosedAt.Value)}")" Icon="check2-circle" Variant="success" />
+                    @if (register.Duty.CanIRecord)
+                    {
+                        <QButton Text="Reopen and correct" Icon="arrow-counterclockwise" Variant="secondary" Size="sm" OnClick="@(() => showReopen = true)" />
+                    }
+                }
+                else if (register.Duty.RegisterClosedAt.HasValue)
+                {
+                    <QChip Text="Correcting a closed register" Icon="pencil-square" Variant="warning" />
+                }
+                else if (register.Duty.EndsAt < DateTime.UtcNow)
+                {
+                    <QChip Text="Register not taken yet" Icon="exclamation-circle" Variant="danger" />
+                }
+                else
+                {
+                    <QChip Text="Open" Icon="pencil-square" Variant="info" />
+                }
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the register...</span></div>
+    }
+    else if (register == null)
+    {
+        <QEmptyState Icon="clipboard-x" Title="This register could not be opened" Text="@(loadError ?? "The duty may have been cancelled, or you may not be one of its recorders.")">
+            <Action><QButton Text="Back to duties" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" /></Action>
+        </QEmptyState>
+    }
+    else if (!register.Rows.Any())
+    {
+        <QEmptyState Icon="people" Title="Nobody is expected" Text="This duty has no expected staff. Edit the duty and name who is expected, or tick everyone in the branch." />
+    }
+    else
+    {
+        @if (!register.Duty.CanIRecord)
+        {
+            <p class="reg-note reg-note--muted"><QIcon Name="eye" Size="sm" /> You can read this register but you are not one of its recorders, so it is read-only.</p>
+        }
+        else if (!editable)
+        {
+            <p class="reg-note reg-note--muted"><QIcon Name="lock" Size="sm" /> This register is closed. Use <strong>Reopen and correct</strong> to change a mark — corrections annul the old rows and write new ones, so the history stays.</p>
+        }
+        else if (register.Duty.RegisterClosedAt.HasValue)
+        {
+            <p class="reg-note reg-note--warn"><QIcon Name="exclamation-triangle" Size="sm" /> Every row you close now is written afresh; the earlier rows are annulled with a note, not deleted.</p>
+        }
+
+        <div class="reg-legend" aria-hidden="true">
+            @foreach (var o in Options)
+            {
+                <span><b class="reg-key reg-key--@o.ToString().ToLowerInvariant()">@Key(o)</b> @StaffDisplay.OutcomeLabel(o)</span>
+            }
+        </div>
+
+        <ul class="reg-rows">
+            @foreach (var row in register.Rows.OrderBy(r => r.FullName))
+            {
+                var mark = marks[row.UserId];
+                <li class="reg-row @(mark.Outcome.HasValue ? "reg-row--marked" : "")">
+                    <div class="reg-row__who">
+                        <QAvatar Name="@row.FullName" Size="sm" />
+                        <div class="reg-row__name">
+                            <strong>@row.FullName</strong>
+                            @if (!string.IsNullOrEmpty(row.JobTitle) || !string.IsNullOrEmpty(row.DepartmentNames))
+                            {
+                                <small>@string.Join(" · ", new[] { row.JobTitle, row.DepartmentNames }.Where(s => !string.IsNullOrEmpty(s)))</small>
+                            }
+                        </div>
+                        @if (mark.Outcome.HasValue)
+                        {
+                            <QChip Text="@StaffDisplay.OutcomeLabel(mark.Outcome.Value)" Size="sm" Variant="@StaffDisplay.OutcomeVariant(mark.Outcome.Value)" Class="reg-row__chip" />
+                        }
+                    </div>
+                    <div class="reg-seg" role="radiogroup" aria-label="@($"Outcome for {row.FullName}")">
+                        @foreach (var o in Options)
+                        {
+                            var on = mark.Outcome == o;
+                            <button type="button" role="radio" aria-checked="@(on ? "true" : "false")" title="@StaffDisplay.OutcomeLabel(o)"
+                                    class="reg-seg__btn reg-seg__btn--@o.ToString().ToLowerInvariant() @(on ? "reg-seg__btn--on" : "")"
+                                    disabled="@(!editable)" @onclick="@(() => Set(row.UserId, o))">
+                                <span class="reg-seg__key">@Key(o)</span>
+                                <span class="reg-seg__word">@StaffDisplay.OutcomeLabel(o)</span>
+                            </button>
+                        }
+                    </div>
+                    @if (editable || !string.IsNullOrWhiteSpace(mark.Note))
+                    {
+                        <div class="reg-row__note">
+                            <QInput TValue="string" Value="@mark.Note" ValueChanged="@(v => SetNote(row.UserId, v))" Placeholder="Note (optional) — reason, time arrived, cover arranged"
+                                    MaxLength="500" ReadOnly="@(!editable)" IconLeft="chat-left-text" />
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@if (register != null && register.Rows.Any() && editable)
+{
+    <div class="reg-footer">
+        <span class="reg-footer__count">@MarkedCount of @register.Rows.Count marked</span>
+        <div class="reg-footer__actions">
+            <QButton Text="Save without closing" Icon="save" Variant="secondary" Loading="@savingOpen" Disabled="@(saving || MarkedCount == 0)" OnClick="@(() => SubmitAsync(close: false))" />
+            <QButton Text="@($"Close register · {MarkedCount} of {register.Rows.Count}")" Icon="check2-circle" Variant="primary" Loading="@saving" Disabled="@(savingOpen || MarkedCount == 0)" OnClick="@(() => SubmitAsync(close: true))" />
+        </div>
+    </div>
+}
+
+<ConfirmDialog @bind-IsVisible="showReopen" Title="Reopen this register?"
+               Message="The register is closed and its records are final. Reopening lets you correct marks: when you close it again, every row you set is written as a new record and the earlier record for that person is annulled with a note saying so. Nothing is deleted."
+               ConfirmText="Reopen and correct" ConfirmButtonClass="btn-warning" OnClose="@ReopenConfirmed" />
+
+<style>
+    .reg-page { max-width: 760px; margin: 0 auto; }
+    .reg-page--editing { padding-bottom: 96px; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .header-content { min-width: 0; }
+    .header-content h1 { margin: 0 0 4px; font-size: 22px; color: var(--qm-text-primary); overflow-wrap: anywhere; }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 13px; }
+    .reg-back { margin-left: -8px; margin-bottom: 4px; }
+
+    .reg-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: var(--qm-radius-md); font-size: 13px; }
+    .reg-note--muted { background: var(--qm-bg-secondary); color: var(--qm-text-secondary); }
+    .reg-note--warn { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-text-primary); border: 1px solid var(--qm-warning); }
+
+    .reg-legend { display: flex; gap: 8px 14px; flex-wrap: wrap; font-size: 12px; color: var(--qm-text-muted); margin-bottom: 10px; }
+    .reg-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .reg-key { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: var(--qm-radius-sm); font-size: 11px; font-weight: 700; color: var(--qm-text-on-primary); }
+
+    .reg-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .reg-row { padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .reg-row--marked { border-color: rgba(var(--qm-primary-rgb), 0.5); }
+    .reg-row__who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .reg-row__name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+    .reg-row__name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reg-row__name small { color: var(--qm-text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .reg-row__chip { flex: 0 0 auto; }
+
+    /* The segmented control: every option is at least 44px tall and the row shares the width, so
+       five options fit a 390px screen at ~66px each with the word hidden and the key letter shown. */
+    .reg-seg { display: flex; gap: 4px; width: 100%; }
+    .reg-seg__btn { flex: 1 1 0; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+                    border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); color: var(--qm-text-secondary);
+                    font: inherit; font-size: 12px; cursor: pointer; padding: 4px 2px; }
+    .reg-seg__btn:disabled { cursor: default; opacity: 0.85; }
+    .reg-seg__key { font-weight: 700; font-size: 15px; line-height: 1; }
+    .reg-seg__word { font-size: 11px; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+    @@media (max-width: 480px) { .reg-seg__word { display: none; } .reg-seg__key { font-size: 17px; } }
+
+    .reg-seg__btn--on { color: var(--qm-text-on-primary); border-color: transparent; }
+    .reg-seg__btn--present.reg-seg__btn--on, .reg-seg__btn--completed.reg-seg__btn--on, .reg-seg__btn--recovered.reg-seg__btn--on, .reg-key--present, .reg-key--recovered { background: var(--qm-success); }
+    .reg-seg__btn--late.reg-seg__btn--on, .reg-key--late { background: var(--qm-warning); }
+    .reg-seg__btn--absent.reg-seg__btn--on, .reg-seg__btn--notcompleted.reg-seg__btn--on, .reg-key--absent { background: var(--qm-danger); }
+    .reg-seg__btn--excused.reg-seg__btn--on, .reg-key--excused { background: var(--qm-text-muted); }
+
+    .reg-row__note { min-width: 0; }
+
+    .reg-footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+                  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: var(--qm-bg-card); border-top: 1px solid var(--qm-border); box-shadow: var(--qm-shadow-md); }
+    .reg-footer__count { font-size: 13px; color: var(--qm-text-secondary); font-weight: 600; }
+    .reg-footer__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+    @@media (min-width: 993px) { .reg-footer { left: var(--sidebar-width, 0); } }
+
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true;
+    private string? loadError;
+    private Guid branchId;
+    private StaffRegisterDto? register;
+    private readonly Dictionary<Guid, Mark> marks = new();
+    private bool editable;
+    private bool saving;
+    private bool savingOpen;
+    private bool showReopen;
+
+    private sealed class Mark
+    {
+        public DutyOutcome? Outcome { get; set; }
+        public string Note { get; set; } = string.Empty;
+    }
+
+    private static readonly DutyOutcome[] BaseOptions = { DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Absent, DutyOutcome.Excused };
+    private static readonly DutyOutcome[] AttendanceOptions = { DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Absent, DutyOutcome.Excused, DutyOutcome.Recovered };
+
+    /// <summary>R = Recovered offsets an Absent (the Lesson Recovery Schedule) and only makes sense on an Attendance-kind duty.</summary>
+    private DutyOutcome[] Options => register?.Duty.ParameterKind == ParameterKind.Attendance ? AttendanceOptions : BaseOptions;
+
+    private static string Key(DutyOutcome o) => o switch
+    {
+        DutyOutcome.Present => "P",
+        DutyOutcome.Late => "L",
+        DutyOutcome.Absent => "A",
+        DutyOutcome.Excused => "E",
+        DutyOutcome.Recovered => "R",
+        DutyOutcome.Completed => "C",
+        DutyOutcome.NotCompleted => "N",
+        _ => "?"
+    };
+
+    private int MarkedCount => marks.Values.Count(m => m.Outcome.HasValue);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+                branchId = (await StaffApi.GetPortalAsync()).BranchId;
+
+            register = await StaffApi.GetRegisterAsync(branchId, Id);
+            marks.Clear();
+            foreach (var row in register.Rows)
+            {
+                marks[row.UserId] = new Mark
+                {
+                    Outcome = row.Outcome is DutyOutcome.NotApplicable ? null : row.Outcome,
+                    Note = row.Note ?? string.Empty
+                };
+            }
+            editable = register.Duty.CanIRecord && !register.Duty.RegisterClosedAt.HasValue;
+        }
+        catch (Exception ex)
+        {
+            register = null;
+            loadError = ex.Message;
+            Toast.Notify(ToastSeverity.Error, "Could not open the register", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    private void Set(Guid userId, DutyOutcome outcome)
+    {
+        if (!editable) return;
+        var m = marks[userId];
+        // Tapping the selected option again clears it — the register's undo.
+        m.Outcome = m.Outcome == outcome ? null : outcome;
+    }
+
+    private void SetNote(Guid userId, string? value)
+    {
+        marks[userId].Note = value ?? string.Empty;
+    }
+
+    private void ReopenConfirmed(bool confirmed)
+    {
+        if (confirmed) editable = true;
+    }
+
+    private async Task SubmitAsync(bool close)
+    {
+        if (register == null || MarkedCount == 0) return;
+        if (close) saving = true; else savingOpen = true;
+        try
+        {
+            var request = new SubmitRegisterRequest
+            {
+                Close = close,
+                Entries = marks
+                    .Where(kv => kv.Value.Outcome.HasValue)
+                    .Select(kv => new RegisterEntryRequest
+                    {
+                        UserId = kv.Key,
+                        Outcome = kv.Value.Outcome!.Value,
+                        Note = string.IsNullOrWhiteSpace(kv.Value.Note) ? null : kv.Value.Note.Trim()
+                    })
+                    .ToList()
+            };
+
+            var unmarked = register.Rows.Count - request.Entries.Count;
+            register = await StaffApi.SubmitRegisterAsync(branchId, Id, request);
+
+            if (close)
+            {
+                Toast.Notify(ToastSeverity.Success, "Register closed",
+                    $"{request.Entries.Count} of {register.Rows.Count} marked; each person has been told." + (unmarked > 0 ? $" {unmarked} left unmarked." : ""));
+                Navigation.NavigateTo("/admin/staff/duties");
+                return;
+            }
+
+            Toast.Notify(ToastSeverity.Success, "Register saved", $"{request.Entries.Count} of {register.Rows.Count} marked. It stays open until you close it.");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, close ? "Could not close the register" : "Could not save the register", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+            savingOpen = false;
+        }
+    }
+}

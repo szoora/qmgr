@@ -1,0 +1,376 @@
+@page "/admin/staff/appraisals/{Id:guid}/report"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+
+@*
+    The MoES-style termly appraisal form on A4: performance plan (targets), the evidence (frozen
+    breakdown once signed, live before), self / appraiser / final ratings with band names, strengths,
+    development areas, the support plan (Annex 12) and next targets, then signature lines. Printed by
+    the browser; publishing to the Library also tells the appraisal which document is its signed PDF.
+*@
+
+<PageTitle>Appraisal Report - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="ap-sheet"
+             Title="@($"Staff Appraisal — {a?.SubjectName}")"
+             Class="ap-sheet"
+             Ready="@(!isLoading && loadError == null && a != null)"
+             BackText="Back to appraisal"
+             OnBack="@(() => Navigation.NavigateTo($"/admin/staff/appraisals/{Id}"))"
+             CanPublish="@canPublish"
+             Publishing="@isPublishing"
+             PublishLabel="@(a?.Stage == AppraisalStage.Signed ? "Publish signed PDF to Library" : "Publish to Library")"
+             OnPublish="@PublishToLibrary"
+             OnPrint="@Print"
+             Disabled="@(isLoading || loadError != null)">
+
+    @if (a != null)
+    {
+        var breakdown = a.Stage == AppraisalStage.Signed ? a.ComputedBreakdown : a.LiveScore?.Breakdown ?? new();
+        var composite = a.Stage == AppraisalStage.Signed ? a.ComputedScore : a.LiveScore?.Composite;
+
+        <header class="ap-head">
+            <div class="ap-head__brand">
+                @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl))
+                {
+                    <img class="ap-logo" src="@branding!.LogoUrl" alt="" />
+                }
+                <div>
+                    <div class="ap-org">@OrganizationName</div>
+                    <div class="ap-doc">Staff Performance Appraisal Report</div>
+                </div>
+            </div>
+            <div class="ap-head__meta">
+                <div><span>Branch</span><strong>@(BranchState.CurrentBranchName ?? "—")</strong></div>
+                <div><span>Period</span><strong>@a.PeriodKey · @QDateFormat.Range(a.PeriodStart, a.PeriodEnd)</strong></div>
+                <div><span>Status</span><strong>@StaffDisplay.StageLabel(a.Stage)@(a.Stage != AppraisalStage.Signed ? " (not yet signed)" : "")</strong></div>
+                <div><span>Generated</span><strong>@QDateFormat.Long(DateTime.Now)</strong></div>
+            </div>
+        </header>
+
+        <section class="ap-section">
+            <h2>Part 1 — Particulars</h2>
+            <dl class="ap-facts">
+                <div><dt>Appraisee</dt><dd>@a.SubjectName</dd></div>
+                <div><dt>Department(s)</dt><dd>@(a.SubjectDepartmentNames ?? "—")</dd></div>
+                <div><dt>Appraiser</dt><dd>@a.AppraiserName</dd></div>
+                <div><dt>Moderator / countersigning officer</dt><dd>@(a.ModeratorName ?? "—")</dd></div>
+                <div><dt>Appraisal opened</dt><dd>@QDateFormat.D(a.CreatedAt.ToLocalTime())</dd></div>
+                <div><dt>Signed</dt><dd>@(a.SignedAt.HasValue ? $"{QDateFormat.D(a.SignedAt.Value.ToLocalTime())} by {a.SignedByName}" : "—")</dd></div>
+            </dl>
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 2 — Performance plan (targets agreed for the period)</h2>
+            @if (!a.Targets.Any())
+            {
+                <p class="ap-empty">No targets were recorded for this period.</p>
+            }
+            else
+            {
+                <table class="ap-table">
+                    <thead><tr><th class="ap-n">#</th><th>Target</th><th>Linked parameter</th><th class="ap-num">Achieved</th></tr></thead>
+                    <tbody>
+                        @{ var n = 0; }
+                        @foreach (var t in a.Targets)
+                        {
+                            n++;
+                            <tr>
+                                <td class="ap-n">@n</td>
+                                <td>@t.Text</td>
+                                <td>@(t.ParameterId.HasValue ? breakdown.FirstOrDefault(b => b.ParameterId == t.ParameterId)?.Name ?? "—" : "—")</td>
+                                <td class="ap-num">@(t.Achieved ? "Yes" : "No")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 3 — Evidence @(a.Stage == AppraisalStage.Signed ? "(frozen at signing)" : "(live at time of printing)")</h2>
+            <div class="ap-tiles">
+                <div class="ap-tile"><span class="ap-tile__n">@StaffDisplay.Composite(composite)</span><span class="ap-tile__l">Composite (0–100)</span></div>
+                <div class="ap-tile"><span class="ap-tile__n">@(a.LiveScore?.BandName ?? a.FinalRatingName ?? "—")</span><span class="ap-tile__l">Band</span></div>
+                <div class="ap-tile"><span class="ap-tile__n">@StaffDisplay.Points(a.LiveScore?.Points ?? 0)</span><span class="ap-tile__l">Points</span></div>
+                <div class="ap-tile"><span class="ap-tile__n">@(a.LiveScore?.DutiesAttended ?? 0)/@(a.LiveScore?.DutiesExpected ?? 0)</span><span class="ap-tile__l">Duties attended</span></div>
+            </div>
+            @if (breakdown.Any())
+            {
+                <table class="ap-table">
+                    <thead><tr><th>Parameter</th><th class="ap-num">Weight</th><th class="ap-num">Evidence</th><th class="ap-num">Score (0–100)</th></tr></thead>
+                    <tbody>
+                        @foreach (var b in breakdown.OrderByDescending(b => b.Weight))
+                        {
+                            <tr>
+                                <td>@b.Name <span class="ap-muted">(@StaffDisplay.KindLabel(b.Kind))</span></td>
+                                <td class="ap-num">@b.Weight.ToString("0.#")</td>
+                                <td class="ap-num">@b.EvidenceCount</td>
+                                <td class="ap-num">@(b.Score.HasValue ? b.Score.Value.ToString("0") : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p class="ap-empty">No scored evidence was recorded in this period.</p>
+            }
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 4 — Ratings</h2>
+            <table class="ap-table">
+                <thead><tr><th>By</th><th class="ap-num">Rating (1–5)</th><th>Band</th><th>Comments</th></tr></thead>
+                <tbody>
+                    <tr><td>Appraisee (self)</td><td class="ap-num">@(a.SelfRating?.ToString() ?? "—")</td><td>@BandName(a.SelfRating)</td><td class="ap-pre">@(a.SelfComments ?? "—")</td></tr>
+                    <tr><td>Appraiser</td><td class="ap-num">@(a.AppraiserRating?.ToString() ?? "—")</td><td>@BandName(a.AppraiserRating)</td><td class="ap-pre">@(a.AppraiserComments ?? "—")</td></tr>
+                    <tr class="ap-final"><td>Final (moderated)</td><td class="ap-num">@(a.FinalRating?.ToString() ?? "—")</td><td>@(a.FinalRatingName ?? BandName(a.FinalRating))</td><td class="ap-pre">@(a.ModerationReason ?? "—")</td></tr>
+                </tbody>
+            </table>
+            <p class="ap-muted ap-note">Bands: @string.Join(" · ", Bands.OrderByDescending(b => b.Rating).Select(b => $"{b.Rating} {b.Name} (≥{b.MinScore:0})"))</p>
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 5 — Strengths and development areas</h2>
+            <dl class="ap-blocks">
+                <div><dt>Strengths</dt><dd class="ap-pre">@(a.Strengths ?? "—")</dd></div>
+                <div><dt>Development areas</dt><dd class="ap-pre">@(a.DevelopmentAreas ?? "—")</dd></div>
+            </dl>
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 6 — Support plan</h2>
+            @if (!a.SupportPlan.Any())
+            {
+                <p class="ap-empty">No support plan recorded.</p>
+            }
+            else
+            {
+                <table class="ap-table">
+                    <thead><tr><th>Performance gap</th><th>Support to be provided</th><th>By when</th></tr></thead>
+                    <tbody>
+                        @foreach (var s in a.SupportPlan)
+                        {
+                            <tr><td>@s.Gap</td><td>@s.Support</td><td>@QDateFormat.D(s.ByWhen)</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section class="ap-section">
+            <h2>Part 7 — Targets for the next period</h2>
+            @if (!a.NextTargets.Any())
+            {
+                <p class="ap-empty">No targets set for the next period.</p>
+            }
+            else
+            {
+                <ol class="ap-list">
+                    @foreach (var t in a.NextTargets) { <li>@t.Text</li> }
+                </ol>
+            }
+        </section>
+
+        @if (a.Stage == AppraisalStage.Appealed && !string.IsNullOrWhiteSpace(a.AppealNote))
+        {
+            <section class="ap-section">
+                <h2>Appeal</h2>
+                <p class="ap-pre">@a.AppealNote</p>
+            </section>
+        }
+
+        <section class="ap-section ap-sign">
+            <h2>Part 8 — Signatures</h2>
+            <div class="ap-sign__row">
+                <div class="ap-sign__box"><span class="ap-sign__line"></span><span class="ap-sign__who">Appraisee — @a.SubjectName</span><span class="ap-sign__date">Date: ____________</span></div>
+                <div class="ap-sign__box"><span class="ap-sign__line"></span><span class="ap-sign__who">Appraiser — @a.AppraiserName</span><span class="ap-sign__date">Date: @(a.AppraiserSubmittedAt.HasValue ? QDateFormat.D(a.AppraiserSubmittedAt.Value.ToLocalTime()) : "____________")</span></div>
+                <div class="ap-sign__box"><span class="ap-sign__line"></span><span class="ap-sign__who">Countersigned by — @(a.SignedByName ?? a.ModeratorName ?? "")</span><span class="ap-sign__date">Date: @(a.SignedAt.HasValue ? QDateFormat.D(a.SignedAt.Value.ToLocalTime()) : "____________")</span></div>
+            </div>
+        </section>
+
+        <footer class="ap-foot">
+            <p><strong>Confidential.</strong> An appraisal is visible to the appraisee, the appraiser, the moderator and holders of the confidential-view permission. Hold and dispose of this copy under your organisation's HR policy.</p>
+            <p class="ap-muted">@OrganizationName · @a.SubjectName · @a.PeriodKey · generated @QDateFormat.DT(DateTime.Now)@(generatedBy != null ? $" by {generatedBy}" : "")</p>
+        </footer>
+    }
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="ap-state no-print"><QSpinner Size="lg" /><span>Building the appraisal form...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="ap-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .ap-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .ap-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
+    .ap-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .ap-logo { height: 42px; width: auto; max-width: 150px; object-fit: contain; }
+    .ap-org { font-family: var(--qm-font-display, inherit); font-size: 15pt; font-weight: 700; line-height: 1.15; }
+    .ap-doc { font-size: 10pt; letter-spacing: .08em; text-transform: uppercase; color: #5b524d; }
+    .ap-head__meta { display: flex; flex-direction: column; gap: 2px; font-size: 9pt; text-align: right; }
+    .ap-head__meta span { color: #5b524d; margin-right: 6px; }
+    .ap-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 11.5pt; margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
+    .ap-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 0; }
+    .ap-facts dt, .ap-blocks dt { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .ap-facts dd { margin: 0; font-size: 10.5pt; font-weight: 600; }
+    .ap-blocks { margin: 0; display: grid; gap: 10px; }
+    .ap-blocks dd { margin: 2px 0 0; font-size: 10pt; border: 1px solid #d6cec9; border-radius: 3px; padding: 8px 10px; min-height: 40px; }
+    .ap-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 8px; }
+    .ap-tile { border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
+    .ap-tile__n { display: block; font-size: 15pt; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .ap-tile__l { display: block; font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+    .ap-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 9.5pt; }
+    .ap-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
+    .ap-table td { border-bottom: 1px solid #e3dcd8; padding: 5px 7px; vertical-align: top; }
+    .ap-final td { font-weight: 700; border-top: 2px solid #14110f; }
+    .ap-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ap-n { width: 28px; }
+    .ap-pre { white-space: pre-wrap; }
+    .ap-list { margin: 0; padding-left: 20px; font-size: 10pt; }
+    .ap-note { font-size: 8.5pt; margin: 8px 0 0; }
+    .ap-muted { color: #5b524d; }
+    .ap-empty { font-style: italic; color: #5b524d; margin: 0; }
+    .ap-sign__row { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 26px; }
+    .ap-sign__box { flex: 1 1 180px; display: flex; flex-direction: column; gap: 3px; font-size: 9pt; }
+    .ap-sign__line { display: block; border-bottom: 1px solid #14110f; height: 28px; }
+    .ap-sign__who { font-weight: 600; }
+    .ap-sign__date { color: #5b524d; }
+    .ap-foot { margin-top: 22px; padding-top: 10px; border-top: 2px solid #14110f; font-size: 8.5pt; }
+    .ap-foot p { margin: 0 0 4px; }
+
+    @@media print {
+        .ap-section, .ap-tile, .ap-sign__box, .ap-foot { break-inside: avoid; page-break-inside: avoid; }
+        .ap-sheet h2 { break-after: avoid; page-break-after: avoid; }
+    }
+    @@media (max-width: 480px) { .ap-head__meta { text-align: left; } }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private StaffAppraisalDto? a;
+    private StaffPerformancePolicyDto? policy;
+    private OrganizationBrandingDto? branding;
+
+    private List<ScoreBandDto> Bands => policy?.Bands ?? new StaffPerformancePolicyDto().Bands;
+    private string BandName(int? rating) => rating.HasValue ? Bands.FirstOrDefault(b => b.Rating == rating)?.Name ?? "—" : "—";
+
+    private string OrganizationName =>
+        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
+        : "Staff Performance";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasAnyPermissionAsync(Permissions.StaffAppraisalsConduct, Permissions.StaffAppraisalsApprove))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            if (organizationId != Guid.Empty)
+                branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
+
+            try { policy = await StaffApi.GetPolicyAsync(); } catch (Exception) { }
+            a = await StaffApi.GetAppraisalAsync(branchId, Id);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the appraisal form: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); }
+        catch (Exception) { }
+    }
+
+    /// <summary>
+    /// Renders the sheet to PDF in the browser and uploads it to the Document Library as a shareable
+    /// snapshot; then tells the appraisal which document is its report so a later reader finds the
+    /// signed PDF from the appraisal itself.
+    /// </summary>
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || a == null) return;
+        isPublishing = true;
+        try
+        {
+            var stamp = QDateFormat.D(DateTime.UtcNow);
+            var signed = a.Stage == AppraisalStage.Signed;
+            var name = $"Appraisal — {a.SubjectName} ({a.PeriodKey}){(signed ? "" : " — draft")}";
+            var fileName = $"appraisal-{a.PeriodKey}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
+
+            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "ap-sheet", fileName);
+            if (bytes == null || bytes.Length == 0)
+                throw new InvalidOperationException("The report rendered to an empty file.");
+
+            using var stream = new MemoryStream(bytes);
+            var doc = await DocShareApi.UploadDocumentAsync(
+                organizationId, stream, fileName,
+                name,
+                summary: $"Staff appraisal for {a.SubjectName}, {a.PeriodKey} ({StaffDisplay.StageLabel(a.Stage)}). Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                publishedFrom: $"Staff appraisal — {a.SubjectName}, {a.PeriodKey}, {StaffDisplay.StageLabel(a.Stage)}, generated {stamp}",
+                shareable: true);
+
+            try
+            {
+                await StaffApi.AttachAppraisalReportAsync(branchId, Id, new AttachAppraisalReportRequest { MediaContentId = doc.Id });
+            }
+            catch (Exception ex)
+            {
+                // The document exists either way; only the back-reference failed.
+                Toast.Notify(ToastSeverity.Warning, "Published, but not linked", $"The PDF is in the Library but the appraisal could not record it: {ex.Message}");
+            }
+
+            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
+                signed ? "The signed appraisal is attached to the record and can be shared from the Library." : "A snapshot as of now. Publish again once the appraisal is signed.");
+            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

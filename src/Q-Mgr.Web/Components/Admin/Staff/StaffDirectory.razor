@@ -1,0 +1,287 @@
+@page "/admin/staff"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Staff Directory - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Staff</h1>
+            <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
+        </div>
+        <div class="header-actions">
+            @if (canCreate)
+            {
+                <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
+            }
+            <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
+                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync"
+                         Disabled="@(!Visible.Any())" DisabledReason="Nothing matches the current filters." />
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(directory?.ScopedToDepartments)" Noun="people" />
+
+    <QFilterBar Wrap="true">
+        <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, email or job title" IconLeft="search" Clearable="true" Class="sd-search" />
+        <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" Items="@DepartmentOptions" TextSelector="@(d => d)" ValueSelector="@(d => d)"
+                 Placeholder="All departments" AllowClear="true" Class="sd-filter" />
+        <QSelect TValue="string" TItem="(string Code, string Name)" @bind-Value="@roleFilter" Items="@RoleOptions" TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Code)"
+                 Placeholder="All roles" AllowClear="true" Class="sd-filter" />
+        <QSelect TValue="int?" TItem="(int? Band, string Label)" @bind-Value="@bandFilter" Items="@BandOptions" TextSelector="@(b => b.Label)" ValueSelector="@(b => b.Band)"
+                 Placeholder="All bands" AllowClear="true" Class="sd-filter" />
+        <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@PeriodOptions" TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)"
+                 Placeholder="Period" Class="sd-filter" />
+    </QFilterBar>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the directory...</span></div>
+    }
+    else if (directory == null || directory.Items.Count == 0)
+    {
+        <QEmptyState Icon="people" Title="No staff on this branch yet"
+                     Text="Staff appear here once they have a user account on this branch. Add them under Users, or import a list under Staff Performance → Structure → Import." />
+    }
+    else if (!Visible.Any())
+    {
+        <QEmptyState Icon="funnel" Title="Nobody matches these filters" Text="Clear a filter or two to see the rest of the directory." />
+    }
+    else
+    {
+        <QCard NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table sd-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Role</th>
+                            <th>Departments</th>
+                            <th>Line manager</th>
+                            <th>Band</th>
+                            <th>Last record</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in Paged)
+                        {
+                            <tr>
+                                <td>
+                                    <div class="sd-person">
+                                        <QAvatar Name="@m.FullName" Size="sm" />
+                                        <div class="sd-person__text">
+                                            <a href="/admin/staff/@m.UserId/timeline" class="sd-person__name">@m.FullName</a>
+                                            <span class="sd-person__sub">@(string.IsNullOrWhiteSpace(m.JobTitle) ? m.Email : m.JobTitle)</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td><QChip Text="@m.RoleName" Color="@m.RoleColor" Size="sm" /></td>
+                                <td>@(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : "—")</td>
+                                <td>@(m.LineManagerName ?? "—")</td>
+                                <td>
+                                    @if (m.CurrentBand.HasValue)
+                                    {
+                                        <QChip Text="@($"{m.CurrentBandName} · {StaffDisplay.Composite(m.CurrentComposite)}")" Variant="@StaffDisplay.BandVariant(m.CurrentBand)" Size="sm" />
+                                    }
+                                    else
+                                    {
+                                        <span class="sd-muted">No evidence yet</span>
+                                    }
+                                </td>
+                                <td>@(m.LastRecordAt.HasValue ? QDateFormat.D(m.LastRecordAt.Value.ToLocalTime()) : "—")</td>
+                                <td>
+                                    <div class="sd-actions">
+                                        <QButton Text="Timeline" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/{m.UserId}/timeline"))" />
+                                        @if (canCreate)
+                                        {
+                                            <QButton Text="Log record" Icon="journal-plus" Variant="ghost" Size="sm" OnClick="@(() => OpenRecordFor(m))" />
+                                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+        <QPager Count="@Visible.Count" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="people" />
+    }
+</div>
+
+@if (directory != null)
+{
+    <StaffRecordDialog BranchId="@branchId" SubjectUserId="@recordSubjectId" Subjects="@directory.Items"
+                       Visible="@showRecordDialog" VisibleChanged="@OnRecordDialogVisibleChanged" OnCreated="@OnRecordCreated" />
+}
+
+<style>
+    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .sd-search { flex: 1 1 240px; min-width: 0; }
+    .sd-filter { flex: 0 1 200px; min-width: 150px; }
+    .table-wrap { overflow-x: auto; }
+    .sd-table th { white-space: nowrap; }
+    .sd-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .sd-person__text { display: flex; flex-direction: column; min-width: 0; }
+    .sd-person__name { font-weight: 600; color: var(--qm-text-primary); text-decoration: none; }
+    .sd-person__name:hover { color: var(--qm-primary); }
+    .sd-person__sub { font-size: 12px; color: var(--qm-text-muted); }
+    .sd-muted { color: var(--qm-text-muted); font-size: 12.5px; }
+    .sd-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+</style>
+
+@code {
+    private const int pageSize = 25;
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private bool canCreate;
+    private StaffDirectoryDto? directory;
+    private string period = StaffPeriods.CurrentKey();
+    private IReadOnlyList<StaffPeriods.Option> PeriodOptions = StaffPeriods.Options();
+
+    private string search = string.Empty;
+    private string? departmentFilter;
+    private string? roleFilter;
+    private int? bandFilter;
+    private int pageIndex;
+
+    private bool showRecordDialog;
+    private Guid? recordSubjectId;
+
+    private static readonly IReadOnlyList<(int? Band, string Label)> BandOptions = new (int?, string)[]
+    {
+        (5, "Band 5"), (4, "Band 4"), (3, "Band 3"), (2, "Band 2"), (1, "Band 1"), (0, "No evidence yet")
+    };
+
+    private IReadOnlyList<string> DepartmentOptions =>
+        directory?.Items.SelectMany(m => m.DepartmentNames).Distinct().OrderBy(d => d).ToList() ?? new List<string>();
+
+    private IReadOnlyList<(string Code, string Name)> RoleOptions =>
+        directory?.Items.Select(m => (m.RoleCode, m.RoleName)).Distinct().OrderBy(r => r.RoleName).ToList() ?? new List<(string, string)>();
+
+    private List<StaffMemberDto> Visible
+    {
+        get
+        {
+            if (directory == null) return new();
+            var q = (search ?? string.Empty).Trim();
+            return directory.Items
+                .Where(m => string.IsNullOrEmpty(q)
+                    || m.FullName.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || m.Email.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (m.JobTitle ?? string.Empty).Contains(q, StringComparison.OrdinalIgnoreCase))
+                .Where(m => departmentFilter == null || m.DepartmentNames.Contains(departmentFilter))
+                .Where(m => roleFilter == null || m.RoleCode == roleFilter)
+                .Where(m => bandFilter == null || (bandFilter == 0 ? m.CurrentBand == null : m.CurrentBand == bandFilter))
+                .OrderBy(m => m.FullName)
+                .ToList();
+        }
+    }
+
+    private IEnumerable<StaffMemberDto> Paged => Visible.Skip(SafePageIndex * pageSize).Take(pageSize);
+    private int SafePageIndex => Math.Min(pageIndex, Math.Max(0, (Visible.Count - 1) / pageSize));
+
+    private string ExportSubtitle => $"{BranchState.CurrentBranchName} · {period} · {Visible.Count} of {directory?.Items.Count ?? 0} people";
+
+    private static readonly List<ExportColumn<StaffMemberDto>> ExportColumns = new()
+    {
+        new("Name", m => m.FullName, ExportType.Text, 26),
+        new("Email", m => m.Email, ExportType.Text, 28),
+        new("Job title", m => m.JobTitle, ExportType.Text, 22),
+        new("Employee number", m => m.EmployeeNumber, ExportType.Text, 14),
+        new("Role", m => m.RoleName, ExportType.Text, 18),
+        new("Departments", m => string.Join("; ", m.DepartmentNames), ExportType.Text, 26),
+        new("Line manager", m => m.LineManagerName, ExportType.Text, 22),
+        new("Band", m => m.CurrentBandName, ExportType.Text, 12),
+        new("Composite", m => m.CurrentComposite, ExportType.Number, 10),
+        new("Last record", m => m.LastRecordAt?.ToLocalTime(), ExportType.Date, 18)
+    };
+
+    private Task<ExportRows<StaffMemberDto>> ProvideExportRowsAsync() =>
+        Task.FromResult(new ExportRows<StaffMemberDto>(Visible, false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canCreate = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsCreate);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            directory = await StaffApi.GetDirectoryAsync(branchId, period);
+            pageIndex = 0;
+        }
+        catch (Exception ex)
+        {
+            directory = null;
+            Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPeriodChanged(string value)
+    {
+        period = value;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    private void OpenRecordFor(StaffMemberDto m)
+    {
+        recordSubjectId = m.UserId;
+        showRecordDialog = true;
+    }
+
+    private void OnRecordDialogVisibleChanged(bool visible)
+    {
+        showRecordDialog = visible;
+        if (!visible) recordSubjectId = null;
+    }
+
+    private Task OnRecordCreated(StaffPerformanceRecordDto _) => LoadAsync();
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

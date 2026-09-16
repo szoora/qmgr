@@ -45,9 +45,9 @@
 
         @ChildContent
 
-        @if (Meta != null)
+        @if ((Meta ?? MetaContent) != null)
         {
-            <div class="q-timeline__meta">@Meta</div>
+            <div class="q-timeline__meta">@(Meta ?? MetaContent)</div>
         }
 
         @if (Actions != null)
@@ -78,6 +78,13 @@
 
     /// <summary>Small muted lines under the content (location, reporter, and so on).</summary>
     [Parameter] public RenderFragment? Meta { get; set; }
+
+    /// <summary>
+    /// The same slot as <see cref="Meta"/> under a name Razor accepts as a child-content tag:
+    /// &lt;Meta&gt; is refused because it is named like the HTML void element, so pages
+    /// write &lt;MetaContent&gt;. Either may be set; Meta wins when both are.
+    /// </summary>
+    [Parameter] public RenderFragment? MetaContent { get; set; }
 
     /// <summary>Buttons. Rendered in a wrapping row above a divider so four of them fit a phone.</summary>
     [Parameter] public RenderFragment? Actions { get; set; }

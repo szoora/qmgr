@@ -1,0 +1,410 @@
+@page "/admin/staff/{UserId:guid}/timeline/report"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+
+@*
+    The A4 staff performance report — WelfareTimelineReport's structure applied to a member of
+    staff. Its own route on MinimalLayout: the page IS the document, the period travels in the
+    query string so the link can be sent to a colleague, and there is no app chrome to hide.
+    Printed by the browser; no PDF library anywhere. Black-on-white in both themes, by design.
+*@
+
+<PageTitle>Staff Report - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="sp-sheet"
+             Title="@($"Staff Performance Report — {SubjectName}")"
+             Class="sp-sheet"
+             Ready="@(!isLoading && loadError == null)"
+             BackText="Back to timeline"
+             OnBack="@(() => Navigation.NavigateTo($"/admin/staff/{UserId}/timeline"))"
+             CanPublish="@canPublish"
+             Publishing="@isPublishing"
+             OnPublish="@PublishToLibrary"
+             OnPrint="@Print"
+             Disabled="@(isLoading || loadError != null)">
+
+        <header class="sp-head">
+            <div class="sp-head__brand">
+                @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl))
+                {
+                    <img class="sp-logo" src="@branding!.LogoUrl" alt="" />
+                }
+                <div>
+                    <div class="sp-org">@OrganizationName</div>
+                    <div class="sp-doc">Staff Performance Report</div>
+                </div>
+            </div>
+            <div class="sp-head__meta">
+                <div><span>Branch</span><strong>@(BranchState.CurrentBranchName ?? "—")</strong></div>
+                <div><span>Period</span><strong>@PeriodCaption</strong></div>
+                <div><span>Generated</span><strong>@QDateFormat.Long(DateTime.Now)</strong></div>
+                @if (!string.IsNullOrWhiteSpace(generatedBy))
+                {
+                    <div><span>By</span><strong>@generatedBy</strong></div>
+                }
+            </div>
+        </header>
+
+        @if (timeline != null)
+        {
+            var s = timeline.Subject;
+            var score = timeline.Score;
+
+            <section class="sp-subject">
+                <h1>@s.FullName</h1>
+                <dl class="sp-facts">
+                    <div><dt>Job title</dt><dd>@(s.JobTitle ?? "—")</dd></div>
+                    <div><dt>Role</dt><dd>@s.RoleName</dd></div>
+                    <div><dt>Departments</dt><dd>@(s.DepartmentNames.Any() ? string.Join(", ", s.DepartmentNames) : "—")</dd></div>
+                    <div><dt>Line manager</dt><dd>@(s.LineManagerName ?? "—")</dd></div>
+                    <div><dt>Employee number</dt><dd>@(s.EmployeeNumber ?? "—")</dd></div>
+                    <div><dt>Records in period</dt><dd>@FinalRecords.Count</dd></div>
+                </dl>
+            </section>
+
+            <section class="sp-summary">
+                <h2>Summary — @(score?.Period.Name ?? "period")</h2>
+                <div class="sp-tiles">
+                    <div class="sp-tile"><span class="sp-tile__n">@(score?.BandName ?? "—")</span><span class="sp-tile__l">Band</span></div>
+                    <div class="sp-tile"><span class="sp-tile__n">@StaffDisplay.Composite(score?.Composite)</span><span class="sp-tile__l">Composite (0–100)</span></div>
+                    <div class="sp-tile"><span class="sp-tile__n">@StaffDisplay.Points(score?.Points ?? 0)</span><span class="sp-tile__l">Points</span></div>
+                    <div class="sp-tile"><span class="sp-tile__n">@(score?.DutiesAttended ?? 0)/@(score?.DutiesExpected ?? 0)</span><span class="sp-tile__l">Duties attended</span></div>
+                    <div class="sp-tile"><span class="sp-tile__n">@(score?.RecognitionReceived ?? 0)</span><span class="sp-tile__l">Recognition</span></div>
+                    <div class="sp-tile"><span class="sp-tile__n">@FinalRecords.Count</span><span class="sp-tile__l">Records</span></div>
+                </div>
+
+                @if (score != null && score.Breakdown.Any())
+                {
+                    <table class="sp-table sp-table--compact">
+                        <thead><tr><th>Parameter</th><th class="sp-num">Weight</th><th class="sp-num">Evidence</th><th class="sp-num">Score</th></tr></thead>
+                        <tbody>
+                            @foreach (var b in score.Breakdown.OrderByDescending(b => b.Weight))
+                            {
+                                <tr>
+                                    <td>@b.Name <span class="sp-muted">(@StaffDisplay.KindLabel(b.Kind))</span></td>
+                                    <td class="sp-num">@b.Weight.ToString("0.#")</td>
+                                    <td class="sp-num">@b.EvidenceCount</td>
+                                    <td class="sp-num">@(b.Score.HasValue ? b.Score.Value.ToString("0") : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <p class="sp-muted sp-note">Composite = Σ(score × weight) ÷ Σ(weights of parameters with evidence). A parameter with no evidence in the period is left out of the denominator rather than scored zero. Wellbeing records are never scored.</p>
+                }
+            </section>
+
+            <section class="sp-records">
+                <h2>Record of evidence</h2>
+                @if (!FinalRecords.Any())
+                {
+                    <p class="sp-empty">No records were logged for this member of staff in this period.</p>
+                }
+                else
+                {
+                    @foreach (var r in FinalRecords.OrderBy(r => r.OccurredAt))
+                    {
+                        <article class="sp-record @SeverityClass(r)">
+                            <div class="sp-record__head">
+                                <div class="sp-record__when">
+                                    <strong>@QDateFormat.D(r.OccurredAt.ToLocalTime())</strong>
+                                    <span>@QDateFormat.T(r.OccurredAt.ToLocalTime())</span>
+                                </div>
+                                <div class="sp-record__what">
+                                    <h3>@r.ParameterName</h3>
+                                    <div class="sp-chips">
+                                        <span class="sp-chip">@StaffDisplay.KindLabel(r.ParameterKind)</span>
+                                        @if (r.Outcome != DutyOutcome.NotApplicable)
+                                        {
+                                            <span class="sp-chip sp-chip--strong">@StaffDisplay.OutcomeLabel(r.Outcome)</span>
+                                        }
+                                        @if (r.Points.HasValue && r.Points != 0)
+                                        {
+                                            <span class="sp-chip sp-chip--strong">@StaffDisplay.Points(r.Points) points</span>
+                                        }
+                                        @if (r.Rating.HasValue)
+                                        {
+                                            <span class="sp-chip sp-chip--strong">Rated @r.Rating of @(r.RatingScale ?? 4)</span>
+                                        }
+                                        @if (r.Visibility != WelfareVisibility.Standard)
+                                        {
+                                            <span class="sp-chip sp-chip--strong">@StaffDisplay.VisibilityLabel(r.Visibility)</span>
+                                        }
+                                        @if (r.Source == RecordSource.System)
+                                        {
+                                            <span class="sp-chip">Automatic</span>
+                                        }
+                                        @if (r.IsLateEntry)
+                                        {
+                                            <span class="sp-chip">Late entry</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            <p class="sp-record__body">@r.Description</p>
+                            <dl class="sp-record__meta">
+                                <div><dt>Logged by</dt><dd>@r.LoggedByName</dd></div>
+                                <div><dt>Source</dt><dd>@StaffDisplay.SourceLabel(r.Source)</dd></div>
+                                @if (!string.IsNullOrWhiteSpace(r.DutyTitle))
+                                {
+                                    <div><dt>Duty</dt><dd>@r.DutyTitle</dd></div>
+                                }
+                                @if (r.AcknowledgedAt.HasValue)
+                                {
+                                    <div><dt>Seen by subject</dt><dd>@QDateFormat.LocalDT(r.AcknowledgedAt)</dd></div>
+                                }
+                            </dl>
+                            @if (r.Notes.Any())
+                            {
+                                <div class="sp-block">
+                                    <h4>Notes</h4>
+                                    @foreach (var n in r.Notes.OrderBy(n => n.CreatedAt))
+                                    {
+                                        <div class="sp-note-row">
+                                            <span class="sp-note-row__by">@(n.Kind == StaffNoteKind.Response ? "Response — " : "")@n.AuthorName · @QDateFormat.LocalDT(n.CreatedAt)</span>
+                                            <p>@n.Body</p>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            @if (r.Attachments.Any())
+                            {
+                                <div class="sp-block">
+                                    <h4>Attachments (held separately)</h4>
+                                    <p class="sp-muted">@string.Join(" · ", r.Attachments.Select(a => a.FileName))</p>
+                                </div>
+                            }
+                        </article>
+                    }
+                }
+            </section>
+
+            <footer class="sp-foot">
+                <p>
+                    <strong>Confidential.</strong> This report contains performance information about a named
+                    member of staff. Hold, share and dispose of it in line with your organisation's data
+                    protection and HR policies. It reflects the records held at the moment it was generated
+                    and is not a substitute for the live file. Records marked Draft or Annulled are excluded.
+                </p>
+                <p class="sp-muted">@OrganizationName · @SubjectName · @PeriodCaption · generated @QDateFormat.DT(DateTime.Now)</p>
+            </footer>
+        }
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="sp-state no-print"><QSpinner Size="lg" /><span>Building the report...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="sp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    /* The sheet, toolbar and print reset are QPrintSheet's. Everything below styles the content INSIDE
+       the sheet in the printed document's own black-on-white palette — not theme tokens, on purpose. */
+    .sp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+
+    .sp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
+    .sp-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .sp-logo { height: 42px; width: auto; max-width: 150px; object-fit: contain; }
+    .sp-org { font-family: var(--qm-font-display, inherit); font-size: 15pt; font-weight: 700; line-height: 1.15; }
+    .sp-doc { font-size: 10pt; letter-spacing: .08em; text-transform: uppercase; color: #5b524d; }
+    .sp-head__meta { display: flex; flex-direction: column; gap: 2px; font-size: 9pt; text-align: right; }
+    .sp-head__meta span { color: #5b524d; margin-right: 6px; }
+
+    .sp-subject { margin-top: 16px; }
+    .sp-subject h1 { font-family: var(--qm-font-display, inherit); font-size: 20pt; margin: 0 0 8px; line-height: 1.1; }
+    .sp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 16px; margin: 0; }
+    .sp-facts dt { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .sp-facts dd { margin: 0; font-size: 10.5pt; font-weight: 600; }
+
+    .sp-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 12pt; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
+
+    .sp-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+    .sp-tile { border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
+    .sp-tile__n { display: block; font-size: 15pt; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .sp-tile__l { display: block; font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+
+    .sp-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 9.5pt; }
+    .sp-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
+    .sp-table td { border-bottom: 1px solid #e3dcd8; padding: 5px 7px; vertical-align: top; }
+    .sp-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .sp-note { font-size: 8.5pt; margin: 8px 0 0; }
+
+    .sp-record { border: 1px solid #d6cec9; border-left-width: 3px; border-radius: 3px; padding: 10px 12px; margin-top: 10px; }
+    .sp-record--positive { border-left-color: #14110f; }
+    .sp-record--negative { border-left-color: #14110f; border-left-width: 5px; }
+    .sp-record--negative h3 { font-weight: 800; }
+    .sp-record__head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+    .sp-record__when { min-width: 76px; font-size: 9.5pt; }
+    .sp-record__when strong { display: block; }
+    .sp-record__when span { color: #5b524d; }
+    .sp-record__what { flex: 1 1 220px; min-width: 0; }
+    .sp-record__what h3 { font-family: var(--qm-font-display, inherit); font-size: 11.5pt; margin: 0 0 4px; }
+    .sp-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .sp-chip { font-size: 7.5pt; letter-spacing: .04em; text-transform: uppercase; border: 1px solid #b7aca6; border-radius: 999px; padding: 1px 7px; color: #403834; }
+    .sp-chip--strong { border-color: #14110f; font-weight: 700; color: #14110f; }
+    .sp-record__body { margin: 8px 0 0; white-space: pre-wrap; }
+    .sp-record__meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; margin: 8px 0 0; }
+    .sp-record__meta dt { font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; margin: 0; }
+    .sp-record__meta dd { margin: 0; font-size: 9.5pt; }
+    .sp-block { margin-top: 9px; padding-top: 7px; border-top: 1px dashed #d6cec9; }
+    .sp-block h4 { font-size: 8pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; margin: 0 0 4px; }
+    .sp-block p { margin: 0 0 4px; font-size: 9.5pt; }
+    .sp-note-row { margin-bottom: 6px; }
+    .sp-note-row__by { font-size: 8pt; color: #5b524d; }
+    .sp-note-row p { margin: 1px 0 0; white-space: pre-wrap; }
+    .sp-muted { color: #5b524d; }
+    .sp-empty { font-style: italic; color: #5b524d; }
+
+    .sp-foot { margin-top: 22px; padding-top: 10px; border-top: 2px solid #14110f; font-size: 8.5pt; }
+    .sp-foot p { margin: 0 0 4px; }
+
+    @@media print {
+        .sp-record, .sp-tile, .sp-block, .sp-foot { break-inside: avoid; page-break-inside: avoid; }
+        .sp-sheet h2 { break-after: avoid; page-break-after: avoid; }
+        /* Severity is carried by border weight and type weight, never a fill — a tint prints as an indistinguishable grey. */
+        .sp-chip--strong { border-width: 2px; }
+    }
+
+    @@media (max-width: 480px) {
+        .sp-head__meta { text-align: left; }
+    }
+</style>
+
+@code {
+    [Parameter] public Guid UserId { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public string? FromQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToQuery { get; set; }
+
+    private Guid branchId;
+    private Guid organizationId;
+    private bool isLoading = true;
+    private string? loadError;
+    private string? generatedBy;
+    private bool canPublish, isPublishing;
+    private StaffTimelineDto? timeline;
+    private OrganizationBrandingDto? branding;
+    private DateRange range = DateRange.AllTime();
+
+    private string SubjectName => timeline?.Subject.FullName ?? "Staff member";
+    private string OrganizationName =>
+        !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName!
+        : !string.IsNullOrWhiteSpace(BranchState.CurrentBranchName) ? BranchState.CurrentBranchName!
+        : "Staff Performance";
+    private string PeriodCaption => range.IsAllTime ? "Complete record" : range.Caption;
+
+    /// <summary>Drafts and annulments are excluded: neither is a record of anything on paper.</summary>
+    private List<StaffPerformanceRecordDto> FinalRecords =>
+        timeline?.Records.Where(r => r.Status == StaffRecordStatus.Final).ToList() ?? new();
+
+    private static string SeverityClass(StaffPerformanceRecordDto r) =>
+        r.Outcome is DutyOutcome.Absent or DutyOutcome.NotCompleted || r.Points < 0 || r.ParameterKind == ParameterKind.Conduct
+            ? "sp-record--negative"
+            : r.Points > 0 || r.Outcome is DutyOutcome.Present or DutyOutcome.Completed or DutyOutcome.Recovered
+                ? "sp-record--positive"
+                : "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user?.Id != UserId && !await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+
+        if (DateOnly.TryParse(FromQuery, out var from) && DateOnly.TryParse(ToQuery, out var to))
+            range = new DateRange(from, to);
+
+        await LoadAsync(user);
+    }
+
+    private async Task LoadAsync(UserInfo? user)
+    {
+        isLoading = true;
+        try
+        {
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            if (organizationId != Guid.Empty)
+                branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
+
+            DateTime? f = range.IsAllTime ? null : range.From.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+            DateTime? t = range.IsAllTime ? null : range.To.ToDateTime(TimeOnly.MaxValue).ToUniversalTime();
+            timeline = await StaffApi.GetTimelineAsync(branchId, UserId, f, t);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the report: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); }
+        catch (Exception) { /* the toolbar tells the reader to use the browser's own print command */ }
+    }
+
+    /// <summary>
+    /// Renders the sheet to PDF in the browser (reportPublish.js) and uploads it into the Document
+    /// Library as a shareable snapshot, with what it was generated from and when recorded on the row.
+    /// </summary>
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty) return;
+        isPublishing = true;
+        try
+        {
+            var stamp = QDateFormat.D(DateTime.UtcNow);
+            var name = $"Staff performance report — {SubjectName} ({PeriodCaption})";
+            var fileName = $"staff-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
+
+            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "sp-sheet", fileName);
+            if (bytes == null || bytes.Length == 0)
+                throw new InvalidOperationException("The report rendered to an empty file.");
+
+            using var stream = new MemoryStream(bytes);
+            var doc = await DocShareApi.UploadDocumentAsync(
+                organizationId, stream, fileName,
+                name,
+                summary: $"Staff performance report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                publishedFrom: $"Staff timeline — {SubjectName} ({timeline?.Subject.EmployeeNumber ?? "no employee number"}), {PeriodCaption}, generated {stamp}",
+                shareable: true);
+
+            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
+                "The report is a snapshot as of now. Create a share link from the Library when you are ready.");
+            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

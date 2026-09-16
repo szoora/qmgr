@@ -1,0 +1,260 @@
+@page "/portal/records/{Id:guid}"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IAuthService AuthService
+
+<PageTitle>Record - Q-Mgr</PageTitle>
+
+<div class="admin-page rec-page">
+    <div class="page-header">
+        <div class="header-content">
+            <QButton Text="Back to my portal" Icon="arrow-left" Variant="ghost" Size="sm" Class="rec-back" OnClick="@(() => Navigation.NavigateTo("/portal"))" />
+            <h1>@(record?.ParameterName ?? "Record")</h1>
+            @if (record != null)
+            {
+                <p class="subtitle">@StaffDisplay.SourceLabel(record.Source) by @record.LoggedByName · happened @QDateFormat.LocalDT(record.OccurredAt) · logged @QDateFormat.LocalDT(record.CreatedAt)</p>
+            }
+        </div>
+        <div class="header-actions">
+            @if (record != null && IsSubject && record.Status != StaffRecordStatus.Annulled)
+            {
+                <QButton Text="Respond" Icon="reply" Variant="secondary" Size="sm" OnClick="@(() => { respondBody = string.Empty; respondError = false; showRespond = true; })" />
+                @if (record.AcknowledgedAt == null)
+                {
+                    <QButton Text="Mark as seen" Icon="eye" Variant="primary" Size="sm" Loading="@acknowledging" OnClick="@AcknowledgeAsync" />
+                }
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the record...</span></div>
+    }
+    else if (record == null)
+    {
+        <QEmptyState Icon="journal-x" Title="This record could not be opened" Text="@(loadError ?? "It may have been annulled, or it may not be yours to read.")">
+            <Action><QButton Text="Back to my portal" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/portal"))" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        <QCard Class="rec-card">
+            <div class="rec-chips">
+                <QChip Text="@StaffDisplay.KindLabel(record.ParameterKind)" Icon="@StaffDisplay.KindIcon(record.ParameterKind)" Color="@(record.ParameterColor ?? StaffDisplay.KindColor(record.ParameterKind))" />
+                @if (record.Outcome != DutyOutcome.NotApplicable)
+                {
+                    <QChip Text="@StaffDisplay.OutcomeLabel(record.Outcome)" Variant="@StaffDisplay.OutcomeVariant(record.Outcome)" />
+                }
+                @if (record.Points.HasValue && record.Points != 0)
+                {
+                    <QChip Text="@($"{StaffDisplay.Points(record.Points)} points")" Variant="@(record.Points > 0 ? "success" : "danger")" />
+                }
+                @if (record.Rating.HasValue)
+                {
+                    <QChip Text="@($"Rated {record.Rating} of {record.RatingScale ?? 5}")" Icon="star-fill" Variant="info" />
+                }
+                <QChip Text="@StaffDisplay.VisibilityLabel(record.Visibility)" Icon="@(record.Visibility == WelfareVisibility.Standard ? "unlock" : "lock-fill")" Variant="@StaffDisplay.VisibilityVariant(record.Visibility)" />
+                <QChip Text="@StaffDisplay.StatusLabel(record.Status)" Variant="@(record.Status == StaffRecordStatus.Annulled ? "danger" : record.Status == StaffRecordStatus.Draft ? "warning" : "muted")" />
+                @if (record.Source == RecordSource.System)
+                {
+                    <QChip Text="Automatic" Icon="cpu" Variant="muted" Title="Credited automatically by the system, not by a colleague" />
+                }
+                @if (record.IsLateEntry)
+                {
+                    <QChip Text="Late entry" Icon="clock-history" Variant="warning" Title="Logged well after it happened" />
+                }
+                @if (record.AcknowledgedAt.HasValue)
+                {
+                    <QChip Text="@($"Seen {QDateFormat.LocalDT(record.AcknowledgedAt.Value)}")" Icon="eye" Variant="success" />
+                }
+            </div>
+
+            @if (record.Rating.HasValue && record.RatingScale.HasValue)
+            {
+                <div class="rec-rating"><QRating Value="@record.Rating.Value" Max="@record.RatingScale.Value" ReadOnly="true" /></div>
+            }
+
+            <h5>What was recorded</h5>
+            <p class="rec-desc">@record.Description</p>
+
+            @if (!string.IsNullOrEmpty(record.DutyTitle))
+            {
+                <p class="rec-muted"><QIcon Name="calendar-event" Size="sm" /> Linked duty: @record.DutyTitle</p>
+            }
+
+            @if (record.Attachments.Any())
+            {
+                <h5>Evidence</h5>
+                <div class="rec-attachments">
+                    @foreach (var a in record.Attachments)
+                    {
+                        <QChip Text="@a.FileName" Icon="paperclip" Variant="muted" Href="@a.FileUrl" Title="@($"{a.ContentType} · {QDateFormat.LocalDT(a.CreatedAt)}")" />
+                    }
+                </div>
+            }
+
+            <h5>Chronology</h5>
+            @if (!record.Notes.Any())
+            {
+                <p class="rec-muted">No notes or responses yet.</p>
+            }
+            else
+            {
+                <div class="rec-notes">
+                    @foreach (var note in record.Notes.OrderBy(n => n.CreatedAt))
+                    {
+                        <div class="rec-note rec-note--@note.Kind.ToString().ToLowerInvariant()">
+                            <span class="rec-note__who">@note.AuthorName <em>· @NoteKindLabel(note.Kind) · @QDateFormat.LocalDT(note.CreatedAt)</em></span>
+                            <p>@note.Body</p>
+                        </div>
+                    }
+                </div>
+            }
+        </QCard>
+    }
+</div>
+
+<QModal @bind-Visible="showRespond" Title="Respond to this record" Icon="reply" Size="md">
+    <ChildContent>
+        <p class="form-hint">Your response is appended to the record's chronology and cannot be edited afterwards.</p>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@respondBody" Type="textarea" Rows="5" Label="Your response" Required="true" MaxLength="4000"
+                    HasError="@respondError" ErrorMessage="Write at least 2 characters" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showRespond = false)" />
+        <QButton Text="Send response" Icon="send" Variant="primary" Loading="@responding" OnClick="@RespondAsync" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .rec-page { max-width: 900px; margin: 0 auto; }
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .header-content h1 { margin: 0 0 4px; font-size: 24px; color: var(--qm-text-primary); }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .rec-back { margin-left: -8px; margin-bottom: 4px; }
+    .rec-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .rec-rating { margin-bottom: 12px; }
+    .rec-card h5 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .rec-card h5:first-of-type { margin-top: 4px; }
+    .rec-desc { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--qm-text-primary); font-size: 15px; }
+    .rec-muted { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0 0; }
+    .rec-attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rec-notes { display: flex; flex-direction: column; gap: 8px; }
+    .rec-note { padding: 10px 12px; border-left: 3px solid var(--qm-border); background: var(--qm-bg-secondary); border-radius: 0 var(--qm-radius-sm) var(--qm-radius-sm) 0; font-size: 14px; }
+    .rec-note--response { border-left-color: var(--qm-primary); }
+    .rec-note--annulment { border-left-color: var(--qm-danger); }
+    .rec-note--visibilitychange { border-left-color: var(--qm-warning); }
+    .rec-note__who { font-weight: 600; color: var(--qm-text-primary); }
+    .rec-note__who em { font-weight: 400; font-style: normal; color: var(--qm-text-muted); }
+    .rec-note p { margin: 4px 0 0; color: var(--qm-text-secondary); white-space: pre-wrap; }
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .form-hint { font-size: 13px; color: var(--qm-text-muted); margin: 0 0 12px; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true;
+    private string? loadError;
+    private Guid branchId;
+    private StaffPerformanceRecordDto? record;
+    private UserInfo? me;
+
+    private bool showRespond;
+    private bool responding;
+    private bool respondError;
+    private string respondBody = string.Empty;
+    private bool acknowledging;
+
+    private bool IsSubject => record != null && me != null && record.SubjectUserId == me.Id;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        try
+        {
+            me = await AuthService.GetCurrentUserAsync();
+            branchId = BranchState.CurrentBranchId;
+            if (branchId == Guid.Empty)
+                branchId = (await StaffApi.GetPortalAsync()).BranchId;
+            record = await StaffApi.GetRecordAsync(branchId, Id);
+        }
+        catch (Exception ex)
+        {
+            record = null;
+            loadError = ex.Message;
+            Toast.Notify(ToastSeverity.Error, "Could not open the record", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string NoteKindLabel(StaffNoteKind kind) => kind switch
+    {
+        StaffNoteKind.Response => "Response",
+        StaffNoteKind.VisibilityChange => "Visibility changed",
+        StaffNoteKind.Annulment => "Annulled",
+        StaffNoteKind.Moderation => "Moderation",
+        _ => "Note"
+    };
+
+    private async Task RespondAsync()
+    {
+        if (record == null) return;
+        respondError = (respondBody?.Trim().Length ?? 0) < 2;
+        if (respondError) return;
+        responding = true;
+        try
+        {
+            record = await StaffApi.RespondAsync(branchId, record.Id, new AddStaffNoteRequest { Body = respondBody.Trim() });
+            showRespond = false;
+            Toast.Notify(ToastSeverity.Success, "Response added", "It is now part of the record's chronology.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not add your response", ex.Message);
+        }
+        finally
+        {
+            responding = false;
+        }
+    }
+
+    private async Task AcknowledgeAsync()
+    {
+        if (record == null) return;
+        acknowledging = true;
+        try
+        {
+            record = await StaffApi.AcknowledgeAsync(branchId, record.Id);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not mark the record as seen", ex.Message);
+        }
+        finally
+        {
+            acknowledging = false;
+        }
+    }
+}

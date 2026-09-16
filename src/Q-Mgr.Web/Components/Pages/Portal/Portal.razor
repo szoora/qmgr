@@ -1,0 +1,882 @@
+@page "/portal"
+@implements IDisposable
+@using System.Text.Json
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject INotificationClientService NotificationHub
+@inject IAuthService AuthService
+@inject IJSRuntime JS
+@inject JsonSerializerOptions JsonOptions
+
+<PageTitle>My Portal - Q-Mgr</PageTitle>
+
+@*
+    The staff member's own landing page (plan §10). Mobile-first: one column under 760px, two
+    above. Everything here is the caller's own file — the API's portal hub answers for the signed-in
+    user only, so there is no permission gate beyond the module, and nothing on this page ever shows
+    another person's rank or score.
+*@
+
+<div class="admin-page portal-page">
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading your portal...</span></div>
+    }
+    else if (portal == null)
+    {
+        <QEmptyState Icon="person-badge" Title="Your portal could not be loaded"
+                     Text="@(loadError ?? "The staff performance service did not answer. Try again in a moment.")">
+            <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadAsync" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        var score = portal.Score;
+
+        <div class="page-header portal-header">
+            <div class="header-content portal-greeting">
+                <QAvatar Name="@portal.Me.FullName" Size="lg" />
+                <div>
+                    <h1>@Greeting, @FirstName</h1>
+                    <p class="subtitle">
+                        @score.Period.Name · @QDateFormat.Range(score.Period.Start, score.Period.End)
+                        @if (!string.IsNullOrEmpty(portal.Me.JobTitle)) { <span> · @portal.Me.JobTitle</span> }
+                        @if (portal.Me.DepartmentNames.Any()) { <span> · @string.Join(", ", portal.Me.DepartmentNames)</span> }
+                    </p>
+                    <div class="portal-band-row">
+                        @if (score.Band.HasValue)
+                        {
+                            <QChip Text="@(score.BandName ?? $"Band {score.Band}")" Icon="award" Variant="@StaffDisplay.BandVariant(score.Band)" />
+                        }
+                        else
+                        {
+                            <QChip Text="No band yet" Icon="hourglass" Variant="muted" Title="A band appears once there is evidence in this period" />
+                        }
+                        @if (score.RankInBranch.HasValue && score.RankedOutOf.HasValue)
+                        {
+                            <span class="portal-rank">Your position: @score.RankInBranch of @score.RankedOutOf</span>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="header-actions portal-ring-wrap" aria-label="Composite score">
+                @{
+                    var pct = score.Composite.HasValue ? Math.Clamp((int)Math.Round(score.Composite.Value), 0, 100) : 0;
+                }
+                <div class="portal-ring @(score.Composite.HasValue ? "" : "portal-ring--empty")" style="--pct: @pct;">
+                    <div class="portal-ring__hole">
+                        <span class="portal-ring__value">@StaffDisplay.Composite(score.Composite)</span>
+                        <span class="portal-ring__label">composite</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <QStatRow Class="portal-stats">
+            <QStatTile Value="@score.Points.ToString("N0")" Label="Points this period" Icon="lightning-charge" Variant="primary" />
+            <QStatTile Value="@($"{score.DutiesAttended} / {score.DutiesExpected}")" Label="Duties attended" Icon="calendar-check"
+                       Variant="@(score.DutiesExpected > 0 && score.DutiesAttended < score.DutiesExpected ? "warning" : "success")" />
+            <QStatTile Value="@score.RecognitionReceived.ToString("N0")" Label="Recognition received" Icon="award" Variant="success" />
+            <QStatTile Value="@portal.OpenItems.Count.ToString("N0")" Label="Open items" Icon="list-check"
+                       Variant="@(portal.OpenItems.Any(i => i.IsOverdue) ? "danger" : "default")" />
+        </QStatRow>
+
+        @* ---- Coming up ---------------------------------------------------------------------- *@
+        <QCard Title="Coming up" Subtitle="Duties you are expected at" Icon="calendar-event" Class="portal-card">
+            @if (!portal.ComingUp.Any())
+            {
+                <QEmptyState Icon="calendar-check" Title="Nothing scheduled" Text="No duties are coming up for you in the next while." />
+            }
+            else
+            {
+                <ul class="portal-list">
+                    @foreach (var duty in portal.ComingUp.OrderBy(d => d.StartsAt))
+                    {
+                        <li class="portal-duty">
+                            <div class="portal-duty__main">
+                                <strong>@duty.Title</strong>
+                                <span class="portal-duty__when">
+                                    <QIcon Name="clock" Size="sm" /> @QDateFormat.LocalDT(duty.StartsAt)
+                                    @if (!string.IsNullOrEmpty(duty.Location)) { <span> · <QIcon Name="geo-alt" Size="sm" /> @duty.Location</span> }
+                                </span>
+                                <span class="portal-duty__param">
+                                    <QChip Text="@duty.ParameterName" Size="sm" Color="@StaffDisplay.KindColor(duty.ParameterKind)" />
+                                    @if (duty.MyOutcome.HasValue && duty.MyOutcome != DutyOutcome.NotApplicable)
+                                    {
+                                        <QChip Text="@StaffDisplay.OutcomeLabel(duty.MyOutcome.Value)" Size="sm" Variant="@StaffDisplay.OutcomeVariant(duty.MyOutcome.Value)" />
+                                    }
+                                </span>
+                            </div>
+                            @if (duty.CanIRecord)
+                            {
+                                <div class="portal-duty__actions">
+                                    <QButton Text="Take register" Icon="clipboard-check" Size="sm" Variant="primary"
+                                             OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{duty.Id}/register"))" />
+                                </div>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </QCard>
+
+        <div class="portal-grid">
+            @* ---- Reminders & to-do ---------------------------------------------------------- *@
+            <QCard Title="Reminders & to-do" Subtitle="What you still owe, soonest first" Icon="list-check" Class="portal-card">
+                @if (!portal.OpenItems.Any())
+                {
+                    <QEmptyState Icon="check2-circle" Title="Nothing open" Text="Anything waiting on you — a register, a response, a notice to acknowledge — will appear here." />
+                }
+                else
+                {
+                    <ul class="portal-list">
+                        @foreach (var item in portal.OpenItems.OrderBy(i => i.DueAt ?? DateTime.MaxValue))
+                        {
+                            <li class="portal-item @(item.IsOverdue ? "portal-item--overdue" : "")">
+                                <QIcon Name="@ItemIcon(item.Kind)" Class="portal-item__icon" />
+                                <div class="portal-item__main">
+                                    <a href="@item.Url">@item.Title</a>
+                                    @if (!string.IsNullOrEmpty(item.Detail)) { <span class="portal-item__detail">@item.Detail</span> }
+                                </div>
+                                <div class="portal-item__due">
+                                    @if (item.IsOverdue)
+                                    {
+                                        <QChip Text="Overdue" Size="sm" Variant="danger" Icon="exclamation-circle" />
+                                    }
+                                    @if (item.DueAt.HasValue)
+                                    {
+                                        <span class="portal-item__date">Due @QDateFormat.D(Local(item.DueAt.Value))</span>
+                                    }
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </QCard>
+
+            @* ---- Notices --------------------------------------------------------------------- *@
+            <QCard Title="Notices" Subtitle="Pinned and unread first" Icon="megaphone" Class="portal-card">
+                @if (!portal.Notices.Any())
+                {
+                    <QEmptyState Icon="megaphone" Title="No notices" Text="Notices published to your branch, department or role will appear here." />
+                }
+                else
+                {
+                    <div class="portal-notices">
+                        @foreach (var notice in OrderedNotices)
+                        {
+                            var needsAck = notice.RequiresAcknowledgement && notice.AcknowledgedByMeAt == null;
+                            <article class="portal-notice @(notice.IsPinned ? "portal-notice--pinned" : "") @(needsAck ? "portal-notice--ack" : "")">
+                                <header class="portal-notice__head">
+                                    <h4><a href="/portal/notices/@notice.Id">@notice.Title</a></h4>
+                                    <span class="portal-notice__chips">
+                                        @if (notice.IsPinned) { <QChip Text="Pinned" Icon="pin-angle" Size="sm" Variant="primary" /> }
+                                        @if (notice.RequiresAcknowledgement)
+                                        {
+                                            if (notice.AcknowledgedByMeAt.HasValue)
+                                            {
+                                                <QChip Text="@($"Acknowledged {QDateFormat.D(Local(notice.AcknowledgedByMeAt.Value))}")" Icon="check2" Size="sm" Variant="success" />
+                                            }
+                                            else
+                                            {
+                                                <QChip Text="Acknowledgement required" Icon="hand-index" Size="sm" Variant="warning" />
+                                            }
+                                        }
+                                    </span>
+                                </header>
+                                <div class="portal-notice__body">@((MarkupString)notice.BodyHtml)</div>
+                                @if (notice.Attachments.Any())
+                                {
+                                    <div class="portal-notice__attachments">
+                                        @foreach (var a in notice.Attachments)
+                                        {
+                                            <QChip Text="@a.Name" Icon="paperclip" Size="sm" Variant="muted" Href="@a.FileUrl" />
+                                        }
+                                    </div>
+                                }
+                                <footer class="portal-notice__meta">
+                                    <span>@notice.PublishedByName · @QDateFormat.D(Local(notice.PublishAt))</span>
+                                    @if (needsAck)
+                                    {
+                                        <QButton Text="Acknowledge" Icon="check2-circle" Size="sm" Variant="primary"
+                                                 Loading="@(busyNoticeId == notice.Id)" OnClick="@(() => AcknowledgeNoticeAsync(notice.Id))" />
+                                    }
+                                </footer>
+                            </article>
+                        }
+                    </div>
+                }
+            </QCard>
+
+            @* ---- My breakdown ---------------------------------------------------------------- *@
+            <QCard Title="My breakdown" Subtitle="Score per parameter, out of 100, with its weight" Icon="bar-chart-line" Class="portal-card">
+                @if (!score.Breakdown.Any())
+                {
+                    <QEmptyState Icon="bar-chart-line" Title="No evidence yet" Text="Your breakdown fills in as records, registers and recognition are logged this period." />
+                }
+                else
+                {
+                    <QBarList Items="@BreakdownBars" Max="100" />
+                }
+            </QCard>
+
+            @* ---- Recognition ----------------------------------------------------------------- *@
+            <QCard Title="Recognition" Subtitle="@RecognitionSubtitle" Icon="award" Class="portal-card">
+                <HeaderActions>
+                    @if (portal.RecognitionBudget.Parameters.Any())
+                    {
+                        <QButton Text="Give recognition" Icon="gift" Size="sm" Variant="primary" OnClick="@OpenGiveDialog"
+                                 Disabled="@(portal.RecognitionBudget.Remaining == 0)" />
+                    }
+                </HeaderActions>
+                <ChildContent>
+                    <div class="portal-recognition">
+                        <section>
+                            <h5>Received</h5>
+                            @if (!portal.RecognitionReceived.Any())
+                            {
+                                <p class="portal-muted">Nobody has recognised you yet this period.</p>
+                            }
+                            else
+                            {
+                                <ul class="portal-list portal-list--tight">
+                                    @foreach (var r in portal.RecognitionReceived.OrderByDescending(r => r.OccurredAt))
+                                    {
+                                        <li class="portal-recog">
+                                            <QAvatar Name="@r.LoggedByName" Size="sm" />
+                                            <div>
+                                                <strong>@r.LoggedByName</strong> <span class="portal-muted">· @r.ParameterName · @QDateFormat.D(Local(r.OccurredAt))</span>
+                                                <p>@r.Description</p>
+                                            </div>
+                                            @if (r.Points.HasValue) { <QChip Text="@StaffDisplay.Points(r.Points)" Size="sm" Variant="success" /> }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </section>
+                        <section>
+                            <h5>Given</h5>
+                            @if (!portal.RecognitionGiven.Any())
+                            {
+                                <p class="portal-muted">You have not recognised a colleague yet this month.</p>
+                            }
+                            else
+                            {
+                                <ul class="portal-list portal-list--tight">
+                                    @foreach (var r in portal.RecognitionGiven.OrderByDescending(r => r.OccurredAt))
+                                    {
+                                        <li class="portal-recog">
+                                            <QAvatar Name="@r.SubjectName" Size="sm" />
+                                            <div>
+                                                <strong>@r.SubjectName</strong> <span class="portal-muted">· @r.ParameterName · @QDateFormat.D(Local(r.OccurredAt))</span>
+                                                <p>@r.Description</p>
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </section>
+                    </div>
+                </ChildContent>
+            </QCard>
+        </div>
+
+        @* ---- My timeline -------------------------------------------------------------------- *@
+        <QCard Title="My timeline" Subtitle="Records about you, newest first" Icon="journal-text" Class="portal-card">
+            <HeaderActions>
+                @if (portal.UnacknowledgedRecords > 0)
+                {
+                    <QChip Text="@($"{portal.UnacknowledgedRecords} not yet seen")" Icon="eye" Size="sm" Variant="warning" />
+                }
+            </HeaderActions>
+            <ChildContent>
+                <QTimeline GroupByDay="true" EmptyText="No records about you yet this period.">
+                    @foreach (var record in portal.RecentRecords.OrderByDescending(r => r.OccurredAt))
+                    {
+                        <QTimelineItem MarkerColor="@(record.ParameterColor ?? StaffDisplay.KindColor(record.ParameterKind))"
+                                       MarkerIcon="@StaffDisplay.KindIcon(record.ParameterKind)"
+                                       Date="@Local(record.OccurredAt)"
+                                       Modifier="@(record.Status == StaffRecordStatus.Annulled ? "annulled" : record.Status == StaffRecordStatus.Draft ? "draft" : null)">
+                            <TitleContent>
+                                <a class="portal-record-link" href="/portal/records/@record.Id"><strong>@record.ParameterName</strong></a>
+                                @if (record.Outcome != DutyOutcome.NotApplicable)
+                                {
+                                    <QChip Text="@StaffDisplay.OutcomeLabel(record.Outcome)" Size="sm" Variant="@StaffDisplay.OutcomeVariant(record.Outcome)" />
+                                }
+                                @if (record.Points.HasValue && record.Points != 0)
+                                {
+                                    <QChip Text="@StaffDisplay.Points(record.Points)" Size="sm" Variant="@(record.Points > 0 ? "success" : "danger")" />
+                                }
+                                @if (record.Rating.HasValue)
+                                {
+                                    <QChip Text="@($"{record.Rating} / {record.RatingScale ?? 5}")" Icon="star-fill" Size="sm" Variant="info" />
+                                }
+                                @if (record.Visibility != WelfareVisibility.Standard)
+                                {
+                                    <QChip Text="@StaffDisplay.VisibilityLabel(record.Visibility)" Icon="lock-fill" Size="sm" Variant="@StaffDisplay.VisibilityVariant(record.Visibility)" />
+                                }
+                                @if (record.Source == RecordSource.System)
+                                {
+                                    <QChip Text="@StaffDisplay.SourceLabel(record.Source)" Icon="cpu" Size="sm" Variant="muted" Title="Credited automatically by the system, not by a colleague" />
+                                }
+                                @if (record.Status == StaffRecordStatus.Annulled)
+                                {
+                                    <QChip Text="Annulled" Size="sm" Variant="muted" />
+                                }
+                            </TitleContent>
+                            <ChildContent>
+                                <p class="portal-record__desc">@record.Description</p>
+                                @if (!string.IsNullOrEmpty(record.DutyTitle))
+                                {
+                                    <p class="portal-muted"><QIcon Name="calendar-event" Size="sm" /> @record.DutyTitle</p>
+                                }
+                                @if (record.Notes.Any())
+                                {
+                                    <div class="portal-notes">
+                                        @foreach (var note in record.Notes.OrderBy(n => n.CreatedAt))
+                                        {
+                                            <div class="portal-note portal-note--@note.Kind.ToString().ToLowerInvariant()">
+                                                <span class="portal-note__who">@note.AuthorName <em>· @NoteKindLabel(note.Kind) · @QDateFormat.LocalDT(note.CreatedAt)</em></span>
+                                                <p>@note.Body</p>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                @if (record.Attachments.Any())
+                                {
+                                    <div class="portal-attachments">
+                                        @foreach (var a in record.Attachments)
+                                        {
+                                            <QChip Text="@a.FileName" Icon="paperclip" Size="sm" Variant="muted" Href="@a.FileUrl" />
+                                        }
+                                    </div>
+                                }
+                            </ChildContent>
+                            <MetaContent>
+                                <span>@StaffDisplay.SourceLabel(record.Source) by @record.LoggedByName · @QDateFormat.LocalDT(record.CreatedAt)</span>
+                                @if (record.IsLateEntry) { <span class="portal-late"> · Late entry</span> }
+                                @if (record.AcknowledgedAt.HasValue) { <span> · Seen @QDateFormat.D(Local(record.AcknowledgedAt.Value))</span> }
+                            </MetaContent>
+                            <Actions>
+                                @if (record.Status != StaffRecordStatus.Annulled)
+                                {
+                                    <QButton Text="Respond" Icon="reply" Size="sm" Variant="ghost" OnClick="@(() => OpenRespond(record))" />
+                                    @if (record.AcknowledgedAt == null)
+                                    {
+                                        <QButton Text="Mark as seen" Icon="eye" Size="sm" Variant="secondary"
+                                                 Loading="@(busyRecordId == record.Id)" OnClick="@(() => AcknowledgeRecordAsync(record.Id))" />
+                                    }
+                                }
+                            </Actions>
+                        </QTimelineItem>
+                    }
+                </QTimeline>
+            </ChildContent>
+        </QCard>
+
+        @* ---- Appraisal ---------------------------------------------------------------------- *@
+        <QCard Title="Appraisal" Subtitle="@score.Period.Name" Icon="clipboard2-check" Class="portal-card">
+            @if (portal.Appraisal == null)
+            {
+                <QEmptyState Icon="clipboard2-check" Title="No appraisal open this period" Text="When your appraiser opens one, its stage and what it needs from you will show here." />
+            }
+            else
+            {
+                var ap = portal.Appraisal;
+                <div class="portal-appraisal">
+                    <div class="portal-appraisal__main">
+                        <QChip Text="@StaffDisplay.StageLabel(ap.Stage)" Variant="@StaffDisplay.StageVariant(ap.Stage)" />
+                        <span class="portal-muted">Appraiser: @ap.AppraiserName · @QDateFormat.Range(ap.PeriodStart, ap.PeriodEnd)</span>
+                        <p class="portal-appraisal__owe">@AppraisalOwe(ap)</p>
+                    </div>
+                    <div class="portal-appraisal__actions">
+                        <QButton Text="Open" Icon="box-arrow-up-right" Variant="primary" Size="sm"
+                                 OnClick="@(() => Navigation.NavigateTo($"/portal/appraisals/{ap.Id}"))" />
+                    </div>
+                </div>
+            }
+        </QCard>
+
+        <footer class="portal-footer">
+            <a href="/notifications"><QIcon Name="bell" Size="sm" /> Notification centre</a>
+            <a href="/profile/notifications"><QIcon Name="sliders" Size="sm" /> Preferences</a>
+            <QButton Text="Export my file" Icon="download" Variant="ghost" Size="sm" Loading="@exporting" OnClick="@ExportMyFileAsync" />
+        </footer>
+    }
+</div>
+
+@* ---- Give recognition ---------------------------------------------------------------------- *@
+<QModal @bind-Visible="showGive" Title="Give recognition" Icon="gift" Size="md">
+    <ChildContent>
+        @if (portal != null)
+        {
+            <p class="form-hint">@portal.RecognitionBudget.Remaining of @portal.RecognitionBudget.MonthlyBudget left this month. The colleague is told at once and it shows on both your feeds.</p>
+        }
+        <div class="form-group">
+            <QSelect TValue="Guid?" TItem="StaffColleagueDto" @bind-Value="@giveSubjectId" Items="@colleagues"
+                     TextSelector="@(c => string.IsNullOrEmpty(c.JobTitle) ? c.FullName : $"{c.FullName} — {c.JobTitle}")"
+                     ValueSelector="@(c => (Guid?)c.UserId)" Label="Colleague" Required="true" Placeholder="Who are you recognising?"
+                     HasError="@giveErrors.Contains("subject")" ErrorMessage="Choose a colleague" />
+        </div>
+        <div class="form-group">
+            <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@giveParameterId"
+                     Items="@(portal?.RecognitionBudget.Parameters ?? new())"
+                     TextSelector="@(p => p.Name)" ValueSelector="@(p => (Guid?)p.Id)" Label="For" Required="true" Placeholder="What did they do?"
+                     HasError="@giveErrors.Contains("parameter")" ErrorMessage="Choose what you are recognising them for" />
+        </div>
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@giveModel.Message" Type="textarea" Rows="4" Label="Why" Required="true" MaxLength="1000"
+                    Placeholder="Say what they did and why it mattered (at least 10 characters)"
+                    HasError="@giveErrors.Contains("message")" ErrorMessage="Write at least 10 characters" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showGive = false)" />
+        <QButton Text="Send recognition" Icon="send" Variant="primary" Loading="@giving" OnClick="@GiveRecognitionAsync" />
+    </FooterContent>
+</QModal>
+
+@* ---- Respond to a record ------------------------------------------------------------------- *@
+<QModal @bind-Visible="showRespond" Title="Respond to this record" Icon="reply" Size="md">
+    <ChildContent>
+        @if (respondTarget != null)
+        {
+            <p class="form-hint"><strong>@respondTarget.ParameterName</strong> · @QDateFormat.LocalDT(respondTarget.OccurredAt) · logged by @respondTarget.LoggedByName</p>
+            <p class="portal-record__desc">@respondTarget.Description</p>
+        }
+        <div class="form-group">
+            <QInput TValue="string" @bind-Value="@respondBody" Type="textarea" Rows="5" Label="Your response" Required="true" MaxLength="4000"
+                    Placeholder="Your response is added to the record's chronology and cannot be edited afterwards."
+                    HasError="@respondError" ErrorMessage="Write at least 2 characters" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showRespond = false)" />
+        <QButton Text="Send response" Icon="send" Variant="primary" Loading="@responding" OnClick="@RespondAsync" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .portal-page { max-width: 1200px; margin: 0 auto; }
+    .portal-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .portal-greeting { display: flex; align-items: center; gap: 16px; min-width: 0; }
+    .portal-greeting h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    .portal-band-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    .portal-rank { font-size: 13px; color: var(--qm-text-secondary); }
+
+    /* Composite ring: a conic-gradient on the outer disc with a plain background declared first as
+       the fallback for a browser without it; the inner hole carries the card colour. */
+    .portal-ring { --pct: 0; width: 96px; height: 96px; border-radius: 50%; padding: 8px; flex: 0 0 auto;
+                   background: var(--qm-bg-secondary);
+                   background: conic-gradient(var(--qm-primary) calc(var(--pct) * 1%), var(--qm-bg-secondary) 0); }
+    .portal-ring--empty { background: var(--qm-bg-secondary); }
+    .portal-ring__hole { width: 100%; height: 100%; border-radius: 50%; background: var(--qm-bg-card); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .portal-ring__value { font-family: var(--qm-font-display); font-weight: 700; font-size: 22px; line-height: 1; color: var(--qm-text-primary); }
+    .portal-ring__label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); margin-top: 2px; }
+
+    .portal-stats { margin-bottom: 16px; }
+    .portal-card { margin-bottom: 16px; }
+    .portal-grid { display: grid; grid-template-columns: 1fr; gap: 0 16px; }
+    @@media (min-width: 760px) { .portal-grid { grid-template-columns: 1fr 1fr; } }
+    .portal-grid > * { min-width: 0; }
+
+    .portal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .portal-list--tight { gap: 8px; }
+    .portal-muted { color: var(--qm-text-muted); font-size: 13px; margin: 0; }
+
+    .portal-duty { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .portal-duty__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .portal-duty__when { font-size: 13px; color: var(--qm-text-secondary); }
+    .portal-duty__param { display: flex; gap: 6px; flex-wrap: wrap; }
+    .portal-duty__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .portal-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
+    .portal-item:last-child { border-bottom: 0; }
+    .portal-item__icon { color: var(--qm-primary); margin-top: 2px; }
+    .portal-item--overdue .portal-item__icon { color: var(--qm-danger); }
+    .portal-item__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .portal-item__main a { color: var(--qm-text-primary); font-weight: 600; text-decoration: none; }
+    .portal-item__main a:hover { color: var(--qm-primary); }
+    .portal-item__detail { font-size: 13px; color: var(--qm-text-muted); }
+    .portal-item__due { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--qm-text-muted); }
+
+    .portal-notices { display: flex; flex-direction: column; gap: 12px; }
+    .portal-notice { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 12px 14px; background: var(--qm-bg-card); }
+    .portal-notice--pinned { border-left: 3px solid var(--qm-primary); }
+    .portal-notice--ack { border-color: var(--qm-warning); }
+    .portal-notice__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .portal-notice__head h4 { margin: 0; font-size: 15px; }
+    .portal-notice__head h4 a { color: var(--qm-text-primary); text-decoration: none; }
+    .portal-notice__chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .portal-notice__body { margin: 8px 0; font-size: 14px; color: var(--qm-text-secondary); overflow-wrap: anywhere; }
+    .portal-notice__body img { max-width: 100%; }
+    .portal-notice__attachments, .portal-attachments { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .portal-notice__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--qm-text-muted); margin-top: 8px; }
+
+    .portal-recognition { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @@media (min-width: 560px) { .portal-recognition { grid-template-columns: 1fr 1fr; } }
+    .portal-recognition h5 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .portal-recog { display: flex; align-items: flex-start; gap: 10px; }
+    .portal-recog > div { flex: 1; min-width: 0; font-size: 13px; }
+    .portal-recog p { margin: 2px 0 0; color: var(--qm-text-secondary); }
+
+    .portal-record-link { color: inherit; text-decoration: none; }
+    .portal-record-link:hover strong { color: var(--qm-primary); }
+    .portal-record__desc { margin: 0 0 6px; color: var(--qm-text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .portal-late { color: var(--qm-warning); }
+    .portal-notes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .portal-note { padding: 8px 10px; border-left: 2px solid var(--qm-border); background: var(--qm-bg-secondary); border-radius: 0 var(--qm-radius-sm) var(--qm-radius-sm) 0; font-size: 13px; }
+    .portal-note--response { border-left-color: var(--qm-primary); }
+    .portal-note--annulment { border-left-color: var(--qm-danger); }
+    .portal-note__who { font-weight: 600; color: var(--qm-text-primary); }
+    .portal-note__who em { font-weight: 400; font-style: normal; color: var(--qm-text-muted); }
+    .portal-note p { margin: 4px 0 0; color: var(--qm-text-secondary); white-space: pre-wrap; }
+
+    .portal-appraisal { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .portal-appraisal__main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .portal-appraisal__owe { margin: 0; color: var(--qm-text-primary); }
+    .portal-appraisal__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .portal-footer { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 0 24px; border-top: 1px solid var(--qm-border); font-size: 13px; }
+    .portal-footer a { color: var(--qm-text-secondary); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .portal-footer a:hover { color: var(--qm-primary); }
+
+    .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
+    .form-hint { font-size: 13px; color: var(--qm-text-muted); margin: 0 0 12px; }
+</style>
+
+@code {
+    private bool isLoading = true;
+    private string? loadError;
+    private StaffPortalDto? portal;
+    private UserInfo? me;
+
+    private bool showGive;
+    private bool giving;
+    private GiveRecognitionRequest giveModel = new();
+    private Guid? giveSubjectId;
+    private Guid? giveParameterId;
+    private readonly HashSet<string> giveErrors = new();
+    private List<StaffColleagueDto> colleagues = new();
+
+    private bool showRespond;
+    private bool responding;
+    private bool respondError;
+    private string respondBody = string.Empty;
+    private StaffPerformanceRecordDto? respondTarget;
+
+    private Guid? busyRecordId;
+    private Guid? busyNoticeId;
+    private bool exporting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        NotificationHub.OnStaffScoreUpdated -= HandleScoreUpdated;
+        NotificationHub.OnStaffScoreUpdated += HandleScoreUpdated;
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        me = await AuthService.GetCurrentUserAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            portal = await StaffApi.GetPortalAsync();
+        }
+        catch (Exception ex)
+        {
+            portal = null;
+            loadError = ex.Message;
+            Toast.Notify(ToastSeverity.Error, "Could not load your portal", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    /// <summary>A quiet refresh after an action: keeps the page in place rather than showing the spinner again.</summary>
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            portal = await StaffApi.GetPortalAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not refresh your portal", ex.Message);
+        }
+    }
+
+    private async Task HandleScoreUpdated(StaffScoreUpdatedEvent e)
+    {
+        if (portal == null || e.UserId != portal.Me.UserId) return;
+        await InvokeAsync(async () =>
+        {
+            // The event carries the figures the tile shows; the band NAME and the breakdown need
+            // the full hub, so the tile updates at once and the rest follows on a quiet refresh.
+            var bandName = e.Band == portal.Score.Band ? portal.Score.BandName : (e.Band.HasValue ? $"Band {e.Band}" : null);
+            portal = portal with
+            {
+                Score = portal.Score with { Composite = e.Composite, Points = e.Points, Band = e.Band, BandName = bandName }
+            };
+            StateHasChanged();
+            await RefreshAsync();
+            StateHasChanged();
+        });
+    }
+
+    // ---- Derived -----------------------------------------------------------------------------
+
+    private string FirstName
+    {
+        get
+        {
+            var name = portal?.Me.FullName ?? me?.FullName ?? "";
+            var first = name.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            return string.IsNullOrEmpty(first) ? "there" : first;
+        }
+    }
+
+    private static string Greeting => DateTime.Now.Hour switch
+    {
+        < 12 => "Good morning",
+        < 17 => "Good afternoon",
+        _ => "Good evening"
+    };
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+
+    private IEnumerable<StaffNoticeDto> OrderedNotices => portal == null
+        ? Enumerable.Empty<StaffNoticeDto>()
+        : portal.Notices
+            .OrderByDescending(n => n.IsPinned)
+            .ThenByDescending(n => n.RequiresAcknowledgement && n.AcknowledgedByMeAt == null)
+            .ThenByDescending(n => n.PublishAt);
+
+    private IReadOnlyList<QBarItem> BreakdownBars => portal == null
+        ? Array.Empty<QBarItem>()
+        : portal.Score.Breakdown
+            .OrderByDescending(b => b.Weight)
+            .Select(b => new QBarItem(
+                b.Name,
+                b.Score ?? 0,
+                Count: b.Score.HasValue
+                    ? $"{b.Score.Value:0.#} · weight {b.Weight:0.#} · {b.EvidenceCount} {(b.EvidenceCount == 1 ? "item" : "items")}"
+                    : $"— · weight {b.Weight:0.#}",
+                Color: b.Color ?? StaffDisplay.KindColor(b.Kind),
+                Hint: b.EvidenceCount == 0 ? "no evidence yet" : null))
+            .ToList();
+
+    private string RecognitionSubtitle => portal == null
+        ? ""
+        : $"{portal.RecognitionBudget.Remaining} of {portal.RecognitionBudget.MonthlyBudget} left to give this month";
+
+    private static string ItemIcon(string kind) => kind switch
+    {
+        "welfare-action" => "heart-pulse",
+        "register-due" => "clipboard-check",
+        "appraisal" => "clipboard2-check",
+        "notice-ack" => "megaphone",
+        "record-unread" => "eye",
+        _ => "dot"
+    };
+
+    private static string NoteKindLabel(StaffNoteKind kind) => kind switch
+    {
+        StaffNoteKind.Response => "Response",
+        StaffNoteKind.VisibilityChange => "Visibility changed",
+        StaffNoteKind.Annulment => "Annulled",
+        StaffNoteKind.Moderation => "Moderation",
+        _ => "Note"
+    };
+
+    private static string AppraisalOwe(StaffAppraisalDto ap) => ap.Stage switch
+    {
+        AppraisalStage.Open => ap.Targets.Any() ? $"{ap.Targets.Count} target(s) agreed. Evidence is accumulating; nothing is due from you yet." : "Targets are being agreed with your appraiser.",
+        AppraisalStage.SelfAssessment => ap.CanISelfAssess ? "Your self-assessment is due — rate yourself on each parameter and add your comments." : "Your self-assessment has been submitted.",
+        AppraisalStage.AppraiserReview => "Your appraiser is reviewing. Nothing is due from you.",
+        AppraisalStage.Moderation => "Under moderation. Nothing is due from you.",
+        AppraisalStage.Signed => ap.CanIAppeal ? $"Signed{(ap.FinalRatingName != null ? $" — {ap.FinalRatingName}" : "")}. You may appeal if you disagree." : $"Signed{(ap.FinalRatingName != null ? $" — {ap.FinalRatingName}" : "")}.",
+        AppraisalStage.Appealed => "Your appeal is with the moderator.",
+        _ => ""
+    };
+
+    // ---- Notices -----------------------------------------------------------------------------
+
+    private async Task AcknowledgeNoticeAsync(Guid id)
+    {
+        busyNoticeId = id;
+        try
+        {
+            await StaffApi.AcknowledgeNoticeAsync(id);
+            Toast.Notify(ToastSeverity.Success, "Acknowledged", "Thank you — the publisher can see you have read it.");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not acknowledge the notice", ex.Message);
+        }
+        finally
+        {
+            busyNoticeId = null;
+        }
+    }
+
+    // ---- Recognition -------------------------------------------------------------------------
+
+    private async Task OpenGiveDialog()
+    {
+        giveModel = new GiveRecognitionRequest();
+        giveSubjectId = null;
+        giveParameterId = null;
+        giveErrors.Clear();
+        showGive = true;
+        if (!colleagues.Any())
+        {
+            try
+            {
+                colleagues = await StaffApi.GetColleaguesAsync();
+            }
+            catch (Exception ex)
+            {
+                Toast.Notify(ToastSeverity.Error, "Could not load your colleagues", ex.Message);
+            }
+        }
+    }
+
+    private async Task GiveRecognitionAsync()
+    {
+        if (portal == null) return;
+        giveErrors.Clear();
+        if (giveSubjectId is null || giveSubjectId == Guid.Empty) giveErrors.Add("subject");
+        if (giveParameterId is null || giveParameterId == Guid.Empty) giveErrors.Add("parameter");
+        giveModel.SubjectUserId = giveSubjectId ?? Guid.Empty;
+        giveModel.ParameterId = giveParameterId ?? Guid.Empty;
+        if ((giveModel.Message?.Trim().Length ?? 0) < 10) giveErrors.Add("message");
+        if (giveErrors.Any()) return;
+
+        giving = true;
+        try
+        {
+            await StaffApi.GiveRecognitionAsync(portal.BranchId, giveModel);
+            showGive = false;
+            Toast.Notify(ToastSeverity.Success, "Recognition sent", "Your colleague has been told.");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not send recognition", ex.Message);
+        }
+        finally
+        {
+            giving = false;
+        }
+    }
+
+    // ---- Records -----------------------------------------------------------------------------
+
+    private void OpenRespond(StaffPerformanceRecordDto record)
+    {
+        respondTarget = record;
+        respondBody = string.Empty;
+        respondError = false;
+        showRespond = true;
+    }
+
+    private async Task RespondAsync()
+    {
+        if (portal == null || respondTarget == null) return;
+        respondError = (respondBody?.Trim().Length ?? 0) < 2;
+        if (respondError) return;
+
+        responding = true;
+        try
+        {
+            await StaffApi.RespondAsync(portal.BranchId, respondTarget.Id, new AddStaffNoteRequest { Body = respondBody.Trim() });
+            showRespond = false;
+            Toast.Notify(ToastSeverity.Success, "Response added", "It is now part of the record's chronology.");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not add your response", ex.Message);
+        }
+        finally
+        {
+            responding = false;
+        }
+    }
+
+    private async Task AcknowledgeRecordAsync(Guid id)
+    {
+        if (portal == null) return;
+        busyRecordId = id;
+        try
+        {
+            await StaffApi.AcknowledgeAsync(portal.BranchId, id);
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not mark the record as seen", ex.Message);
+        }
+        finally
+        {
+            busyRecordId = null;
+        }
+    }
+
+    // ---- Export ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The subject-access export. IDataExportService is column-shaped (one row per item) and this
+    /// file is a nested document, so it goes to the browser through the same qmgrExport.saveText
+    /// the export service itself uses — one save path, no second mechanism.
+    /// </summary>
+    private async Task ExportMyFileAsync()
+    {
+        exporting = true;
+        try
+        {
+            var file = await StaffApi.ExportMyFileAsync();
+            var json = JsonSerializer.Serialize(file, new JsonSerializerOptions(JsonOptions) { WriteIndented = true });
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmm");
+            await JS.InvokeVoidAsync("qmgrExport.saveText", json, "application/json", $"my-staff-file-{stamp}.json");
+            Toast.Notify(ToastSeverity.Success, "Your file is downloading",
+                $"{file.Records.Count} record(s), {file.Appraisals.Count} appraisal(s), {file.Activity.Count} activity event(s)."
+                + (string.IsNullOrEmpty(file.DataProtectionOfficerContact) ? "" : $" Data protection contact: {file.DataProtectionOfficerContact}."));
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not export your file", ex.Message);
+        }
+        finally
+        {
+            exporting = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        NotificationHub.OnStaffScoreUpdated -= HandleScoreUpdated;
+    }
+}

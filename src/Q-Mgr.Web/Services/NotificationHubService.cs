@@ -337,6 +337,34 @@ public class NotificationApiService : INotificationApiService
         }
     }
 
+    public async Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit)
+    {
+        limit = Math.Clamp(limit, 1, 199);
+        var url = $"api/v1/notifications?offset={Math.Max(0, offset)}&limit={limit + 1}";
+        if (!string.IsNullOrWhiteSpace(eventKey))
+            url += $"&eventKey={Uri.EscapeDataString(eventKey)}";
+
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+
+        var rows = await response.Content.ReadFromJsonAsync<List<NotificationDto>>(_jsonOptions) ?? new();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new NotificationPageResult(rows, hasMore);
+    }
+
+    public async Task MarkAllAsReadAsync(string? eventKey)
+    {
+        var url = "api/v1/notifications/read-all";
+        if (!string.IsNullOrWhiteSpace(eventKey))
+            url += $"?eventKey={Uri.EscapeDataString(eventKey)}";
+
+        var response = await _httpClient.PostAsync(url, null);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+    }
+
     public async Task DeleteAsync(Guid notificationId)
     {
         try
