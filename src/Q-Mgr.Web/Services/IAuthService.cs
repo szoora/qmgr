@@ -41,6 +41,7 @@ public class AuthService : IAuthService
     private readonly ITokenStorageService _tokenStorage;
     private readonly ILogger<AuthService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly ViewerRequestContext _viewer;
 
     private const string AccessTokenKey = "access_token";
     private const string RefreshTokenKey = "refresh_token";
@@ -51,7 +52,8 @@ public class AuthService : IAuthService
         ILocalStorageService localStorage,
         ITokenStorageService tokenStorage,
         ILogger<AuthService> logger,
-        JsonSerializerOptions jsonOptions)
+        JsonSerializerOptions jsonOptions,
+        ViewerRequestContext viewer)
     {
         // Use QMgrAuthApi to avoid circular dependency with AuthenticationMessageHandler
         _httpClient = httpClientFactory.CreateClient("QMgrAuthApi");
@@ -59,6 +61,15 @@ public class AuthService : IAuthService
         _tokenStorage = tokenStorage;
         _logger = logger;
         _jsonOptions = jsonOptions;
+        _viewer = viewer;
+    }
+
+    private void AddViewerHeaders(HttpRequestMessage message)
+    {
+        var v = _viewer.Viewer;
+        if (v == null) return;
+        if (!string.IsNullOrWhiteSpace(v.IpAddress)) message.Headers.TryAddWithoutValidation("X-Viewer-Ip", v.IpAddress);
+        if (!string.IsNullOrWhiteSpace(v.UserAgent)) message.Headers.TryAddWithoutValidation("X-Viewer-Agent", v.UserAgent);
     }
 
     public async Task<IdentifyUserResponse?> IdentifyUserAsync(string email)
@@ -92,12 +103,15 @@ public class AuthService : IAuthService
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/auth/login", new
+            // The login goes out on the auth client, which has no AuthenticationMessageHandler, so
+            // it relays the browser's address itself: the sign-in is the first row of the staff
+            // activity log and would otherwise name the Web server (see ViewerRequestContext).
+            using var loginMessage = new HttpRequestMessage(HttpMethod.Post, "api/v1/auth/login")
             {
-                email,
-                password,
-                organizationId
-            });
+                Content = JsonContent.Create(new { email, password, organizationId })
+            };
+            AddViewerHeaders(loginMessage);
+            var response = await _httpClient.SendAsync(loginMessage);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -130,6 +144,26 @@ public class AuthService : IAuthService
 
     public async Task LogoutAsync()
     {
+        // Tell the API first, while the token is still in hand: it revokes the refresh token and
+        // records the sign-out in the activity log. Best effort — a failed call must never stop
+        // somebody signing out of this browser.
+        try
+        {
+            var token = _tokenStorage.AccessToken ?? await _localStorage.GetItemAsync<string>(AccessTokenKey);
+            if (!string.IsNullOrEmpty(token))
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, "api/v1/auth/logout");
+                message.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                AddViewerHeaders(message);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await _httpClient.SendAsync(message, cts.Token);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Server-side logout call failed; signing out locally regardless");
+        }
+
         await _localStorage.RemoveItemAsync(AccessTokenKey);
         await _localStorage.RemoveItemAsync(RefreshTokenKey);
         await _localStorage.RemoveItemAsync(UserInfoKey);

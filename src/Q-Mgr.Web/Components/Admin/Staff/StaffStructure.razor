@@ -1,0 +1,733 @@
+@page "/admin/staff/structure"
+@implements IDisposable
+@using Microsoft.AspNetCore.Components.Forms
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Departments &amp; Structure - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Departments &amp; Structure</h1>
+            <p class="subtitle">Who belongs to which department, who heads it, and who each person reports to. A head of department sees only the people in the departments they head; a head with no department sees nobody.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@Tabs" @bind-ActiveKey="activeTab" IdPrefix="ss" />
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the structure...</span></div>
+    }
+    else if (activeTab == "departments")
+    {
+        <div class="ss-toolbar">
+            <QCheckbox Value="@showRetired" ValueChanged="@OnShowRetiredChanged" Label="Show retired departments" />
+            <QButton Text="New department" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenDepartment(null))" />
+        </div>
+
+        @if (departments.Count == 0)
+        {
+            <QEmptyState Icon="diagram-3" Title="No departments yet"
+                         Text="Add the school's departments (Mathematics, Languages, Sciences, Support…) and name a head for each. Staff are then placed in one or more departments on the Staff tab." />
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>Department</th><th>Code</th><th>Head</th><th>Deputy</th><th>Members</th><th>State</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var d in departments)
+                            {
+                                <tr class="@(d.IsActive ? "" : "ss-retired")">
+                                    <td><strong>@d.Name</strong></td>
+                                    <td><QChip Text="@d.Code" Size="sm" Class="q-chip--mono" /></td>
+                                    <td>@(d.HeadName ?? "—")@if (d.HeadUserId == null && d.IsActive) { <QChip Text="No head" Variant="warning" Size="sm" Class="ss-gap" /> }</td>
+                                    <td>@(d.DeputyHeadName ?? "—")</td>
+                                    <td>@d.MemberCount</td>
+                                    <td><QChip Text="@(d.IsActive ? "Active" : "Retired")" Variant="@(d.IsActive ? "success" : "muted")" Size="sm" /></td>
+                                    <td>
+                                        <div class="ss-actions">
+                                            <QButton Text="Edit" Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => OpenDepartment(d))" />
+                                            <QButton Text="@(d.IsActive ? "Retire" : "Restore")" Icon="@(d.IsActive ? "archive" : "arrow-counterclockwise")" Variant="ghost" Size="sm" OnClick="@(() => ToggleDepartment(d))" />
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+        }
+    }
+    else if (activeTab == "staff")
+    {
+        <QFilterBar Wrap="true">
+            <QInput TValue="string" @bind-Value="@staffSearch" Placeholder="Search name or job title" IconLeft="search" Clearable="true" Class="ss-search" />
+            <QCheckbox @bind-Value="@onlyGaps" Label="Only people missing a department or line manager" />
+        </QFilterBar>
+
+        @if (VisibleStaff.Count == 0)
+        {
+            <QEmptyState Icon="people" Title="@(staff.Count == 0 ? "No staff on this branch yet" : "Nobody matches")"
+                         Text="@(staff.Count == 0 ? "People appear here once they have a user account on this branch. Import a list on the Import tab." : "Clear the search or the gaps filter to see everyone.")" />
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>Name</th><th>Role</th><th>Departments</th><th>Line manager</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var m in PagedStaff)
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="ss-person">
+                                            <QAvatar Name="@m.FullName" Size="sm" />
+                                            <div>
+                                                <a href="/admin/staff/@m.UserId/timeline">@m.FullName</a>
+                                                <div class="ss-sub">@(m.JobTitle ?? m.Email)</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td><QChip Text="@m.RoleName" Color="@m.RoleColor" Size="sm" /></td>
+                                    <td>@if (m.DepartmentNames.Any()) { @string.Join(", ", m.DepartmentNames) } else { <QChip Text="No department" Variant="warning" Size="sm" /> }</td>
+                                    <td>@if (m.LineManagerName != null) { @m.LineManagerName } else { <QChip Text="No line manager" Variant="warning" Size="sm" /> }</td>
+                                    <td><QButton Text="Edit" Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => OpenMember(m))" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+            <QPager Count="@VisibleStaff.Count" PageSize="@PageSize" PageIndex="@staffPage" PageIndexChanged="@(i => staffPage = i)" ItemLabel="people" />
+        }
+    }
+    else if (activeTab == "coverage")
+    {
+        @if (coverage == null)
+        {
+            <QEmptyState Icon="shield-check" Title="Coverage could not be loaded" Text="Try the tab again in a moment." />
+        }
+        else
+        {
+            <p class="ss-lede">The ways this structure fails silently, for <strong>@coverage.PeriodKey</strong>. Each list should be empty; a name here is somebody nobody appraises, nobody is told about, or nobody has observed.</p>
+            <QStatRow>
+                <QStatTile Value="@coverage.DepartmentsWithoutHead.Count.ToString()" Label="Departments without a head" Variant="@(coverage.DepartmentsWithoutHead.Count > 0 ? "warning" : "success")" Icon="diagram-3" />
+                <QStatTile Value="@coverage.StaffWithoutDepartment.Count.ToString()" Label="Staff without a department" Variant="@(coverage.StaffWithoutDepartment.Count > 0 ? "warning" : "success")" Icon="person-dash" />
+                <QStatTile Value="@coverage.StaffWithoutLineManager.Count.ToString()" Label="Staff without a line manager" Variant="@(coverage.StaffWithoutLineManager.Count > 0 ? "warning" : "success")" Icon="person-x" />
+                <QStatTile Value="@coverage.StaffWithoutAppraiserThisPeriod.Count.ToString()" Label="No appraisal this period" Variant="@(coverage.StaffWithoutAppraiserThisPeriod.Count > 0 ? "danger" : "success")" Icon="clipboard-x" />
+                <QStatTile Value="@coverage.StaffWithoutObservationThisPeriod.Count.ToString()" Label="Not observed this period" Variant="@(coverage.StaffWithoutObservationThisPeriod.Count > 0 ? "warning" : "success")" Icon="eye-slash" />
+                <QStatTile Value="@coverage.ParametersWithNoRecordsThisPeriod.Count.ToString()" Label="Parameters with no records" Variant="@(coverage.ParametersWithNoRecordsThisPeriod.Count > 0 ? "info" : "success")" Icon="sliders2" />
+            </QStatRow>
+
+            <div class="ss-coverage">
+                @CoverageList("Departments without a head", coverage.DepartmentsWithoutHead.Select(d => (d.Name, (string?)null)))
+                @CoverageList("Staff without a department", coverage.StaffWithoutDepartment.Select(m => (m.FullName, (string?)$"/admin/staff/{m.UserId}/timeline")))
+                @CoverageList("Staff without a line manager", coverage.StaffWithoutLineManager.Select(m => (m.FullName, (string?)$"/admin/staff/{m.UserId}/timeline")))
+                @CoverageList("No appraisal opened this period", coverage.StaffWithoutAppraiserThisPeriod.Select(m => (m.FullName, (string?)"/admin/staff/appraisals")))
+                @CoverageList("No observed lesson this period (the MoES minimum is one per term)", coverage.StaffWithoutObservationThisPeriod.Select(m => (m.FullName, (string?)$"/admin/staff/{m.UserId}/timeline")))
+                @CoverageList("Parameters with no records this period", coverage.ParametersWithNoRecordsThisPeriod.Select(p => (p.Name, (string?)"/admin/staff/parameters")))
+            </div>
+        }
+    }
+    else if (activeTab == "import")
+    {
+        @if (!canImport)
+        {
+            <QEmptyState Icon="lock" Title="Importing staff needs two permissions"
+                         Text="Creating accounts needs Create Users as well as Manage Staff Structure. Ask a Tenant Admin to run the import." />
+        }
+        else
+        {
+            <QCard Title="Import a staff list" Icon="upload">
+                <p class="ss-lede">
+                    One row per person. Columns, in this order, with a header row:
+                    <code>FirstName, LastName, Email, Username, Phone, EmployeeNumber, JobTitle, RoleCode, DepartmentCodes, LineManagerEmail</code>.
+                    Department codes are separated by semicolons (<code>MATH;PHYS</code>). Role codes are
+                    <code>teacher</code>, <code>support-staff</code>, <code>class-teacher</code>, <code>head-of-department</code>,
+                    <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom role's code. An email already on file is skipped, not changed.
+                </p>
+                <div class="ss-import-input">
+                    <InputFile OnChange="OnCsvFileSelected" accept=".csv,text/csv" />
+                    <span class="ss-sub">or paste below</span>
+                </div>
+                <QInput TValue="string" Type="textarea" Rows="8" @bind-Value="@csvText" Placeholder="FirstName,LastName,Email,..." />
+                <div class="ss-actions ss-import-actions">
+                    <QButton Text="Preview" Icon="eye" Variant="secondary" OnClick="@Preview" Disabled="@string.IsNullOrWhiteSpace(csvText)" />
+                    <QCheckbox @bind-Value="@sendInvites" Label="Email each person a link to set their own password" />
+                </div>
+            </QCard>
+
+            @if (previewRows.Count > 0)
+            {
+                <QCard Title="@($"Preview — {previewRows.Count} row(s), {previewRows.Count(r => r.Error == null)} ready")" Icon="table" NoPadding="true">
+                    <ChildContent>
+                    <div class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Departments</th><th>Line manager</th><th>Check</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in previewRows.Take(200))
+                                {
+                                    <tr class="@(r.Error == null ? "" : "ss-row-error")">
+                                        <td>@r.Number</td>
+                                        <td>@($"{r.Row.FirstName} {r.Row.LastName}".Trim())</td>
+                                        <td>@r.Row.Email</td>
+                                        <td>@r.Row.RoleCode</td>
+                                        <td>@string.Join("; ", r.Row.DepartmentCodes)</td>
+                                        <td>@(r.Row.LineManagerEmail ?? "—")</td>
+                                        <td>@if (r.Error == null) { <QChip Text="Ready" Variant="success" Size="sm" /> } else { <QChip Text="@r.Error" Variant="danger" Size="sm" /> }</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    </ChildContent>
+                    <FooterContent>
+                        <div class="ss-actions">
+                            <span class="ss-sub">Rows with a problem are left out. The import runs in the background; progress appears below.</span>
+                            <QButton Text="@($"Import {previewRows.Count(r => r.Error == null)} people")" Icon="cloud-upload" Variant="primary"
+                                     OnClick="@StartImport" Loading="@importing" Disabled="@(!previewRows.Any(r => r.Error == null))" />
+                        </div>
+                    </FooterContent>
+                </QCard>
+            }
+
+            @if (currentJob != null)
+            {
+                <QCard Title="Import progress" Icon="hourglass-split">
+                    <QStatRow>
+                        <QStatTile Value="@($"{currentJob.ProcessedRows} / {currentJob.TotalRows}")" Label="Processed" Variant="info" />
+                        <QStatTile Value="@currentJob.CreatedCount.ToString()" Label="Accounts created" Variant="success" />
+                        <QStatTile Value="@currentJob.DuplicateCount.ToString()" Label="Already on file" Variant="secondary" />
+                        <QStatTile Value="@currentJob.FailedCount.ToString()" Label="Failed" Variant="@(currentJob.FailedCount > 0 ? "danger" : "secondary")" />
+                    </QStatRow>
+                    <p class="ss-sub">@ImportStatusText(currentJob)</p>
+                    @if (jobEntries.Count > 0)
+                    {
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Outcome</th><th>Message</th></tr></thead>
+                                <tbody>
+                                    @foreach (var e in jobEntries)
+                                    {
+                                        <tr>
+                                            <td>@e.RowNumber</td>
+                                            <td>@e.StudentName</td>
+                                            <td>@e.GuardianName</td>
+                                            <td><QChip Text="@e.Outcome.ToString()" Variant="@OutcomeVariant(e.Outcome)" Size="sm" /></td>
+                                            <td>@e.Message</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </QCard>
+            }
+
+            @if (recentJobs.Count > 0)
+            {
+                <QCard Title="Earlier imports" Icon="clock-history" NoPadding="true">
+                    <div class="table-wrap">
+                        <table class="data-table">
+                            <thead><tr><th>Started</th><th>Rows</th><th>Created</th><th>Already on file</th><th>Failed</th><th>Status</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var j in recentJobs)
+                                {
+                                    <tr>
+                                        <td>@QDateFormat.DT(j.CreatedAt.ToLocalTime())</td>
+                                        <td>@j.TotalRows</td>
+                                        <td>@j.CreatedCount</td>
+                                        <td>@j.DuplicateCount</td>
+                                        <td>@j.FailedCount</td>
+                                        <td>@j.Status</td>
+                                        <td><QButton Text="Details" Variant="ghost" Size="sm" OnClick="@(() => ShowJob(j.Id))" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </QCard>
+            }
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showDepartmentModal" Title="@(editingDepartmentId == null ? "New department" : "Edit department")" Icon="diagram-3" Size="md">
+    <ChildContent>
+        <div class="ss-form">
+            <QInput TValue="string" Label="Name" @bind-Value="@departmentForm.Name" Required="true" MaxLength="100" />
+            <QInput TValue="string" Label="Code" @bind-Value="@departmentForm.Code" Required="true" MaxLength="20" HelperText="Short and permanent, e.g. MATH. The staff import places people by this code." />
+            <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Head of department" @bind-Value="@departmentForm.HeadUserId" Items="@ActiveStaff"
+                     TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)" AllowClear="true" Placeholder="No head yet"
+                     HelperText="Holds the Head of Department role's view of this department's staff." />
+            <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Deputy head" @bind-Value="@departmentForm.DeputyHeadUserId" Items="@ActiveStaff"
+                     TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)" AllowClear="true" Placeholder="No deputy" />
+            <QCheckbox @bind-Value="@departmentBranchOnly" Label="@($"Only this branch ({BranchState.CurrentBranchName})")" />
+            <QInput TValue="int" Label="Sort order" Type="number" @bind-Value="@departmentForm.SortOrder" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showDepartmentModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveDepartment" Loading="@saving" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showMemberModal" Title="@($"Structure — {editingMember?.FullName}")" Icon="person-gear" Size="md">
+    <ChildContent>
+        @if (editingMember != null)
+        {
+            <div class="ss-form">
+                <QMultiSelect TValue="Guid" TItem="DepartmentDto" Label="Departments" SelectedValues="@memberDepartments" SelectedValuesChanged="@(v => memberDepartments = v.ToList())"
+                              Items="@departments.Where(d => d.IsActive).ToList()" TextSelector="@(d => d.Name)" ValueSelector="@(d => d.Id)"
+                              Placeholder="No department" HelperText="A person may belong to more than one department." />
+                <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Line manager" @bind-Value="@memberLineManager" Items="@ActiveStaff.Where(s => s.UserId != editingMember.UserId).ToList()"
+                         TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)" AllowClear="true" Placeholder="No line manager"
+                         HelperText="Appraises this person, is told about their standard records, and sees them with the Direct reports staff scope." />
+                <p class="ss-sub">They will be notified that their department or line manager changed.</p>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showMemberModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SaveMember" Loading="@saving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .ss-toolbar, .ss-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ss-toolbar { justify-content: space-between; margin: 12px 0; }
+    .ss-import-actions { margin-top: 12px; justify-content: space-between; }
+    .ss-search { flex: 1 1 260px; min-width: 0; }
+    .ss-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .ss-sub { font-size: 12px; color: var(--qm-text-muted); }
+    .ss-lede { color: var(--qm-text-secondary); font-size: 13px; line-height: 1.55; margin: 12px 0; max-width: 78ch; }
+    .ss-lede code { font-family: var(--qm-font-mono); font-size: 12px; }
+    .ss-retired { opacity: .65; }
+    .ss-gap { margin-left: 6px; }
+    .ss-row-error td { background: rgba(var(--qm-danger-rgb), .06); }
+    .ss-form { display: flex; flex-direction: column; gap: 14px; }
+    .ss-import-input { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .ss-coverage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 14px; }
+    .ss-cov { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 12px 14px; background: var(--qm-bg-card); min-width: 0; }
+    .ss-cov h4 { margin: 0 0 8px; font-size: 13px; font-family: var(--qm-font-display); }
+    .ss-cov ul { margin: 0; padding-left: 18px; font-size: 13px; }
+    .ss-cov li { margin: 2px 0; }
+    .ss-cov--ok { color: var(--qm-success); font-size: 13px; margin: 0; }
+    .admin-page .q-card { margin-top: 14px; }
+</style>
+
+@code {
+    private const int PageSize = 25;
+
+    private Guid branchId;
+    private bool isLoading = true, saving, canImport, importing, sendInvites = true, showRetired, onlyGaps;
+    private string activeTab = "departments";
+    private List<DepartmentDto> departments = new();
+    private List<StaffMemberDto> staff = new();
+    private StructureCoverageDto? coverage;
+    private string? staffSearch;
+    private int staffPage;
+
+    private static readonly IReadOnlyList<QTab> Tabs = new List<QTab>
+    {
+        new("departments", "Departments", "diagram-3"),
+        new("staff", "Staff", "people"),
+        new("coverage", "Coverage", "shield-check"),
+        new("import", "Import", "upload"),
+    };
+
+    // Department editor
+    private bool showDepartmentModal, departmentBranchOnly;
+    private Guid? editingDepartmentId;
+    private SaveDepartmentRequest departmentForm = new();
+
+    // Member editor
+    private bool showMemberModal;
+    private StaffMemberDto? editingMember;
+    private List<Guid> memberDepartments = new();
+    private Guid? memberLineManager;
+
+    // Import
+    private string? csvText;
+    private List<PreviewRow> previewRows = new();
+    private RosterImportJobDto? currentJob;
+    private List<RosterImportJobEntryDto> jobEntries = new();
+    private List<RosterImportJobDto> recentJobs = new();
+    private System.Threading.Timer? pollTimer;
+
+    private sealed record PreviewRow(int Number, StaffImportRow Row, string? Error);
+
+    private List<StaffMemberDto> ActiveStaff => staff.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+
+    private List<StaffMemberDto> VisibleStaff => staff
+        .Where(m => string.IsNullOrWhiteSpace(staffSearch)
+                    || m.FullName.Contains(staffSearch, StringComparison.OrdinalIgnoreCase)
+                    || (m.JobTitle?.Contains(staffSearch, StringComparison.OrdinalIgnoreCase) ?? false))
+        .Where(m => !onlyGaps || m.DepartmentIds.Count == 0 || m.LineManagerUserId == null)
+        .OrderBy(m => m.FullName)
+        .ToList();
+
+    private IEnumerable<StaffMemberDto> PagedStaff => VisibleStaff.Skip(staffPage * PageSize).Take(PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        canImport = await PermissionService.HasPermissionAsync(Permissions.UsersCreate);
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadAllAsync();
+    }
+
+    private async Task LoadAllAsync()
+    {
+        isLoading = true;
+        try
+        {
+            departments = await StaffApi.GetDepartmentsAsync(branchId, includeInactive: showRetired);
+            staff = (await StaffApi.GetDirectoryAsync(branchId)).Items;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the structure", ex.Message);
+        }
+
+        try { coverage = await StaffApi.GetCoverageAsync(branchId); }
+        catch (Exception ex) { coverage = null; Toast.Notify(ToastSeverity.Error, "Could not load coverage", ex.Message); }
+
+        if (canImport)
+        {
+            try { recentJobs = await StaffApi.GetStaffImportJobsAsync(branchId, 10); }
+            catch { recentJobs = new(); }
+        }
+
+        isLoading = false;
+    }
+
+    private async Task OnShowRetiredChanged(bool value)
+    {
+        showRetired = value;
+        try { departments = await StaffApi.GetDepartmentsAsync(branchId, includeInactive: showRetired); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load departments", ex.Message); }
+    }
+
+    // ---- Departments ----
+
+    private void OpenDepartment(DepartmentDto? d)
+    {
+        editingDepartmentId = d?.Id;
+        departmentForm = d == null
+            ? new SaveDepartmentRequest { SortOrder = departments.Count + 1 }
+            : new SaveDepartmentRequest { Name = d.Name, Code = d.Code, BranchId = d.BranchId, HeadUserId = d.HeadUserId, DeputyHeadUserId = d.DeputyHeadUserId, SortOrder = d.SortOrder };
+        departmentBranchOnly = d?.BranchId != null;
+        showDepartmentModal = true;
+    }
+
+    private async Task SaveDepartment()
+    {
+        if (string.IsNullOrWhiteSpace(departmentForm.Name) || string.IsNullOrWhiteSpace(departmentForm.Code))
+        {
+            Toast.Notify(ToastSeverity.Warning, "Name and code are required");
+            return;
+        }
+        if (departmentForm.HeadUserId != null && departmentForm.HeadUserId == departmentForm.DeputyHeadUserId)
+        {
+            Toast.Notify(ToastSeverity.Warning, "The head and the deputy must be different people");
+            return;
+        }
+
+        departmentForm.BranchId = departmentBranchOnly ? branchId : null;
+        saving = true;
+        try
+        {
+            if (editingDepartmentId == null) await StaffApi.CreateDepartmentAsync(branchId, departmentForm);
+            else await StaffApi.UpdateDepartmentAsync(branchId, editingDepartmentId.Value, departmentForm);
+            Toast.Notify(ToastSeverity.Success, editingDepartmentId == null ? "Department added" : "Department saved");
+            showDepartmentModal = false;
+            await LoadAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the department", ex.Message);
+        }
+        finally { saving = false; }
+    }
+
+    private async Task ToggleDepartment(DepartmentDto d)
+    {
+        try
+        {
+            await StaffApi.ToggleDepartmentAsync(branchId, d.Id);
+            Toast.Notify(ToastSeverity.Success, d.IsActive ? "Department retired" : "Department restored");
+            await LoadAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not change the department", ex.Message);
+        }
+    }
+
+    // ---- Members ----
+
+    private void OpenMember(StaffMemberDto m)
+    {
+        editingMember = m;
+        memberDepartments = m.DepartmentIds.ToList();
+        memberLineManager = m.LineManagerUserId;
+        showMemberModal = true;
+    }
+
+    private async Task SaveMember()
+    {
+        if (editingMember == null) return;
+        saving = true;
+        try
+        {
+            await StaffApi.UpdateMemberStructureAsync(branchId, editingMember.UserId,
+                new UpdateStaffStructureRequest { DepartmentIds = memberDepartments, LineManagerUserId = memberLineManager });
+            Toast.Notify(ToastSeverity.Success, $"{editingMember.FullName} updated");
+            showMemberModal = false;
+            await LoadAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message);
+        }
+        finally { saving = false; }
+    }
+
+    // ---- Coverage ----
+
+    private RenderFragment CoverageList(string title, IEnumerable<(string Name, string? Href)> items) => __builder =>
+    {
+        var list = items.ToList();
+        <div class="ss-cov">
+            <h4>@title</h4>
+            @if (list.Count == 0)
+            {
+                <p class="ss-cov--ok"><QIcon Name="check-circle" /> None</p>
+            }
+            else
+            {
+                <ul>
+                    @foreach (var (name, href) in list.Take(50))
+                    {
+                        <li>@if (href != null) { <a href="@href">@name</a> } else { @name }</li>
+                    }
+                </ul>
+                @if (list.Count > 50) { <p class="ss-sub">and @(list.Count - 50) more</p> }
+            }
+        </div>
+    };
+
+    // ---- Import ----
+
+    private async Task OnCsvFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024));
+            csvText = await reader.ReadToEndAsync();
+            Preview();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not read the file", ex.Message);
+        }
+    }
+
+    private void Preview()
+    {
+        previewRows = new();
+        if (string.IsNullOrWhiteSpace(csvText)) return;
+
+        var lines = csvText.Replace("\r\n", "\n").Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+        if (lines.Count == 0) return;
+
+        var header = ParseCsvLine(lines[0]).Select(h => h.Trim().ToLowerInvariant()).ToList();
+        var hasHeader = header.Contains("email");
+        int Col(string name, int fallback) { var i = header.IndexOf(name.ToLowerInvariant()); return hasHeader ? i : fallback; }
+
+        var iFirst = Col("firstname", 0); var iLast = Col("lastname", 1); var iEmail = Col("email", 2); var iUser = Col("username", 3);
+        var iPhone = Col("phone", 4); var iEmp = Col("employeenumber", 5); var iJob = Col("jobtitle", 6); var iRole = Col("rolecode", 7);
+        var iDept = Col("departmentcodes", 8); var iLm = Col("linemanageremail", 9);
+
+        var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var number = 0;
+        foreach (var line in lines.Skip(hasHeader ? 1 : 0))
+        {
+            number++;
+            var cells = ParseCsvLine(line);
+            string? Cell(int i) => i >= 0 && i < cells.Count && !string.IsNullOrWhiteSpace(cells[i]) ? cells[i].Trim() : null;
+
+            var row = new StaffImportRow
+            {
+                FirstName = Cell(iFirst) ?? "",
+                LastName = Cell(iLast) ?? "",
+                Email = Cell(iEmail) ?? "",
+                Username = Cell(iUser),
+                Phone = Cell(iPhone),
+                EmployeeNumber = Cell(iEmp),
+                JobTitle = Cell(iJob),
+                RoleCode = (Cell(iRole) ?? RoleCodes.Teacher).ToLowerInvariant(),
+                DepartmentCodes = (Cell(iDept) ?? "").Split(new[] { ';', '|' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(c => c.ToUpperInvariant()).ToList(),
+                LineManagerEmail = Cell(iLm)
+            };
+
+            string? error = null;
+            if (string.IsNullOrWhiteSpace(row.FirstName) || string.IsNullOrWhiteSpace(row.LastName)) error = "Name missing";
+            else if (string.IsNullOrWhiteSpace(row.Email) || !row.Email.Contains('@')) error = "Email missing or invalid";
+            else if (!seenEmails.Add(row.Email)) error = "Email repeated in the file";
+            else if (RoleCodes.IsSuperAdmin(row.RoleCode) || string.Equals(row.RoleCode, RoleCodes.Admin, StringComparison.OrdinalIgnoreCase)) error = "Administrator roles cannot be imported";
+
+            previewRows.Add(new PreviewRow(number, row, error));
+        }
+    }
+
+    /// <summary>A small RFC-4180-ish splitter: commas, double-quoted fields, doubled quotes inside them.</summary>
+    private static List<string> ParseCsvLine(string line)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (quoted)
+            {
+                if (c == '"' && i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
+                else if (c == '"') quoted = false;
+                else current.Append(c);
+            }
+            else if (c == '"') quoted = true;
+            else if (c == ',') { result.Add(current.ToString()); current.Clear(); }
+            else current.Append(c);
+        }
+        result.Add(current.ToString());
+        return result;
+    }
+
+    private async Task StartImport()
+    {
+        var rows = previewRows.Where(r => r.Error == null).Select(r => r.Row).ToList();
+        if (rows.Count == 0) return;
+
+        importing = true;
+        try
+        {
+            currentJob = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest { Rows = rows, SendInvites = sendInvites });
+            jobEntries = new();
+            previewRows = new();
+            csvText = null;
+            Toast.Notify(ToastSeverity.Success, "Import started", $"{rows.Count} row(s) queued.");
+            StartPolling(currentJob.Id);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not start the import", ex.Message);
+        }
+        finally { importing = false; }
+    }
+
+    private async Task ShowJob(Guid jobId)
+    {
+        try
+        {
+            currentJob = await StaffApi.GetStaffImportJobAsync(branchId, jobId);
+            jobEntries = await StaffApi.GetStaffImportJobEntriesAsync(branchId, jobId);
+            if (!IsFinished(currentJob.Status)) StartPolling(jobId);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the import", ex.Message);
+        }
+    }
+
+    private void StartPolling(Guid jobId)
+    {
+        pollTimer?.Dispose();
+        pollTimer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                var job = await StaffApi.GetStaffImportJobAsync(branchId, jobId);
+                currentJob = job;
+                if (IsFinished(job.Status))
+                {
+                    pollTimer?.Dispose();
+                    pollTimer = null;
+                    jobEntries = await StaffApi.GetStaffImportJobEntriesAsync(branchId, jobId);
+                    staff = (await StaffApi.GetDirectoryAsync(branchId)).Items;
+                    recentJobs = await StaffApi.GetStaffImportJobsAsync(branchId, 10);
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+            catch
+            {
+                // A missed poll is retried on the next tick; the job keeps running regardless.
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private static bool IsFinished(RosterImportStatus s) =>
+        s is RosterImportStatus.Completed or RosterImportStatus.CompletedWithErrors or RosterImportStatus.Failed;
+
+    private static string ImportStatusText(RosterImportJobDto j) => j.Status switch
+    {
+        RosterImportStatus.Pending => "Queued — waiting for the background worker.",
+        RosterImportStatus.Processing => "Creating accounts…",
+        RosterImportStatus.Completed => $"Finished {(j.CompletedAt.HasValue ? QDateFormat.DT(j.CompletedAt.Value.ToLocalTime()) : "")}.",
+        RosterImportStatus.CompletedWithErrors => "Finished, with some rows that could not be imported. The reasons are listed below.",
+        RosterImportStatus.Failed => $"The import failed: {j.FailureReason}",
+        _ => j.Status.ToString()
+    };
+
+    private static string OutcomeVariant(RosterImportRowOutcome o) => o switch
+    {
+        RosterImportRowOutcome.Created => "success",
+        RosterImportRowOutcome.AlreadyExists or RosterImportRowOutcome.DuplicateInFile or RosterImportRowOutcome.Skipped => "muted",
+        RosterImportRowOutcome.Failed => "danger",
+        _ => "info"
+    };
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAllAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
+        pollTimer?.Dispose();
+    }
+}

@@ -28,6 +28,7 @@ public class AuthController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IEmailSender _emailSender;
     private readonly IPlatformSettingsService _platformSettingsService;
+    private readonly QMgr.Infrastructure.Services.IActivityLogger _activity;
 
     public AuthController(
         IUnitOfWork unitOfWork,
@@ -37,8 +38,10 @@ public class AuthController : ControllerBase
         ILogger<AuthController> logger,
         ITenantContextAccessor tenantAccessor,
         IEmailSender emailSender,
-        IPlatformSettingsService platformSettingsService)
+        IPlatformSettingsService platformSettingsService,
+        QMgr.Infrastructure.Services.IActivityLogger activity)
     {
+        _activity = activity;
         _unitOfWork = unitOfWork;
         _dbContext = dbContext;
         _configuration = configuration;
@@ -189,6 +192,12 @@ public class AuthController : ControllerBase
 
         _logger.LogInformation("User {Username} logged in successfully", user.Username);
 
+        // The first row of a person's activity trail (plan §11). Explicit actor and organization:
+        // there is no authenticated principal on this request yet. Never throws.
+        await _activity.RecordAsync(ActivityActions.SignedIn, "User", user.Id, user.Id,
+            $"{(string.IsNullOrWhiteSpace(user.FullName) ? user.Username : user.FullName)} signed in",
+            organizationId: user.OrganizationId, branchId: user.AssignedBranchId, actorUserId: user.Id);
+
         // Get user's permissions
         var permissions = user.Role.RolePermissions
             .Select(rp => rp.Permission.Code)
@@ -252,6 +261,33 @@ public class AuthController : ControllerBase
             TokenType = "Bearer",
             ExpiresIn = 3600
         });
+    }
+
+    /// <summary>
+    /// Signs the caller out server-side: revokes their refresh token, so a copy of it lifted from
+    /// the browser stops working, and records the sign-out in the activity log. The Web calls it
+    /// best-effort before clearing local storage; the access token itself expires on its own.
+    /// </summary>
+    [HttpPost("logout")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> Logout()
+    {
+        var raw = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        if (!Guid.TryParse(raw, out var userId)) return NoContent();
+
+        var user = await _dbContext.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null) return NoContent();
+
+        user.RefreshToken = null;
+        user.RefreshTokenExpiry = null;
+        await _dbContext.SaveChangesAsync();
+
+        await _activity.RecordAsync(ActivityActions.SignedOut, "User", user.Id, user.Id,
+            $"{(string.IsNullOrWhiteSpace(user.FullName) ? user.Username : user.FullName)} signed out",
+            organizationId: user.OrganizationId, branchId: user.AssignedBranchId, actorUserId: user.Id);
+
+        return NoContent();
     }
 
     /// <summary>

@@ -108,7 +108,7 @@ else if (noBranchSelected)
         </div>
     </div>
 }
-else if (!hasCoreQueue && !hasStudentWelfare && !hasVisitorManagement && !hasEngagement)
+else if (!hasCoreQueue && !hasStudentWelfare && !hasVisitorManagement && !hasEngagement && !hasStaffPerformance)
 {
     @* Only when the organization holds nothing this dashboard can report on. It used to be shown
        to anyone without Core Queue Management, so a school that had bought Student Welfare opened
@@ -340,6 +340,30 @@ else if (hasCoreQueue && queueStatus != null)
                 </QCard>
             }
         }
+    </div>
+}
+
+@if (branchReady && hasStaffPerformance && staffCoverage != null)
+{
+    <div class="module-section">
+        <div class="module-section-head">
+            <h2><QIcon Name="people" /> Staff Performance</h2>
+            <QButton Text="Open structure" Icon="arrow-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/staff/structure"))" />
+        </div>
+        @* The structure's silent failures, on the dashboard (plan Phase 6). Every figure should be
+           zero; each tile links to the page that fixes it. Shown only to staff.structure.manage
+           holders, because the coverage endpoint is gated on it. *@
+        <QStatRow>
+            <QStatTile Value="@staffCoverage.DepartmentsWithoutHead.Count.ToString()" Label="Departments without a head" Icon="diagram-3"
+                       Variant="@(staffCoverage.DepartmentsWithoutHead.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+            <QStatTile Value="@staffCoverage.StaffWithoutLineManager.Count.ToString()" Label="Staff without a line manager" Icon="person-x"
+                       Variant="@(staffCoverage.StaffWithoutLineManager.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+            <QStatTile Value="@staffCoverage.StaffWithoutAppraiserThisPeriod.Count.ToString()" Label="No appraisal this period" Icon="clipboard-x"
+                       Variant="@(staffCoverage.StaffWithoutAppraiserThisPeriod.Count > 0 ? "danger" : "success")" Href="/admin/staff/appraisals" Sub="@staffCoverage.PeriodKey" />
+            <QStatTile Value="@staffCoverage.StaffWithoutObservationThisPeriod.Count.ToString()" Label="Not observed this period" Icon="eye-slash"
+                       Variant="@(staffCoverage.StaffWithoutObservationThisPeriod.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+        </QStatRow>
     </div>
 }
 
@@ -1113,6 +1137,8 @@ else if (hasCoreQueue && queueStatus != null)
 
     /// <summary>Which module sections to render. Each is resolved once, from the same catalog call.</summary>
     private bool hasStudentWelfare;
+    private bool hasStaffPerformance;
+    private StructureCoverageDto? staffCoverage;
     private bool hasVisitorManagement;
     private bool hasEngagement;
 
@@ -1143,6 +1169,7 @@ else if (hasCoreQueue && queueStatus != null)
         {
             hasCoreQueue = true;
             hasStudentWelfare = true;
+            hasStaffPerformance = true;
             hasVisitorManagement = true;
             hasEngagement = true;
             return;
@@ -1153,6 +1180,7 @@ else if (hasCoreQueue && queueStatus != null)
             var catalog = await ModuleApi.GetMineAsync();
             hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
             hasStudentWelfare = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StudentWelfare);
+            hasStaffPerformance = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StaffPerformance);
             hasVisitorManagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.VisitorManagement);
             hasEngagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.EngagementCommunications);
             activeModuleNames = catalog
@@ -1166,6 +1194,7 @@ else if (hasCoreQueue && queueStatus != null)
             // customer they don't own Core Queue Management. Its data calls are gated server-side.
             hasCoreQueue = true;
             hasStudentWelfare = false;
+            hasStaffPerformance = false;
             hasVisitorManagement = false;
             hasEngagement = false;
             activeModuleNames = new();
@@ -1213,6 +1242,7 @@ else if (hasCoreQueue && queueStatus != null)
 
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
+            await LoadStaffCoverageAsync();
             await LoadVisitorSummaryAsync();
             await LoadEngagementSummaryAsync();
 
@@ -1258,6 +1288,7 @@ else if (hasCoreQueue && queueStatus != null)
             noBranchSelected = false;
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
+            await LoadStaffCoverageAsync();
             await LoadVisitorSummaryAsync();
             await LoadEngagementSummaryAsync();
             try
@@ -1273,6 +1304,30 @@ else if (hasCoreQueue && queueStatus != null)
     /// Loads the Student Welfare panel. Separate from the queue load so a school holding only this
     /// module still gets a populated dashboard, and so neither module's failure blanks the other.
     /// </summary>
+    /// <summary>
+    /// Staff Performance structure coverage (plan Phase 6). Only for a staff.structure.manage
+    /// holder — the endpoint is gated on it — and quiet on failure, like the other panels.
+    /// </summary>
+    private async Task LoadStaffCoverageAsync()
+    {
+        await EnsureModulesResolvedAsync();
+        if (!hasStaffPerformance || !branchReady || !await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage))
+        {
+            staffCoverage = null;
+            return;
+        }
+
+        try
+        {
+            staffCoverage = await Http.GetFromJsonAsync<StructureCoverageDto>(
+                $"api/v1/branches/{BranchId}/staff/structure/coverage", JsonOptions);
+        }
+        catch
+        {
+            staffCoverage = null;
+        }
+    }
+
     private async Task LoadWelfareSummaryAsync()
     {
         await EnsureModulesResolvedAsync();
@@ -1407,6 +1462,7 @@ else if (hasCoreQueue && queueStatus != null)
     {
         await LoadQueueStatus();
         await LoadWelfareSummaryAsync();
+        await LoadStaffCoverageAsync();
         await LoadVisitorSummaryAsync();
         await LoadEngagementSummaryAsync();
     }

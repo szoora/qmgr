@@ -5,7 +5,107 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (written 2026-09-15, end of day)
+## ▶ NEXT SESSION — start here (written 2026-09-16, end of day)
+
+**State: the Staff Performance Monitor is BUILT but NOT VERIFIED and NOT DEPLOYED.** It is on a
+new branch, `phase-85-staff-performance`, cut from `phase-82-scope-sweep-and-platform-email`. Both
+projects build with 0 errors; `dotnet ef migrations has-pending-model-changes` reports none. **No
+part of it has been run against the dev tenant** — the user asked for the whole feature in one
+pass with testing afterwards. Production is still `390e5c0` (see the 2026-09-15 block below).
+
+**First job next session: verify it.** Apply the migration by starting the API (it runs
+`MigrateAsync` at startup), grant `staff-performance` to the dev tenant as SuperAdmin
+(`PUT /api/v1/admin/tenants/{org}/modules/staff-performance`), then write section 14 of
+`scripts/e2e/class-teacher-e2e.sh` exactly as plan §14 lists, and drive the portal, the register
+and an appraisal in Chrome. Expect real bugs: nothing here has touched a real row yet.
+
+**Genuinely open:**
+
+- `[ ]` **Verify Staff Performance end to end** (above). Plan §14 is the assertion list.
+- `[ ]` Price the module — it ships at a placeholder (plan §13 decision 7).
+- `[!]` Merge `phase-82-…` (and now `phase-85-…`) into `master` — the user has not said when.
+- `[!]` The five dev-tenant images in public git history — user's call, no PII found.
+- `[ ]` Restore drill from `qmgr-backup-db.sh` output, and a load test — never run.
+- `[ ]` SuperAdmin with no organization chosen sees an empty Category list on the welfare create
+  form until reload (noted 2026-09-11, not investigated).
+
+**Do not re-plan:** a test project (decided against), per-display theme (per-organization is
+settled), PPTX rendering (no server dependencies), pg extensions (none), and the ten Staff
+Performance decisions (taken as proposed; see CLAUDE.md "Staff Performance Monitor").
+
+**Local environment note:** the e2e needs `BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f`. The run
+recipe is in CLAUDE.md under "Running it locally".
+
+---
+## 🧭 SESSION HANDOVER (written 2026-09-16) — Phase 85: the Staff Performance Monitor, planned, then built in one pass
+
+Requested as a staff performance monitor for schools: variable scored parameters, a summative
+rating, the hierarchy Administrator → Director of Studies → Academic Assistant → Head of Department
+→ Class Teacher → Teacher → Support Staff, delegated recording, a portal per person, reports,
+notifications, an activity log, evidence, blended with Student Welfare, built from the shared
+component library. Plan: `docs/plans/STAFF_PERFORMANCE_MONITOR.md`; artifact
+https://claude.ai/artifact/NL5aZ9uCKUAy2w7kb94wAo. The user then asked for it to be implemented
+"fully, word for word", tests after.
+
+### 1. What was built
+
+- [x] **Phase 0 — groundwork.** Module `staff-performance` (catalog row seeded in every
+      environment by the new `ModuleCatalogDefaults`; `DbSeeder` was dev-only). Thirteen `staff.*`
+      permissions in all three catalogues. Five system roles ranked below `manager`.
+      `Role.StaffScope`, `User.DepartmentIds`, `User.LineManagerUserId`, `Notification.EventKey`.
+      `Department`, `ActivityEvent`. `IStaffScopeService`, `IActivityLogger`,
+      `IStaffPerformancePolicyService`, `IStaffScoringService`, `IStaffAlertService`. The browser's
+      address relayed on every authenticated call. The role editor (create, rename, colour, icon,
+      both scopes, activate, delete).
+- [x] **Component library consolidated** (plan §9): twelve components lifted and fourteen existing
+      pages moved onto them, plus `QLibraryPicker`.
+- [x] **Phase 1 — the ledger.** Parameters (MoES defaults seeded per tenant), append-only records
+      with notes, the subject's response and acknowledgement, annulment, visibility change, points
+      correction, evidence (`UploadOwnerKind.StaffEvidence`), staff timeline and A4 report.
+- [x] **Phase 2 — duties and registers.** Delegated recorders, the phone-first register, lesson
+      recovery, minutes from the Library, duty reminders and register chase.
+- [x] **Phase 3 — the hub.** The portal, notices with acknowledgement, recognition with a monthly
+      budget, the notification centre at `/notifications`, the weekly digest (HTML via the new
+      `EmailHtmlBody`), the live `StaffScoreUpdated` push.
+- [x] **Phase 4 — scoring and reports.** Policy page, composite and bands, reports with observer
+      dispersion and who-logs-what, leaderboard behind the switch, monthly summary email, print and
+      Publish to Library.
+- [x] **Phase 5 — appraisals.** Targets → self → appraiser → moderation → signed (score frozen) →
+      appeal; board, detail, A4 appraisal form published to the Library; annual roll-up.
+- [x] **Phase 6 — blend and hygiene.** System-source awards from welfare, tokens and visitors
+      (off by default); the staff import with password-reset invitations; export my file;
+      activity log page and attribution purge; structure coverage on the dashboard; sign-in and
+      sign-out in the activity log (new `POST api/v1/auth/logout`, which also revokes the refresh
+      token).
+
+### 2. Found and fixed on the way
+
+- [x] The module catalog was only ever seeded in Development (`DbSeeder`).
+- [x] Roles tab: permission counts always read 0; the grouped permissions response was read as
+      flat; Save Permissions posted codes where the API wants ids and would have wiped the role.
+- [x] `QAvatar` colours were stable only per process (`string.GetHashCode` is randomised).
+- [x] The feedback page's star size rule never matched (`.rzi` vs `.q-icon`).
+
+### 3. Deviations from the plan, stated
+
+- One migration (`20260916173550_AddStaffPerformanceGroundwork`) instead of the six the phases
+  name — the model was complete before the first `migrations add`.
+- Staff import job reads got their own `staff/import-jobs` endpoints; the student ones are gated
+  on the student scope.
+- The author of a Confidential record keeps read access to it (the seeded head of department
+  could not otherwise read the observation it just filed). Restricted has no author exception.
+- Plan §6.3 says a second observer's record is "linked by DutyId; the reports show the pair". The
+  observer-dispersion report exists; a side-by-side pair view does not.
+- `WelfareStatusColor()` still lives in two pages.
+
+### 4. Verification
+
+**None beyond compilation.** Build: 0 errors in both projects; no pending model changes. Not run
+against the dev tenant, not driven in Chrome, no e2e section written. That is the next session's
+first job, per the user's instruction to test after the build.
+
+---
+## ▶ The 2026-09-15 next-session block (kept for history; production state unchanged since)
 
 **State: everything below is committed, pushed and DEPLOYED to `qmgr.cashbook.ug`, and the user
 confirmed it on a real phone** — "share link reloads fine now and book toggle works on phone".
