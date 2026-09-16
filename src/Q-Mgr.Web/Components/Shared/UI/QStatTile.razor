@@ -1,0 +1,121 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    A summary tile: one big figure, a small uppercase label, an optional sub-line and icon. Lifted
+    from WelfareReports' .stat-card and sized by the --qm-statcard-* tokens. With Href it renders
+    as an anchor (the Dashboard's drill-down pattern); a tile whose Href is null renders as an inert
+    div, which is what the Dashboard relied on for a figure this account cannot open the page for.
+*@
+
+@if (!string.IsNullOrEmpty(Href))
+{
+    <a class="@RootClass q-stat--link" href="@Href" @attributes="AdditionalAttributes">
+        @Body
+    </a>
+}
+else if (OnClick.HasDelegate)
+{
+    <button type="button" class="@RootClass q-stat--link" @onclick="OnClick" @attributes="AdditionalAttributes">
+        @Body
+    </button>
+}
+else
+{
+    <div class="@RootClass" @attributes="AdditionalAttributes">
+        @Body
+    </div>
+}
+
+@code {
+    /// <summary>The figure, already formatted by the caller.</summary>
+    [Parameter] public string? Value { get; set; }
+
+    /// <summary>Replaces Value when the figure needs markup.</summary>
+    [Parameter] public RenderFragment? ValueContent { get; set; }
+
+    /// <summary>A unit shown small after the figure ("min").</summary>
+    [Parameter] public string? Unit { get; set; }
+
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+
+    /// <summary>A short line under the label ("Across 3 service types").</summary>
+    [Parameter] public string? Sub { get; set; }
+
+    /// <summary>Icon beside Sub.</summary>
+    [Parameter] public string? SubIcon { get; set; }
+
+    /// <summary>"positive" | "negative" | "neutral" — tints the Sub line. Neutral when null.</summary>
+    [Parameter] public string? SubVariant { get; set; }
+
+    /// <summary>default | primary | success | warning | danger | info | secondary.</summary>
+    [Parameter] public string Variant { get; set; } = "default";
+
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>Renders the tile as a link to this address.</summary>
+    [Parameter] public string? Href { get; set; }
+
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string RootClass => $"q-stat q-stat--{VariantClass} {Class}";
+
+    private string VariantClass => Variant.ToLowerInvariant() switch
+    {
+        "primary" => "primary",
+        "success" => "success",
+        "warning" => "warning",
+        "danger" => "danger",
+        "info" => "info",
+        "secondary" => "secondary",
+        _ => "default"
+    };
+
+    private string SubClass => SubVariant?.ToLowerInvariant() switch
+    {
+        "positive" => "q-stat__sub--positive",
+        "negative" => "q-stat__sub--negative",
+        _ => "q-stat__sub--neutral"
+    };
+
+    private RenderFragment Body => __builder =>
+    {
+        <div class="q-stat__body">
+            <div class="q-stat__info">
+                <span class="q-stat__value">
+                    @if (ValueContent != null)
+                    {
+                        @ValueContent
+                    }
+                    else
+                    {
+                        @Value
+                    }
+                    @if (!string.IsNullOrEmpty(Unit))
+                    {
+                        <small class="q-stat__unit">@Unit</small>
+                    }
+                </span>
+                <span class="q-stat__label">@Label</span>
+                @if (!string.IsNullOrEmpty(Sub))
+                {
+                    <span class="q-stat__sub @SubClass">
+                        @if (!string.IsNullOrEmpty(SubIcon))
+                        {
+                            <QIcon Name="@SubIcon" Size="sm" />
+                        }
+                        @Sub
+                    </span>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(Icon))
+            {
+                <div class="q-stat__icon"><QIcon Name="@Icon" /></div>
+            }
+        </div>
+    };
+}

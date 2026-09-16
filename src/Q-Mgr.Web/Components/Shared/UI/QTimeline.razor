@@ -1,0 +1,105 @@
+@namespace QMgr.Web.Components.Shared.UI
+@implements IDisposable
+
+@*
+    The vertical timeline lifted from StudentWelfareTimeline: a 40px marker on a connector rail
+    with a card beside it. Items are QTimelineItem children; this component owns the rail, the
+    optional day headers, the empty state and the "Load older" affordance.
+
+    Day headers: the items render in document order in one render pass, so each item asks this
+    component whether its date differs from the previous item's (NextItem). OnParametersSet runs
+    before the children re-render on every pass, which is what resets the sequence. An item that
+    re-renders alone keeps the decision it made on the last full pass (see QTimelineItem).
+*@
+
+<div class="q-timeline @Class" @attributes="AdditionalAttributes">
+    <CascadingValue Value="this" IsFixed="true">
+        @ChildContent
+    </CascadingValue>
+
+    @if (hasRendered && items.Count == 0 && !string.IsNullOrWhiteSpace(EmptyText))
+    {
+        <QEmptyState Icon="@EmptyIcon" Title="@EmptyText" Class="q-timeline__empty" />
+    }
+
+    @if (HasMore)
+    {
+        <div class="q-timeline__more">
+            <QButton Text="@LoadOlderText" Icon="arrow-down-circle" Variant="ghost" Size="sm"
+                     Loading="@LoadingOlder" OnClick="@OnLoadOlder" />
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Render a day header whenever an item's Date falls on a different day from the item before it.</summary>
+    [Parameter] public bool GroupByDay { get; set; }
+
+    /// <summary>Shown when the timeline has no items. Nothing is shown when null.</summary>
+    [Parameter] public string? EmptyText { get; set; }
+
+    [Parameter] public string EmptyIcon { get; set; } = "journal-richtext";
+
+    /// <summary>Whether older items exist beyond what is rendered; shows the "Load older" control.</summary>
+    [Parameter] public bool HasMore { get; set; }
+
+    [Parameter] public bool LoadingOlder { get; set; }
+
+    [Parameter] public string LoadOlderText { get; set; } = "Load older";
+
+    [Parameter] public EventCallback OnLoadOlder { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private readonly HashSet<QTimelineItem> items = new();
+    private bool hasRendered;
+    private DateTime? lastDay;
+
+    /// <summary>Incremented on every render pass of this component; items use it to know when to recompute.</summary>
+    internal int Pass { get; private set; }
+
+    protected override void OnParametersSet()
+    {
+        Pass++;
+        lastDay = null;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            hasRendered = true;
+            if (items.Count == 0 && !string.IsNullOrWhiteSpace(EmptyText))
+                StateHasChanged();
+        }
+    }
+
+    /// <summary>Called by each item in render order; true when this item starts a new day.</summary>
+    internal bool NextItem(DateTime? date)
+    {
+        if (!GroupByDay) return false;
+        var day = date?.Date;
+        var starts = day != null && day != lastDay;
+        if (day != null) lastDay = day;
+        return starts;
+    }
+
+    internal void Register(QTimelineItem item)
+    {
+        if (items.Add(item) && items.Count == 1 && hasRendered)
+            InvokeAsync(StateHasChanged);
+    }
+
+    internal void Unregister(QTimelineItem item)
+    {
+        if (items.Remove(item) && items.Count == 0 && hasRendered)
+            InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => items.Clear();
+}

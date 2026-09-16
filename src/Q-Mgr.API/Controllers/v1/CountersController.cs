@@ -6,6 +6,7 @@ using QMgr.Filters;
 using QMgr.Application.Commands.Queue;
 using QMgr.Application.DTOs;
 using QMgr.Domain.Constants;
+using QMgr.Infrastructure.Services;
 
 namespace QMgr.API.Controllers.v1;
 
@@ -18,11 +19,13 @@ namespace QMgr.API.Controllers.v1;
 public class CountersController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IStaffSystemAwards _systemAwards;
     private readonly ILogger<CountersController> _logger;
 
-    public CountersController(IMediator mediator, ILogger<CountersController> logger)
+    public CountersController(IMediator mediator, IStaffSystemAwards systemAwards, ILogger<CountersController> logger)
     {
         _mediator = mediator;
+        _systemAwards = systemAwards;
         _logger = logger;
     }
 
@@ -94,6 +97,11 @@ public class CountersController : ControllerBase
             return NotFound(new ProblemDetails { Title = "Token not found", Status = StatusCodes.Status404NotFound });
 
         _logger.LogInformation("Counter {CounterId} completed service for token {TokenId}", counterId, request.TokenId);
+
+        // Staff Performance system award for the serving user — after the command has committed,
+        // policy-gated (off by default) and never throwing, the same post-commit side-effect rule
+        // the visitor badge token follows.
+        await _systemAwards.CreditTokenServedAsync(request.TokenId);
 
         return Ok(result);
     }

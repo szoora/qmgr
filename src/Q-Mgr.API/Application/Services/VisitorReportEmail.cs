@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using QMgr.Application.DTOs;
+using QMgr.Infrastructure.Email;
 
 namespace QMgr.API.Application.Services;
 
@@ -20,61 +21,26 @@ public static class VisitorReportEmail
 {
     private const int MaxRows = 40;
 
-    private const string Ink = "#1b1317";
-    private const string Muted = "#6d5b63";
-    private const string Rule = "#e7dde1";
-    private const string Wine = "#7a2847";
-    private const string Danger = "#a3302a";
+    // The palette and the four building blocks were promoted into EmailTemplates on 2026-09-16 so the
+    // staff digests share them. These thin aliases keep this file's render methods readable; the
+    // rule itself has one copy, over there.
+    private const string Ink = EmailTemplates.ReportInk;
+    private const string Muted = EmailTemplates.ReportMuted;
+    private const string Danger = EmailTemplates.ReportDanger;
 
     private static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
 
     private static string Plural(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 
-    private static string Shell(string title, string subtitle, string body) => $@"
-<div style=""font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:{Ink};max-width:720px;margin:0 auto;padding:8px"">
-  <h1 style=""font-size:20px;margin:0 0 4px;color:{Wine}"">{E(title)}</h1>
-  <p style=""margin:0 0 18px;color:{Muted};font-size:13px"">{E(subtitle)}</p>
-  {body}
-  <p style=""margin-top:26px;padding-top:12px;border-top:1px solid {Rule};color:{Muted};font-size:11px"">
-    Sent by Q-Mgr Visitor Management. Times are shown in the branch's local timezone.
-  </p>
-</div>";
+    private static string Shell(string title, string subtitle, string body)
+        => EmailTemplates.ReportShell(title, subtitle, body, "Sent by Q-Mgr Visitor Management. Times are shown in the branch's local timezone.");
 
     private static string Table(string[] headers, IEnumerable<string[]> rows, int totalCount)
-    {
-        var body = new StringBuilder();
-        var shown = 0;
+        => EmailTemplates.ReportTable(headers, rows, totalCount);
 
-        foreach (var row in rows)
-        {
-            body.Append("<tr>");
-            foreach (var cell in row)
-                body.Append($@"<td style=""padding:7px 10px;border-bottom:1px solid {Rule};font-size:13px;vertical-align:top"">{cell}</td>");
-            body.Append("</tr>");
-            shown++;
-        }
+    private static string Section(string heading) => EmailTemplates.ReportSection(heading);
 
-        if (shown == 0)
-            return $@"<p style=""margin:0 0 18px;color:{Muted};font-size:13px"">Nothing to report.</p>";
-
-        var head = string.Concat(headers.Select(h =>
-            $@"<th align=""left"" style=""padding:7px 10px;border-bottom:2px solid {Rule};font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{Muted}"">{E(h)}</th>"));
-
-        var omitted = totalCount > shown
-            ? $@"<p style=""margin:6px 0 18px;color:{Muted};font-size:12px"">Showing {shown} of {totalCount}. Open the report in Q-Mgr for the rest.</p>"
-            : @"<div style=""height:18px""></div>";
-
-        return $@"<table cellspacing=""0"" cellpadding=""0"" style=""width:100%;border-collapse:collapse""><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{omitted}";
-    }
-
-    private static string Section(string heading) =>
-        $@"<h2 style=""font-size:14px;margin:20px 0 8px;color:{Ink}"">{E(heading)}</h2>";
-
-    private static string Stat(string label, string value, bool alert = false) => $@"
-<div style=""display:inline-block;min-width:120px;margin:0 14px 12px 0"">
-  <div style=""font-size:24px;font-weight:700;color:{(alert ? Danger : Ink)}"">{E(value)}</div>
-  <div style=""font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{Muted}"">{E(label)}</div>
-</div>";
+    private static string Stat(string label, string value, bool alert = false) => EmailTemplates.ReportStat(label, value, alert);
 
     // -----------------------------------------------------------------------------------------
 

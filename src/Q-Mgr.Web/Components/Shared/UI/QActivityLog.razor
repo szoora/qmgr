@@ -1,0 +1,124 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    An activity log: an optional KPI strip, an optional retention note, whatever the caller puts
+    between (a QBarList of pages read, say), then the event table with a CSV export. Generalised
+    from the Document Library's activity modal, which now renders through it.
+*@
+
+<div class="q-activity @Class" @attributes="AdditionalAttributes">
+    @if (Tiles is { Count: > 0 })
+    {
+        <QStatRow Class="q-activity__tiles">
+            @foreach (var tile in Tiles)
+            {
+                <QStatTile Value="@tile.Value" Label="@tile.Label" />
+            }
+        </QStatRow>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(RetentionNote))
+    {
+        <p class="q-activity__note">@RetentionNote</p>
+    }
+
+    @ChildContent
+
+    <div class="q-activity__head">
+        <h4 class="q-activity__title">@TableTitle</h4>
+        @if (OnExportCsv.HasDelegate)
+        {
+            <QButton Text="Export CSV" Icon="filetype-csv" Variant="secondary" Size="sm"
+                     OnClick="@OnExportCsv" Loading="@Exporting" Disabled="@(Loading || Rows.Count == 0)" />
+        }
+    </div>
+
+    @if (Loading)
+    {
+        <div class="q-activity__loading"><QSpinner Size="lg" /></div>
+    }
+    else if (Rows.Count == 0)
+    {
+        <QEmptyState Icon="activity" Title="@(EmptyText ?? "No activity yet")" Class="q-empty--compact" />
+    }
+    else
+    {
+        var hasRef = Rows.Any(r => !string.IsNullOrEmpty(r.Ref));
+        var hasWhere = Rows.Any(r => !string.IsNullOrEmpty(r.Where));
+        var hasDetail = Rows.Any(r => !string.IsNullOrEmpty(r.Detail));
+        <div class="q-activity__table-wrap">
+            <table class="q-activity__table">
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        @if (hasRef)
+                        {
+                            <th>@RefHeader</th>
+                        }
+                        <th>Event</th>
+                        <th>Who</th>
+                        @if (hasWhere)
+                        {
+                            <th>Where</th>
+                        }
+                        @if (hasDetail)
+                        {
+                            <th>Detail</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Rows)
+                    {
+                        <tr class="@(row.Failed ? "q-activity__row--fail" : "")">
+                            <td class="q-activity__when">@QDateFormat.DT(row.At)</td>
+                            @if (hasRef)
+                            {
+                                <td>@(row.Ref ?? "—")</td>
+                            }
+                            <td>@row.Summary</td>
+                            <td>@(string.IsNullOrEmpty(row.Actor) ? "—" : row.Actor)</td>
+                            @if (hasWhere)
+                            {
+                                <td class="q-activity__where">@(string.IsNullOrEmpty(row.Where) ? "—" : row.Where)</td>
+                            }
+                            @if (hasDetail)
+                            {
+                                <td>@(row.Detail ?? "")</td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<QActivityRow> Rows { get; set; } = Array.Empty<QActivityRow>();
+
+    /// <summary>The KPI strip above the table.</summary>
+    [Parameter] public IReadOnlyList<(string Label, string Value)>? Tiles { get; set; }
+
+    /// <summary>What the log is, and for how long attribution is kept. Shown under the tiles.</summary>
+    [Parameter] public string? RetentionNote { get; set; }
+
+    /// <summary>Rendered between the note and the table.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    [Parameter] public string TableTitle { get; set; } = "Recent events";
+
+    /// <summary>Header for the optional Ref column.</summary>
+    [Parameter] public string RefHeader { get; set; } = "Ref";
+
+    /// <summary>When set, an "Export CSV" button appears beside the table title.</summary>
+    [Parameter] public EventCallback OnExportCsv { get; set; }
+
+    [Parameter] public bool Exporting { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string? EmptyText { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+}

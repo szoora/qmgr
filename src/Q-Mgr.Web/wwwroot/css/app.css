@@ -1112,28 +1112,13 @@ html, body {
     }
 }
 
-/* Tabs - Mobile Scrollable */
+/* Tabs - Mobile Scrollable. New tab strips are QTabs (q-components.css); .tabs-container is kept
+   only because UsersSetup.razor still renders it. The orphan .tab-item rules were removed. */
 .tabs-container {
     display: flex;
     gap: 4px;
     border-bottom: 1px solid var(--qm-border);
     margin-bottom: 20px;
-}
-
-.tab-item {
-    padding: 12px 20px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--qm-text-muted);
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-}
-
-.tab-item.active {
-    color: var(--qm-primary);
-    border-color: var(--qm-primary);
 }
 
 @media (max-width: 576px) {
@@ -1145,11 +1130,6 @@ html, body {
 
     .tabs-container::-webkit-scrollbar {
         display: none;
-    }
-
-    .tab-item {
-        padding: 14px 16px;
-        min-height: 48px;
     }
 }
 

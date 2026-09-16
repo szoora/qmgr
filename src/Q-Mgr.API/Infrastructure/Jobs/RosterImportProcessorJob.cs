@@ -5,7 +5,9 @@ using Microsoft.EntityFrameworkCore;
 using QMgr.API.Controllers.v1;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
+using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Visitor;
+using QMgr.Domain.Identity;
 using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
@@ -49,10 +51,22 @@ public class RosterImportProcessorJob
         "dd/MM/yy", "d/M/yy"
     };
 
-    public RosterImportProcessorJob(QMgrDbContext context, IRosterImportBroadcaster broadcaster, ILogger<RosterImportProcessorJob> logger)
+    // Staff imports (Kind = Staff) invite each new account by the existing reset-link email; these
+    // two are what AuthController.SendPasswordResetEmailAsync uses, resolved here the same way.
+    private readonly IEmailSender _emailSender;
+    private readonly IPlatformSettingsService _platformSettings;
+
+    public RosterImportProcessorJob(
+        QMgrDbContext context,
+        IRosterImportBroadcaster broadcaster,
+        IEmailSender emailSender,
+        IPlatformSettingsService platformSettings,
+        ILogger<RosterImportProcessorJob> logger)
     {
         _context = context;
         _broadcaster = broadcaster;
+        _emailSender = emailSender;
+        _platformSettings = platformSettings;
         _logger = logger;
     }
 
@@ -63,6 +77,12 @@ public class RosterImportProcessorJob
         if (job == null)
         {
             _logger.LogWarning("RosterImportJob {JobId} not found — nothing to process", jobId);
+            return;
+        }
+
+        if (job.Kind == RosterImportKind.Staff)
+        {
+            await ProcessStaffJobAsync(job);
             return;
         }
 
@@ -522,6 +542,266 @@ public class RosterImportProcessorJob
 
         occurredAt = default;
         return false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Kind = Staff — bulk staff onboarding (Staff Performance Phase 6)
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Creates User rows from a staff list and invites each by the reset-link flow. RowsJson holds
+    /// the whole StartStaffImportRequest (rows + SendInvites). Two passes: rows first (create
+    /// accounts, one entry per row), then line managers, because a manager may be a later row of
+    /// the same file. The entry's StudentName column carries the person's name, StudentCode the
+    /// employee number and GuardianName the email, so the per-row log reads without a join.
+    /// </summary>
+    private async Task ProcessStaffJobAsync(RosterImportJob job)
+    {
+        if (!job.CreatedByUserId.HasValue)
+        {
+            await FailJobAsync(job, "A staff import must be attributed to a signed-in user — this job has no creator.");
+            return;
+        }
+
+        StartStaffImportRequest? request;
+        try { request = JsonSerializer.Deserialize<StartStaffImportRequest>(job.RowsJson); }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "RosterImportJob {JobId}: failed to deserialize RowsJson as StartStaffImportRequest", job.Id);
+            request = null;
+        }
+        if (request == null) { await FailJobAsync(job, "Could not read the uploaded rows (corrupted payload)."); return; }
+
+        var context = await StaffImportContext.LoadAsync(_context, job.OrganizationId, job.BranchId);
+        var created = new List<(Guid UserId, string? LineManagerEmail)>();
+
+        await RunRowsAsync(job, request.Rows,
+            (row, rowNumber) => ProcessStaffRowAsync(job, row, rowNumber, request.SendInvites, context, created),
+            row => new RosterImportJobEntry { StudentName = $"{row.FirstName} {row.LastName}".Trim(), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
+
+        // Second pass: line managers, now that every row's account exists. Matched by normalized
+        // email against the organization's users (existing or just created).
+        var linked = 0;
+        foreach (var (userId, managerEmail) in created.Where(c => !string.IsNullOrWhiteSpace(c.LineManagerEmail)))
+        {
+            try
+            {
+                var normalized = RegistrationIdentity.NormalizeEmail(managerEmail);
+                if (normalized == null) continue;
+                var managerId = await _context.Users.IgnoreQueryFilters().AsNoTracking()
+                    .Where(u => u.OrganizationId == job.OrganizationId && u.NormalizedEmail == normalized && u.IsActive && u.Id != userId)
+                    .Select(u => (Guid?)u.Id)
+                    .FirstOrDefaultAsync();
+                if (managerId == null)
+                {
+                    _logger.LogWarning("RosterImportJob {JobId}: line manager {Email} not found for user {UserId}", job.Id, managerEmail, userId);
+                    continue;
+                }
+                await _context.Users.IgnoreQueryFilters().Where(u => u.Id == userId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(u => u.LineManagerUserId, managerId).SetProperty(u => u.UpdatedAt, DateTime.UtcNow));
+                linked++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "RosterImportJob {JobId}: could not set line manager for user {UserId}", job.Id, userId);
+            }
+        }
+
+        _logger.LogInformation("RosterImportJob {JobId} (Staff): {Linked} line manager link(s) set in the second pass", job.Id, linked);
+    }
+
+    /// <summary>What every staff row needs and none should re-query: the roles a row may name, the departments by code, the organization's name for the invitation.</summary>
+    private sealed class StaffImportContext
+    {
+        public Dictionary<string, Domain.Entities.Identity.Role> RolesByCode { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, Guid> DepartmentsByCode { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public string OrganizationName { get; private set; } = "your organization";
+        public string BaseUrl { get; set; } = "https://qmgr.app";
+
+        public static async Task<StaffImportContext> LoadAsync(QMgrDbContext db, Guid organizationId, Guid branchId)
+        {
+            var ctx = new StaffImportContext();
+
+            // System roles and this organization's own — never the platform SuperAdmin, never the
+            // Tenant Admin: an import file must not be able to mint an administrator.
+            var roles = await db.Roles.IgnoreQueryFilters().AsNoTracking()
+                .Where(r => r.IsActive && (r.OrganizationId == null || r.OrganizationId == organizationId))
+                .ToListAsync();
+            foreach (var r in roles.Where(r => !RoleCodes.IsSuperAdmin(r.Code) && !RoleCodes.IsAdmin(r.Code)))
+                ctx.RolesByCode.TryAdd(r.Code, r);
+
+            var departments = await db.Departments.IgnoreQueryFilters().AsNoTracking()
+                .Where(d => d.OrganizationId == organizationId && d.IsActive && (d.BranchId == null || d.BranchId == branchId))
+                .Select(d => new { d.Code, d.Id })
+                .ToListAsync();
+            foreach (var d in departments.Where(d => !string.IsNullOrWhiteSpace(d.Code)))
+                ctx.DepartmentsByCode.TryAdd(d.Code.Trim(), d.Id);
+
+            ctx.OrganizationName = await db.Organizations.IgnoreQueryFilters().AsNoTracking()
+                .Where(o => o.Id == organizationId).Select(o => o.BrandName ?? o.Name).FirstOrDefaultAsync() ?? ctx.OrganizationName;
+            return ctx;
+        }
+    }
+
+    private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, bool sendInvites, StaffImportContext ctx, List<(Guid, string?)> created)
+    {
+        var firstName = (row.FirstName ?? "").Trim();
+        var lastName = (row.LastName ?? "").Trim();
+        var email = (row.Email ?? "").Trim();
+        var entry = new RosterImportJobEntry
+        {
+            RosterImportJobId = job.Id,
+            RowNumber = rowNumber,
+            StudentName = $"{firstName} {lastName}".Trim(),
+            StudentCode = string.IsNullOrWhiteSpace(row.EmployeeNumber) ? null : row.EmployeeNumber.Trim(),
+            GuardianName = string.IsNullOrWhiteSpace(email) ? null : email
+        };
+
+        void Fail(string message)
+        {
+            entry.Outcome = RosterImportRowOutcome.Failed;
+            entry.Message = message;
+            job.FailedCount++;
+            _context.RosterImportJobEntries.Add(entry);
+        }
+
+        var missing = new List<string>();
+        if (firstName.Length == 0) missing.Add("first name");
+        if (lastName.Length == 0) missing.Add("last name");
+        if (email.Length == 0) missing.Add("email");
+        if (missing.Count > 0) { Fail($"Missing required field(s): {string.Join(", ", missing)}."); return; }
+
+        var normalizedEmail = RegistrationIdentity.NormalizeEmail(email);
+        if (normalizedEmail == null || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@')) { Fail($"'{email}' is not a valid email address."); return; }
+
+        var roleCode = string.IsNullOrWhiteSpace(row.RoleCode) ? RoleCodes.Teacher : row.RoleCode.Trim();
+        if (!ctx.RolesByCode.TryGetValue(roleCode, out var role))
+        {
+            Fail(RoleCodes.IsSuperAdmin(roleCode) || RoleCodes.IsAdmin(roleCode)
+                ? $"Role '{roleCode}' cannot be assigned by import — add administrators one at a time."
+                : $"Unrecognized role code '{roleCode}' — use a system role such as teacher, support-staff or head-of-department, or one of this organization's own roles.");
+            return;
+        }
+
+        // Existing account, by email (globally unique) — skipped as a per-row outcome, never overwritten.
+        var existing = await _context.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.NormalizedEmail == normalizedEmail)
+            .Select(u => new { u.Id, u.OrganizationId })
+            .FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            entry.Outcome = RosterImportRowOutcome.AlreadyExists;
+            entry.Message = existing.OrganizationId == job.OrganizationId
+                ? "An account with this email already exists in this organization — left unchanged."
+                : "An account with this email already exists elsewhere on the platform — left unchanged.";
+            job.DuplicateCount++;
+            _context.RosterImportJobEntries.Add(entry);
+            return;
+        }
+
+        // Username: the one given, else the email's local part; made unique with a numeric suffix
+        // because idx_users_username is global.
+        var baseUsername = (string.IsNullOrWhiteSpace(row.Username) ? email[..email.IndexOf('@')] : row.Username.Trim()).ToLowerInvariant();
+        baseUsername = new string(baseUsername.Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-').ToArray());
+        if (baseUsername.Length < 3) baseUsername = $"user{Guid.NewGuid():N}"[..12];
+        var username = baseUsername;
+        for (var suffix = 2; await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.Username == username); suffix++)
+            username = $"{baseUsername}{suffix}";
+
+        // Departments by code; an unknown code is reported, not fatal — the person still gets an account.
+        var departmentIds = new List<Guid>();
+        var unknownCodes = new List<string>();
+        foreach (var code in (row.DepartmentCodes ?? new List<string>()).Select(c => c.Trim()).Where(c => c.Length > 0).Distinct())
+        {
+            if (ctx.DepartmentsByCode.TryGetValue(code, out var id)) departmentIds.Add(id);
+            else unknownCodes.Add(code);
+        }
+
+        // A random password nobody knows; the invitation (or a later "forgot password") sets the real one.
+        var randomPassword = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var user = new Domain.Entities.Identity.User
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = job.OrganizationId,
+            Username = username,
+            Email = email.ToLowerInvariant(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(randomPassword),
+            FirstName = firstName,
+            LastName = lastName,
+            Phone = string.IsNullOrWhiteSpace(row.Phone) ? null : row.Phone.Trim(),
+            EmployeeNumber = entry.StudentCode,
+            JobTitle = string.IsNullOrWhiteSpace(row.JobTitle) ? null : row.JobTitle.Trim(),
+            RoleId = role.Id,
+            AssignedBranchId = job.BranchId,
+            DepartmentIds = departmentIds.Count > 0 ? departmentIds.ToArray() : null,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = job.CreatedByUserId
+        };
+
+        string? inviteNote = null;
+        if (sendInvites)
+        {
+            // Exactly AuthController.ForgotPassword's token, with a 7-day expiry rather than 1 hour:
+            // an invitation waits for someone who may not open their mail today.
+            user.PasswordResetToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
+            user.PasswordResetTokenExpiry = DateTime.UtcNow.AddDays(7);
+        }
+
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+
+        if (sendInvites)
+        {
+            var delivered = await SendStaffInviteAsync(user, ctx);
+            inviteNote = delivered ? " Invitation sent." : " Invitation could not be sent — they can use Forgot password.";
+        }
+
+        created.Add((user.Id, string.IsNullOrWhiteSpace(row.LineManagerEmail) ? null : row.LineManagerEmail.Trim()));
+
+        entry.Outcome = RosterImportRowOutcome.Created;
+        entry.Message = $"Created as {role.Name} ({username})."
+                        + (departmentIds.Count > 0 ? $" {departmentIds.Count} department(s)." : "")
+                        + (unknownCodes.Count > 0 ? $" Unknown department code(s) ignored: {string.Join(", ", unknownCodes)}." : "")
+                        + (inviteNote ?? "");
+        entry.NewValue = user.Id.ToString();
+        job.CreatedCount++;
+        _context.RosterImportJobEntries.Add(entry);
+    }
+
+    /// <summary>The reset-link email, worded as an invitation. Same link shape as AuthController.SendPasswordResetEmailAsync so /reset-password handles it unchanged. Never throws.</summary>
+    private async Task<bool> SendStaffInviteAsync(Domain.Entities.Identity.User user, StaffImportContext ctx)
+    {
+        try
+        {
+            if (ctx.BaseUrl == "https://qmgr.app")
+            {
+                var saas = await _platformSettings.GetSettingsAsync<Domain.Entities.Platform.SaasSettings>("SaaS");
+                ctx.BaseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+            }
+            var resetUrl = $"{ctx.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(user.PasswordResetToken!)}";
+
+            var subject = $"You have been added to {ctx.OrganizationName} on {Email.EmailTemplates.AppName} — set your password";
+            var html = Email.EmailTemplates.Layout(
+                $"Welcome to {ctx.OrganizationName}",
+                user.FirstName,
+                new[]
+                {
+                    $"An account has been created for you on {Email.EmailTemplates.B(ctx.OrganizationName)}'s {Email.EmailTemplates.AppName} workspace, signed in as {Email.EmailTemplates.B(user.Username)} ({Email.EmailTemplates.P(user.Email)}).",
+                    "Choose your password with the button below. The link is valid for 7 days; after that, use \"Forgot password\" on the sign-in page to get a new one."
+                },
+                "Set my password",
+                resetUrl,
+                footerNote: "If you were not expecting this, you can ignore it; no account is usable until a password is set.",
+                showLinkFallback: true);
+
+            return await _emailSender.SendAsync(user.Email, subject, html);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Staff import: invitation to {Email} could not be sent", user.Email);
+            return false;
+        }
     }
 
     private Task Broadcast(RosterImportJob job) => _broadcaster.BroadcastAsync(new RosterImportProgressEvent

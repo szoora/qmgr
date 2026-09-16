@@ -109,18 +109,9 @@
     </QCard>
 
     @* ---- Tabs ---- *@
-    <div class="report-tabs no-print">
-        @foreach (var tab in AllTabs)
-        {
-            <button type="button" class="report-tab @(activeTab == tab ? "active" : "")" @onclick="@(() => SwitchTab(tab))">
-                @TabLabel(tab)
-                @if (tab == ReportTab.Exceptions && exceptions is { TotalCount: > 0 })
-                {
-                    <span class="tab-badge">@exceptions.TotalCount</span>
-                }
-            </button>
-        }
-    </div>
+    <QTabs Tabs="@VisitorTabs" ActiveKey="@activeTab.ToString()"
+           ActiveKeyChanged="@(key => SwitchTab(Enum.Parse<ReportTab>(key)))"
+           AriaLabel="Visitor report sections" Class="no-print" />
 
     @if (isLoading)
     {
@@ -648,17 +639,7 @@
     .range-caption { margin: 0; font-size: 12.5px; color: var(--qm-text-muted); }
     .range-caption strong { color: var(--qm-text-primary); font-weight: 600; }
 
-    .report-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); }
-    .report-tab {
-        padding: 9px 16px; border: 0; background: none; font: inherit; font-size: 14px; font-weight: 600;
-        color: var(--qm-text-muted); cursor: pointer; border-bottom: 2px solid transparent;
-        display: inline-flex; align-items: center; gap: 7px;
-    }
-    .report-tab.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); }
-    .tab-badge {
-        background: var(--qm-danger); color: #fff; border-radius: 999px;
-        font-size: 11px; font-weight: 700; padding: 1px 7px; font-variant-numeric: tabular-nums;
-    }
+    /* The tab strip is QTabs (q-components.css); the exceptions count is its danger badge. */
 
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); }
     .stat-card {
@@ -836,6 +817,15 @@
         ReportTab.Compliance => "Compliance",
         _ => tab.ToString()
     };
+
+    /// <summary>The strip's tabs; Exceptions carries its count as a danger badge once the report has run.</summary>
+    private IReadOnlyList<QTab> VisitorTabs => AllTabs
+        .Select(t => new QTab(
+            t.ToString(),
+            TabLabel(t),
+            Badge: t == ReportTab.Exceptions && exceptions is { TotalCount: > 0 } ? exceptions.TotalCount : null,
+            BadgeVariant: "danger"))
+        .ToList();
 
     private string TabTitle() => activeTab switch
     {

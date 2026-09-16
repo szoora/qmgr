@@ -29,6 +29,7 @@ public class VisitorsController : ControllerBase
     private readonly IVisitorActivityBroadcaster _activityBroadcaster;
     private readonly IMediaStorageService _mediaStorage;
     private readonly IVisitorReportingService _reporting;
+    private readonly QMgr.Infrastructure.Services.IStaffSystemAwards _systemAwards;
     private readonly ILogger<VisitorsController> _logger;
 
     private const int SearchResultLimit = 10;
@@ -56,9 +57,11 @@ public class VisitorsController : ControllerBase
         IVisitorActivityBroadcaster activityBroadcaster,
         IMediaStorageService mediaStorage,
         IVisitorReportingService reporting,
+        QMgr.Infrastructure.Services.IStaffSystemAwards systemAwards,
         ILogger<VisitorsController> logger)
     {
         _reporting = reporting;
+        _systemAwards = systemAwards;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notificationService = notificationService;
@@ -526,6 +529,11 @@ public class VisitorsController : ControllerBase
             // still on the log and can be found by front desk staff.
             _logger.LogError(ex, "Failed to notify host {HostUserId} of visitor {VisitorId} arrival", hostUserId, visitor.Id);
         }
+
+        // Staff Performance system award for the host (policy-gated, off by default, never throws).
+        // Same post-commit slot as the notification above: the visit is already on the books.
+        await _systemAwards.CreditAsync(organizationId, branchId, hostUserId, QMgr.Infrastructure.Services.StaffSystemAwards.VisitorHosted,
+            $"Hosted a visitor ({visitor.Purpose}). Credited automatically.");
     }
 
     /// <summary>

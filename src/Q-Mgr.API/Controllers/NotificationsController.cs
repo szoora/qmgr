@@ -160,10 +160,17 @@ public class NotificationsController : ControllerBase
     /// <summary>
     /// Get notifications for the current user
     /// </summary>
+    /// <remarks>
+    /// <paramref name="eventKey"/> and <paramref name="offset"/> (2026-09-16) serve the notification
+    /// centre: one NotificationEventKeys group at a time, paged. Omitted, the call is exactly what the
+    /// bell has always made.
+    /// </remarks>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<NotificationDto>>> GetNotifications(
         [FromQuery] bool unreadOnly = false,
         [FromQuery] int limit = 50,
+        [FromQuery] string? eventKey = null,
+        [FromQuery] int offset = 0,
         CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
@@ -174,7 +181,8 @@ public class NotificationsController : ControllerBase
         if (organizationId == null)
             return Unauthorized();
 
-        var notifications = await _notificationService.GetUserNotificationsAsync(userId.Value, organizationId.Value, unreadOnly, limit, cancellationToken);
+        var notifications = await _notificationService.GetUserNotificationsAsync(
+            userId.Value, organizationId.Value, unreadOnly, Math.Clamp(limit, 1, 200), cancellationToken, eventKey, Math.Max(0, offset));
         var result = notifications.Select(n => new NotificationDto
         {
             Id = n.Id,
@@ -233,10 +241,12 @@ public class NotificationsController : ControllerBase
     }
 
     /// <summary>
-    /// Mark all notifications as read
+    /// Mark all notifications as read — or, with <paramref name="eventKey"/>, one category of them.
+    /// Returns the caller's remaining unread count so the bell can update without a second call.
     /// </summary>
     [HttpPost("read-all")]
-    public async Task<ActionResult> MarkAllAsRead(CancellationToken cancellationToken = default)
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    public async Task<ActionResult<int>> MarkAllAsRead([FromQuery] string? eventKey = null, CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
         if (userId == null)
@@ -246,8 +256,8 @@ public class NotificationsController : ControllerBase
         if (organizationId == null)
             return Unauthorized();
 
-        await _notificationService.MarkAllAsReadAsync(userId.Value, organizationId.Value, cancellationToken);
-        return NoContent();
+        var remaining = await _notificationService.MarkAllAsReadAsync(userId.Value, organizationId.Value, eventKey, cancellationToken);
+        return Ok(remaining);
     }
 
     /// <summary>

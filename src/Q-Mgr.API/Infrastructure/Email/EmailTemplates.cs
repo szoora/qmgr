@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 
 namespace QMgr.Infrastructure.Email;
 
@@ -95,4 +96,77 @@ public static class EmailTemplates
     /// <summary>Joins a base URL and a site-relative path.</summary>
     public static string Link(string baseUrl, string path)
         => $"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}";
+
+    // =====================================================================================================
+    // Report-email building blocks (promoted from VisitorReportEmail on 2026-09-16, Staff Performance
+    // Phase 3). Inline styles only — mail clients strip stylesheets — and long tables are truncated
+    // with an explicit count of what was left out, because a silently shortened list reads as "that
+    // is all of them". VisitorReportEmail delegates to these; the staff digests build on them too, so
+    // there is ONE copy of the rule for what a table or a KPI block looks like in an email.
+    // =====================================================================================================
+
+    /// <summary>Report palette. Distinct from the transactional Layout's on purpose: reports are denser and read on a phone.</summary>
+    public const string ReportInk = "#1b1317";
+    public const string ReportMuted = "#6d5b63";
+    public const string ReportRule = "#e7dde1";
+    public const string ReportWine = "#7a2847";
+    public const string ReportDanger = "#a3302a";
+
+    /// <summary>Report shell: heading, subtitle, body, small-print footer. <paramref name="footer"/> is plain text.</summary>
+    public static string ReportShell(string title, string subtitle, string body, string footer = "Sent by Q-Mgr. Times are shown in the branch's local timezone.") => $@"
+<div style=""font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:{ReportInk};max-width:720px;margin:0 auto;padding:8px"">
+  <h1 style=""font-size:20px;margin:0 0 4px;color:{ReportWine}"">{P(title)}</h1>
+  <p style=""margin:0 0 18px;color:{ReportMuted};font-size:13px"">{P(subtitle)}</p>
+  {body}
+  <p style=""margin-top:26px;padding-top:12px;border-top:1px solid {ReportRule};color:{ReportMuted};font-size:11px"">
+    {P(footer)}
+  </p>
+</div>";
+
+    /// <summary>
+    /// An inline-styled table. Cells are HTML fragments (encode user data with <see cref="P"/>);
+    /// headers are plain text. <paramref name="totalCount"/> larger than the rows given prints a
+    /// "Showing n of N" line rather than pretending the list is complete.
+    /// </summary>
+    public static string ReportTable(string[] headers, IEnumerable<string[]> rows, int totalCount, string emptyText = "Nothing to report.")
+    {
+        var body = new StringBuilder();
+        var shown = 0;
+
+        foreach (var row in rows)
+        {
+            body.Append("<tr>");
+            foreach (var cell in row)
+                body.Append($@"<td style=""padding:7px 10px;border-bottom:1px solid {ReportRule};font-size:13px;vertical-align:top"">{cell}</td>");
+            body.Append("</tr>");
+            shown++;
+        }
+
+        if (shown == 0)
+            return $@"<p style=""margin:0 0 18px;color:{ReportMuted};font-size:13px"">{P(emptyText)}</p>";
+
+        var head = string.Concat(headers.Select(h =>
+            $@"<th align=""left"" style=""padding:7px 10px;border-bottom:2px solid {ReportRule};font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{ReportMuted}"">{P(h)}</th>"));
+
+        var omitted = totalCount > shown
+            ? $@"<p style=""margin:6px 0 18px;color:{ReportMuted};font-size:12px"">Showing {shown} of {totalCount}. Open the report in Q-Mgr for the rest.</p>"
+            : @"<div style=""height:18px""></div>";
+
+        return $@"<table cellspacing=""0"" cellpadding=""0"" style=""width:100%;border-collapse:collapse""><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{omitted}";
+    }
+
+    /// <summary>A section heading inside a report.</summary>
+    public static string ReportSection(string heading) =>
+        $@"<h2 style=""font-size:14px;margin:20px 0 8px;color:{ReportInk}"">{P(heading)}</h2>";
+
+    /// <summary>A KPI block: big number, small uppercase label. <paramref name="alert"/> paints the number red.</summary>
+    public static string ReportStat(string label, string value, bool alert = false) => $@"
+<div style=""display:inline-block;min-width:120px;margin:0 14px 12px 0"">
+  <div style=""font-size:24px;font-weight:700;color:{(alert ? ReportDanger : ReportInk)}"">{P(value)}</div>
+  <div style=""font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{ReportMuted}"">{P(label)}</div>
+</div>";
+
+    /// <summary>A highlighted note (a caveat, an all-clear). <paramref name="text"/> is plain text.</summary>
+    public static string ReportCallout(string text, bool danger = false) =>
+        $@"<p style=""margin:14px 0 0;padding:10px 12px;background:{(danger ? "#f8e6e4" : "#e4f0ea")};border-left:3px solid {(danger ? ReportDanger : "#2c6f4c")};color:{ReportInk};font-size:13px"">{P(text)}</p>";
 }

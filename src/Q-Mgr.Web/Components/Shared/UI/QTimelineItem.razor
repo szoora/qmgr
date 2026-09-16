@@ -1,0 +1,109 @@
+@namespace QMgr.Web.Components.Shared.UI
+@implements IDisposable
+
+@*
+    One entry on a QTimeline: a coloured marker with an icon, and a card carrying a title row,
+    the caller's content, an optional meta block and an optional action row. Modifier maps to a
+    card class (q-timeline__card--draft, --annulled, --final) so a page can style a state without
+    owning the card.
+*@
+
+@{ ComputeDayHeader(); }
+
+@if (showDayHeader && Date.HasValue)
+{
+    <div class="q-timeline__day">@QDateFormat.LongDay(Date.Value)</div>
+}
+
+<div class="q-timeline__item @Class" @attributes="AdditionalAttributes">
+    <div class="q-timeline__marker" style="@MarkerStyle">
+        @if (!string.IsNullOrEmpty(MarkerIcon))
+        {
+            <QIcon Name="@MarkerIcon" Size="lg" />
+        }
+    </div>
+    <div class="q-timeline__card @(string.IsNullOrEmpty(Modifier) ? "" : $"q-timeline__card--{Modifier.ToLowerInvariant()}")">
+        @if (TitleContent != null || !string.IsNullOrEmpty(Title) || Date.HasValue)
+        {
+            <div class="q-timeline__head">
+                <div class="q-timeline__title">
+                    @if (TitleContent != null)
+                    {
+                        @TitleContent
+                    }
+                    else if (!string.IsNullOrEmpty(Title))
+                    {
+                        <strong>@Title</strong>
+                    }
+                </div>
+                @if (Date.HasValue)
+                {
+                    <span class="q-timeline__date">@QDateFormat.DT(Date.Value)</span>
+                }
+            </div>
+        }
+
+        @ChildContent
+
+        @if (Meta != null)
+        {
+            <div class="q-timeline__meta">@Meta</div>
+        }
+
+        @if (Actions != null)
+        {
+            <div class="q-timeline__actions">@Actions</div>
+        }
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private QTimeline? Parent { get; set; }
+
+    /// <summary>Any CSS colour for the marker circle; a category colour or a var(--qm-*) token.</summary>
+    [Parameter] public string? MarkerColor { get; set; }
+
+    /// <summary>Bootstrap icon name shown inside the marker.</summary>
+    [Parameter] public string? MarkerIcon { get; set; }
+
+    /// <summary>Shown top-right of the card through QDateFormat.DT, and used for day grouping.</summary>
+    [Parameter] public DateTime? Date { get; set; }
+
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>Replaces Title when the heading needs badges or controls beside the text.</summary>
+    [Parameter] public RenderFragment? TitleContent { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Small muted lines under the content (location, reporter, and so on).</summary>
+    [Parameter] public RenderFragment? Meta { get; set; }
+
+    /// <summary>Buttons. Rendered in a wrapping row above a divider so four of them fit a phone.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>"draft" | "annulled" | "final" — becomes q-timeline__card--{Modifier}.</summary>
+    [Parameter] public string? Modifier { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string? MarkerStyle => string.IsNullOrEmpty(MarkerColor) ? null : $"background-color: {MarkerColor}";
+
+    private int seenPass = -1;
+    private bool showDayHeader;
+
+    protected override void OnInitialized() => Parent?.Register(this);
+
+    private void ComputeDayHeader()
+    {
+        if (Parent == null) return;
+        if (seenPass == Parent.Pass) return;
+        seenPass = Parent.Pass;
+        showDayHeader = Parent.NextItem(Date);
+    }
+
+    public void Dispose() => Parent?.Unregister(this);
+}

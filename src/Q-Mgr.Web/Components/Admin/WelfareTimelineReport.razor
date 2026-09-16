@@ -32,38 +32,22 @@
 
 <PageTitle>Welfare Report - Q-Mgr</PageTitle>
 
-<div class="wr-toolbar no-print">
-    <QButton Text="Back to timeline" Icon="arrow-left" Variant="ghost"
-             OnClick="@(() => Navigation.NavigateTo($"/admin/students/{StudentId}/welfare"))" />
-    <div class="wr-toolbar__right">
-        <span class="wr-hint">Print, then choose <strong>Save as PDF</strong> as the destination.</span>
-        @if (canPublish)
-        {
-            @* Publishing is the boundary: this is the one way a welfare report reaches the
-               Document Library, and from there a share link. It runs the same permission and
-               row-scope checks as viewing (the report is what the caller could already see), and
-               the published document records what it was generated from and when. *@
-            <QButton Text="@(isPublishing ? "Publishing..." : "Publish to Library")" Icon="file-earmark-lock2" Variant="secondary"
-                     OnClick="@PublishToLibrary" Disabled="@(isLoading || isPublishing || loadError != null)" />
-        }
-        <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="primary" OnClick="@Print" Disabled="@isLoading" />
-    </div>
-</div>
-
-@if (isLoading)
-{
-    <div class="wr-state no-print"><QSpinner Size="lg" /><span>Building the report...</span></div>
-}
-else if (loadError != null)
-{
-    <div class="wr-state no-print">
-        <QIcon Name="exclamation-triangle" />
-        <span>@loadError</span>
-    </div>
-}
-else
-{
-    <article class="wr-sheet" id="wr-sheet">
+@* Publishing is the boundary: the toolbar's Publish is the one way a welfare report reaches the
+   Document Library, and from there a share link. It runs the same permission and row-scope
+   checks as viewing (the report is what the caller could already see), and the published
+   document records what it was generated from and when. The sheet, toolbar and print rules are
+   QPrintSheet's; the welfare content inside the sheet is this page's. *@
+<QPrintSheet SheetId="wr-sheet"
+             Title="@($"Student Welfare Report — {SubjectName}")"
+             Class="wr-sheet"
+             Ready="@(!isLoading && loadError == null)"
+             BackText="Back to timeline"
+             OnBack="@(() => Navigation.NavigateTo($"/admin/students/{StudentId}/welfare"))"
+             CanPublish="@canPublish"
+             Publishing="@isPublishing"
+             OnPublish="@PublishToLibrary"
+             OnPrint="@Print"
+             Disabled="@(isLoading || loadError != null)">
 
         @* ---------------- Branded header, repeated as the running head on later pages ---------------- *@
         <header class="wr-head">
@@ -268,34 +252,27 @@ else
                 @OrganizationName · @SubjectName · @PeriodCaption · generated @QDateFormat.DT(DateTime.Now)
             </p>
         </footer>
-    </article>
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="wr-state no-print"><QSpinner Size="lg" /><span>Building the report...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="wr-state no-print">
+        <QIcon Name="exclamation-triangle" />
+        <span>@loadError</span>
+    </div>
 }
 
 <style>
     /* ------------------------------------------------------------------------------------------
-       Screen: an A4 page shown on a grey desk, so what you see is what prints.
+       The A4 sheet on its grey desk, the toolbar and the page-size / print reset are QPrintSheet's.
+       Everything below styles the welfare content INSIDE the sheet. The colours are the printed
+       document's own black-on-white palette, not theme tokens, on purpose (see QPrintSheet).
        ------------------------------------------------------------------------------------------ */
-    .wr-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--qm-bg-card); border-bottom: 1px solid var(--qm-border); position: sticky; top: 0; z-index: 10; }
-    .wr-toolbar__right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-    .wr-hint { font-size: 12.5px; color: var(--qm-text-muted); }
     .wr-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
-
-    .wr-sheet {
-        width: 210mm;
-        max-width: 100%;
-        margin: 20px auto;
-        padding: 16mm;
-        background: #fff;
-        color: #14110f;
-        border: 1px solid var(--qm-border);
-        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.10);
-        /* The sheet is a printed document, not a themed screen: it stays black-on-white in dark
-           mode too, because that is what comes out of the printer either way and previewing it in
-           dark grey would misrepresent the output. */
-        font-family: var(--qm-font-primary, system-ui), sans-serif;
-        font-size: 11pt;
-        line-height: 1.5;
-    }
 
     .wr-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
     .wr-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -355,21 +332,6 @@ else
        Print. The document is already the page, so this mostly removes the desk it was sitting on.
        ------------------------------------------------------------------------------------------ */
     @@media print {
-        .no-print { display: none !important; }
-
-        @@page {
-            size: A4 portrait;
-            margin: 14mm;
-        }
-
-        .wr-sheet {
-            width: auto;
-            margin: 0;
-            padding: 0;
-            border: 0;
-            box-shadow: none;
-        }
-
         /* A record must not be split across a page break: half an incident on one sheet and half
            on the next is how a reader draws the wrong conclusion from a file. */
         .wr-record,
@@ -387,7 +349,6 @@ else
     }
 
     @@media (max-width: 480px) {
-        .wr-sheet { padding: 12px; margin: 8px; }
         .wr-head__meta { text-align: left; }
     }
 </style>

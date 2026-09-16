@@ -1,0 +1,130 @@
+@namespace QMgr.Web.Components.Shared.UI
+@inject IJSRuntime JS
+
+@*
+    A printable A4 sheet shown on a grey desk, so what you see is what prints, with a sticky
+    toolbar above it that the print stylesheet removes. Lifted from WelfareTimelineReport.
+
+    The sheet is a printed document, not a themed screen: it stays black-on-white in dark mode too,
+    because that is what comes out of the printer either way and previewing it in dark grey would
+    misrepresent the output. Printing is the browser's job — "Save as PDF" in its dialog produces
+    the file; no rendering library anywhere (CLAUDE.md). The @page and print rules live in this
+    component's own style block rather than a global stylesheet so they apply only where a sheet
+    is on the page.
+*@
+
+<div class="q-print__toolbar no-print">
+    <div class="q-print__toolbar-left">
+        @if (OnBack.HasDelegate)
+        {
+            <QButton Text="@BackText" Icon="arrow-left" Variant="ghost" OnClick="@OnBack" />
+        }
+        @ToolbarStart
+    </div>
+    <div class="q-print__toolbar-right">
+        <span class="q-print__hint">Print, then choose <strong>Save as PDF</strong> as the destination.</span>
+        @ToolbarEnd
+        @if (CanPublish)
+        {
+            <QButton Text="@(Publishing ? "Publishing..." : (PublishLabel ?? "Publish to Library"))" Icon="file-earmark-lock2" Variant="secondary"
+                     OnClick="@OnPublish" Disabled="@(Disabled || Publishing)" />
+        }
+        <QButton Text="Print / Save as PDF" Icon="printer-fill" Variant="primary" OnClick="@HandlePrint" Disabled="@Disabled" />
+    </div>
+</div>
+
+@if (Ready && ChildContent != null)
+{
+    <article class="q-print__sheet @Class" id="@SheetId" aria-label="@Title" @attributes="AdditionalAttributes">
+        @ChildContent
+    </article>
+}
+
+<style>
+    .q-print__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--qm-bg-card); border-bottom: 1px solid var(--qm-border); position: sticky; top: 0; z-index: 10; }
+    .q-print__toolbar-left, .q-print__toolbar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
+    .q-print__hint { font-size: 12.5px; color: var(--qm-text-muted); }
+
+    .q-print__sheet {
+        width: 210mm;
+        max-width: 100%;
+        margin: 20px auto;
+        padding: 16mm;
+        background: #fff;
+        color: #14110f;
+        border: 1px solid var(--qm-border);
+        box-shadow: 0 3px 14px rgba(0, 0, 0, 0.10);
+        font-family: var(--qm-font-primary, system-ui), sans-serif;
+        font-size: 11pt;
+        line-height: 1.5;
+    }
+
+    @@media print {
+        .no-print { display: none !important; }
+
+        @@page {
+            size: A4 portrait;
+            margin: 14mm;
+        }
+
+        .q-print__sheet {
+            width: auto;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            box-shadow: none;
+        }
+    }
+
+    @@media (max-width: 480px) {
+        .q-print__sheet { padding: 12px; margin: 8px; }
+    }
+</style>
+
+@code {
+    /// <summary>The element id of the sheet — what reportPublish.js renders to PDF.</summary>
+    [Parameter, EditorRequired] public string SheetId { get; set; } = "print-sheet";
+
+    /// <summary>Accessible name of the document.</summary>
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+
+    /// <summary>The document itself.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>False while the document is loading or failed: the toolbar stays, the sheet is not drawn.</summary>
+    [Parameter] public bool Ready { get; set; } = true;
+
+    /// <summary>Runs instead of the browser's own print when set.</summary>
+    [Parameter] public EventCallback OnPrint { get; set; }
+
+    [Parameter] public EventCallback OnPublish { get; set; }
+    [Parameter] public bool CanPublish { get; set; }
+    [Parameter] public bool Publishing { get; set; }
+    [Parameter] public string? PublishLabel { get; set; }
+
+    /// <summary>Disables Print and Publish while the document is still loading.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>A "back" button on the left of the toolbar when set.</summary>
+    [Parameter] public EventCallback OnBack { get; set; }
+    [Parameter] public string BackText { get; set; } = "Back";
+
+    [Parameter] public RenderFragment? ToolbarStart { get; set; }
+    [Parameter] public RenderFragment? ToolbarEnd { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task HandlePrint()
+    {
+        if (OnPrint.HasDelegate)
+        {
+            await OnPrint.InvokeAsync();
+            return;
+        }
+        try { await JS.InvokeVoidAsync("window.print"); }
+        catch (Exception) { /* the toolbar tells the reader to use the browser's own print command */ }
+    }
+}

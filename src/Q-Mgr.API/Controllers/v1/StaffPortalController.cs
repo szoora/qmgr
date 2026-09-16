@@ -1,0 +1,529 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
+using QMgr.Application.DTOs;
+using QMgr.Application.Tenant;
+using QMgr.Domain.Constants;
+using QMgr.Domain.Entities.Identity;
+using QMgr.Domain.Entities.Staff;
+using QMgr.Domain.Enums;
+using QMgr.Filters;
+using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services;
+using QMgr.Infrastructure.Services.Storage;
+
+namespace QMgr.API.Controllers.v1;
+
+/// <summary>
+/// "My Portal": the caller's own file and nothing else. Follows ProfileController — [Authorize]
+/// plus the module gate, NO permission code, the user id from the JWT — because a teacher or a
+/// front-office employee with no staff.* permission at all must still see what has been recorded
+/// about them, respond to it, and take their file with them. That is the s.24 subject-access right
+/// the plan is built around, and it is why every seeded role reaches these routes.
+///
+/// The rung rule for self is fixed: Standard and Confidential, never Restricted, never somebody
+/// else's draft. The branch is the caller's assigned branch, or the organization's first active
+/// branch for a person assigned to none.
+/// </summary>
+[ApiController]
+[Route("api/v1/staff/portal")]
+[Produces("application/json")]
+[Authorize]
+[RequireModule(ModuleCodes.StaffPerformance)]
+public class StaffPortalController : StaffPerformanceControllerBase
+{
+    private readonly IStaffPerformancePolicyService _policy;
+    private readonly IStaffScoringService _scoring;
+    private const int MaxPageSize = 200;
+
+    public StaffPortalController(
+        QMgrDbContext db,
+        ITenantContextAccessor tenantAccessor,
+        IStaffScopeService staffScope,
+        IActivityLogger activity,
+        IStaffPerformancePolicyService policy,
+        IStaffScoringService scoring)
+        : base(db, tenantAccessor, staffScope, activity)
+    {
+        _policy = policy;
+        _scoring = scoring;
+    }
+
+    // ---------------------------------------------------------------------
+    // The hub
+    // ---------------------------------------------------------------------
+
+    [HttpGet]
+    [ProducesResponseType(typeof(StaffPortalDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetPortal()
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        var (me, organizationId, branchId) = (self.User!, self.OrganizationId, self.BranchId);
+        var now = DateTime.UtcNow;
+
+        var policy = await _policy.GetAsync(organizationId);
+        var period = _policy.PeriodFor(policy, DateOnly.FromDateTime(now));
+        var score = await _scoring.ComputeAsync(organizationId, branchId, me.Id, period, includeRank: true);
+        var mayManageDuties = await HasPermissionAsync(Permissions.StaffDutiesManage);
+        var myDepartments = me.DepartmentIds ?? Array.Empty<Guid>();
+        var myRole = me.Role?.Code ?? string.Empty;
+        var myGroup = _policy.GroupFor(myRole);
+
+        // ---- Coming up: duties I am expected at or record, not yet over ----
+        var upcoming = await Db.StaffDuties.AsNoTracking().Include(d => d.Parameter)
+            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt >= now
+                        && (d.ExpectedUserIds == null || d.ExpectedUserIds.Contains(me.Id) || d.RecorderUserIds.Contains(me.Id)))
+            .OrderBy(d => d.StartsAt)
+            .Take(10)
+            .ToListAsync();
+        var comingUp = await MapDutiesAsync(upcoming, me.Id, organizationId, branchId, mayManageDuties);
+
+        // ---- Open items ----
+        var openItems = new List<PortalItemDto>();
+
+        var registersDue = await Db.StaffDuties.AsNoTracking()
+            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt < now && d.RegisterClosedAt == null && d.RecorderUserIds.Contains(me.Id))
+            .OrderBy(d => d.EndsAt)
+            .Take(10)
+            .ToListAsync();
+        openItems.AddRange(registersDue.Select(d => new PortalItemDto
+        {
+            Kind = "register-due",
+            Title = d.Title,
+            Detail = "You are the recorder and the register has not been taken.",
+            DueAt = d.EndsAt,
+            IsOverdue = true,
+            Url = $"/admin/staff/duties/{d.Id}/register"
+        }));
+
+        var appraisal = await Db.StaffAppraisals.AsNoTracking().Include(a => a.Subject).Include(a => a.Appraiser)
+            .FirstOrDefaultAsync(a => a.SubjectUserId == me.Id && a.PeriodKey == period.Key);
+        if (appraisal != null)
+        {
+            if (appraisal.Stage is AppraisalStage.Open or AppraisalStage.SelfAssessment)
+                openItems.Add(new PortalItemDto
+                {
+                    Kind = "appraisal",
+                    Title = $"Self-assessment for {period.Name}",
+                    Detail = appraisal.Stage == AppraisalStage.Open ? "Your targets are set; your self-assessment is next." : "Your self-assessment is waiting for you.",
+                    DueAt = appraisal.PeriodEnd.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
+                    IsOverdue = appraisal.PeriodEnd < DateOnly.FromDateTime(now),
+                    Url = $"/portal/appraisals/{appraisal.Id}"
+                });
+            else if (appraisal.Stage == AppraisalStage.Signed && appraisal.SignedAt is { } signed && signed > now.AddDays(-14))
+                openItems.Add(new PortalItemDto
+                {
+                    Kind = "appraisal",
+                    Title = $"Your {period.Name} appraisal has been signed",
+                    Detail = "Read it. You may appeal within the period.",
+                    DueAt = signed,
+                    Url = $"/portal/appraisals/{appraisal.Id}"
+                });
+        }
+
+        // ---- Notices for my audience ----
+        var notices = await NoticesForMeQuery(organizationId, branchId, me.Id, myDepartments, myRole, myGroup, now)
+            .OrderByDescending(n => n.IsPinned).ThenByDescending(n => n.PublishAt)
+            .Take(10)
+            .ToListAsync();
+        var noticeDtos = await MapNoticesAsync(notices, me.Id);
+        openItems.AddRange(noticeDtos.Where(n => n.RequiresAcknowledgement && n.AcknowledgedByMeAt == null).Select(n => new PortalItemDto
+        {
+            Kind = "notice-ack",
+            Title = n.Title,
+            Detail = "This notice asks you to confirm you have read it.",
+            DueAt = n.ExpiresAt,
+            IsOverdue = false,
+            Url = $"/portal/notices/{n.Id}"
+        }));
+
+        // ---- My records ----
+        var recent = await MyRecordsQuery(me.Id, branchId)
+            .OrderByDescending(r => r.OccurredAt).ThenByDescending(r => r.CreatedAt)
+            .Take(20)
+            .ToListAsync();
+        var received = await MyRecordsQuery(me.Id, branchId)
+            .Where(r => r.Source == RecordSource.Recognition && r.Status == StaffRecordStatus.Final)
+            .OrderByDescending(r => r.CreatedAt).Take(10).ToListAsync();
+        var given = await RecordsWithIncludes()
+            .Where(r => r.OrganizationId == organizationId && r.LoggedByUserId == me.Id && r.Source == RecordSource.Recognition && r.Status == StaffRecordStatus.Final)
+            .OrderByDescending(r => r.CreatedAt).Take(10).ToListAsync();
+
+        var unacknowledged = await Db.StaffPerformanceRecords
+            .CountAsync(r => r.SubjectUserId == me.Id && r.Status == StaffRecordStatus.Final && r.AcknowledgedAt == null && r.Visibility != WelfareVisibility.Restricted);
+        openItems.AddRange(recent
+            .Where(r => r.Status == StaffRecordStatus.Final && r.AcknowledgedAt == null && r.LoggedByUserId != me.Id)
+            .Take(10)
+            .Select(r => new PortalItemDto
+            {
+                Kind = "record-unread",
+                Title = r.Visibility == WelfareVisibility.Confidential ? "A confidential record was logged about you" : $"{r.Parameter?.Name ?? "A record"} logged about you",
+                Detail = r.Visibility == WelfareVisibility.Confidential ? "Open it to read and respond." : Truncate(r.Description, 120),
+                DueAt = r.CreatedAt,
+                Url = $"/portal/records/{r.Id}"
+            }));
+
+        // ---- Welfare actions I owe (the same rows WelfareController's my-actions returns) ----
+        var welfareActions = await Db.WelfareRecords.AsNoTracking().Include(w => w.Student).Include(w => w.Category)
+            .Where(w => w.AssignedToUserId == me.Id && w.Status != WelfareStatus.Resolved && w.Status != WelfareStatus.Draft)
+            .OrderBy(w => w.ActionDueDate ?? DateTime.MaxValue)
+            .Take(10)
+            .ToListAsync();
+        openItems.AddRange(welfareActions.Select(w => new PortalItemDto
+        {
+            Kind = "welfare-action",
+            Title = $"Welfare follow-up: {w.Student?.FullName ?? "a student"}",
+            Detail = w.Category?.Name,
+            DueAt = w.ActionDueDate,
+            IsOverdue = w.ActionDueDate.HasValue && w.ActionDueDate.Value < now,
+            Url = $"/admin/students/{w.StudentId}/welfare"
+        }));
+
+        // ---- Names, once ----
+        var allRecords = recent.Concat(received).Concat(given).ToList();
+        var names = await BuildNamesAsync(allRecords.Select(r => (Guid?)r.LoggedByUserId)
+            .Concat(allRecords.Select(r => (Guid?)r.SubjectUserId))
+            .Concat(allRecords.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId))
+            .Concat(notices.Select(n => (Guid?)n.PublishedByUserId))
+            .Append(me.LineManagerUserId)
+            .Append(appraisal?.AppraiserUserId).Append(appraisal?.ModeratorUserId).Append(appraisal?.SignedByUserId));
+        var departmentNames = await DepartmentNamesAsync(organizationId);
+
+        StaffAppraisalDto? appraisalDto = null;
+        if (appraisal != null)
+        {
+            var band = appraisal.FinalRating is { } fr ? policy.Bands.FirstOrDefault(b => b.Rating == fr) : null;
+            appraisalDto = StaffPerformanceMapping.ToDto(appraisal, names,
+                string.Join(", ", myDepartments.Select(id => departmentNames.GetValueOrDefault(id)).Where(n => n != null)),
+                band?.Name, score, me.Id,
+                callerMayApprove: await HasPermissionAsync(Permissions.StaffAppraisalsApprove),
+                callerMayConduct: await HasPermissionAsync(Permissions.StaffAppraisalsConduct));
+        }
+
+        return Ok(new StaffPortalDto
+        {
+            Me = StaffPerformanceMapping.ToDto(me, names, departmentNames, score, recent.FirstOrDefault(r => r.Status == StaffRecordStatus.Final)?.CreatedAt),
+            BranchId = branchId,
+            Score = score,
+            ComingUp = comingUp,
+            OpenItems = openItems.OrderBy(i => !i.IsOverdue).ThenBy(i => i.DueAt ?? DateTime.MaxValue).ToList(),
+            Notices = noticeDtos,
+            RecognitionReceived = received.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays, includeNotesAndAttachments: false)).ToList(),
+            RecognitionGiven = given.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays, includeNotesAndAttachments: false)).ToList(),
+            RecentRecords = recent.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays)).ToList(),
+            Appraisal = appraisalDto,
+            RecognitionBudget = await BuildRecognitionBudgetAsync(_policy, organizationId, me.Id),
+            UnacknowledgedRecords = unacknowledged,
+            LeaderboardMode = policy.LeaderboardMode
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // My records, my trail, my colleagues, my file
+    // ---------------------------------------------------------------------
+
+    [HttpGet("records")]
+    [ProducesResponseType(typeof(StaffRecordSearchResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyRecords([FromQuery] int page = 1, [FromQuery] int pageSize = 25)
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+        var policy = await _policy.GetAsync(self.OrganizationId);
+
+        var query = MyRecordsQuery(self.User!.Id, self.BranchId);
+        var total = await query.CountAsync();
+        var records = await query.OrderByDescending(r => r.OccurredAt).ThenByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .ToListAsync();
+        var names = await NamesForAsync(records);
+
+        return Ok(new StaffRecordSearchResultDto
+        {
+            Items = records.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays)).ToList(),
+            TotalCount = total
+        });
+    }
+
+    /// <summary>The subject-access trail: everything anyone did on my file, including who viewed and who exported it.</summary>
+    [HttpGet("activity")]
+    [ProducesResponseType(typeof(ActivityLogPageDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyActivity([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+        var policy = await _policy.GetAsync(self.OrganizationId);
+
+        var query = Db.ActivityEvents.AsNoTracking().Where(e => e.OrganizationId == self.OrganizationId && e.SubjectUserId == self.User!.Id);
+        var total = await query.CountAsync();
+        var counts = await query.GroupBy(e => e.Action).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
+        var events = await query.OrderByDescending(e => e.OccurredAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        var names = await BuildNamesAsync(events.Select(e => e.ActorUserId).Append(self.User!.Id));
+
+        return Ok(new ActivityLogPageDto
+        {
+            Items = events.Select(e => StaffPerformanceMapping.ToDto(e, names)).ToList(),
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize,
+            AttributionRetentionDays = policy.ActivityAttributionRetentionDays,
+            CountsByAction = counts
+        });
+    }
+
+    /// <summary>Everyone I might recognise: the active staff of my organization, minus me and the platform SuperAdmin.</summary>
+    [HttpGet("colleagues")]
+    [ProducesResponseType(typeof(List<StaffColleagueDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetColleagues()
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+
+        var colleagues = await Db.Users.AsNoTracking()
+            .Where(u => u.OrganizationId == self.OrganizationId && u.IsActive && u.Id != self.User!.Id && u.Role.Code != RoleCodes.SuperAdmin)
+            .OrderBy(u => u.FirstName).ThenBy(u => u.LastName)
+            .Select(u => new { u.Id, u.FirstName, u.LastName, u.Username, u.JobTitle, u.DepartmentIds })
+            .ToListAsync();
+        var departmentNames = await DepartmentNamesAsync(self.OrganizationId);
+
+        return Ok(colleagues.Select(c => new StaffColleagueDto
+        {
+            UserId = c.Id,
+            FullName = $"{c.FirstName} {c.LastName}".Trim() is { Length: > 0 } n ? n : c.Username,
+            JobTitle = c.JobTitle,
+            DepartmentNames = c.DepartmentIds == null || c.DepartmentIds.Length == 0
+                ? null
+                : string.Join(", ", c.DepartmentIds.Select(id => departmentNames.GetValueOrDefault(id)).Where(x => x != null))
+        }).ToList());
+    }
+
+    /// <summary>
+    /// Everything the module holds about me, for the subject-access request: records with their
+    /// notes and evidence (Standard and Confidential), my appraisals, my activity trail, the notices
+    /// I acknowledged, and who to write to about it. The export itself is logged on the trail — the
+    /// next export will show this one.
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(typeof(StaffFileExportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportMyFile()
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        var (me, organizationId, branchId) = (self.User!, self.OrganizationId, self.BranchId);
+        var policy = await _policy.GetAsync(organizationId);
+        var period = _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
+
+        var records = await RecordsWithIncludes()
+            .Where(r => r.SubjectUserId == me.Id && r.Visibility != WelfareVisibility.Restricted && (r.Status != StaffRecordStatus.Draft || r.LoggedByUserId == me.Id))
+            .OrderByDescending(r => r.OccurredAt)
+            .ToListAsync();
+        var appraisals = await Db.StaffAppraisals.AsNoTracking().Include(a => a.Subject).Include(a => a.Appraiser)
+            .Where(a => a.SubjectUserId == me.Id)
+            .OrderByDescending(a => a.PeriodStart)
+            .ToListAsync();
+        var events = await Db.ActivityEvents.AsNoTracking()
+            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == me.Id)
+            .OrderByDescending(e => e.OccurredAt)
+            .ToListAsync();
+        // Acknowledgements live in a jsonb map; the key is the user id as a string, and Npgsql's
+        // jsonb containment is not something we want to hand-write, so filter in memory over the
+        // notices that could have reached me at all.
+        var acknowledged = (await Db.StaffNotices.AsNoTracking()
+                .Where(n => n.OrganizationId == organizationId && n.Acknowledgements != "{}")
+                .ToListAsync())
+            .Where(n => StaffPerformanceMapping.ParseAcknowledgements(n.Acknowledgements).ContainsKey(me.Id))
+            .OrderByDescending(n => n.PublishAt)
+            .ToList();
+
+        var names = await BuildNamesAsync(records.Select(r => (Guid?)r.LoggedByUserId)
+            .Concat(records.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId))
+            .Concat(appraisals.SelectMany(a => new[] { (Guid?)a.AppraiserUserId, a.ModeratorUserId, a.SignedByUserId }))
+            .Concat(events.Select(e => e.ActorUserId))
+            .Concat(acknowledged.Select(n => (Guid?)n.PublishedByUserId))
+            .Append(me.Id).Append(me.LineManagerUserId));
+        var departmentNames = await DepartmentNamesAsync(organizationId);
+        var myDepartmentText = string.Join(", ", (me.DepartmentIds ?? Array.Empty<Guid>()).Select(id => departmentNames.GetValueOrDefault(id)).Where(n => n != null));
+        var score = await _scoring.ComputeAsync(organizationId, branchId, me.Id, period, includeRank: true);
+        var mayApprove = await HasPermissionAsync(Permissions.StaffAppraisalsApprove);
+        var mayConduct = await HasPermissionAsync(Permissions.StaffAppraisalsConduct);
+
+        var export = new StaffFileExportDto
+        {
+            Me = StaffPerformanceMapping.ToDto(me, names, departmentNames, score),
+            GeneratedAt = DateTime.UtcNow,
+            Records = records.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays)).ToList(),
+            Appraisals = appraisals.Select(a => StaffPerformanceMapping.ToDto(a, names, myDepartmentText,
+                a.FinalRating is { } fr ? policy.Bands.FirstOrDefault(b => b.Rating == fr)?.Name : null,
+                liveScore: null, me.Id, mayApprove, mayConduct)).ToList(),
+            Activity = events.Select(e => StaffPerformanceMapping.ToDto(e, names)).ToList(),
+            AcknowledgedNotices = await MapNoticesAsync(acknowledged, me.Id),
+            DataProtectionOfficerContact = policy.DataProtectionOfficerContact
+        };
+
+        await Activity.RecordAsync(ActivityActions.FileExported, nameof(User), me.Id, me.Id,
+            $"{StaffPerformanceMapping.FullName(me)} exported their own file ({records.Count} records, {appraisals.Count} appraisals)",
+            new { Records = records.Count, Appraisals = appraisals.Count, Events = events.Count }, branchId, organizationId);
+
+        return Ok(export);
+    }
+
+    // ---------------------------------------------------------------------
+    // Notices: acknowledge
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Adds me to the notice's acknowledgement map. Idempotent: the first timestamp stands. The
+    /// notice must be live and addressed to me — an id for one that is not reads as not found, so
+    /// the endpoint cannot be used to enumerate notices meant for other audiences.
+    /// </summary>
+    [HttpPost("notices/{id:guid}/acknowledge")]
+    [ProducesResponseType(typeof(StaffNoticeDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AcknowledgeNotice(Guid id)
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        var me = self.User!;
+        var now = DateTime.UtcNow;
+
+        var notice = await NoticesForMeQuery(self.OrganizationId, self.BranchId, me.Id, me.DepartmentIds ?? Array.Empty<Guid>(), me.Role?.Code ?? string.Empty, _policy.GroupFor(me.Role?.Code), now)
+            .FirstOrDefaultAsync(n => n.Id == id);
+        if (notice == null) return NotFoundProblem("Notice not found");
+
+        var acks = StaffPerformanceMapping.ParseAcknowledgements(notice.Acknowledgements);
+        if (!acks.ContainsKey(me.Id))
+        {
+            acks[me.Id] = now;
+            notice.Acknowledgements = StaffPerformanceMapping.SerializeAcknowledgements(acks);
+            await Db.SaveChangesAsync();
+
+            await Activity.RecordAsync(ActivityActions.NoticeAcknowledged, nameof(StaffNotice), notice.Id, me.Id,
+                $"{StaffPerformanceMapping.FullName(me)} acknowledged notice '{notice.Title}'", null, notice.BranchId ?? self.BranchId, self.OrganizationId);
+        }
+
+        return Ok((await MapNoticesAsync(new[] { notice }, me.Id)).First());
+    }
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    /// <summary>Who is calling, from the JWT, and which branch their portal is about.</summary>
+    private async Task<(IActionResult? Error, User? User, Guid OrganizationId, Guid BranchId)> ResolveSelfAsync()
+    {
+        var userId = CurrentUserId();
+        if (userId == Guid.Empty)
+            return (Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = "User ID not found in authentication token.", Status = StatusCodes.Status401Unauthorized }), null, default, default);
+
+        // Tracked (not AsNoTracking): nothing here writes the user, but the notice acknowledgement
+        // shares the context and a mixed tracking state is not worth the saving.
+        var me = await Db.Users.Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == userId && u.IsActive);
+        if (me == null)
+            return (Unauthorized(new ProblemDetails { Title = "Unauthorized", Detail = "Your account is not active.", Status = StatusCodes.Status401Unauthorized }), null, default, default);
+
+        var branchId = me.AssignedBranchId;
+        if (branchId == null || !await Db.Branches.AnyAsync(b => b.Id == branchId && b.OrganizationId == me.OrganizationId))
+        {
+            branchId = await Db.Branches.Where(b => b.OrganizationId == me.OrganizationId && b.IsActive)
+                .OrderBy(b => b.CreatedAt).Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
+        }
+        if (branchId == null)
+            return (NotFoundProblem("Your organization has no active branch"), null, default, default);
+
+        return (null, me, me.OrganizationId, branchId.Value);
+    }
+
+    private IQueryable<StaffPerformanceRecord> RecordsWithIncludes()
+        => Db.StaffPerformanceRecords.AsNoTracking()
+            .Include(r => r.Parameter).Include(r => r.Subject).Include(r => r.Duty)
+            .Include(r => r.Notes).Include(r => r.Attachments);
+
+    /// <summary>The self rule: about me, below Restricted, no draft unless I wrote it. Across branches, since a file follows the person.</summary>
+    private IQueryable<StaffPerformanceRecord> MyRecordsQuery(Guid me, Guid branchId)
+        => RecordsWithIncludes().Where(r => r.SubjectUserId == me
+                                            && r.Visibility != WelfareVisibility.Restricted
+                                            && (r.Status != StaffRecordStatus.Draft || r.LoggedByUserId == me));
+
+    /// <summary>
+    /// The audience rule as a query: live, published, for my branch or every branch, for my
+    /// department (null or empty = any), for my role (null or empty = any), for my staff group
+    /// (null or AllStaff = any). This is <see cref="StaffNoticeFanOut.IsRecipient"/> translated to
+    /// SQL — the fan-out decides who is TOLD, this decides who can SEE, and the two must agree or a
+    /// person is notified about a notice their portal then hides.
+    /// </summary>
+    private IQueryable<StaffNotice> NoticesForMeQuery(Guid organizationId, Guid branchId, Guid me, Guid[] myDepartments, string myRole, StaffGroup myGroup, DateTime now)
+        => Db.StaffNotices
+            .Where(n => n.OrganizationId == organizationId && n.IsActive
+                        && n.PublishAt <= now && (n.ExpiresAt == null || n.ExpiresAt > now)
+                        && (n.BranchId == null || n.BranchId == branchId)
+                        && (n.AudienceDepartmentIds == null || n.AudienceDepartmentIds.Length == 0 || n.AudienceDepartmentIds.Any(id => myDepartments.Contains(id)))
+                        && (n.AudienceRoleCodes == null || n.AudienceRoleCodes.Length == 0 || n.AudienceRoleCodes.Contains(myRole))
+                        && (n.AudienceStaffGroup == null || n.AudienceStaffGroup == StaffGroup.AllStaff || n.AudienceStaffGroup == myGroup));
+
+    private async Task<List<StaffNoticeDto>> MapNoticesAsync(IReadOnlyCollection<StaffNotice> notices, Guid me)
+    {
+        if (notices.Count == 0) return new List<StaffNoticeDto>();
+
+        var mediaIds = notices.Where(n => n.AttachmentMediaContentIds != null).SelectMany(n => n.AttachmentMediaContentIds!).Distinct().ToList();
+        var media = mediaIds.Count == 0
+            ? new Dictionary<Guid, (string Name, string? Url)>()
+            : await Db.MediaContents.AsNoTracking()
+                .Where(m => mediaIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.Name, m.FileUrl })
+                .ToDictionaryAsync(m => m.Id, m => (Name: m.Name, Url: m.FileUrl));
+
+        var names = await BuildNamesAsync(notices.Select(n => (Guid?)n.PublishedByUserId));
+        return notices.Select(n => StaffPerformanceMapping.ToDto(n, names, me, recipientCount: 0,
+            (n.AttachmentMediaContentIds ?? Array.Empty<Guid>())
+                .Where(media.ContainsKey)
+                .Select(id => new NoticeAttachmentDto { MediaContentId = id, Name = media[id].Name, FileUrl = UploadLinks.Sign(media[id].Url) })
+                .ToList())).ToList();
+    }
+
+    private async Task<List<StaffDutyDto>> MapDutiesAsync(List<StaffDuty> duties, Guid me, Guid organizationId, Guid branchId, bool mayManage)
+    {
+        if (duties.Count == 0) return new List<StaffDutyDto>();
+        var dutyIds = duties.Select(d => d.Id).ToList();
+
+        var marked = await Db.StaffPerformanceRecords.AsNoTracking()
+            .Where(r => r.DutyId != null && dutyIds.Contains(r.DutyId.Value) && r.Status == StaffRecordStatus.Final)
+            .Select(r => new { DutyId = r.DutyId!.Value, r.SubjectUserId, r.Outcome })
+            .ToListAsync();
+        var markedCounts = marked.GroupBy(m => m.DutyId).ToDictionary(g => g.Key, g => g.Count());
+        var myOutcomes = marked.Where(m => m.SubjectUserId == me).GroupBy(m => m.DutyId).ToDictionary(g => g.Key, g => (DutyOutcome?)g.First().Outcome);
+
+        var needsBranchCount = duties.Any(d => d.ExpectedUserIds == null);
+        var branchStaffCount = needsBranchCount
+            ? await Db.Users.CountAsync(u => u.OrganizationId == organizationId && u.IsActive && (u.AssignedBranchId == branchId || u.AssignedBranchId == null) && u.Role.Code != RoleCodes.SuperAdmin)
+            : 0;
+
+        var minutesIds = duties.Where(d => d.MinutesMediaContentId != null).Select(d => d.MinutesMediaContentId!.Value).Distinct().ToList();
+        var minutes = minutesIds.Count == 0
+            ? new Dictionary<Guid, string?>()
+            : await Db.MediaContents.AsNoTracking().Where(m => minutesIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.FileUrl);
+
+        var names = await BuildNamesAsync(duties.SelectMany(d => d.RecorderUserIds.Select(id => (Guid?)id)).Concat(duties.Select(d => d.RegisterClosedByUserId)));
+
+        return duties.Select(d => StaffPerformanceMapping.ToDto(d, names, me, mayManage,
+            expectedCount: d.ExpectedUserIds?.Length ?? branchStaffCount,
+            markedCount: markedCounts.GetValueOrDefault(d.Id),
+            myOutcome: myOutcomes.GetValueOrDefault(d.Id),
+            minutesUrl: d.MinutesMediaContentId is { } mid ? minutes.GetValueOrDefault(mid) : null)).ToList();
+    }
+
+    private Task<StaffPerformanceMapping.NameLookup> NamesForAsync(IEnumerable<StaffPerformanceRecord> records)
+    {
+        var list = records.ToList();
+        return BuildNamesAsync(list.Select(r => (Guid?)r.LoggedByUserId)
+            .Concat(list.Select(r => (Guid?)r.SubjectUserId))
+            .Concat(list.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId)));
+    }
+}

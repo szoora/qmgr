@@ -356,64 +356,27 @@
 @* ---------------- Activity ---------------- *@
 <QModal @bind-Visible="showActivity" Title="@($"Activity — {activityDoc?.Name}")" Size="xl">
     <ChildContent>
-        @if (isLoadingActivity)
+        @* The loading, tiles, retention note, event table and CSV export are QActivityLog's; this
+           page only shapes its own data into rows and adds the pages-read bars between them. *@
+        @if (isLoadingActivity || activity != null)
         {
-            <div class="doclib-empty"><QSpinner Size="lg" /></div>
-        }
-        else if (activity != null)
-        {
-            <div class="doclib-tiles">
-                <div class="doclib-tile"><span>Opens</span><strong>@activity.Opens</strong></div>
-                <div class="doclib-tile"><span>Verified viewers</span><strong>@activity.UniqueViewers</strong></div>
-                <div class="doclib-tile"><span>Anonymous opens</span><strong>@activity.AnonymousOpens</strong></div>
-                <div class="doclib-tile"><span>Downloads</span><strong>@activity.Downloads</strong></div>
-                <div class="doclib-tile"><span>Refused attempts</span><strong>@activity.Denials</strong></div>
-                <div class="doclib-tile"><span>Links (live / all)</span><strong>@activity.LinksActive / @activity.LinksTotal</strong></div>
-            </div>
-            <p class="doclib-hint">
-                Last opened @(activity.LastOpenedAt.HasValue ? QDateFormat.DT(activity.LastOpenedAt) : "never").
-                Viewer email, address and browser are kept for <strong>@activity.AttributionRetentionDays days</strong> and then blanked; the events themselves are kept.
-            </p>
-
-            @if (activity.Pages.Count > 0)
-            {
-                <h4>Pages read</h4>
-                <div class="doclib-pages">
-                    @{ var maxDwell = Math.Max(1, activity.Pages.Max(p => p.TotalDwellSeconds)); }
-                    @foreach (var p in activity.Pages)
-                    {
-                        <div class="doclib-page-row">
-                            <span class="doclib-page-no">p.@p.Page</span>
-                            <span class="doclib-page-bar"><span style="width:@(p.TotalDwellSeconds * 100 / maxDwell)%"></span></span>
-                            <span class="doclib-page-val">@p.Views view(s) · @FormatDwell(p.TotalDwellSeconds)</span>
-                        </div>
-                    }
-                </div>
-            }
-
-            <h4>Recent events</h4>
-            <div class="doclib-table-wrap">
-                <table class="doclib-table">
-                    <thead><tr><th>When</th><th>Link</th><th>Event</th><th>Viewer</th><th>From</th><th>Detail</th></tr></thead>
-                    <tbody>
-                        @foreach (var e in activity.RecentEvents)
-                        {
-                            <tr class="@(e.Success ? "" : "doclib-row--fail")">
-                                <td>@QDateFormat.DT(e.CreatedAt)</td>
-                                <td>@(e.ShareLabel ?? e.ShareId.ToString("N")[..8])</td>
-                                <td>@EventLabel(e)</td>
-                                <td>@(e.Email ?? e.ActorName ?? "—")</td>
-                                <td>@(string.IsNullOrEmpty(e.IpAddress) && string.IsNullOrEmpty(e.UserAgent) ? "—" : $"{e.IpAddress} {e.UserAgent}".Trim())</td>
-                                <td>@(e.Page.HasValue ? $"page {e.Page}{(e.DwellSeconds.HasValue ? $", {FormatDwell(e.DwellSeconds.Value)}" : "")}" : e.Detail)</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+            <QActivityLog Rows="@ActivityRows"
+                          Tiles="@ActivityTiles"
+                          Loading="@isLoadingActivity"
+                          RetentionNote="@ActivityNote"
+                          RefHeader="Link"
+                          OnExportCsv="@ExportActivity"
+                          Exporting="@isExporting"
+                          EmptyText="Nothing has happened on this document's links yet.">
+                @if (activity is { Pages.Count: > 0 })
+                {
+                    <h4 class="doclib-activity-h4">Pages read</h4>
+                    <QBarList Items="@PageBars" MinPercent="0" />
+                }
+            </QActivityLog>
         }
     </ChildContent>
     <FooterContent>
-        <QButton Text="Export CSV" Icon="filetype-csv" Variant="secondary" OnClick="@ExportActivity" Disabled="@(activity == null || isExporting)" />
         <QButton Text="Close" Variant="primary" OnClick="@(() => showActivity = false)" />
     </FooterContent>
 </QModal>
@@ -490,20 +453,8 @@
     .doclib-share-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
     .doclib-shares-form { display: flex; flex-direction: column; gap: .7rem; min-width: 0; }
     .doclib-form-actions { display: flex; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
-    .doclib-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .6rem; margin-bottom: .75rem; }
-    .doclib-tile { background: var(--qm-bg-elevated, var(--qm-bg-card)); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: .6rem .75rem; display: flex; flex-direction: column; }
-    .doclib-tile span { font-size: .75rem; color: var(--qm-text-secondary); }
-    .doclib-tile strong { font-size: 1.35rem; font-family: var(--qm-font-display); }
-    .doclib-pages { display: flex; flex-direction: column; gap: .3rem; margin-bottom: 1rem; }
-    .doclib-page-row { display: grid; grid-template-columns: 44px 1fr 150px; gap: .5rem; align-items: center; font-size: .8rem; }
-    .doclib-page-bar { height: 8px; background: var(--qm-border); border-radius: 4px; overflow: hidden; }
-    .doclib-page-bar span { display: block; height: 100%; background: var(--qm-primary); }
-    .doclib-page-val { color: var(--qm-text-secondary); text-align: right; }
-    .doclib-table-wrap { overflow-x: auto; }
-    .doclib-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
-    .doclib-table th, .doclib-table td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--qm-border); white-space: nowrap; }
-    .doclib-table th { color: var(--qm-text-secondary); font-weight: 600; }
-    .doclib-row--fail td { color: var(--qm-danger); }
+    /* The activity modal's tiles, bars and event table are QActivityLog / QBarList (q-components.css). */
+    .doclib-activity-h4 { font-size: .95rem; margin: 0 0 .5rem; font-family: var(--qm-font-display); }
     /* The modal is 1140px at most and narrower than the viewport below that, so the paired rows
        and the links/form split stack well before phone width — a 300px column cannot hold a date
        picker and a time field side by side, and a flex/grid child will not shrink below its
@@ -512,8 +463,6 @@
     @@media (max-width: 960px) {
         .doclib-shares-layout, .doclib-two { grid-template-columns: 1fr; }
         .doclib-shares-layout { gap: 1.25rem; }
-        .doclib-page-row { grid-template-columns: 40px 1fr 110px; }
-        .doclib-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @@media (max-width: 480px) {
         .doclib-datetime { grid-template-columns: 1fr; }
@@ -892,6 +841,39 @@
         catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load activity", ex.Message); }
         finally { isLoadingActivity = false; }
     }
+
+    private IReadOnlyList<(string Label, string Value)> ActivityTiles => activity == null
+        ? Array.Empty<(string, string)>()
+        : new (string, string)[]
+        {
+            ("Opens", activity.Opens.ToString()),
+            ("Verified viewers", activity.UniqueViewers.ToString()),
+            ("Anonymous opens", activity.AnonymousOpens.ToString()),
+            ("Downloads", activity.Downloads.ToString()),
+            ("Refused attempts", activity.Denials.ToString()),
+            ("Links (live / all)", $"{activity.LinksActive} / {activity.LinksTotal}")
+        };
+
+    private string? ActivityNote => activity == null
+        ? null
+        : $"Last opened {(activity.LastOpenedAt.HasValue ? QDateFormat.DT(activity.LastOpenedAt) : "never")}. " +
+          $"Viewer email, address and browser are kept for {activity.AttributionRetentionDays} days and then blanked; the events themselves are kept.";
+
+    private IReadOnlyList<QBarItem> PageBars => activity == null
+        ? Array.Empty<QBarItem>()
+        : activity.Pages.Select(p => new QBarItem($"p.{p.Page}", p.TotalDwellSeconds,
+            Count: $"{p.Views} view(s) · {FormatDwell(p.TotalDwellSeconds)}")).ToList();
+
+    private IReadOnlyList<QActivityRow> ActivityRows => activity == null
+        ? Array.Empty<QActivityRow>()
+        : activity.RecentEvents.Select(e => new QActivityRow(
+            At: e.CreatedAt,
+            Actor: e.Email ?? e.ActorName ?? "",
+            Summary: EventLabel(e),
+            Detail: e.Page.HasValue ? $"page {e.Page}{(e.DwellSeconds.HasValue ? $", {FormatDwell(e.DwellSeconds.Value)}" : "")}" : e.Detail,
+            Where: string.IsNullOrEmpty(e.IpAddress) && string.IsNullOrEmpty(e.UserAgent) ? null : $"{e.IpAddress} {e.UserAgent}".Trim(),
+            Failed: !e.Success,
+            Ref: e.ShareLabel ?? e.ShareId.ToString("N")[..8])).ToList();
 
     private async Task ExportActivity()
     {

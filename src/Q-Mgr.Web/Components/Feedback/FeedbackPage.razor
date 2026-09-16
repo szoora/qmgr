@@ -125,25 +125,8 @@
                star glyphs are decorative, so the label is the only thing that has to read well. *@
             <fieldset class="rating-section">
                 <legend>How would you rate your experience?</legend>
-                <div class="star-rating" role="radiogroup" aria-label="Overall service rating, 1 to 5 stars">
-                    @for (int i = 1; i <= 5; i++)
-                    {
-                        var rating = i;
-                        <button type="button"
-                                role="radio"
-                                aria-checked="@(feedbackRating == rating ? "true" : "false")"
-                                aria-label="@($"{rating} out of 5 stars - {RatingWord(rating)}")"
-                                class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
-                                @onclick="@(() => feedbackRating = rating)"
-                                @onmouseenter="@(() => hoverRating = rating)"
-                                @onmouseleave="@(() => hoverRating = 0)">
-                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" />
-                        </button>
-                    }
-                </div>
-                <div class="rating-label" aria-live="polite">
-                    @GetRatingLabel()
-                </div>
+                <QRating @bind-Value="feedbackRating" Labels="@RatingWords" ShowLabels="true"
+                         AriaLabel="Overall service rating, 1 to 5 stars" Class="feedback-rating" />
             </fieldset>
 
             <fieldset class="category-section">
@@ -207,21 +190,10 @@
 
                         @if (q.QuestionType == FeedbackQuestionType.Rating)
                         {
-                            <div class="star-rating star-rating--sm" role="radiogroup" aria-label="@q.QuestionText">
-                                @for (int i = 1; i <= 5; i++)
-                                {
-                                    var star = i;
-                                    var selected = int.TryParse(answer, out var current) ? current : 0;
-                                    <button type="button"
-                                            role="radio"
-                                            aria-checked="@(selected == star ? "true" : "false")"
-                                            aria-label="@($"{star} out of 5 stars - {RatingWord(star)}")"
-                                            class="star-btn star-btn--sm @(selected >= star ? "active" : "")"
-                                            @onclick="@(() => SetAnswer(q.Id, star.ToString()))">
-                                        <QIcon Name="@(selected >= star ? "star-fill" : "star")" />
-                                    </button>
-                                }
-                            </div>
+                            var selected = int.TryParse(answer, out var current) ? current : 0;
+                            var questionId = q.Id;
+                            <QRating Value="@selected" ValueChanged="@(v => SetAnswer(questionId, v.ToString()))"
+                                     Size="sm" Labels="@RatingWords" AriaLabel="@q.QuestionText" />
                         }
                         else
                         {
@@ -603,8 +575,8 @@
         border: 0;
     }
 
-    /* Every interactive control here is keyboard-reachable; make that visible. */
-    .star-btn:focus-visible,
+    /* Every interactive control here is keyboard-reachable; make that visible. (The star rating
+       is QRating, which carries its own focus ring.) */
     .category-chip:focus-visible,
     .nps-btn:focus-visible,
     .submit-btn:focus-visible,
@@ -632,19 +604,6 @@
         outline: none;
         border-color: var(--qm-primary);
         background: var(--qm-bg-card-hover);
-    }
-
-    .star-rating--sm {
-        gap: 8px;
-    }
-
-    .star-btn--sm {
-        width: 48px;
-        height: 48px;
-    }
-
-    .star-btn--sm .rzi {
-        font-size: 24px;
     }
 
     /* Net Promoter Score */
@@ -750,60 +709,8 @@
         border-radius: var(--qm-radius-md);
     }
 
-    /* Star Rating */
-    .star-rating {
-        display: flex;
-        justify-content: center;
-        gap: 12px;
-        margin-bottom: 12px;
-    }
-
-    .star-btn {
-        background: var(--qm-bg-elevated);
-        border: 2px solid var(--qm-border);
-        border-radius: var(--qm-radius-xl);
-        width: 64px;
-        height: 64px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .star-btn .rzi {
-        font-size: 36px;
-        color: var(--qm-text-muted);
-        transition: all 0.3s ease;
-    }
-
-    .star-btn:hover, .star-btn.hover {
-        background: rgba(var(--qm-warning-rgb), 0.1);
-        border-color: rgba(var(--qm-warning-rgb), 0.3);
-        transform: scale(1.1);
-    }
-
-    .star-btn:hover .rzi, .star-btn.hover .rzi {
-        color: var(--qm-warning);
-    }
-
-    .star-btn.active {
-        background: rgba(var(--qm-warning-rgb), 0.15);
-        border-color: var(--qm-warning);
-    }
-
-    .star-btn.active .rzi {
-        color: var(--qm-warning);
-        text-shadow: 0 0 20px rgba(var(--qm-warning-rgb), 0.5);
-    }
-
-    .rating-label {
-        text-align: center;
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--qm-primary);
-        min-height: 24px;
-    }
+    /* Star rating: QRating (q-components.css). */
+    .feedback-rating { margin-bottom: 12px; }
 
     /* Categories */
     .category-chips {
@@ -979,24 +886,6 @@
             font-size: 26px;
         }
 
-        .star-btn {
-            width: 52px;
-            height: 52px;
-        }
-
-        .star-btn .rzi {
-            font-size: 28px;
-        }
-
-        .star-btn--sm {
-            width: 42px;
-            height: 42px;
-        }
-
-        .star-btn--sm .rzi {
-            font-size: 20px;
-        }
-
         /* 11 columns won't fit a phone: wrap to two rows of six/five instead of shrinking the
            tap targets below the 38px minimum. */
         .nps-scale {
@@ -1037,7 +926,6 @@
     private int existingRating = 0;
 
     private int feedbackRating = 0;
-    private int hoverRating = 0;
     private int? npsScore;
     private FeedbackCategory selectedCategory = FeedbackCategory.General;
     private string? feedbackComment;
@@ -1123,7 +1011,8 @@
             ? new List<string> { "Yes", "No" }
             : question.Options ?? new List<string>();
 
-    private string GetRatingLabel() => feedbackRating == 0 ? "Tap a star to rate" : RatingWord(feedbackRating);
+    /// <summary>One word per star, index 0 = one star — QRating's tooltip and label text.</summary>
+    private static readonly string[] RatingWords = { "Very Poor", "Poor", "Average", "Good", "Excellent" };
 
     private static string RatingWord(int rating) => rating switch
     {

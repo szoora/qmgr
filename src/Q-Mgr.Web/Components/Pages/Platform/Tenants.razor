@@ -132,13 +132,9 @@
                 </div>
 
                 <!-- Pagination -->
-                <div class="pagination">
-                    <QButton Text="Previous" Icon="chevron-left" Variant="ghost" Size="sm"
-                             OnClick="@PreviousPage" Disabled="@(currentPage <= 1)" />
-                    <span class="page-info">Page @currentPage of @pagedResult.TotalPages</span>
-                    <QButton Text="Next" Icon="chevron-right" Variant="ghost" Size="sm"
-                             OnClick="@NextPage" Disabled="@(currentPage >= pagedResult.TotalPages)" />
-                </div>
+                <QPager Count="@pagedResult.TotalCount" PageSize="@pageSize"
+                        PageIndex="@(currentPage - 1)" PageIndexChanged="@OnPageChanged"
+                        ItemLabel="tenants" Class="tenants-pager" />
             }
             else
             {
@@ -555,20 +551,7 @@
         color: var(--qm-success);
     }
 
-    .pagination {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 16px;
-        margin-top: 20px;
-        padding-top: 16px;
-        border-top: 1px solid var(--qm-border);
-    }
-
-    .page-info {
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
+    .tenants-pager { margin-top: 20px; padding-top: 16px; }
 
     .details-grid {
         display: grid;
@@ -1054,22 +1037,10 @@
         }
     }
 
-    private async Task PreviousPage()
+    private async Task OnPageChanged(int pageIndex)
     {
-        if (currentPage > 1)
-        {
-            currentPage--;
-            await LoadTenants();
-        }
-    }
-
-    private async Task NextPage()
-    {
-        if (currentPage < pagedResult.TotalPages)
-        {
-            currentPage++;
-            await LoadTenants();
-        }
+        currentPage = pageIndex + 1;
+        await LoadTenants();
     }
 
     private string GetStatusVariant(TenantStatus status) => status switch

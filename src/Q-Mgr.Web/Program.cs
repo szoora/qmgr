@@ -96,6 +96,7 @@ builder.Services.AddScoped<IReportsApiService, ReportsApiService>();
 builder.Services.AddScoped<IAppointmentApiService, AppointmentApiService>();
 builder.Services.AddScoped<IStudentApiService, StudentApiService>();
 builder.Services.AddScoped<IClassTeacherApiService, ClassTeacherApiService>();
+builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();

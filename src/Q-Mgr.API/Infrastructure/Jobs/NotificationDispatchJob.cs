@@ -54,7 +54,7 @@ public class NotificationDispatchJob
     /// would look to Hangfire like a success and never be retried.
     /// </summary>
     [AutomaticRetry(Attempts = MaxAttempts)]
-    public async Task DispatchAsync(
+    public Task DispatchAsync(
         Guid notificationId,
         NotificationChannel channel,
         Guid organizationId,
@@ -62,13 +62,40 @@ public class NotificationDispatchJob
         string subject,
         string message,
         PerformContext? context = null)
+        => DispatchCoreAsync(notificationId, channel, organizationId, recipient, subject, message, bodyIsHtml: false, context);
+
+    /// <summary>
+    /// Email only, body already HTML (a staff digest with tables — see
+    /// CreateNotificationRequest.EmailHtmlBody). A SEPARATE job method rather than a flag on
+    /// <see cref="DispatchAsync"/>: Hangfire stores a queued job by method signature, so widening
+    /// the existing one would leave every job queued before a deploy unable to deserialise.
+    /// </summary>
+    [AutomaticRetry(Attempts = MaxAttempts)]
+    public Task DispatchHtmlEmailAsync(
+        Guid notificationId,
+        Guid organizationId,
+        string recipient,
+        string subject,
+        string html,
+        PerformContext? context = null)
+        => DispatchCoreAsync(notificationId, NotificationChannel.Email, organizationId, recipient, subject, html, bodyIsHtml: true, context);
+
+    private async Task DispatchCoreAsync(
+        Guid notificationId,
+        NotificationChannel channel,
+        Guid organizationId,
+        string recipient,
+        string subject,
+        string message,
+        bool bodyIsHtml,
+        PerformContext? context)
     {
         var attempt = context?.GetJobParameter<int>("RetryCount") ?? 0;
 
         var result = channel switch
         {
             NotificationChannel.Sms => await _notificationService.SendSmsAsync(organizationId, recipient, message),
-            NotificationChannel.Email => await _notificationService.SendEmailAsync(organizationId, recipient, subject, WrapEmailBody(subject, message), isHtml: true),
+            NotificationChannel.Email => await _notificationService.SendEmailAsync(organizationId, recipient, subject, bodyIsHtml ? message : WrapEmailBody(subject, message), isHtml: true),
             _ => ChannelSendResult.Skipped($"{channel} has no dispatcher.")
         };
 

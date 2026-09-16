@@ -48,7 +48,7 @@
                     <div class="action-row-body">
                         <div class="action-row-title">
                             <strong>@record.StudentName</strong>
-                            <span class="status-chip status-chip--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
+                            <QChip Text="@record.Status.ToString()" Size="sm" Color="@WelfareStatusColor(record.Status)" />
                             @if (isOverdue)
                             {
                                 <span class="overdue-tag">Overdue</span>
@@ -88,11 +88,6 @@
     .action-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
     .action-row-desc { margin: 4px 0; font-size: 13px; color: var(--qm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .action-row-due { font-size: 12px; color: var(--qm-text-muted); }
-
-    .status-chip { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
-    .status-chip--open { background: color-mix(in srgb, var(--qm-welfare-concern) 12%, transparent); color: var(--qm-welfare-concern); }
-    .status-chip--underreview { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-accent-orange); }
-    .status-chip--actiontaken { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
 
     .overdue-tag { padding: 1px 7px; border-radius: 999px; background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); font-weight: 700; font-size: 10px; text-transform: uppercase; }
 </style>
@@ -152,6 +147,16 @@
             isLoading = false;
         }
     }
+
+    /// <summary>Status chip colour — the same hues WelfareReports uses, so a record reads the same on both pages.</summary>
+    private static string WelfareStatusColor(WelfareStatus status) => status switch
+    {
+        WelfareStatus.Open => "var(--qm-welfare-concern)",
+        WelfareStatus.UnderReview => "var(--qm-accent-orange)",
+        WelfareStatus.ActionTaken => "var(--qm-primary)",
+        WelfareStatus.Resolved => "var(--qm-accent-green)",
+        _ => "var(--qm-text-muted)"
+    };
 
     private static string CaseTypeIcon(WelfareCaseType caseType) => caseType switch
     {

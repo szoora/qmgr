@@ -1,0 +1,76 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    A person's avatar: their photograph when there is one, otherwise their initials on a colour
+    derived from the name. The hash is a stable FNV-1a over the characters, not string.GetHashCode,
+    which is randomised per process and would recolour every avatar on each restart.
+*@
+
+<span class="q-avatar q-avatar--@SizeClass @Class" title="@(Title ?? Name)" style="@Style" @attributes="AdditionalAttributes">
+    @if (!string.IsNullOrEmpty(PhotoUrl))
+    {
+        <img class="q-avatar__img" src="@PhotoUrl" alt="" />
+    }
+    else
+    {
+        <span class="q-avatar__initials" aria-hidden="true">@Initials</span>
+    }
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string? Name { get; set; }
+    [Parameter] public string? PhotoUrl { get; set; }
+
+    /// <summary>"sm" (28px) | "md" (40px) | "lg" (56px).</summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private static readonly string[] Palette =
+    {
+        "var(--qm-primary)",
+        "var(--qm-secondary)",
+        "var(--qm-success)",
+        "var(--qm-warning)",
+        "var(--qm-danger)"
+    };
+
+    private string SizeClass => Size.ToLowerInvariant() switch
+    {
+        "sm" or "small" => "sm",
+        "lg" or "large" => "lg",
+        _ => "md"
+    };
+
+    private string? Style => string.IsNullOrEmpty(PhotoUrl) ? $"background: {ColorFor(Name)}" : null;
+
+    private string Initials
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Name)) return "?";
+            var parts = Name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length == 1) return char.ToUpperInvariant(parts[0][0]).ToString();
+            return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+        }
+    }
+
+    public static string ColorFor(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "var(--qm-text-muted)";
+        unchecked
+        {
+            uint hash = 2166136261;
+            foreach (var ch in name.Trim().ToLowerInvariant())
+            {
+                hash ^= ch;
+                hash *= 16777619;
+            }
+            return Palette[(int)(hash % (uint)Palette.Length)];
+        }
+    }
+}

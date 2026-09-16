@@ -89,6 +89,13 @@ public record StaffMemberDto
     public DateTime? LastRecordAt { get; init; }
 }
 
+/// <summary>The staff directory, with the departments a scoped caller's view covers (empty for an unscoped caller).</summary>
+public record StaffDirectoryDto
+{
+    public List<StaffMemberDto> Items { get; init; } = new();
+    public List<string> ScopedToDepartments { get; init; } = new();
+}
+
 public record UpdateStaffStructureRequest
 {
     public List<Guid> DepartmentIds { get; set; } = new();

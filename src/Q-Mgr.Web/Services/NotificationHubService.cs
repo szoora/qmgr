@@ -34,6 +34,7 @@ public class NotificationClientService : INotificationClientService
     public event Func<VisitorActivityEvent, Task>? OnVisitorActivityReceived;
     public event Func<RosterImportProgressEvent, Task>? OnRosterImportProgressReceived;
     public event Func<Task>? OnPermissionsChanged;
+    public event Func<StaffScoreUpdatedEvent, Task>? OnStaffScoreUpdated;
     public event Action? ConnectionStateChanged;
 
     public HubConnectionState State => _hubConnection?.State ?? HubConnectionState.Disconnected;
@@ -136,6 +137,17 @@ public class NotificationClientService : INotificationClientService
         });
 
         // Role / permission changes pushed by UsersController / RolesController
+        // Staff Performance: a record about this user was finalised; the portal's score tile
+        // updates live. Same shape as the other events; subscribers unsubscribe before subscribing.
+        _hubConnection.On<StaffScoreUpdatedEvent>("StaffScoreUpdated", async update =>
+        {
+            if (OnStaffScoreUpdated != null)
+            {
+                try { await OnStaffScoreUpdated.Invoke(update); }
+                catch (Exception ex) { _logger.LogError(ex, "StaffScoreUpdated handler failed"); }
+            }
+        });
+
         _hubConnection.On<Guid>("PermissionsChanged", async _ =>
         {
             _logger.LogInformation("Server reported a permission change for the current user");

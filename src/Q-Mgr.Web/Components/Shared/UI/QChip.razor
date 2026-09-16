@@ -1,0 +1,92 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    A small labelled pill. Three uses share it: a status chip (Variant or Color), a removable
+    filter chip (Removable + OnRemove) and an attachment link (Href opens in a new tab). Color is
+    any CSS colour — a category colour or var(--qm-welfare-concern) — and tints the background
+    through color-mix, with a plain background declared first as the fallback for a browser
+    without it (see CLAUDE.md on tints that sit under a themed accent).
+*@
+
+@if (!string.IsNullOrEmpty(Href))
+{
+    <a class="@RootClass q-chip--link" href="@Href" target="_blank" rel="noopener" title="@Title" style="@InlineStyle" @attributes="AdditionalAttributes">
+        @Inner
+    </a>
+}
+else
+{
+    <span class="@RootClass" title="@Title" style="@InlineStyle" @attributes="AdditionalAttributes">
+        @Inner
+        @if (Removable)
+        {
+            <button type="button" class="q-chip__remove" aria-label="@(RemoveLabel ?? $"Remove {Text}")" @onclick="OnRemove" @onclick:stopPropagation="true">
+                <QIcon Name="x-lg" Size="xs" />
+            </button>
+        }
+    </span>
+}
+
+@code {
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>default | primary | success | warning | danger | info | muted. Ignored when Color is set.</summary>
+    [Parameter] public string Variant { get; set; } = "default";
+
+    /// <summary>"sm" — 10px uppercase status chip; "md" — 12px text chip.</summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>Any CSS colour: tints the background and colours the text.</summary>
+    [Parameter] public string? Color { get; set; }
+
+    [Parameter] public bool Removable { get; set; }
+    [Parameter] public EventCallback OnRemove { get; set; }
+    [Parameter] public string? RemoveLabel { get; set; }
+
+    /// <summary>Renders the chip as a link opened in a new tab.</summary>
+    [Parameter] public string? Href { get; set; }
+
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private string RootClass =>
+        $"q-chip q-chip--{SizeClass} {(string.IsNullOrEmpty(Color) ? $"q-chip--{VariantClass}" : "q-chip--tinted")} {(Removable ? "q-chip--removable" : "")} {Class}";
+
+    private string SizeClass => Size.ToLowerInvariant() is "sm" or "small" ? "sm" : "md";
+
+    private string VariantClass => Variant.ToLowerInvariant() switch
+    {
+        "primary" => "primary",
+        "success" => "success",
+        "warning" => "warning",
+        "danger" => "danger",
+        "info" => "info",
+        "muted" => "muted",
+        _ => "default"
+    };
+
+    private string? InlineStyle => string.IsNullOrEmpty(Color)
+        ? null
+        : $"background: var(--qm-bg-secondary); background: color-mix(in srgb, {Color} 12%, transparent); color: {Color};";
+
+    private RenderFragment Inner => __builder =>
+    {
+        @if (!string.IsNullOrEmpty(Icon))
+        {
+            <QIcon Name="@Icon" Size="sm" />
+        }
+        @if (ChildContent != null)
+        {
+            @ChildContent
+        }
+        else
+        {
+            <span class="q-chip__text">@Text</span>
+        }
+    };
+}

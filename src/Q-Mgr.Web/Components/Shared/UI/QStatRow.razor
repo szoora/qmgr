@@ -1,0 +1,14 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@* A responsive grid of QStatTile: as many columns as --qm-statcard-min allows, wrapping below. *@
+<div class="q-stat-row @Class" @attributes="AdditionalAttributes">
+    @ChildContent
+</div>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+}

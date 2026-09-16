@@ -399,5 +399,6 @@ VisitorReportSubscriptionJobsRegistration.RegisterRecurringJobs();
 WelfareReminderJobRegistration.RegisterRecurringJobs();
 AppointmentJobsRegistration.RegisterRecurringJobs();
 DocumentShareJobsRegistration.RegisterRecurringJobs();
+StaffPerformanceJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

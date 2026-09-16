@@ -163,23 +163,9 @@ else
             <!-- Pagination -->
             @if (TotalPages > 1)
             {
-                <div class="pagination-container">
-                    <div class="pagination-info">
-                        Showing @((currentPage - 1) * pageSize + 1) to @Math.Min(currentPage * pageSize, filteredInvoices.Count) of @filteredInvoices.Count invoices
-                    </div>
-                    <div class="pagination-controls">
-                        <QButton Variant="outline-primary" Size="sm" Icon="chevron-left" Text="Previous"
-                                 OnClick="@PreviousPage"
-                                 Disabled="@(currentPage <= 1)" />
-                        <span class="pagination-page">Page @currentPage of @TotalPages</span>
-                        <QButton Variant="outline-primary" Size="sm"
-                                 OnClick="@NextPage"
-                                 Disabled="@(currentPage >= TotalPages)">
-                            Next
-                            <QIcon Name="chevron-right" />
-                        </QButton>
-                    </div>
-                </div>
+                <QPager Count="@filteredInvoices.Count" PageSize="@pageSize"
+                        PageIndex="@(currentPage - 1)" PageIndexChanged="@(i => currentPage = i + 1)"
+                        ItemLabel="invoices" Class="invoice-pager" />
             }
         </div>
     }
@@ -470,30 +456,8 @@ else
         color: var(--qm-text-on-primary);
     }
 
-    .pagination-container {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 20px;
-        border-top: 1px solid var(--qm-border);
-    }
-
-    .pagination-info {
-        font-size: 14px;
-        color: var(--qm-text-secondary);
-    }
-
-    .pagination-controls {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-    }
-
-    .pagination-page {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--qm-text-primary);
-    }
+    /* QPager, sitting in the card's footer position the hand-rolled pager used to occupy. */
+    .invoice-pager { padding: 16px 20px 20px; margin-top: 0; }
 
     .empty-state {
         background: var(--qm-bg-card);
@@ -707,11 +671,6 @@ else
             grid-template-columns: 1fr;
         }
 
-        .pagination-container {
-            flex-direction: column;
-            gap: 16px;
-        }
-
         .invoice-document-header {
             grid-template-columns: 1fr;
         }
@@ -835,22 +794,6 @@ else
             .Skip((currentPage - 1) * pageSize)
             .Take(pageSize)
             .ToList();
-    }
-
-    private void NextPage()
-    {
-        if (currentPage < TotalPages)
-        {
-            currentPage++;
-        }
-    }
-
-    private void PreviousPage()
-    {
-        if (currentPage > 1)
-        {
-            currentPage--;
-        }
     }
 
     private void SelectInvoice(InvoiceDto invoice)

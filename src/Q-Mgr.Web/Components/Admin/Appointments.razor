@@ -123,15 +123,15 @@
                             <div class="appointment-main">
                                 <span class="customer">@appointment.CustomerName</span>
                                 <div class="appointment-meta">
-                                    <span class="chip">@(appointment.ServiceTypeName ?? "Service")</span>
-                                    <span class="chip ref">@appointment.ReferenceCode</span>
+                                    <QChip Text="@(appointment.ServiceTypeName ?? "Service")" />
+                                    <QChip Text="@appointment.ReferenceCode" Class="q-chip--mono" />
                                     @if (!string.IsNullOrWhiteSpace(appointment.CustomerPhone))
                                     {
-                                        <span class="chip">@appointment.CustomerPhone</span>
+                                        <QChip Text="@appointment.CustomerPhone" />
                                     }
                                     @if (appointment.TokenDisplayNumber != null)
                                     {
-                                        <span class="chip issued">Ticket @appointment.TokenDisplayNumber</span>
+                                        <QChip Text="@($"Ticket {appointment.TokenDisplayNumber}")" Variant="success" />
                                     }
                                 </div>
                             </div>
@@ -322,17 +322,6 @@
     .appointment-main .customer { font-weight: 600; color: var(--qm-text-primary); }
 
     .appointment-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-
-    .chip {
-        font-size: 0.75rem;
-        padding: 2px 8px;
-        border-radius: var(--qm-radius-full);
-        background: var(--qm-bg-secondary);
-        color: var(--qm-text-secondary);
-    }
-
-    .chip.ref { font-family: var(--qm-font-mono); }
-    .chip.issued { background: rgba(var(--qm-success-rgb), 0.14); color: var(--qm-success); }
 
     .status-badge {
         font-size: 0.75rem;

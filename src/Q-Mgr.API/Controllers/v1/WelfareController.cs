@@ -38,6 +38,7 @@ public class WelfareController : ControllerBase
     private readonly IMediaStorageService _mediaStorage;
     private readonly IStudentScopeService _scope;
     private readonly IWelfareAlertService _alerts;
+    private readonly IStaffSystemAwards _systemAwards;
     private readonly ILogger<WelfareController> _logger;
 
     // 25MB — bumped from the original 10MB to admit short video/audio evidence clips. Deliberately
@@ -63,6 +64,7 @@ public class WelfareController : ControllerBase
         IMediaStorageService mediaStorage,
         IStudentScopeService scope,
         IWelfareAlertService alerts,
+        IStaffSystemAwards systemAwards,
         ILogger<WelfareController> logger)
     {
         _context = context;
@@ -71,6 +73,7 @@ public class WelfareController : ControllerBase
         _mediaStorage = mediaStorage;
         _scope = scope;
         _alerts = alerts;
+        _systemAwards = systemAwards;
         _logger = logger;
     }
 
@@ -668,6 +671,12 @@ public class WelfareController : ControllerBase
         // alerts nobody; so does anything above Standard visibility. Both are decided inside.
         await _alerts.NotifyRecordLoggedAsync(record.Id);
 
+        // Staff Performance system award (policy-gated, off by default; never throws). A draft earns
+        // nothing — FinalizeRecord credits it when it becomes real.
+        if (record.Status != WelfareStatus.Draft)
+            await _systemAwards.CreditAsync(record.OrganizationId, branchId, record.ReportedByUserId, StaffSystemAwards.WelfareRecordFiled,
+                $"Filed a {category.Name} record. Credited automatically.");
+
         record.Student = student;
         record.Category = category;
         var userNames = await ResolveUserNamesAsync(new[] { record });
@@ -715,6 +724,9 @@ public class WelfareController : ControllerBase
         // This is the moment a draft becomes a real record, so it is the moment the class teacher
         // is told — CreateRecord deliberately alerts nobody for a draft.
         await _alerts.NotifyRecordLoggedAsync(record.Id);
+
+        await _systemAwards.CreditAsync(record.OrganizationId, branchId, record.ReportedByUserId, StaffSystemAwards.WelfareRecordFiled,
+            $"Filed a {record.Category?.Name ?? "welfare"} record. Credited automatically.");
 
         var userNames = await ResolveUserNamesAsync(new[] { record });
         var studentNames = await ResolveStudentNamesAsync(new[] { record });

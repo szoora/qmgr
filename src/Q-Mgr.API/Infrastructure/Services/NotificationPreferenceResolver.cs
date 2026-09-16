@@ -155,6 +155,9 @@ public class NotificationPreferenceResolver : INotificationPreferenceResolver
         {
             EmailEnabled = preferences.EmailEnabled,
             SmsEnabled = preferences.SmsEnabled,
+            // Job state, not a preference — carried through so a round-trip of the panel does not
+            // reset the digest gate and re-send the same week's digest.
+            LastStaffDigestSentAt = preferences.LastStaffDigestSentAt,
             Events = preferences.Events
                 .Where(e => NotificationEventKeys.IsKnown(e.EventKey))
                 .GroupBy(e => e.EventKey)

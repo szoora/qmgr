@@ -1,0 +1,99 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    Proportional bars: label, track, count. Lifted from WelfareReports' .bar-list (both the markup
+    and the RenderTreeBuilder copy the cohort panel carried). Widths are relative to Max, which
+    defaults to the largest Value so the longest bar always fills its track.
+*@
+
+@if (Items.Count == 0)
+{
+    @if (!string.IsNullOrWhiteSpace(EmptyText))
+    {
+        <p class="q-bars__empty">@EmptyText</p>
+    }
+}
+else
+{
+    <div class="q-bars @(RowSuffix != null ? "q-bars--suffixed" : "") @Class" @attributes="AdditionalAttributes">
+        @foreach (var item in Items)
+        {
+            var pct = Percent(item.Value);
+            <div class="q-bars__row">
+                <span class="q-bars__label" title="@item.Label">
+                    @if (!string.IsNullOrEmpty(item.Href))
+                    {
+                        <a href="@item.Href">@item.Label</a>
+                    }
+                    else
+                    {
+                        @item.Label
+                    }
+                    @if (!string.IsNullOrEmpty(item.Hint))
+                    {
+                        <em>@item.Hint</em>
+                    }
+                </span>
+                <div class="q-bars__track">
+                    <div class="q-bars__fill" style="@FillStyle(item, pct)"></div>
+                </div>
+                <span class="q-bars__count">@CountText(item, pct)</span>
+                @if (RowSuffix != null)
+                {
+                    <span class="q-bars__suffix">@RowSuffix(item)</span>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<QBarItem> Items { get; set; } = Array.Empty<QBarItem>();
+
+    /// <summary>The value a full-width bar represents. The largest item Value when null.</summary>
+    [Parameter] public decimal? Max { get; set; }
+
+    /// <summary>Show the share of Max as a percentage instead of the raw Value (ignored when the item carries Count).</summary>
+    [Parameter] public bool ShowPercent { get; set; }
+
+    [Parameter] public string? EmptyText { get; set; }
+
+    /// <summary>The narrowest a non-zero bar may draw, so a count of one is a visible sliver rather than nothing.</summary>
+    [Parameter] public int MinPercent { get; set; } = 4;
+
+    /// <summary>An extra cell after the count, per row — the cohort panel's "n% punitive".</summary>
+    [Parameter] public RenderFragment<QBarItem>? RowSuffix { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private decimal EffectiveMax
+    {
+        get
+        {
+            var max = Max ?? (Items.Count == 0 ? 0 : Items.Max(i => i.Value));
+            return max <= 0 ? 1 : max;
+        }
+    }
+
+    private int Percent(decimal value)
+    {
+        if (value <= 0) return 0;
+        var pct = (int)Math.Round(value * 100 / EffectiveMax);
+        return Math.Clamp(Math.Max(MinPercent, pct), 0, 100);
+    }
+
+    private static string FillStyle(QBarItem item, int pct) =>
+        string.IsNullOrEmpty(item.Color) ? $"width: {pct}%" : $"width: {pct}%; background: {item.Color}";
+
+    private string CountText(QBarItem item, int pct)
+    {
+        if (item.Count != null) return item.Count;
+        if (ShowPercent) return $"{pct}%";
+        return item.Value == Math.Truncate(item.Value)
+            ? ((long)item.Value).ToString("N0", System.Globalization.CultureInfo.InvariantCulture)
+            : item.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+    }
+}

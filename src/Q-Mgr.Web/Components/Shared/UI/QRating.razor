@@ -1,0 +1,87 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    The star rating lifted from FeedbackPage (and KioskMode's duplicate). A radiogroup of native
+    buttons so it is keyboard-reachable; the hover state previews the value; Labels gives each
+    level a word (a five-word satisfaction scale, or a four-level rubric) used as the button's
+    tooltip and, with ShowLabels, printed under the control. The small amber glow on an active star
+    is kept on purpose — it is the conventional "star lights up" affordance (CLAUDE.md).
+*@
+
+<div class="q-rating q-rating--@SizeClass @(ReadOnly ? "q-rating--readonly" : "") @Class" @attributes="AdditionalAttributes">
+    <div class="q-rating__stars" role="radiogroup" aria-label="@AriaLabel" @onmouseleave="@(() => hover = 0)">
+        @for (var i = 1; i <= Max; i++)
+        {
+            var star = i;
+            var filled = Value >= star || (!ReadOnly && hover >= star);
+            <button type="button"
+                    role="radio"
+                    aria-checked="@(Value == star ? "true" : "false")"
+                    aria-label="@StarLabel(star)"
+                    title="@LabelFor(star)"
+                    class="q-rating__star @(Value >= star ? "active" : "") @(!ReadOnly && hover >= star ? "hover" : "")"
+                    disabled="@ReadOnly"
+                    @onclick="@(() => Set(star))"
+                    @onmouseenter="@(() => { if (!ReadOnly) hover = star; })">
+                <QIcon Name="@(filled ? "star-fill" : "star")" />
+            </button>
+        }
+    </div>
+    @if (ShowLabels)
+    {
+        <div class="q-rating__label" aria-live="polite">@CurrentLabel</div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Value { get; set; }
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+
+    [Parameter] public int Max { get; set; } = 5;
+
+    [Parameter] public bool ReadOnly { get; set; }
+
+    /// <summary>"sm" | "md".</summary>
+    [Parameter] public string Size { get; set; } = "md";
+
+    /// <summary>One descriptor per level, index 0 = one star.</summary>
+    [Parameter] public IReadOnlyList<string>? Labels { get; set; }
+
+    /// <summary>Print the current level's descriptor under the stars.</summary>
+    [Parameter] public bool ShowLabels { get; set; }
+
+    /// <summary>What the label reads when nothing is chosen yet.</summary>
+    [Parameter] public string EmptyLabel { get; set; } = "Tap a star to rate";
+
+    /// <summary>Accessible name for the group ("Overall service rating, 1 to 5 stars").</summary>
+    [Parameter] public string? AriaLabel { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private int hover;
+
+    private string SizeClass => Size.ToLowerInvariant() is "sm" or "small" ? "sm" : "md";
+
+    private string? LabelFor(int star) =>
+        Labels != null && star >= 1 && star <= Labels.Count ? Labels[star - 1] : null;
+
+    private string StarLabel(int star)
+    {
+        var word = LabelFor(star);
+        var unit = Max == 5 ? "stars" : "";
+        var core = $"{star} out of {Max} {unit}".TrimEnd();
+        return word == null ? core : $"{core} - {word}";
+    }
+
+    private string CurrentLabel => Value <= 0 ? EmptyLabel : (LabelFor(Value) ?? $"{Value} / {Max}");
+
+    private async Task Set(int star)
+    {
+        if (ReadOnly) return;
+        Value = star;
+        await ValueChanged.InvokeAsync(star);
+    }
+}

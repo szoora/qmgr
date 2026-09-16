@@ -1,0 +1,963 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
+using QMgr.API.Authorization;
+using QMgr.Application.DTOs;
+using QMgr.Application.Interfaces;
+using QMgr.Application.Tenant;
+using QMgr.Domain.Constants;
+using QMgr.Domain.Entities.Identity;
+using QMgr.Domain.Entities.Notification;
+using QMgr.Domain.Entities.Staff;
+using QMgr.Domain.Enums;
+using QMgr.Filters;
+using QMgr.Infrastructure.Data;
+using QMgr.Infrastructure.Services;
+
+namespace QMgr.API.Controllers.v1;
+
+/// <summary>
+/// The staff ledger: records, their follow-up notes, evidence, the subject's right of reply, a
+/// person's timeline and score, and peer recognition. The staff analogue of WelfareController and
+/// the same rules — append-only rows, an "edit" is a note, a void is Annulled with a reason, the
+/// visibility rung is the one mutable field and changing it writes a note.
+///
+/// Three things are different from the student side and are deliberate:
+///  - THE SUBJECT IS A USER OF THIS SYSTEM. They read their own Standard and Confidential records
+///    (never Restricted), respond to them, acknowledge them and add evidence to them. A child
+///    cannot do any of that.
+///  - THE AUTHOR KEEPS WHAT THEY WROTE. A lesson observation defaults to Confidential; a head of
+///    department without staff.confidential.view must still see the observation they filed an hour
+///    ago. Reading your own words is not a leak. Restricted stays administrator-only even for the
+///    author, exactly as in welfare.
+///  - SIGN RULES COME FROM THE PARAMETER'S KIND, not from a case type on the record: Contribution
+///    and Recognition positive, Conduct negative, Attendance and Duty by outcome, Wellbeing never.
+///
+/// Every write is followed by an IActivityLogger call whose summary is written at the ACTOR's
+/// visibility — never the description of a Confidential or Restricted record. Every path that
+/// reaches another person's record goes through IStaffScopeService and answers 404, never 403.
+/// </summary>
+[ApiController]
+[Route("api/v1/branches/{branchId:guid}/staff")]
+[Produces("application/json")]
+[Authorize] // SECURITY: baseline safety net — actions carry their own [RequirePermission] or an explicit self check
+[RequireModule(ModuleCodes.StaffPerformance)]
+public class StaffRecordsController : StaffPerformanceControllerBase
+{
+    private readonly IStaffPerformancePolicyService _policy;
+    private readonly IStaffScoringService _scoring;
+    private readonly IStaffAlertService _alerts;
+    private readonly INotificationService _notifications;
+    private readonly IMediaStorageService _mediaStorage;
+    private readonly ILogger<StaffRecordsController> _logger;
+
+    // 25MB, the welfare figure, for the welfare reason: local disk, no CDN tier, and video at any
+    // real length is a capacity conversation rather than a constant.
+    private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
+    private static readonly string[] AllowedAttachmentMimePrefixes = { "image/", "application/pdf", "video/", "audio/" };
+    private const int MaxPageSize = 200;
+    private const int TimelineActivityRows = 50;
+
+    public StaffRecordsController(
+        QMgrDbContext db,
+        ITenantContextAccessor tenantAccessor,
+        IStaffScopeService staffScope,
+        IActivityLogger activity,
+        IStaffPerformancePolicyService policy,
+        IStaffScoringService scoring,
+        IStaffAlertService alerts,
+        INotificationService notifications,
+        IMediaStorageService mediaStorage,
+        ILogger<StaffRecordsController> logger)
+        : base(db, tenantAccessor, staffScope, activity)
+    {
+        _policy = policy;
+        _scoring = scoring;
+        _alerts = alerts;
+        _notifications = notifications;
+        _mediaStorage = mediaStorage;
+        _logger = logger;
+    }
+
+    // ---------------------------------------------------------------------
+    // Search and create
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Branch-wide search, narrowed three ways: the caller's staff scope, the rungs they may read,
+    /// and drafts only to their author. The caller's own records and the ones they wrote are always
+    /// in (below Restricted), since a head searching "my department" must find their own rows too.
+    /// </summary>
+    [HttpGet("records")]
+    [RequirePermission(Permissions.StaffRecordsView)]
+    [ProducesResponseType(typeof(StaffRecordSearchResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SearchRecords(
+        Guid branchId,
+        [FromQuery] Guid? subjectUserId = null,
+        [FromQuery] Guid? parameterId = null,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? q = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        StaffRecordStatus? statusFilter = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (!Enum.TryParse<StaffRecordStatus>(status, true, out var parsed))
+                return BadRequestProblem("Unrecognised status", "Use Draft, Final or Annulled.");
+            statusFilter = parsed;
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+        var me = CurrentUserId();
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var policy = await _policy.GetAsync(organizationId);
+
+        var query = RecordsWithIncludes().Where(r => r.BranchId == branchId);
+        query = await StaffScope.ApplyAsync(query, branchId);
+        query = await ApplyRungAsync(query, me);
+
+        if (subjectUserId.HasValue) query = query.Where(r => r.SubjectUserId == subjectUserId.Value);
+        if (parameterId.HasValue) query = query.Where(r => r.ParameterId == parameterId.Value);
+        if (from.HasValue) query = query.Where(r => r.OccurredAt >= DateTime.SpecifyKind(from.Value, DateTimeKind.Utc));
+        if (to.HasValue) query = query.Where(r => r.OccurredAt <= DateTime.SpecifyKind(to.Value, DateTimeKind.Utc));
+        if (statusFilter.HasValue) query = query.Where(r => r.Status == statusFilter.Value);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var term = q.Trim().ToLower();
+            query = query.Where(r => r.Description.ToLower().Contains(term) || r.Parameter!.Name.ToLower().Contains(term)
+                                     || (r.Subject!.FirstName + " " + r.Subject.LastName).ToLower().Contains(term));
+        }
+
+        var total = await query.CountAsync();
+        var records = await query.OrderByDescending(r => r.OccurredAt).ThenByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .ToListAsync();
+
+        var names = await NamesForAsync(records);
+        return Ok(new StaffRecordSearchResultDto
+        {
+            Items = records.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays)).ToList(),
+            TotalCount = total,
+            ScopedToDepartments = (await StaffScope.GetScopedDepartmentNamesAsync()).ToList()
+        });
+    }
+
+    /// <summary>
+    /// Logs a record. The subject must be in the caller's scope (a scope that only covers reads is
+    /// half a scope — Phase 77's lesson), the parameter must be active and apply to the subject's
+    /// staff group, points obey the kind's sign rule and the per-entry cap, an observation needs a
+    /// rating on its scale, and the visibility is decided here: a caller may ASK for a rung they
+    /// can read; the parameter's default and the Wellbeing floor are applied on top regardless.
+    /// </summary>
+    [HttpPost("records")]
+    [RequirePermission(Permissions.StaffRecordsCreate)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRecord(Guid branchId, [FromBody] CreateStaffRecordRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        // The subject: exists, is staff of this branch, and is in scope. One wording for all three
+        // refusals, so a probe cannot learn which it was.
+        var subject = await FindBranchStaffAsync(organizationId, branchId, request.SubjectUserId);
+        if (subject == null || !await StaffScope.CanSeeStaffAsync(branchId, subject.Id)) return StaffMemberNotFound();
+
+        var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == request.ParameterId && p.OrganizationId == organizationId);
+        if (parameter == null) return BadRequestProblem("The parameter was not found");
+        if (!parameter.IsActive) return BadRequestProblem($"'{parameter.Name}' has been retired", "Choose an active parameter.");
+        if (parameter.Kind == ParameterKind.Recognition && subject.Id == me) return BadRequestProblem("You cannot recognise yourself");
+
+        var group = _policy.GroupFor(subject.Role?.Code);
+        if (parameter.AppliesTo != StaffGroup.AllStaff && parameter.AppliesTo != group)
+            return BadRequestProblem($"'{parameter.Name}' applies to {(parameter.AppliesTo == StaffGroup.TeachingStaff ? "teaching" : "support")} staff only");
+
+        if (string.IsNullOrWhiteSpace(request.Description) || request.Description.Trim().Length < 10)
+            return BadRequestProblem("Describe what happened", "At least 10 characters — a record that says nothing is worth nothing to the person it is about.");
+        if (request.OccurredAt > DateTime.UtcNow.AddDays(1))
+            return BadRequestProblem("A record cannot be dated in the future");
+
+        if (!Enum.IsDefined(request.Outcome)) return BadRequestProblem("Unrecognised outcome");
+
+        var pointsError = ResolvePoints(parameter, request.Outcome, request.Points, out var points);
+        if (pointsError != null) return BadRequestProblem(pointsError);
+
+        var ratingError = ResolveRating(parameter, request.Rating, out var rating);
+        if (ratingError != null) return BadRequestProblem(ratingError);
+
+        var visibilityError = await ResolveVisibilityAsync(parameter, request.Visibility);
+        if (visibilityError.Error != null) return visibilityError.Error;
+
+        StaffDuty? duty = null;
+        if (request.DutyId.HasValue)
+        {
+            duty = await Db.StaffDuties.FirstOrDefaultAsync(d => d.Id == request.DutyId.Value && d.BranchId == branchId);
+            if (duty == null) return BadRequestProblem("The duty was not found");
+        }
+
+        var isObservation = parameter.Kind == ParameterKind.Observation;
+        var record = new StaffPerformanceRecord
+        {
+            OrganizationId = organizationId,
+            BranchId = branchId,
+            SubjectUserId = subject.Id,
+            ParameterId = parameter.Id,
+            DutyId = duty?.Id,
+            Outcome = request.Outcome,
+            Points = points,
+            Rating = rating,
+            Description = request.Description.Trim(),
+            OccurredAt = DateTime.SpecifyKind(request.OccurredAt, DateTimeKind.Utc),
+            Source = isObservation ? RecordSource.Observation : RecordSource.Manual,
+            Status = request.SaveAsDraft ? StaffRecordStatus.Draft : StaffRecordStatus.Final,
+            Visibility = visibilityError.Visibility,
+            LoggedByUserId = me,
+            CreatedBy = me
+        };
+        Db.StaffPerformanceRecords.Add(record);
+
+        if (isObservation && (request.PreObservationMeetingAt.HasValue || request.FeedbackSessionAt.HasValue))
+        {
+            var parts = new List<string>();
+            if (request.PreObservationMeetingAt is { } pre) parts.Add($"Pre-observation meeting on {pre.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
+            if (request.FeedbackSessionAt is { } fb) parts.Add($"Feedback session on {fb.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
+            Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = string.Join(" ", parts), AuthorUserId = me, Kind = StaffNoteKind.Note });
+        }
+
+        await Db.SaveChangesAsync();
+
+        var subjectName = StaffPerformanceMapping.FullName(subject);
+        await Activity.RecordAsync(ActivityActions.RecordCreated, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary(record.Status == StaffRecordStatus.Draft ? "drafted" : "created", record, parameter.Name, subjectName),
+            new { record.ParameterId, record.Outcome, record.Points, record.Rating, record.Visibility, record.Status, record.Source, record.DutyId },
+            branchId, organizationId);
+
+        // A committed record's fan-out must not fail the request; the service never throws.
+        if (record.Status == StaffRecordStatus.Final)
+            await _alerts.NotifyRecordLoggedAsync(record.Id);
+
+        var dto = await LoadDtoAsync(record.Id, branchId);
+        return CreatedAtAction(nameof(GetRecord), new { branchId, id = record.Id }, dto);
+    }
+
+    // ---------------------------------------------------------------------
+    // One record
+    // ---------------------------------------------------------------------
+
+    [HttpGet("records/{id:guid}")]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetRecord(Guid branchId, Guid id)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanReadRecordAsync(record, branchId)) return RecordNotFound();
+
+        var me = CurrentUserId();
+        if (record.SubjectUserId != me)
+        {
+            // The subject-access trail: who looked at my file. Reading your own is not an event on it.
+            await Activity.RecordAsync(ActivityActions.RecordViewed, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+                RecordSummary("viewed", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+        }
+
+        return Ok(await ToDtoAsync(record));
+    }
+
+    /// <summary>Draft → Final, by the author only. The alert fan-out runs now, not when the draft was saved.</summary>
+    [HttpPost("records/{id:guid}/finalize")]
+    [RequirePermission(Permissions.StaffRecordsCreate)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> FinalizeRecord(Guid branchId, Guid id)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        // Only the caller's own draft is findable here, so there is nothing to leak about anyone else's.
+        var record = await LoadAsync(id, branchId, r => r.LoggedByUserId == me && r.Status == StaffRecordStatus.Draft);
+        if (record == null) return RecordNotFound();
+
+        record.Status = StaffRecordStatus.Final;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = me;
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecordFinalized, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary("finalised", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+        await _alerts.NotifyRecordLoggedAsync(record.Id);
+
+        return Ok(await ToDtoAsync(record));
+    }
+
+    [HttpPost("records/{id:guid}/notes")]
+    [RequirePermission(Permissions.StaffRecordsEdit)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AddNote(Guid branchId, Guid id, [FromBody] AddStaffNoteRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        if (string.IsNullOrWhiteSpace(request.Body)) return BadRequestProblem("The note is empty");
+
+        var me = CurrentUserId();
+        Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = request.Body.Trim(), AuthorUserId = me, Kind = StaffNoteKind.Note });
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecordNoteAdded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary("annotated", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+
+        return Ok(await LoadDtoAsync(record.Id, branchId));
+    }
+
+    /// <summary>
+    /// The right of reply. The SUBJECT only, on any record they can see (so never Restricted, never
+    /// a draft). The person who logged the record is told there is a response to read.
+    /// </summary>
+    [HttpPost("records/{id:guid}/respond")]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Respond(Guid branchId, Guid id, [FromBody] AddStaffNoteRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var record = await LoadAsync(id, branchId, r => r.SubjectUserId == me && r.Status != StaffRecordStatus.Draft && r.Visibility != WelfareVisibility.Restricted);
+        if (record == null) return RecordNotFound();
+        if (string.IsNullOrWhiteSpace(request.Body)) return BadRequestProblem("The response is empty");
+
+        Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = request.Body.Trim(), AuthorUserId = me, Kind = StaffNoteKind.Response });
+        if (record.AcknowledgedAt == null) record.AcknowledgedAt = DateTime.UtcNow; // responding is seeing
+        await Db.SaveChangesAsync();
+
+        var subjectName = SubjectName(record);
+        await Activity.RecordAsync(ActivityActions.RecordResponded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary("responded to by the subject", record, record.Parameter?.Name, subjectName), null, branchId, record.OrganizationId);
+
+        if (record.LoggedByUserId != me)
+        {
+            await SendAsync(new CreateNotificationRequest
+            {
+                UserId = record.LoggedByUserId,
+                OrganizationId = record.OrganizationId,
+                BranchId = record.BranchId,
+                Title = $"{subjectName} responded to your record",
+                Message = $"{record.Parameter?.Name ?? "A record"}: {Truncate(request.Body.Trim(), 160)}",
+                Type = NotificationType.StaffPerformance,
+                Priority = NotificationPriority.Normal,
+                Channels = NotificationChannel.InApp | NotificationChannel.Email,
+                EventKey = NotificationEventKeys.StaffRecordLogged,
+                ActionUrl = $"/admin/staff/{record.SubjectUserId}/timeline",
+                IconClass = "chat-left-text"
+            });
+        }
+
+        return Ok(await LoadDtoAsync(record.Id, branchId));
+    }
+
+    /// <summary>The subject marks a record as seen. Idempotent: the first timestamp stands.</summary>
+    [HttpPost("records/{id:guid}/acknowledge")]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Acknowledge(Guid branchId, Guid id)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var record = await LoadAsync(id, branchId, r => r.SubjectUserId == me && r.Status != StaffRecordStatus.Draft && r.Visibility != WelfareVisibility.Restricted);
+        if (record == null) return RecordNotFound();
+
+        if (record.AcknowledgedAt == null)
+        {
+            record.AcknowledgedAt = DateTime.UtcNow;
+            await Db.SaveChangesAsync();
+            await Activity.RecordAsync(ActivityActions.RecordAcknowledged, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+                RecordSummary("acknowledged by the subject", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+        }
+
+        return Ok(await ToDtoAsync(record));
+    }
+
+    /// <summary>The void that keeps the row: Status → Annulled, a note saying why, the row drops out of scoring and the subject's score is pushed again.</summary>
+    [HttpPost("records/{id:guid}/annul")]
+    [RequirePermission(Permissions.StaffRecordsEdit)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Annul(Guid branchId, Guid id, [FromBody] AnnulStaffRecordRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        if (record.Status == StaffRecordStatus.Annulled) return BadRequestProblem("This record is already annulled");
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5) return BadRequestProblem("Say why the record is being annulled");
+
+        var me = CurrentUserId();
+        var wasFinal = record.Status == StaffRecordStatus.Final;
+        record.Status = StaffRecordStatus.Annulled;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = me;
+        Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = request.Reason.Trim(), AuthorUserId = me, Kind = StaffNoteKind.Annulment });
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecordAnnulled, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary("annulled", record, record.Parameter?.Name, SubjectName(record)), new { WasFinal = wasFinal }, branchId, record.OrganizationId);
+
+        if (wasFinal) await _alerts.NotifyScoreUpdatedAsync(record.OrganizationId, record.BranchId, record.SubjectUserId);
+
+        return Ok(await LoadDtoAsync(record.Id, branchId));
+    }
+
+    /// <summary>
+    /// The one mutable field. Raising needs the target rung to be one the caller can read (or they
+    /// could hide a record from everyone including themselves); lowering demands a reason, since it
+    /// widens who can read it. Wellbeing never drops below Confidential. The change is a note, so the
+    /// record's own chronology carries who, from what, to what, and why.
+    /// </summary>
+    [HttpPatch("records/{id:guid}/visibility")]
+    [RequirePermission(Permissions.StaffRecordsEdit)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateVisibility(Guid branchId, Guid id, [FromBody] UpdateStaffRecordVisibilityRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+
+        if (!Enum.IsDefined(request.Visibility)) return BadRequestProblem("Unrecognised visibility");
+        var from = record.Visibility;
+        var to = request.Visibility;
+        if (from == to) return BadRequestProblem($"The record is already {to}");
+
+        if (to > from && !await CanSeeAsync(to))
+            return BadRequestProblem($"You cannot mark a record {to.ToString().ToLowerInvariant()}",
+                to == WelfareVisibility.Restricted
+                    ? "Restricted records are administrator-only. Ask an administrator to restrict it."
+                    : "Your role cannot read confidential staff records, so it cannot file into that rung.");
+        if (to < from && string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequestProblem("Lowering visibility needs a reason", "More people will be able to read this record; say why that is right.");
+        if (record.Parameter?.Kind == ParameterKind.Wellbeing && to < WelfareVisibility.Confidential)
+            return BadRequestProblem("A wellbeing record cannot be made Standard", "Welfare-of-staff records are confidential by nature.");
+
+        var me = CurrentUserId();
+        record.Visibility = to;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = me;
+        var body = $"Visibility changed from {from} to {to}" + (string.IsNullOrWhiteSpace(request.Reason) ? "" : $": {request.Reason.Trim()}");
+        Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = body, AuthorUserId = me, Kind = StaffNoteKind.VisibilityChange });
+        await Db.SaveChangesAsync();
+
+        // Written at the HIGHER of the two rungs, so a log reader without it learns only that a
+        // restricted record's visibility moved, not what the record is.
+        var forSummary = to > from ? record : new StaffPerformanceRecord { Visibility = from, Outcome = record.Outcome, Points = record.Points, Rating = record.Rating };
+        await Activity.RecordAsync(ActivityActions.RecordVisibilityChanged, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary($"visibility changed from {from} to {to}", forSummary, record.Parameter?.Name, SubjectName(record)),
+            new { From = from, To = to }, branchId, record.OrganizationId);
+
+        return Ok(await LoadDtoAsync(record.Id, branchId));
+    }
+
+    /// <summary>Corrects points and/or rating under the same sign and magnitude rules, with a Moderation note. The row is otherwise untouched.</summary>
+    [HttpPatch("records/{id:guid}/points")]
+    [RequirePermission(Permissions.StaffRecordsEdit)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CorrectPoints(Guid branchId, Guid id, [FromBody] CorrectStaffRecordPointsRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
+        if (record.Status == StaffRecordStatus.Annulled) return BadRequestProblem("An annulled record cannot be corrected");
+        if (record.Parameter == null) return BadRequestProblem("The record's parameter no longer exists");
+        if (request.Points == null && request.Rating == null) return BadRequestProblem("Nothing to correct", "Give new points, a new rating, or both.");
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5) return BadRequestProblem("Say why the points are being corrected");
+
+        var oldPoints = record.Points;
+        var oldRating = record.Rating;
+        var newPoints = oldPoints;
+        var newRating = oldRating;
+
+        if (request.Points != null)
+        {
+            var error = ResolvePoints(record.Parameter, record.Outcome, request.Points, out newPoints);
+            if (error != null) return BadRequestProblem(error);
+        }
+        if (request.Rating != null)
+        {
+            var error = ResolveRating(record.Parameter, request.Rating, out newRating);
+            if (error != null) return BadRequestProblem(error);
+        }
+        if (newPoints == oldPoints && newRating == oldRating) return BadRequestProblem("Nothing changed");
+
+        var me = CurrentUserId();
+        record.Points = newPoints;
+        record.Rating = newRating;
+        record.UpdatedAt = DateTime.UtcNow;
+        record.UpdatedBy = me;
+
+        var changes = new List<string>();
+        if (newPoints != oldPoints) changes.Add($"points {Fmt(oldPoints)} → {Fmt(newPoints)}");
+        if (newRating != oldRating) changes.Add($"rating {Fmt(oldRating)} → {Fmt(newRating)}");
+        Db.StaffPerformanceNotes.Add(new StaffPerformanceNote
+        {
+            RecordId = record.Id,
+            Body = $"Corrected {string.Join(", ", changes)}: {request.Reason.Trim()}",
+            AuthorUserId = me,
+            Kind = StaffNoteKind.Moderation
+        });
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecordPointsCorrected, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary($"corrected ({string.Join(", ", changes)})", record, record.Parameter.Name, SubjectName(record)),
+            new { OldPoints = oldPoints, NewPoints = newPoints, OldRating = oldRating, NewRating = newRating }, branchId, record.OrganizationId);
+
+        if (record.Status == StaffRecordStatus.Final)
+            await _alerts.NotifyScoreUpdatedAsync(record.OrganizationId, record.BranchId, record.SubjectUserId);
+
+        return Ok(await LoadDtoAsync(record.Id, branchId));
+    }
+
+    // ---------------------------------------------------------------------
+    // Evidence
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Evidence: a signed register page, an observation sheet, a certificate. By anyone holding
+    /// staff.records.create who can read the record, or by the SUBJECT on their own record (a
+    /// teacher attaching the certificate that proves the training happened). Stored through the
+    /// same IMediaStorageService as every other upload, classified StaffEvidence by
+    /// UploadAuthorizer, served only on a signed link.
+    /// </summary>
+    [HttpPost("records/{id:guid}/attachments")]
+    [RequestSizeLimit(MaxAttachmentSizeBytes)]
+    [ProducesResponseType(typeof(StaffPerformanceAttachmentDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UploadAttachment(Guid branchId, Guid id, IFormFile file)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var record = await LoadAsync(id, branchId);
+        if (record == null || !await CanReadRecordAsync(record, branchId)) return RecordNotFound();
+        if (record.SubjectUserId != me && !await HasPermissionAsync(Permissions.StaffRecordsCreate)) return RecordNotFound();
+
+        if (file == null || file.Length == 0) return BadRequestProblem("No file was provided");
+        if (file.Length > MaxAttachmentSizeBytes) return BadRequestProblem($"File exceeds the {MaxAttachmentSizeBytes / 1024 / 1024}MB size limit");
+
+        var mimeType = file.ContentType ?? "";
+        if (!AllowedAttachmentMimePrefixes.Any(p => mimeType.StartsWith(p)))
+            return BadRequestProblem("Only images, PDF documents, video, or audio are accepted as evidence");
+
+        await using var uploadStream = file.OpenReadStream();
+        var uploadResult = await _mediaStorage.UploadAsync(uploadStream, file.FileName, mimeType);
+        if (!uploadResult.Success)
+        {
+            _logger.LogError("Staff evidence upload failed for record {RecordId}: {Error}", id, uploadResult.ErrorMessage);
+            return StatusCode(StatusCodes.Status500InternalServerError, new ProblemDetails { Title = "Failed to store the file" });
+        }
+
+        var attachment = new StaffPerformanceAttachment
+        {
+            RecordId = record.Id,
+            FileUrl = uploadResult.FileUrl!,
+            FileName = file.FileName,
+            ContentType = mimeType,
+            FileSizeBytes = file.Length,
+            UploadedByUserId = me
+        };
+        Db.StaffPerformanceAttachments.Add(attachment);
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecordEvidenceAdded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            RecordSummary("received evidence", record, record.Parameter?.Name, SubjectName(record)),
+            new { attachment.FileName, attachment.ContentType, attachment.FileSizeBytes }, branchId, record.OrganizationId);
+
+        return CreatedAtAction(nameof(GetRecord), new { branchId, id = record.Id }, StaffPerformanceMapping.ToDto(attachment));
+    }
+
+    // ---------------------------------------------------------------------
+    // A person: timeline and score
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// One person's file: who they are, their records at the rungs the caller may read (newest
+    /// first, others' drafts excluded), their score this period (with a private rank only for
+    /// themselves), and the last fifty actions on the file — the subject-access trail. Self needs
+    /// no permission; anyone else needs staff.records.view and the person in scope.
+    /// </summary>
+    [HttpGet("members/{userId:guid}/timeline")]
+    [ProducesResponseType(typeof(StaffTimelineDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTimeline(Guid branchId, Guid userId, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var access = await VerifyPersonAccessAsync(branchId, userId);
+        if (access.Error != null) return access.Error;
+        var (organizationId, subject, isSelf) = (access.OrganizationId, access.Subject!, access.IsSelf);
+
+        var me = CurrentUserId();
+        var policy = await _policy.GetAsync(organizationId);
+        var period = _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
+
+        var query = RecordsWithIncludes().Where(r => r.BranchId == branchId && r.SubjectUserId == userId);
+        query = await ApplyRungAsync(query, me);
+        if (from.HasValue) query = query.Where(r => r.OccurredAt >= DateTime.SpecifyKind(from.Value, DateTimeKind.Utc));
+        if (to.HasValue) query = query.Where(r => r.OccurredAt <= DateTime.SpecifyKind(to.Value, DateTimeKind.Utc));
+        var records = await query.OrderByDescending(r => r.OccurredAt).ThenByDescending(r => r.CreatedAt).ToListAsync();
+
+        var score = await _scoring.ComputeAsync(organizationId, branchId, userId, period, includeRank: isSelf);
+
+        var events = await Db.ActivityEvents.AsNoTracking()
+            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == userId)
+            .OrderByDescending(e => e.OccurredAt)
+            .Take(TimelineActivityRows)
+            .ToListAsync();
+
+        var names = await BuildNamesAsync(records.Select(r => (Guid?)r.LoggedByUserId)
+            .Concat(records.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId))
+            .Concat(events.Select(e => e.ActorUserId))
+            .Append(userId).Append(subject.LineManagerUserId));
+        var departmentNames = await DepartmentNamesAsync(organizationId);
+
+        if (!isSelf)
+        {
+            await Activity.RecordAsync(ActivityActions.TimelineViewed, nameof(User), userId, userId,
+                $"Timeline of {StaffPerformanceMapping.FullName(subject)} viewed", null, branchId, organizationId);
+        }
+
+        return Ok(new StaffTimelineDto
+        {
+            Subject = StaffPerformanceMapping.ToDto(subject, names, departmentNames, score),
+            Records = records.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays)).ToList(),
+            Score = score,
+            Activity = events.Select(e => StaffPerformanceMapping.ToDto(e, names)).ToList(),
+            IsSelf = isSelf
+        });
+    }
+
+    [HttpGet("members/{userId:guid}/score")]
+    [ProducesResponseType(typeof(StaffScoreDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetScore(Guid branchId, Guid userId, [FromQuery] string? period = null)
+    {
+        var access = await VerifyPersonAccessAsync(branchId, userId);
+        if (access.Error != null) return access.Error;
+
+        var policy = await _policy.GetAsync(access.OrganizationId);
+        var periodDto = _policy.FindPeriod(policy, period) ?? _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
+        return Ok(await _scoring.ComputeAsync(access.OrganizationId, branchId, userId, periodDto, includeRank: access.IsSelf));
+    }
+
+    // ---------------------------------------------------------------------
+    // Recognition
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Kudos from a colleague, within the tenant's monthly budget. NOT narrowed by staff scope on
+    /// purpose: recognising somebody in another department is the point. Self-recognition is
+    /// refused; the receiver is notified at once; the row is an ordinary Final record with
+    /// Source = Recognition, so it counts and shows like any other.
+    /// </summary>
+    [HttpPost("recognition")]
+    [RequirePermission(Permissions.StaffRecognitionGive)]
+    [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GiveRecognition(Guid branchId, [FromBody] GiveRecognitionRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        if (request.SubjectUserId == me) return BadRequestProblem("You cannot recognise yourself");
+
+        var subject = await FindBranchStaffAsync(organizationId, branchId, request.SubjectUserId);
+        if (subject == null) return StaffMemberNotFound();
+
+        var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == request.ParameterId && p.OrganizationId == organizationId && p.IsActive);
+        if (parameter == null) return BadRequestProblem("The recognition parameter was not found");
+        if (parameter.Kind != ParameterKind.Recognition) return BadRequestProblem($"'{parameter.Name}' is not a recognition parameter");
+        var group = _policy.GroupFor(subject.Role?.Code);
+        if (parameter.AppliesTo != StaffGroup.AllStaff && parameter.AppliesTo != group)
+            return BadRequestProblem($"'{parameter.Name}' applies to {(parameter.AppliesTo == StaffGroup.TeachingStaff ? "teaching" : "support")} staff only");
+        if (string.IsNullOrWhiteSpace(request.Message) || request.Message.Trim().Length < 10)
+            return BadRequestProblem("Say what you are recognising", "At least 10 characters — the point of recognition is the why.");
+
+        var policy = await _policy.GetAsync(organizationId);
+        if (policy.RecognitionMonthlyBudget <= 0) return BadRequestProblem("Peer recognition is switched off for this organization");
+        var used = await RecognitionsUsedThisMonthAsync(organizationId, me);
+        if (used >= policy.RecognitionMonthlyBudget)
+            return BadRequestProblem($"You have used {used} of {policy.RecognitionMonthlyBudget} recognitions this month", "The budget resets on the first of the month.");
+
+        var points = Math.Max(1, Math.Abs(parameter.DefaultPoints ?? 1));
+        if (parameter.MaxPointsPerEntry > 0) points = Math.Min(points, parameter.MaxPointsPerEntry);
+
+        var record = new StaffPerformanceRecord
+        {
+            OrganizationId = organizationId,
+            BranchId = branchId,
+            SubjectUserId = subject.Id,
+            ParameterId = parameter.Id,
+            Outcome = DutyOutcome.NotApplicable,
+            Points = points,
+            Description = request.Message.Trim(),
+            OccurredAt = DateTime.UtcNow,
+            Source = RecordSource.Recognition,
+            Status = StaffRecordStatus.Final,
+            Visibility = WelfareVisibility.Standard,
+            LoggedByUserId = me,
+            CreatedBy = me
+        };
+        Db.StaffPerformanceRecords.Add(record);
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.RecognitionGiven, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+            $"Recognition given to {StaffPerformanceMapping.FullName(subject)} ({parameter.Name}, +{points} pts)",
+            new { record.ParameterId, record.Points }, branchId, organizationId);
+        await _alerts.NotifyRecordLoggedAsync(record.Id);
+
+        return CreatedAtAction(nameof(GetRecord), new { branchId, id = record.Id }, await LoadDtoAsync(record.Id, branchId));
+    }
+
+    [HttpGet("recognition/budget")]
+    [RequirePermission(Permissions.StaffRecognitionGive)]
+    [ProducesResponseType(typeof(RecognitionBudgetDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetRecognitionBudget(Guid branchId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        return Ok(await BuildRecognitionBudgetAsync(_policy, organizationId, CurrentUserId()));
+    }
+
+    // ---------------------------------------------------------------------
+    // Rules, stated once
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// The sign rule by kind, and the per-entry cap. Returns a plain-English message or null.
+    /// Attendance and Duty derive their points from the outcome and let the client override the
+    /// magnitude but never the sign; Late is half; Excused is zero; Recovered is a full credit.
+    /// </summary>
+    internal static string? ResolvePoints(PerformanceParameter p, DutyOutcome outcome, int? requested, out int? points)
+    {
+        points = null;
+        var dp = Math.Abs(p.DefaultPoints ?? 0);
+
+        switch (p.Kind)
+        {
+            case ParameterKind.Wellbeing:
+                if (requested is { } w && w != 0) return "Wellbeing records are not scored — leave points blank";
+                return null;
+
+            case ParameterKind.Attendance:
+            case ParameterKind.Duty:
+            {
+                int derived;
+                switch (outcome)
+                {
+                    case DutyOutcome.Present or DutyOutcome.Completed or DutyOutcome.Recovered: derived = dp; break;
+                    case DutyOutcome.Absent or DutyOutcome.NotCompleted: derived = -dp; break;
+                    case DutyOutcome.Late: derived = (int)Math.Round(dp / 2.0, MidpointRounding.AwayFromZero); break;
+                    case DutyOutcome.Excused: derived = 0; break;
+                    default: return $"Choose an outcome for {(p.Kind == ParameterKind.Attendance ? "an attendance" : "a duty")} record";
+                }
+                if (requested is { } r && r != 0)
+                {
+                    if (derived == 0) return $"An {outcome.ToString().ToLowerInvariant()} outcome carries no points";
+                    if (Math.Sign(r) != Math.Sign(derived)) return $"Points for a {outcome.ToString().ToLowerInvariant()} outcome must be {(derived > 0 ? "positive" : "negative")}";
+                }
+                points = requested ?? derived;
+                break;
+            }
+
+            case ParameterKind.Contribution:
+            case ParameterKind.Recognition:
+                points = requested ?? dp;
+                if (points < 0) return $"{p.Kind} points must be zero or positive";
+                break;
+
+            case ParameterKind.Conduct:
+                points = requested ?? -dp;
+                if (points > 0) return "Conduct points must be zero or negative";
+                break;
+
+            case ParameterKind.Observation:
+                points = requested ?? p.DefaultPoints;
+                break;
+        }
+
+        if (points is { } v && p.MaxPointsPerEntry > 0 && Math.Abs(v) > p.MaxPointsPerEntry)
+            return $"Points for '{p.Name}' must be between -{p.MaxPointsPerEntry} and {p.MaxPointsPerEntry}";
+        if (points is { } v2 && p.MaxPointsPerEntry == 0 && v2 != 0)
+            return $"'{p.Name}' carries no points";
+
+        return null;
+    }
+
+    internal static string? ResolveRating(PerformanceParameter p, int? requested, out int? rating)
+    {
+        rating = null;
+        if (p.Kind != ParameterKind.Observation)
+            return requested.HasValue ? "Only observations carry a rating" : null;
+
+        var scale = p.RatingScale is > 1 ? p.RatingScale.Value : 4;
+        if (requested == null) return $"An observation needs a rating from 1 to {scale}";
+        if (requested < 1 || requested > scale) return $"The rating must be between 1 and {scale}";
+        rating = requested;
+        return null;
+    }
+
+    /// <summary>
+    /// Server decides. A caller may ASK for a rung they can read (a request for one they cannot is
+    /// refused: they would be hiding a record from everyone including themselves). The parameter's
+    /// default and the Wellbeing floor are applied on top, and those are allowed even above the
+    /// caller's rung — the welfare precedent, where a class teacher files a safeguarding case that
+    /// is forced Confidential — because the author keeps read access to what they wrote.
+    /// </summary>
+    private async Task<(IActionResult? Error, WelfareVisibility Visibility)> ResolveVisibilityAsync(PerformanceParameter parameter, WelfareVisibility requested)
+    {
+        if (!Enum.IsDefined(requested)) return (BadRequestProblem("Unrecognised visibility"), default);
+
+        if (requested == WelfareVisibility.Restricted && !await CanViewRestrictedAsync())
+            return (BadRequestProblem("You cannot mark a record restricted", "Restricted records are administrator-only. Log it normally and ask an administrator to restrict it."), default);
+        if (requested == WelfareVisibility.Confidential && !await CanViewConfidentialAsync() && parameter.DefaultVisibility < WelfareVisibility.Confidential && parameter.Kind != ParameterKind.Wellbeing)
+            return (BadRequestProblem("You cannot mark a record confidential", "Your role cannot read confidential staff records. Log it at its normal visibility, or ask someone who can."), default);
+
+        var visibility = requested;
+        if (parameter.DefaultVisibility > visibility) visibility = parameter.DefaultVisibility;
+        if (parameter.Kind == ParameterKind.Wellbeing && visibility < WelfareVisibility.Confidential) visibility = WelfareVisibility.Confidential;
+        return (null, visibility);
+    }
+
+    /// <summary>
+    /// May this caller WRITE to (annotate, annul, re-rung, correct) this record? The rung and the
+    /// scope, or authorship below Restricted. Drafts are the author's alone. The permission itself
+    /// is the action's [RequirePermission].
+    /// </summary>
+    private async Task<bool> CanActOnRecordAsync(StaffPerformanceRecord record, Guid branchId)
+    {
+        var me = CurrentUserId();
+        var isAuthor = me != Guid.Empty && record.LoggedByUserId == me;
+        if (record.Status == StaffRecordStatus.Draft) return isAuthor;
+        if (isAuthor && record.Visibility != WelfareVisibility.Restricted) return true;
+        return await CanSeeAsync(record.Visibility) && await StaffScope.CanSeeStaffAsync(branchId, record.SubjectUserId);
+    }
+
+    /// <summary>The query-side twin of CanReadRecordAsync: rung set for others, self and authorship below Restricted, drafts to their author.</summary>
+    private async Task<IQueryable<StaffPerformanceRecord>> ApplyRungAsync(IQueryable<StaffPerformanceRecord> query, Guid me)
+    {
+        var levels = await VisibleLevelsAsync();
+        return query.Where(r =>
+            (r.Status != StaffRecordStatus.Draft || r.LoggedByUserId == me)
+            && (levels.Contains(r.Visibility)
+                || ((r.SubjectUserId == me || r.LoggedByUserId == me) && r.Visibility != WelfareVisibility.Restricted)));
+    }
+
+    /// <summary>Branch + person: self needs nothing more; anyone else needs staff.records.view (403 — the permission is not a secret) and the person in scope (404).</summary>
+    private async Task<(IActionResult? Error, Guid OrganizationId, User? Subject, bool IsSelf)> VerifyPersonAccessAsync(Guid branchId, Guid userId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return (branchError, default, null, false);
+
+        var me = CurrentUserId();
+        var isSelf = me != Guid.Empty && me == userId;
+        if (!isSelf)
+        {
+            if (!await HasPermissionAsync(Permissions.StaffRecordsView)) return (Forbid(), default, null, false);
+            var scopeError = await StaffScope.VerifyStaffAccessAsync(branchId, userId);
+            if (scopeError != null) return (scopeError, default, null, false);
+        }
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var subject = await Db.Users.AsNoTracking().Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId && u.Role.Code != RoleCodes.SuperAdmin);
+        if (subject == null) return (StaffMemberNotFound(), default, null, false);
+
+        return (null, organizationId, subject, isSelf);
+    }
+
+    private Task<User?> FindBranchStaffAsync(Guid organizationId, Guid branchId, Guid userId)
+        => Db.Users.AsNoTracking().Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId && u.IsActive
+                                      && (u.AssignedBranchId == branchId || u.AssignedBranchId == null)
+                                      && u.Role.Code != RoleCodes.SuperAdmin);
+
+    // ---- Loading and mapping -----------------------------------------------------------------------
+
+    private IQueryable<StaffPerformanceRecord> RecordsWithIncludes()
+        => Db.StaffPerformanceRecords
+            .Include(r => r.Parameter)
+            .Include(r => r.Subject)
+            .Include(r => r.Duty)
+            .Include(r => r.Notes)
+            .Include(r => r.Attachments);
+
+    private Task<StaffPerformanceRecord?> LoadAsync(Guid id, Guid branchId, System.Linq.Expressions.Expression<Func<StaffPerformanceRecord, bool>>? also = null)
+    {
+        var query = RecordsWithIncludes().Where(r => r.Id == id && r.BranchId == branchId);
+        if (also != null) query = query.Where(also);
+        return query.FirstOrDefaultAsync();
+    }
+
+    private async Task<StaffPerformanceRecordDto> LoadDtoAsync(Guid id, Guid branchId)
+    {
+        var record = await RecordsWithIncludes().AsNoTracking().FirstAsync(r => r.Id == id && r.BranchId == branchId);
+        return await ToDtoAsync(record);
+    }
+
+    private async Task<StaffPerformanceRecordDto> ToDtoAsync(StaffPerformanceRecord record)
+    {
+        var policy = await _policy.GetAsync(record.OrganizationId);
+        var names = await NamesForAsync(new[] { record });
+        return StaffPerformanceMapping.ToDto(record, names, policy.LateEntryThresholdDays);
+    }
+
+    private Task<StaffPerformanceMapping.NameLookup> NamesForAsync(IEnumerable<StaffPerformanceRecord> records)
+    {
+        var list = records.ToList();
+        return BuildNamesAsync(list.Select(r => (Guid?)r.LoggedByUserId)
+            .Concat(list.Select(r => (Guid?)r.SubjectUserId))
+            .Concat(list.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId)));
+    }
+
+    private static string SubjectName(StaffPerformanceRecord r) => r.Subject != null ? StaffPerformanceMapping.FullName(r.Subject) : "a member of staff";
+    private static string Fmt(int? v) => v?.ToString() ?? "none";
+
+    private async Task SendAsync(CreateNotificationRequest request)
+    {
+        try { await _notifications.CreateInAppNotificationAsync(request); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to notify {UserId}: {Title}", request.UserId, request.Title); }
+    }
+}

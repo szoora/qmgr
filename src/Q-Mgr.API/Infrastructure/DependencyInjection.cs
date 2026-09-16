@@ -65,6 +65,8 @@ public static class DependencyInjection
         services.AddScoped<IStaffPerformancePolicyService, StaffPerformancePolicyService>();
         services.AddScoped<IStaffScoringService, StaffScoringService>();
         services.AddScoped<IStaffAlertService, StaffAlertService>();
+        // Policy-gated automatic credit from welfare, queue and visitor activity (off by default).
+        services.AddScoped<IStaffSystemAwards, StaffSystemAwards>();
 
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();

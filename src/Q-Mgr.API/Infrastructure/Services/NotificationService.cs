@@ -5,6 +5,7 @@ using System.Text.Json;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Entities.Notification;
 using QMgr.Infrastructure.Data;
@@ -511,7 +512,12 @@ public class NotificationService : INotificationService
 
         if (channels.HasFlag(NotificationChannel.Email) && !string.IsNullOrWhiteSpace(email))
         {
-            EnqueueDispatch(notification.Id, NotificationChannel.Email, request.OrganizationId, email!, subject, request.Message);
+            // A caller-built HTML body (a digest with tables) goes out verbatim; anything else is
+            // the plain message, which the dispatch job wraps and encodes.
+            if (!string.IsNullOrWhiteSpace(request.EmailHtmlBody))
+                EnqueueHtmlEmailDispatch(notification.Id, request.OrganizationId, email!, subject, request.EmailHtmlBody);
+            else
+                EnqueueDispatch(notification.Id, NotificationChannel.Email, request.OrganizationId, email!, subject, request.Message);
             notification.DeliveredVia |= NotificationChannel.Email;
         }
 
@@ -583,7 +589,21 @@ public class NotificationService : INotificationService
         }
     }
 
-    public async Task<IEnumerable<Notification>> GetUserNotificationsAsync(Guid userId, Guid organizationId, bool unreadOnly = false, int limit = 50, CancellationToken cancellationToken = default)
+    /// <summary>The same hand-off for a pre-rendered HTML email (see CreateNotificationRequest.EmailHtmlBody). A separate job method rather than a new parameter on DispatchAsync, so jobs already queued under the old signature still deserialise after a deploy.</summary>
+    private void EnqueueHtmlEmailDispatch(Guid notificationId, Guid organizationId, string recipient, string subject, string html)
+    {
+        try
+        {
+            BackgroundJob.Enqueue<NotificationDispatchJob>(job =>
+                job.DispatchHtmlEmailAsync(notificationId, organizationId, recipient, subject, html, null));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not queue HTML email delivery for notification {NotificationId}", notificationId);
+        }
+    }
+
+    public async Task<IEnumerable<Notification>> GetUserNotificationsAsync(Guid userId, Guid organizationId, bool unreadOnly = false, int limit = 50, CancellationToken cancellationToken = default, string? eventKey = null, int offset = 0)
     {
         var query = _context.Notifications
             .Where(n => n.OrganizationId == organizationId)
@@ -596,8 +616,18 @@ public class NotificationService : INotificationService
             query = query.Where(n => !n.IsRead);
         }
 
+        // The notification centre groups by kind. "general" also picks up rows sent with no key —
+        // everything from before EventKey existed and every send that never carried one.
+        if (!string.IsNullOrWhiteSpace(eventKey))
+        {
+            query = eventKey == NotificationEventKeys.General
+                ? query.Where(n => n.EventKey == null || n.EventKey == NotificationEventKeys.General)
+                : query.Where(n => n.EventKey == eventKey);
+        }
+
         return await query
             .OrderByDescending(n => n.CreatedAt)
+            .Skip(Math.Max(0, offset))
             .Take(limit)
             .ToListAsync(cancellationToken);
     }
@@ -634,15 +664,29 @@ public class NotificationService : INotificationService
     }
 
     public async Task MarkAllAsReadAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken = default)
+        => await MarkAllAsReadAsync(userId, organizationId, null, cancellationToken);
+
+    public async Task<int> MarkAllAsReadAsync(Guid userId, Guid organizationId, string? eventKey, CancellationToken cancellationToken = default)
     {
-        await _context.Notifications
+        var query = _context.Notifications
             .Where(n => n.OrganizationId == organizationId)
-            .Where(n => (n.UserId == userId || n.UserId == null) && !n.IsRead)
-            .ExecuteUpdateAsync(s => s
+            .Where(n => (n.UserId == userId || n.UserId == null) && !n.IsRead);
+
+        if (!string.IsNullOrWhiteSpace(eventKey))
+        {
+            query = eventKey == NotificationEventKeys.General
+                ? query.Where(n => n.EventKey == null || n.EventKey == NotificationEventKeys.General)
+                : query.Where(n => n.EventKey == eventKey);
+        }
+
+        await query.ExecuteUpdateAsync(s => s
                 .SetProperty(n => n.IsRead, true)
                 .SetProperty(n => n.ReadAt, DateTime.UtcNow), cancellationToken);
 
-        await _hubService.NotifyUnreadCountAsync(userId, 0);
+        // Recounted rather than assumed zero: with a key, other groups are still unread.
+        var remaining = string.IsNullOrWhiteSpace(eventKey) ? 0 : await GetUnreadCountAsync(userId, organizationId, cancellationToken);
+        await _hubService.NotifyUnreadCountAsync(userId, remaining);
+        return remaining;
     }
 
     public async Task<bool> DeleteNotificationAsync(Guid notificationId, Guid callerId, Guid organizationId, CancellationToken cancellationToken = default)

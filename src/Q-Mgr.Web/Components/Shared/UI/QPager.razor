@@ -1,31 +1,41 @@
 @namespace QMgr.Web.Components.Shared.UI
 
-@if (TotalPages > 1)
+@if (Count > 0 && (ShowCaption || TotalPages > 1))
 {
-    <nav class="q-pager" aria-label="Pagination">
-        @* The two arrows are icon-only, so the accessible name has to live on the button —
-           without it a screen reader announces them as bare "button". The numbered buttons read
-           out their own digit, but need aria-current so the active page is distinguishable by
-           something other than colour. *@
-        <button type="button" class="q-pager__btn" aria-label="Previous page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
-            <QIcon Name="chevron-left" />
-        </button>
-
-        @foreach (var page in GetVisiblePages())
+    <div class="q-pager-bar @Class" @attributes="AdditionalAttributes">
+        @if (ShowCaption)
         {
-            <button type="button"
-                    class="q-pager__btn @(page == PageIndex ? "q-pager__btn--active" : "")"
-                    aria-label="@($"Page {page + 1}")"
-                    aria-current="@(page == PageIndex ? "page" : null)"
-                    @onclick="() => GoTo(page)">
-                @(page + 1)
-            </button>
+            <span class="q-pager__caption">Showing @From.ToString("N0", Inv)–@To.ToString("N0", Inv) of @Count.ToString("N0", Inv)@(string.IsNullOrEmpty(ItemLabel) ? "" : $" {ItemLabel}")</span>
         }
 
-        <button type="button" class="q-pager__btn" aria-label="Next page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
-            <QIcon Name="chevron-right" />
-        </button>
-    </nav>
+        @if (TotalPages > 1)
+        {
+            <nav class="q-pager" aria-label="Pagination">
+                @* The two arrows are icon-only, so the accessible name has to live on the button —
+                   without it a screen reader announces them as bare "button". The numbered buttons read
+                   out their own digit, but need aria-current so the active page is distinguishable by
+                   something other than colour. *@
+                <button type="button" class="q-pager__btn" aria-label="Previous page" disabled="@(PageIndex == 0)" @onclick="() => GoTo(PageIndex - 1)">
+                    <QIcon Name="chevron-left" />
+                </button>
+
+                @foreach (var page in GetVisiblePages())
+                {
+                    <button type="button"
+                            class="q-pager__btn @(page == PageIndex ? "q-pager__btn--active" : "")"
+                            aria-label="@($"Page {page + 1}")"
+                            aria-current="@(page == PageIndex ? "page" : null)"
+                            @onclick="() => GoTo(page)">
+                        @(page + 1)
+                    </button>
+                }
+
+                <button type="button" class="q-pager__btn" aria-label="Next page" disabled="@(PageIndex >= TotalPages - 1)" @onclick="() => GoTo(PageIndex + 1)">
+                    <QIcon Name="chevron-right" />
+                </button>
+            </nav>
+        }
+    </div>
 }
 
 @code {
@@ -37,10 +47,27 @@
     /// <summary>How many page-number buttons to show around the current page.</summary>
     [Parameter] public int PageNumbersCount { get; set; } = 5;
 
+    /// <summary>Zero-based.</summary>
     [Parameter] public int PageIndex { get; set; }
     [Parameter] public EventCallback<int> PageIndexChanged { get; set; }
 
+    /// <summary>"Showing 21–40 of 57" beside the buttons. Shown even when there is only one page.</summary>
+    [Parameter] public bool ShowCaption { get; set; } = true;
+
+    /// <summary>A noun for the caption: "Showing 1–20 of 57 invoices".</summary>
+    [Parameter] public string? ItemLabel { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
     private int TotalPages => PageSize <= 0 ? 0 : (int)Math.Ceiling(Count / (double)PageSize);
+
+    private int From => Count == 0 ? 0 : Math.Min(Count, PageIndex * PageSize + 1);
+    private int To => Math.Min(Count, (PageIndex + 1) * PageSize);
 
     private IEnumerable<int> GetVisiblePages()
     {

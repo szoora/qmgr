@@ -88,9 +88,7 @@
                         <RadzenDataGridColumn TItem="UserInfo" Property="FullName" Title="Name">
                             <Template Context="user">
                                 <div class="user-cell">
-                                    <div class="user-avatar" style="background: @GetAvatarColor(user.FullName)">
-                                        @user.FullName?.Substring(0, 1).ToUpper()
-                                    </div>
+                                    <QAvatar Name="@user.FullName" Title="@user.FullName" />
                                     <div class="user-info">
                                         <span class="user-name">@user.FullName</span>
                                         <span class="user-email">@user.Email</span>
@@ -138,24 +136,68 @@
         }
         else
         {
+            @* ── The role editor Role.DataScope's doc comment promised (plan §5.4) ────────────────
+               System roles are fixed by the seeder: the API refuses rename, scope, toggle, delete
+               AND permission changes on them (400), so a system card offers only a read-only view.
+               A custom role gets the full set. *@
+            <div class="roles-toolbar">
+                <p class="roles-intro">
+                    A role is a set of permissions plus two row scopes: which <strong>students</strong> and which
+                    <strong>staff</strong> its holders may see. System roles are fixed; create a custom role to change anything.
+                </p>
+                @if (canCreateRoles)
+                {
+                    <QButton Text="New Role" Icon="plus-lg" Variant="primary" Size="sm" OnClick="@ShowCreateRoleDialog" />
+                }
+            </div>
             <div class="roles-grid">
                 @foreach (var role in roles)
                 {
-                    <div class="role-card">
+                    <div class="role-card @(role.IsActive ? "" : "role-card--inactive")">
                         <div class="role-header">
-                            <div class="role-icon" style="background: @(role.Color ?? "var(--qm-text-muted)")">
-                                <QIcon Name="@(role.Icon ?? "shield")" />
+                            <div class="role-icon" style="background: @(string.IsNullOrWhiteSpace(role.Color) ? "var(--qm-text-muted)" : role.Color)">
+                                <QIcon Name="@(string.IsNullOrWhiteSpace(role.Icon) ? "shield" : role.Icon)" />
                             </div>
                             <div class="role-title">
                                 <h4>@role.Name</h4>
                                 <span class="role-code">@role.Code</span>
-                                <span>@role.UserCount users</span>
+                                <span>@role.UserCount @(role.UserCount == 1 ? "user" : "users")</span>
                             </div>
-                            @if (role.IsSystem)
-                            {
-                                <span class="system-badge">System</span>
-                            }
+                            <div class="role-badges">
+                                @if (role.IsSystem)
+                                {
+                                    <span class="system-badge">System</span>
+                                }
+                                @if (!role.IsActive)
+                                {
+                                    <span class="inactive-badge">Inactive</span>
+                                }
+                            </div>
                         </div>
+                        @if (!string.IsNullOrWhiteSpace(role.Description))
+                        {
+                            <p class="role-description">@role.Description</p>
+                        }
+                        @* Scope chips only when a scope is narrower than the whole organization: the
+                           default is silent so a card that says nothing means "sees everything the
+                           permissions allow", which is what every role meant before scopes existed. *@
+                        @if (role.DataScope != RoleDataScope.Organization || role.StaffScope != StaffDataScope.Organization)
+                        {
+                            <div class="role-scopes">
+                                @if (role.DataScope != RoleDataScope.Organization)
+                                {
+                                    <span class="scope-chip" title="@StudentScopeHelp(role.DataScope)">
+                                        <QIcon Name="mortarboard-fill" /> Students: @StudentScopeLabel(role.DataScope)
+                                    </span>
+                                }
+                                @if (role.StaffScope != StaffDataScope.Organization)
+                                {
+                                    <span class="scope-chip" title="@StaffScopeHelp(role.StaffScope)">
+                                        <QIcon Name="people-fill" /> Staff: @StaffScopeLabel(role.StaffScope)
+                                    </span>
+                                }
+                            </div>
+                        }
                         <div class="role-permissions">
                             <h5>Permissions (@role.Permissions.Count)</h5>
                             <ul>
@@ -170,9 +212,24 @@
                             </ul>
                         </div>
                         <div class="role-actions">
-                            @if (canEditRoles)
+                            @if (role.IsSystem)
                             {
-                                <QButton Text="Edit Permissions" Icon="shield-lock-fill" Variant="secondary" Size="sm" OnClick="@(() => EditRole(role))" />
+                                <QButton Text="View Permissions" Icon="shield-lock-fill" Variant="secondary" Size="sm" OnClick="@(() => EditRole(role))" />
+                            }
+                            else
+                            {
+                                @if (canEditRoles)
+                                {
+                                    <QButton Text="Edit" Icon="pencil-fill" Variant="secondary" Size="sm" OnClick="@(() => ShowEditRoleDialog(role))" />
+                                    <QButton Text="Permissions" Icon="shield-lock-fill" Variant="secondary" Size="sm" OnClick="@(() => EditRole(role))" />
+                                    <QButton Text="@(role.IsActive ? "Deactivate" : "Activate")"
+                                             Icon="@(role.IsActive ? "pause-circle" : "play-circle")"
+                                             Variant="ghost" Size="sm" OnClick="@(() => ToggleRole(role))" />
+                                }
+                                @if (canDeleteRoles)
+                                {
+                                    <QButton Text="Delete" Icon="trash-fill" Variant="ghost" Size="sm" Class="role-delete-btn" OnClick="@(() => DeleteRole(role))" />
+                                }
                             }
                         </div>
                     </div>
@@ -307,15 +364,15 @@
     ConfirmButtonClass="btn-danger"
     OnClose="@HandleDeleteConfirm" />
 
-<!-- Role Permissions Editor Dialog -->
-<QModal @bind-Visible="showRoleDialog" Title="@($"Edit Permissions: {editingRole?.Name}")" Size="lg">
+<!-- Role Permissions Editor Dialog (read-only for a system role: the API refuses the write) -->
+<QModal @bind-Visible="showRoleDialog" Title="@($"{(editingRole?.IsSystem == true ? "Permissions" : "Edit Permissions")}: {editingRole?.Name}")" Size="lg">
     <ChildContent>
         @if (editingRole != null)
         {
             <div class="role-editor">
                 <div class="role-info-header">
-                    <div class="role-icon" style="background: @(editingRole.Color ?? "var(--qm-text-muted)")">
-                        <QIcon Name="@(editingRole.Icon ?? "shield")" />
+                    <div class="role-icon" style="background: @(string.IsNullOrWhiteSpace(editingRole.Color) ? "var(--qm-text-muted)" : editingRole.Color)">
+                        <QIcon Name="@(string.IsNullOrWhiteSpace(editingRole.Icon) ? "shield" : editingRole.Icon)" />
                     </div>
                     <div>
                         <h4>@editingRole.Name</h4>
@@ -323,42 +380,140 @@
                     </div>
                 </div>
 
-                <div class="permissions-editor">
-                    @foreach (var category in allPermissions.GroupBy(p => p.Category).OrderBy(g => g.Key))
-                    {
-                        <div class="permission-category">
-                            <h5 class="category-header">
-                                <span>@category.Key</span>
-                                <button class="select-all-btn" @onclick="@(() => ToggleCategoryPermissions(category.Key))">
-                                    @(AreAllCategoryPermissionsSelected(category.Key) ? "Deselect All" : "Select All")
-                                </button>
-                            </h5>
-                            <div class="permissions-list">
-                                @foreach (var permission in category.OrderBy(p => p.SortOrder))
-                                {
-                                    <div class="permission-item">
-                                        <QCheckbox @bind-Value="@selectedPermissions[permission.Code]"
-                                                   Label="@permission.Name"
-                                                   Disabled="@(editingRole.Code == "SuperAdmin")" />
-                                        @if (!string.IsNullOrEmpty(permission.Description))
-                                        {
-                                            <span class="permission-description">@permission.Description</span>
-                                        }
-                                    </div>
-                                }
-                            </div>
-                        </div>
-                    }
-                </div>
+                @if (editingRole.IsSystem)
+                {
+                    <div class="us-ct-warn">
+                        <QIcon Name="info-circle-fill" />
+                        <span>System role permissions cannot be modified. Create a custom role instead.</span>
+                    </div>
+                }
+
+                @PermissionEditor(editingRole.IsSystem)
             </div>
         }
     </ChildContent>
     <FooterContent>
-        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showRoleDialog = false)" />
-        <QButton Text="Save Permissions" Icon="check-lg" Variant="primary" OnClick="@SaveRolePermissions"
-                 Disabled="@(editingRole?.Code == "SuperAdmin")" />
+        <QButton Text="@(editingRole?.IsSystem == true ? "Close" : "Cancel")" Icon="x-lg" Variant="ghost" OnClick="@(() => showRoleDialog = false)" />
+        @if (editingRole?.IsSystem != true)
+        {
+            <QButton Text="Save Permissions" Icon="check-lg" Variant="primary" OnClick="@SaveRolePermissions" Loading="@isSavingRole" />
+        }
     </FooterContent>
 </QModal>
+
+<!-- Role Editor Dialog: create, or edit a custom role's identity and its two scopes -->
+<QModal @bind-Visible="showRoleEditor" Title="@(roleBeingEdited == null ? "New Role" : $"Edit Role: {roleBeingEdited.Name}")" Size="lg">
+    <ChildContent>
+        <div class="role-editor">
+            <div class="form-row">
+                <div class="form-group">
+                    @* @bind:after, never a separate @oninput: the slug follows the name while the code is untouched. *@
+                    <QInput TValue="string" @bind-Value="roleForm.Name" @bind-Value:after="SyncCodeFromName"
+                            Label="Name *" Placeholder="e.g. Deputy Head Teacher" MaxLength="100" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" @bind-Value="roleForm.Code" @bind-Value:after="MarkCodeEdited"
+                            Label="Code *" Placeholder="deputy-head-teacher" MaxLength="50"
+                            ReadOnly="@(roleBeingEdited != null)"
+                            HelperText="@(roleBeingEdited != null
+                                ? "A code is permanent: permission checks and reports refer to it."
+                                : "Lower-case letters, digits and hyphens. Follows the name until you edit it.")" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <QInput TValue="string" @bind-Value="roleForm.Description" Type="textarea" Rows="2" Label="Description"
+                        Placeholder="Who holds this role and what it is for" MaxLength="500" />
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Colour</label>
+                    <div class="colour-swatches">
+                        @foreach (var preset in RoleColourPresets)
+                        {
+                            <button type="button" class="colour-swatch @(IsSelectedColour(preset) ? "selected" : "")"
+                                    style="background: @preset" title="@preset" aria-label="@($"Use colour {preset}")"
+                                    @onclick="@(() => roleForm.Color = preset)">
+                                @if (IsSelectedColour(preset))
+                                {
+                                    <QIcon Name="check-lg" />
+                                }
+                            </button>
+                        }
+                    </div>
+                    <QInput TValue="string" @bind-Value="roleForm.Color" Placeholder="#7a2847" MaxLength="30"
+                            HelperText="A preset above, or any CSS colour." />
+                </div>
+                <div class="form-group">
+                    <label>Icon</label>
+                    <div class="icon-preview-row">
+                        <div class="role-icon" style="background: @(string.IsNullOrWhiteSpace(roleForm.Color) ? "var(--qm-text-muted)" : roleForm.Color)">
+                            <QIcon Name="@(string.IsNullOrWhiteSpace(roleForm.Icon) ? "shield" : roleForm.Icon.Trim())" />
+                        </div>
+                        <div class="icon-preview-input">
+                            <QInput TValue="string" @bind-Value="roleForm.Icon" Placeholder="shield" MaxLength="50"
+                                    HelperText="A Bootstrap Icons name, e.g. mortarboard-fill, people-fill, clipboard-check." />
+                        </div>
+                    </div>
+                    <QInput TValue="int" @bind-Value="roleForm.SortOrder" Type="number" Min="0" Max="10000" Label="Sort order"
+                            HelperText="Lower sorts first in role lists. System roles use 1–99." />
+                </div>
+            </div>
+
+            @* ── The two row scopes. Permissions gate ACTIONS; these gate ROWS (CLAUDE.md, RBAC). ── *@
+            <div class="scope-section">
+                <h5 class="scope-heading"><QIcon Name="funnel-fill" /> Row scopes</h5>
+                <div class="form-row">
+                    <div class="form-group">
+                        <QSelect TValue="RoleDataScope" TItem="StudentScopeOption" @bind-Value="roleForm.DataScope"
+                                 Items="@StudentScopeOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)"
+                                 Label="Student scope" />
+                        <p class="scope-help">
+                            <strong>Organization</strong> — sees every student the permissions allow.
+                            <strong>Assigned classes</strong> — sees only students in classes this role's holders are
+                            assigned to; fails closed, so a holder with no class sees no students at all.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <QSelect TValue="StaffDataScope" TItem="StaffScopeOption" @bind-Value="roleForm.StaffScope"
+                                 Items="@StaffScopeOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)"
+                                 Label="Staff scope" />
+                        <p class="scope-help">
+                            <strong>Organization</strong> — sees every staff member the permissions allow.
+                            <strong>Assigned departments</strong> — heads of department: members of the departments the
+                            holder heads or deputises; fails closed.
+                            <strong>Direct reports</strong> — line managers: staff whose line manager is the holder; fails closed.
+                            <strong>Self only</strong> — sees nobody but themselves. Teachers and support staff.
+                            A person always reads their own file regardless.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scope-section">
+                <h5 class="scope-heading"><QIcon Name="shield-lock-fill" /> Permissions (@selectedPermissions.Count(kvp => kvp.Value))</h5>
+                @PermissionEditor(false)
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Icon="x-lg" Variant="ghost" OnClick="@(() => showRoleEditor = false)" />
+        <QButton Text="@(roleBeingEdited == null ? "Create Role" : "Save Changes")"
+                 Icon="@(roleBeingEdited == null ? "plus-lg" : "check-lg")"
+                 Variant="primary" OnClick="@SaveRole" Loading="@isSavingRole" />
+    </FooterContent>
+</QModal>
+
+<!-- Role Delete Confirmation -->
+<ConfirmDialog
+    IsVisible="@showRoleDeleteConfirm"
+    Title="Delete Role"
+    Message="@roleDeleteConfirmMessage"
+    ConfirmText="Delete"
+    CancelText="Cancel"
+    ConfirmButtonClass="btn-danger"
+    OnClose="@HandleRoleDeleteConfirm" />
 
 <style>
     .header-actions { display: flex; align-items: center; gap: 10px; }
@@ -501,10 +656,100 @@
     .role-permissions li .rzi { color: var(--qm-success); font-size: 16px; }
     .role-permissions li.more { color: var(--qm-text-muted); font-style: italic; }
 
+    /* A button row wraps rather than widening the card: the page must never scroll sideways. */
     .role-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
         margin-top: 16px;
         padding-top: 16px;
         border-top: 1px solid var(--qm-border);
+    }
+
+    .role-actions .role-delete-btn { color: var(--qm-danger); }
+
+    .roles-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .roles-intro { margin: 0; font-size: 13px; color: var(--qm-text-muted); max-width: 60ch; }
+
+    .role-card--inactive { opacity: 0.7; border-style: dashed; }
+
+    .role-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: auto; }
+    .role-badges .system-badge { margin-left: 0; }
+
+    .inactive-badge {
+        padding: 2px 8px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: var(--qm-bg-elevated);
+        color: var(--qm-text-muted);
+        border: 1px solid var(--qm-border);
+    }
+
+    .role-description { margin: -6px 0 14px; font-size: 13px; color: var(--qm-text-secondary); }
+
+    /* Scope chips: the tint derives from the brand token so it follows the theme (CLAUDE.md). */
+    .role-scopes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .scope-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 9px;
+        border-radius: var(--qm-radius-sm);
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--qm-primary);
+        background: rgba(var(--qm-primary-rgb), 0.12);
+        border: 1px solid rgba(var(--qm-primary-rgb), 0.3);
+    }
+
+    /* Role editor form */
+    .colour-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .colour-swatch {
+        width: 30px;
+        height: 30px;
+        border-radius: var(--qm-radius-md);
+        border: 2px solid transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--qm-text-on-primary);
+        padding: 0;
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .colour-swatch:hover { transform: scale(1.08); }
+    .colour-swatch.selected { border-color: var(--qm-text-primary); }
+
+    .icon-preview-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+    .icon-preview-row .role-icon { flex: 0 0 48px; }
+    .icon-preview-input { flex: 1; min-width: 0; }
+
+    .scope-section { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--qm-border); }
+    .scope-heading {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 14px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--qm-text-muted);
+    }
+    .scope-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--qm-text-muted); }
+    .scope-help strong { color: var(--qm-text-secondary); font-weight: 600; }
+
+    @@media (max-width: 640px) {
+        .form-row { grid-template-columns: 1fr; }
     }
 
     /* Dialog styles */
@@ -740,6 +985,8 @@
 
     // Permission check
     private bool canEditRoles = false;
+    private bool canCreateRoles = false;
+    private bool canDeleteRoles = false;
     private bool canCreateUsers = false;
     private bool canEditUsers = false;
     private bool canDeleteUsers = false;
@@ -769,6 +1016,8 @@
             }
 
             canEditRoles = await PermissionSvc.HasPermissionAsync(Permissions.RolesEdit);
+            canCreateRoles = await PermissionSvc.HasPermissionAsync(Permissions.RolesCreate);
+            canDeleteRoles = await PermissionSvc.HasPermissionAsync(Permissions.RolesDelete);
             canCreateUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersCreate);
             canEditUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersEdit);
             canDeleteUsers = await PermissionSvc.HasPermissionAsync(Permissions.UsersDelete);
@@ -915,38 +1164,68 @@
         isLoadingRoles = true;
         try
         {
-            // Load roles with permissions
-            var rolesResponse = await Http.GetAsync("api/v1/roles");
+            // The list endpoint returns RoleListDto — counts and scopes, no permission codes — so
+            // the codes and sort order come from GET roles/{id} per role. Until 2026-09-16 this
+            // read a `Permissions` list the list shape never had, so every card said
+            // "Permissions (0)" and the editor opened with nothing ticked. Inactive roles are
+            // included here so a deactivated custom role can be found and reactivated.
+            var rolesResponse = await Http.GetAsync("api/v1/roles?includeInactive=true");
             if (rolesResponse.IsSuccessStatusCode)
             {
                 var apiRoles = await rolesResponse.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
-                roles = apiRoles.Select(r => new RoleInfo
+                var loaded = new List<RoleInfo>();
+                foreach (var r in apiRoles)
                 {
-                    Id = r.Id,
-                    Name = r.Name,
-                    Code = r.Code,
-                    Icon = r.Icon,
-                    Color = r.Color,
-                    IsSystem = r.IsSystem,
-                    UserCount = users.Count(u => u.RoleId == r.Id),
-                    Permissions = r.Permissions?.ToList() ?? new()
-                }).ToList();
+                    var detail = await LoadRoleDetailAsync(r.Id);
+                    loaded.Add(new RoleInfo
+                    {
+                        Id = r.Id,
+                        Name = r.Name,
+                        Code = r.Code,
+                        Description = r.Description,
+                        Icon = r.Icon,
+                        Color = r.Color,
+                        IsSystem = r.IsSystem,
+                        IsActive = r.IsActive,
+                        DataScope = r.DataScope,
+                        StaffScope = r.StaffScope,
+                        SortOrder = detail?.SortOrder ?? 100,
+                        // Counted over the users list this page already holds (inactive included),
+                        // because that is the count DELETE refuses on — the API's UserCount is active only.
+                        UserCount = users.Count(u => u.RoleId == r.Id),
+                        Permissions = detail?.Permissions ?? new()
+                    });
+                }
+                roles = loaded;
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(rolesResponse);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
             }
 
-            // Load all available permissions
+            // GET roles/permissions is GROUPED by category ({ Category, Permissions[] }); reading it
+            // as a flat list gave every item an empty Code, and ToDictionary over those threw the
+            // moment the editor opened. The API already orders within a category by SortOrder, so
+            // the arrival index stands in for it.
             var permissionsResponse = await Http.GetAsync("api/v1/roles/permissions");
             if (permissionsResponse.IsSuccessStatusCode)
             {
-                var apiPermissions = await permissionsResponse.Content.ReadFromJsonAsync<List<PermissionApiDto>>(JsonOptions) ?? new();
-                allPermissions = apiPermissions.Select(p => new PermissionInfo
-                {
-                    Id = p.Id,
-                    Code = p.Code,
-                    Name = p.Name,
-                    Description = p.Description,
-                    Category = p.Category,
-                    SortOrder = p.SortOrder
-                }).ToList();
+                var grouped = await permissionsResponse.Content.ReadFromJsonAsync<List<PermissionCategoryApiDto>>(JsonOptions) ?? new();
+                allPermissions = grouped
+                    .SelectMany(g => g.Permissions.Select((p, i) => new PermissionInfo
+                    {
+                        Id = p.Id,
+                        Code = p.Code,
+                        Name = p.Name,
+                        Description = p.Description,
+                        Category = string.IsNullOrWhiteSpace(p.Category) ? g.Category : p.Category,
+                        SortOrder = i
+                    }))
+                    .Where(p => !string.IsNullOrWhiteSpace(p.Code))
+                    .GroupBy(p => p.Code)
+                    .Select(g => g.First())
+                    .ToList();
             }
         }
         catch (Exception ex)
@@ -1337,20 +1616,27 @@
         return categoryPermissions.All(p => selectedPermissions.GetValueOrDefault(p.Code, false));
     }
 
+    /// <summary>
+    /// The permission ids currently ticked. UpdateRolePermissionsRequest takes <c>PermissionIds</c>
+    /// (GUIDs); this used to post <c>{ Permissions: [codes] }</c>, which deserialized to an empty
+    /// list and would have wiped every permission off the role on Save.
+    /// </summary>
+    private List<Guid> SelectedPermissionIds() => allPermissions
+        .Where(p => selectedPermissions.GetValueOrDefault(p.Code, false))
+        .Select(p => p.Id)
+        .Distinct()
+        .ToList();
+
     private async Task SaveRolePermissions()
     {
-        if (editingRole == null) return;
+        if (editingRole == null || editingRole.IsSystem || isSavingRole) return;
 
+        isSavingRole = true;
         try
         {
-            var permissionCodes = selectedPermissions
-                .Where(kvp => kvp.Value)
-                .Select(kvp => kvp.Key)
-                .ToList();
-
             var response = await Http.PutAsJsonAsync(
                 $"api/v1/roles/{editingRole.Id}/permissions",
-                new { Permissions = permissionCodes },
+                new { PermissionIds = SelectedPermissionIds() },
                 JsonOptions);
 
             if (response.IsSuccessStatusCode)
@@ -1369,7 +1655,379 @@
         {
             NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save permissions: {ex.Message}");
         }
+        finally
+        {
+            isSavingRole = false;
+        }
     }
+
+    // =====================================================================================
+    // Role editor: create / edit / toggle / delete a CUSTOM role (plan §5.4).
+    //
+    // Permissions gate actions; the two scopes gate rows. A school adds "Deputy Head Teacher"
+    // or "House Parent" here itself instead of waiting on the seeder. System roles are refused
+    // by the API for every one of these writes, so the UI never offers them on a system card.
+    // =====================================================================================
+
+    private bool showRoleEditor;
+    private bool isSavingRole;
+    private RoleInfo? roleBeingEdited;
+    private RoleFormData roleForm = new();
+    private bool roleCodeEdited;
+
+    private bool showRoleDeleteConfirm;
+    private string roleDeleteConfirmMessage = "";
+    private RoleInfo? roleToDelete;
+
+    private sealed record StudentScopeOption(RoleDataScope Value, string Text);
+    private sealed record StaffScopeOption(StaffDataScope Value, string Text);
+
+    private static readonly List<StudentScopeOption> StudentScopeOptions = new()
+    {
+        new(RoleDataScope.Organization, "Organization — every student the permissions allow"),
+        new(RoleDataScope.AssignedClasses, "Assigned classes — only students in the holder's classes")
+    };
+
+    private static readonly List<StaffScopeOption> StaffScopeOptions = new()
+    {
+        new(StaffDataScope.Organization, "Organization — every staff member the permissions allow"),
+        new(StaffDataScope.AssignedDepartments, "Assigned departments — heads of department"),
+        new(StaffDataScope.DirectReports, "Direct reports — line managers"),
+        new(StaffDataScope.SelfOnly, "Self only — nobody but themselves")
+    };
+
+    /// <summary>
+    /// Eight presets that carry white text legibly on either theme. The brand wine leads; the
+    /// rest are deliberately muted so a role colour reads as a label, not a warning light.
+    /// </summary>
+    private static readonly string[] RoleColourPresets =
+    {
+        "#7a2847", "#1f5f8b", "#2e7d4f", "#b3701a", "#b3342e", "#5b4a9e", "#c2571a", "#4f5b66"
+    };
+
+    private bool IsSelectedColour(string preset) =>
+        string.Equals(roleForm.Color?.Trim(), preset, StringComparison.OrdinalIgnoreCase);
+
+    private static string StudentScopeLabel(RoleDataScope scope) => scope switch
+    {
+        RoleDataScope.AssignedClasses => "assigned classes",
+        _ => "organization"
+    };
+
+    private static string StaffScopeLabel(StaffDataScope scope) => scope switch
+    {
+        StaffDataScope.AssignedDepartments => "assigned departments",
+        StaffDataScope.DirectReports => "direct reports",
+        StaffDataScope.SelfOnly => "self only",
+        _ => "organization"
+    };
+
+    // Tooltip wording follows the enums' own doc comments (RoleDataScope.cs, StaffPerformanceEnums.cs).
+    private static string StudentScopeHelp(RoleDataScope scope) => scope switch
+    {
+        RoleDataScope.AssignedClasses => "Sees only students in classes this role's holders are assigned to. Fails closed: a holder with no class sees no students.",
+        _ => "Sees every student the permissions allow."
+    };
+
+    private static string StaffScopeHelp(StaffDataScope scope) => scope switch
+    {
+        StaffDataScope.AssignedDepartments => "Sees members of the departments the holder heads or deputises. Fails closed: a head with no department sees nobody.",
+        StaffDataScope.DirectReports => "Sees staff whose line manager is the holder. Fails closed the same way.",
+        StaffDataScope.SelfOnly => "Sees nobody but themselves. Teachers and support staff.",
+        _ => "Sees every staff member the permissions allow."
+    };
+
+    /// <summary>lower-case, letters/digits/hyphens only, single hyphens, no leading or trailing hyphen.</summary>
+    private static string Slugify(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var sb = new System.Text.StringBuilder(text.Length);
+        var lastHyphen = true; // suppress a leading hyphen
+        foreach (var ch in text.Trim().ToLowerInvariant())
+        {
+            if (char.IsAsciiLetterOrDigit(ch))
+            {
+                sb.Append(ch);
+                lastHyphen = false;
+            }
+            else if (!lastHyphen)
+            {
+                sb.Append('-');
+                lastHyphen = true;
+            }
+        }
+        return sb.ToString().TrimEnd('-');
+    }
+
+    private void SyncCodeFromName()
+    {
+        // Only while creating and only until the administrator has typed a code of their own.
+        if (roleBeingEdited != null || roleCodeEdited) return;
+        roleForm.Code = Slugify(roleForm.Name);
+    }
+
+    private void MarkCodeEdited()
+    {
+        // Clearing the box hands the code back to the name; anything else is theirs to keep.
+        roleCodeEdited = !string.IsNullOrWhiteSpace(roleForm.Code);
+        if (!roleCodeEdited) roleForm.Code = Slugify(roleForm.Name);
+    }
+
+    private void ShowCreateRoleDialog()
+    {
+        roleBeingEdited = null;
+        roleCodeEdited = false;
+        roleForm = new RoleFormData
+        {
+            Color = RoleColourPresets[0],
+            Icon = "shield",
+            SortOrder = 100
+        };
+        selectedPermissions = allPermissions.ToDictionary(p => p.Code, _ => false);
+        showRoleEditor = true;
+    }
+
+    private void ShowEditRoleDialog(RoleInfo role)
+    {
+        if (role.IsSystem) return;
+        roleBeingEdited = role;
+        roleCodeEdited = true;
+        roleForm = new RoleFormData
+        {
+            Name = role.Name,
+            Code = role.Code,
+            Description = role.Description ?? "",
+            Color = role.Color ?? "",
+            Icon = role.Icon ?? "",
+            SortOrder = role.SortOrder,
+            DataScope = role.DataScope,
+            StaffScope = role.StaffScope
+        };
+        selectedPermissions = allPermissions.ToDictionary(p => p.Code, p => role.Permissions.Contains(p.Code));
+        showRoleEditor = true;
+    }
+
+    private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private async Task SaveRole()
+    {
+        if (isSavingRole) return;
+
+        var name = roleForm.Name?.Trim() ?? "";
+        var code = Slugify(roleForm.Code);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "A role needs a name.");
+            return;
+        }
+        if (roleBeingEdited == null && string.IsNullOrWhiteSpace(code))
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "Validation", "A role needs a code: lower-case letters, digits and hyphens.");
+            return;
+        }
+
+        isSavingRole = true;
+        try
+        {
+            if (roleBeingEdited == null)
+            {
+                var response = await Http.PostAsJsonAsync("api/v1/roles", new
+                {
+                    Code = code,
+                    Name = name,
+                    Description = NullIfBlank(roleForm.Description),
+                    Color = NullIfBlank(roleForm.Color),
+                    Icon = NullIfBlank(roleForm.Icon),
+                    SortOrder = roleForm.SortOrder,
+                    PermissionIds = SelectedPermissionIds(),
+                    DataScope = roleForm.DataScope,
+                    StaffScope = roleForm.StaffScope
+                }, JsonOptions);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                    NotificationService.Notify(ToastSeverity.Error, title, detail);
+                    return;
+                }
+
+                NotificationService.Notify(ToastSeverity.Success, "Role created", $"'{name}' is ready to assign.");
+            }
+            else
+            {
+                var response = await Http.PutAsJsonAsync($"api/v1/roles/{roleBeingEdited.Id}", new
+                {
+                    Name = name,
+                    Description = NullIfBlank(roleForm.Description),
+                    Color = NullIfBlank(roleForm.Color),
+                    Icon = NullIfBlank(roleForm.Icon),
+                    SortOrder = roleForm.SortOrder,
+                    DataScope = roleForm.DataScope,
+                    StaffScope = roleForm.StaffScope
+                }, JsonOptions);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                    NotificationService.Notify(ToastSeverity.Error, title, detail);
+                    return;
+                }
+
+                // Permissions travel separately, and only when the set actually changed: the
+                // permissions endpoint replaces the whole set and invalidates every holder's cache.
+                var wanted = allPermissions.Where(p => selectedPermissions.GetValueOrDefault(p.Code, false)).Select(p => p.Code).ToHashSet();
+                var current = roleBeingEdited.Permissions.ToHashSet();
+                if (!wanted.SetEquals(current))
+                {
+                    var permResponse = await Http.PutAsJsonAsync(
+                        $"api/v1/roles/{roleBeingEdited.Id}/permissions",
+                        new { PermissionIds = SelectedPermissionIds() },
+                        JsonOptions);
+
+                    if (!permResponse.IsSuccessStatusCode)
+                    {
+                        // The role itself DID save; say so rather than reporting one failure for two writes.
+                        var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(permResponse);
+                        NotificationService.Notify(ToastSeverity.Warning, "Role saved, permissions not", $"{title}: {detail}");
+                        showRoleEditor = false;
+                        await LoadData();
+                        return;
+                    }
+                }
+
+                NotificationService.Notify(ToastSeverity.Success, "Role updated", $"'{name}' saved.");
+            }
+
+            showRoleEditor = false;
+            // Reload the lot: the Add User dialog's role dropdown is fed from the same call.
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to save role: {ex.Message}");
+        }
+        finally
+        {
+            isSavingRole = false;
+        }
+    }
+
+    private async Task ToggleRole(RoleInfo role)
+    {
+        if (role.IsSystem) return;
+        try
+        {
+            var response = await Http.PatchAsync($"api/v1/roles/{role.Id}/toggle", null);
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success,
+                    role.IsActive ? "Role deactivated" : "Role activated",
+                    role.IsActive
+                        ? $"'{role.Name}' can no longer be assigned; its holders' permissions were revoked at once."
+                        : $"'{role.Name}' can be assigned again.");
+                await LoadData();
+            }
+            else
+            {
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to update role: {ex.Message}");
+        }
+    }
+
+    private void DeleteRole(RoleInfo role)
+    {
+        if (role.IsSystem) return;
+        roleToDelete = role;
+        roleDeleteConfirmMessage = role.UserCount > 0
+            ? $"'{role.Name}' is held by {role.UserCount} user{(role.UserCount == 1 ? "" : "s")}. The server will refuse to delete it until they are moved to another role. Try anyway?"
+            : $"Delete the role '{role.Name}'? This cannot be undone. Its permissions and scopes are lost; no user holds it.";
+        showRoleDeleteConfirm = true;
+    }
+
+    private async Task HandleRoleDeleteConfirm(bool confirmed)
+    {
+        showRoleDeleteConfirm = false;
+        var role = roleToDelete;
+        roleToDelete = null;
+        if (!confirmed || role == null) return;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"api/v1/roles/{role.Id}");
+            if (response.IsSuccessStatusCode)
+            {
+                NotificationService.Notify(ToastSeverity.Success, "Role deleted", $"'{role.Name}' was removed.");
+                await LoadData();
+            }
+            else
+            {
+                // The API's own words: "Cannot delete role 'X' because it has N user(s) assigned."
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to delete role: {ex.Message}");
+        }
+    }
+
+    private async Task<RoleDetailApiDto?> LoadRoleDetailAsync(Guid roleId)
+    {
+        try
+        {
+            var response = await Http.GetAsync($"api/v1/roles/{roleId}");
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<RoleDetailApiDto>(JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The category-grouped permission checklist, shared by the permissions modal and the role
+    /// editor so there is one copy of it. Read-only for a system role, since the API refuses the write.
+    /// </summary>
+    private RenderFragment PermissionEditor(bool readOnly) => __builder =>
+    {
+        <div class="permissions-editor">
+            @foreach (var category in allPermissions.GroupBy(p => p.Category).OrderBy(g => g.Key))
+            {
+                <div class="permission-category">
+                    <h5 class="category-header">
+                        <span>@category.Key</span>
+                        @if (!readOnly)
+                        {
+                            <button type="button" class="select-all-btn" @onclick="@(() => ToggleCategoryPermissions(category.Key))">
+                                @(AreAllCategoryPermissionsSelected(category.Key) ? "Deselect All" : "Select All")
+                            </button>
+                        }
+                    </h5>
+                    <div class="permissions-list">
+                        @foreach (var permission in category.OrderBy(p => p.SortOrder))
+                        {
+                            <div class="permission-item">
+                                <QCheckbox @bind-Value="@selectedPermissions[permission.Code]"
+                                           Label="@permission.Name"
+                                           Disabled="@readOnly" />
+                                @if (!string.IsNullOrEmpty(permission.Description))
+                                {
+                                    <span class="permission-description">@permission.Description</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    };
 
     // DTOs for API
     private record UserDto
@@ -1395,15 +2053,45 @@
         public string Name { get; init; } = "";
     }
 
+    /// <summary>Mirrors RolesController.RoleListDto exactly — no permission codes on the list shape.</summary>
     private record RoleApiDto
     {
         public Guid Id { get; init; }
         public string Name { get; init; } = "";
         public string Code { get; init; } = "";
+        public string? Description { get; init; }
         public string? Icon { get; init; }
         public string? Color { get; init; }
         public bool IsSystem { get; init; }
-        public List<string>? Permissions { get; init; }
+        public bool IsActive { get; init; } = true;
+        public int UserCount { get; init; }
+        public int PermissionCount { get; init; }
+        public RoleDataScope DataScope { get; init; }
+        public StaffDataScope StaffScope { get; init; }
+    }
+
+    /// <summary>Mirrors RolesController.RoleDetailDto — the shape GET roles/{id} and every role write return.</summary>
+    private record RoleDetailApiDto
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = "";
+        public string Code { get; init; } = "";
+        public string? Description { get; init; }
+        public string? Icon { get; init; }
+        public string? Color { get; init; }
+        public bool IsSystem { get; init; }
+        public bool IsActive { get; init; }
+        public int SortOrder { get; init; }
+        public RoleDataScope DataScope { get; init; }
+        public StaffDataScope StaffScope { get; init; }
+        public List<string> Permissions { get; init; } = new();
+    }
+
+    /// <summary>GET roles/permissions returns these, grouped — RolesController.PermissionCategoryDto.</summary>
+    private record PermissionCategoryApiDto
+    {
+        public string Category { get; init; } = "";
+        public List<PermissionApiDto> Permissions { get; init; } = new();
     }
 
     private record PermissionApiDto
@@ -1413,7 +2101,18 @@
         public string Name { get; init; } = "";
         public string? Description { get; init; }
         public string Category { get; init; } = "";
-        public int SortOrder { get; init; }
+    }
+
+    private class RoleFormData
+    {
+        public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Color { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public int SortOrder { get; set; } = 100;
+        public RoleDataScope DataScope { get; set; } = RoleDataScope.Organization;
+        public StaffDataScope StaffScope { get; set; } = StaffDataScope.Organization;
     }
 
     private class UserInfo
@@ -1434,9 +2133,14 @@
         public Guid Id { get; set; }
         public string Name { get; set; } = "";
         public string Code { get; set; } = "";
+        public string? Description { get; set; }
         public string? Icon { get; set; }
         public string? Color { get; set; }
         public bool IsSystem { get; set; }
+        public bool IsActive { get; set; } = true;
+        public int SortOrder { get; set; } = 100;
+        public RoleDataScope DataScope { get; set; }
+        public StaffDataScope StaffScope { get; set; }
         public int UserCount { get; set; }
         public List<string> Permissions { get; set; } = new();
     }

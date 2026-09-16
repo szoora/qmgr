@@ -139,6 +139,15 @@ public record UserNotificationPreferencesDto
 
     /// <summary>The same, for SMS. SMS costs the tenant money per message, so this defaults on but the per-event defaults are off.</summary>
     public bool SmsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// When the Staff Performance weekly digest was last sent to this person (UTC). The idempotency
+    /// gate for StaffPerformanceJobs.SendWeeklyDigestsAsync: lives in the preferences blob rather
+    /// than a new column because it is per-person notification state, and is read and written ONLY
+    /// through INotificationPreferenceResolver like everything else in this record. Not shown on
+    /// the preferences panel.
+    /// </summary>
+    public DateTime? LastStaffDigestSentAt { get; set; }
 }
 
 /// <summary>

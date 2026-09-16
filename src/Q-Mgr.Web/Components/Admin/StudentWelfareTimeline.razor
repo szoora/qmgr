@@ -111,16 +111,14 @@
     {
         @RenderRestrictedNotes()
 
-        <div class="timeline">
+        <QTimeline>
             @foreach (var record in records)
             {
-                <div class="timeline-item timeline-item--@record.CaseType.ToString().ToLowerInvariant()">
-                    <div class="timeline-marker" style="background-color: @(record.CategoryColor ?? DefaultCaseColor(record.CaseType))">
-                        <QIcon Name="@CaseTypeIcon(record.CaseType)" />
-                    </div>
-                    <div class="timeline-card @(record.Status == WelfareStatus.Draft ? "timeline-card--draft" : "")">
-                        <div class="timeline-card-header">
-                            <div class="timeline-card-title">
+                <QTimelineItem MarkerColor="@(record.CategoryColor ?? DefaultCaseColor(record.CaseType))"
+                               MarkerIcon="@CaseTypeIcon(record.CaseType)"
+                               Date="@record.OccurredAt.ToLocalTime()"
+                               Modifier="@(record.Status == WelfareStatus.Draft ? "draft" : null)">
+                    <TitleContent>
                                 <strong>@record.CategoryName</strong>
                                 <span class="tier-badge tier-badge--@record.Tier.ToString().ToLowerInvariant()">@record.Tier</span>
                                 @if (record.Points.HasValue && record.Points.Value != 0)
@@ -161,19 +159,20 @@
                                 {
                                     <span class="status-badge status-badge--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
                                 }
-                            </div>
-                            <span class="timeline-date">@QDateFormat.DT(record.OccurredAt.ToLocalTime())</span>
+                    </TitleContent>
+                    <ChildContent>
+                        <p class="q-timeline__text">@record.Description</p>
+                        <div class="q-timeline__meta">
+                            @if (!string.IsNullOrWhiteSpace(record.Location))
+                            {
+                                <p><QIcon Name="geo-alt-fill" /> @record.Location</p>
+                            }
+                            <p>Reported by @record.ReportedByName</p>
+                            @if (record.AdditionalStudentNames.Any())
+                            {
+                                <p><QIcon Name="people-fill" /> Also logged for: @string.Join(", ", record.AdditionalStudentNames)</p>
+                            }
                         </div>
-                        <p class="timeline-description">@record.Description</p>
-                        @if (!string.IsNullOrWhiteSpace(record.Location))
-                        {
-                            <p class="timeline-meta"><QIcon Name="geo-alt-fill" /> @record.Location</p>
-                        }
-                        <p class="timeline-meta">Reported by @record.ReportedByName</p>
-                        @if (record.AdditionalStudentNames.Any())
-                        {
-                            <p class="timeline-meta"><QIcon Name="people-fill" /> Also logged for: @string.Join(", ", record.AdditionalStudentNames)</p>
-                        }
 
                         @if (!string.IsNullOrWhiteSpace(record.ActionTaken) || record.AssignedToUserId.HasValue || record.ActionDueDate.HasValue)
                         {
@@ -207,10 +206,8 @@
                             <div class="attachment-list">
                                 @foreach (var att in record.Attachments)
                                 {
-                                    <a class="attachment-chip" href="@att.FileUrl" target="_blank" rel="noopener">
-                                        <QIcon Name="@(att.ContentType.StartsWith("image/") ? "image-fill" : "file-earmark-pdf-fill")" />
-                                        @att.FileName
-                                    </a>
+                                    <QChip Href="@att.FileUrl" Text="@att.FileName"
+                                           Icon="@(att.ContentType.StartsWith("image/") ? "image-fill" : "file-earmark-pdf-fill")" />
                                 }
                             </div>
                         }
@@ -250,7 +247,8 @@
                             </div>
                         }
 
-                        <div class="timeline-card-actions">
+                    </ChildContent>
+                    <Actions>
                             @if (record.Status == WelfareStatus.Draft && canCreate)
                             {
                                 <QButton Text="Finalize" Icon="check2-circle" Size="sm" Variant="primary" OnClick="@(() => FinalizeRecord(record))" />
@@ -278,11 +276,10 @@
                             {
                                 <QButton Text="Notify Guardian" Icon="bell-fill" Size="sm" Variant="ghost" OnClick="@(() => ShowNotifyDialog(record))" />
                             }
-                        </div>
-                    </div>
-                </div>
+                    </Actions>
+                </QTimelineItem>
             }
-        </div>
+        </QTimeline>
     }
 </div>
 
@@ -703,18 +700,8 @@
     .empty-state h3 { margin: 0 0 8px; color: var(--qm-text-primary); }
     .empty-state p { margin: 0 0 20px; }
 
-    .timeline { display: flex; flex-direction: column; gap: 4px; }
-    .timeline-item { display: flex; gap: 16px; position: relative; padding-bottom: 24px; }
-    .timeline-item::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: 0; width: 2px; background: var(--qm-border); }
-    .timeline-item:last-child::before { display: none; }
-
-    .timeline-marker { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; z-index: 1; }
-    .timeline-marker .rzi { font-size: 18px; }
-
-    .timeline-card { flex: 1; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 16px; min-width: 0; }
-    .timeline-card-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-    .timeline-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--qm-text-primary); }
-    .timeline-date { font-size: 12px; color: var(--qm-text-muted); white-space: nowrap; }
+    /* The timeline itself (rail, marker, card, actions) is QTimeline / QTimelineItem in
+       q-components.css; only the welfare-specific chrome inside the card lives here. */
 
     .tier-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .tier-badge--high { background: rgba(220, 38, 38, 0.12); color: var(--qm-danger, #dc2626); }
@@ -751,12 +738,7 @@
        the child needs to know an administrator holds something, or they cannot know to ask. */
     .restricted-hint { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--qm-text-muted); padding: 10px 14px; border: 1px dashed var(--qm-border); border-radius: var(--qm-radius-md); margin-bottom: 18px; }
 
-    .timeline-description { margin: 8px 0; color: var(--qm-text-primary); font-size: 14px; line-height: 1.5; }
-    .timeline-meta { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; color: var(--qm-text-muted); }
-
     .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .attachment-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); color: var(--qm-text-secondary); text-decoration: none; }
-    .attachment-chip:hover { border-color: var(--qm-primary); color: var(--qm-primary); }
 
     .note-list { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
     .note-item { background: var(--qm-bg-elevated); border-radius: var(--qm-radius-md); padding: 8px 12px; font-size: 13px; }
@@ -769,12 +751,6 @@
     .notification-item--success { color: var(--qm-accent-green, #16a34a); }
     .notification-item--failed { color: var(--qm-danger, #dc2626); }
 
-    /* flex-wrap is the fix for the reported mobile bug: four buttons (Set response, Add Note,
-       Assign Action, Notify Guardian) were wider than a phone, and because a flex child will not
-       shrink below its content by default, the overflow widened the whole PAGE rather than this
-       row — which is why the heading and the chips appeared clipped too. */
-    .timeline-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
-
     .form-group { margin-bottom: 16px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
@@ -784,8 +760,6 @@
     .roster-notice { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 0; font-size: 13px; color: var(--qm-text-muted); max-width: 70ch; }
 
     .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: var(--qm-accent-orange, #d97706); margin-bottom: 16px; }
-
-    .timeline-card--draft { border-style: dashed; opacity: 0.85; }
 
     .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
     .status-badge--draft { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
@@ -812,8 +786,6 @@
 
     @@media (max-width: 700px) {
         .form-row { grid-template-columns: 1fr; }
-        .timeline-item { gap: 10px; }
-        .timeline-marker { width: 32px; height: 32px; }
     }
 </style>
 

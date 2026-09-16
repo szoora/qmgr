@@ -134,71 +134,28 @@ else if (!hasCoreQueue && !hasStudentWelfare && !hasVisitorManagement && !hasEng
 else if (hasCoreQueue && queueStatus != null)
 {
     <!-- Statistics Cards -->
-    <div class="stats-row">
-        <a class="stats-card primary" href="@QueueLiveHref">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@queueStatus.Summary.TotalWaiting</span>
-                    <span class="stats-label">Waiting in Queue</span>
-                    <span class="stats-change neutral">
-                        <QIcon Name="grid-fill" /> Across @queueStatus.ServiceTypes.Count(st => st.WaitingCount > 0) service type@(queueStatus.ServiceTypes.Count(st => st.WaitingCount > 0) == 1 ? "" : "s")
-                    </span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="hourglass-split" />
-                </div>
-            </div>
-        </a>
+    var waitingTypes = queueStatus.ServiceTypes.Count(st => st.WaitingCount > 0);
+    var totalToday = queueStatus.Summary.TotalCompletedToday + queueStatus.Summary.TotalWaiting + queueStatus.Summary.TotalServing;
+    var clearedPct = totalToday > 0 ? (int)Math.Round(100.0 * queueStatus.Summary.TotalCompletedToday / totalToday) : 0;
+    <QStatRow>
+        <QStatTile Variant="primary" Href="@QueueLiveHref" Icon="hourglass-split"
+                   Value="@queueStatus.Summary.TotalWaiting.ToString()" Label="Waiting in Queue"
+                   SubIcon="grid-fill" Sub="@($"Across {waitingTypes} service type{(waitingTypes == 1 ? "" : "s")}")" />
 
-        <a class="stats-card success" href="@QueueLiveHref">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@queueStatus.Summary.TotalServing</span>
-                    <span class="stats-label">Being Served Now</span>
-                    <span class="stats-change positive">
-                        <QIcon Name="person-fill" /> Active customers
-                    </span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="headset" />
-                </div>
-            </div>
-        </a>
+        <QStatTile Variant="success" Href="@QueueLiveHref" Icon="headset"
+                   Value="@queueStatus.Summary.TotalServing.ToString()" Label="Being Served Now"
+                   SubIcon="person-fill" Sub="Active customers" SubVariant="positive" />
 
-        <a class="stats-card warning" href="@QueueAnalyticsHref">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@queueStatus.Summary.AverageWaitMinutes.ToString("F0")<small>min</small></span>
-                    <span class="stats-label">Average Wait Time</span>
-                    <span class="stats-change neutral">
-                        <QIcon Name="clock-fill" /> Avg service: @queueStatus.Summary.AverageServiceMinutes.ToString("F0") min
-                    </span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="stopwatch-fill" />
-                </div>
-            </div>
-        </a>
+        <QStatTile Variant="warning" Href="@QueueAnalyticsHref" Icon="stopwatch-fill"
+                   Value="@queueStatus.Summary.AverageWaitMinutes.ToString("F0")" Unit="min" Label="Average Wait Time"
+                   SubIcon="clock-fill" Sub="@($"Avg service: {queueStatus.Summary.AverageServiceMinutes:F0} min")" />
 
-        <a class="stats-card danger" href="@QueueAnalyticsHref">
-            <div class="stats-content">
-                <div class="stats-info">
-                    <span class="stats-number">@queueStatus.Summary.TotalCompletedToday</span>
-                    <span class="stats-label">Completed Today</span>
-                    @{
-                        var totalToday = queueStatus.Summary.TotalCompletedToday + queueStatus.Summary.TotalWaiting + queueStatus.Summary.TotalServing;
-                        var clearedPct = totalToday > 0 ? (int)Math.Round(100.0 * queueStatus.Summary.TotalCompletedToday / totalToday) : 0;
-                    }
-                    <span class="stats-change @(totalToday == 0 ? "neutral" : "positive")">
-                        <QIcon Name="check-circle-fill" /> @(totalToday == 0 ? "No activity yet today" : $"{clearedPct}% of today's queue cleared")
-                    </span>
-                </div>
-                <div class="stats-icon">
-                    <QIcon Name="check2-all" />
-                </div>
-            </div>
-        </a>
-    </div>
+        <QStatTile Variant="danger" Href="@QueueAnalyticsHref" Icon="check2-all"
+                   Value="@queueStatus.Summary.TotalCompletedToday.ToString()" Label="Completed Today"
+                   SubIcon="check-circle-fill"
+                   Sub="@(totalToday == 0 ? "No activity yet today" : $"{clearedPct}% of today's queue cleared")"
+                   SubVariant="@(totalToday == 0 ? "neutral" : "positive")" />
+    </QStatRow>
 
     <!-- Main Content Grid -->
     <div class="dashboard-grid">
@@ -348,44 +305,16 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-row">
-                <a class="stats-card primary" href="@WelfareOpenHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@welfareSummary.OpenActionsCount</span>
-                            <span class="stats-label">Open actions</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="clipboard-check" /></div>
-                    </div>
-                </a>
-                <a class="stats-card @(welfareSummary.OverdueActionsCount > 0 ? "danger" : "secondary")" href="@WelfareOverdueHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@welfareSummary.OverdueActionsCount</span>
-                            <span class="stats-label">Overdue</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="exclamation-triangle-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card secondary" href="@WelfareRecordsHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@welfareSummary.TotalRecords</span>
-                            <span class="stats-label">Records</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="journal-text" /></div>
-                    </div>
-                </a>
-                <a class="stats-card secondary" href="@RosterHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@studentCount</span>
-                            <span class="stats-label">Students</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="people-fill" /></div>
-                    </div>
-                </a>
-            </div>
+            <QStatRow>
+                <QStatTile Variant="primary" Href="@WelfareOpenHref" Icon="clipboard-check"
+                           Value="@welfareSummary.OpenActionsCount.ToString()" Label="Open actions" />
+                <QStatTile Variant="@(welfareSummary.OverdueActionsCount > 0 ? "danger" : "secondary")" Href="@WelfareOverdueHref" Icon="exclamation-triangle-fill"
+                           Value="@welfareSummary.OverdueActionsCount.ToString()" Label="Overdue" />
+                <QStatTile Variant="secondary" Href="@WelfareRecordsHref" Icon="journal-text"
+                           Value="@welfareSummary.TotalRecords.ToString()" Label="Records" />
+                <QStatTile Variant="secondary" Href="@RosterHref" Icon="people-fill"
+                           Value="@studentCount.ToString()" Label="Students" />
+            </QStatRow>
 
             @if (welfareSummary.ByCategory.Any())
             {
@@ -429,46 +358,18 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-row">
-                <a class="stats-card primary" href="@VisitorDeskHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@visitorSummary.CurrentlyOnSite</span>
-                            <span class="stats-label">On site now</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="person-check-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card secondary" href="@VisitorExpectedHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@visitorSummary.ExpectedToday</span>
-                            <span class="stats-label">Still expected</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="calendar-check-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card secondary" href="@VisitorReportHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@visitorSummary.TotalToday</span>
-                            <span class="stats-label">Today</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="door-open-fill" /></div>
-                    </div>
-                </a>
+            <QStatRow>
+                <QStatTile Variant="primary" Href="@VisitorDeskHref" Icon="person-check-fill"
+                           Value="@visitorSummary.CurrentlyOnSite.ToString()" Label="On site now" />
+                <QStatTile Variant="secondary" Href="@VisitorExpectedHref" Icon="calendar-check-fill"
+                           Value="@visitorSummary.ExpectedToday.ToString()" Label="Still expected" />
+                <QStatTile Variant="secondary" Href="@VisitorReportHref" Icon="door-open-fill"
+                           Value="@visitorSummary.TotalToday.ToString()" Label="Today" />
                 @* A watchlisted person on site is the one number here that asks somebody to act,
-                   so it takes the danger stripe rather than looking like the others. *@
-                <a class="stats-card @(visitorSummary.WatchlistedOnSite > 0 ? "danger" : "secondary")" href="@VisitorDeskHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@visitorSummary.WatchlistedOnSite</span>
-                            <span class="stats-label">Watchlisted on site</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="shield-exclamation" /></div>
-                    </div>
-                </a>
-            </div>
+                   so it takes the danger colour rather than looking like the others. *@
+                <QStatTile Variant="@(visitorSummary.WatchlistedOnSite > 0 ? "danger" : "secondary")" Href="@VisitorDeskHref" Icon="shield-exclamation"
+                           Value="@visitorSummary.WatchlistedOnSite.ToString()" Label="Watchlisted on site" />
+            </QStatRow>
         }
     </div>
 }
@@ -488,44 +389,16 @@ else if (hasCoreQueue && queueStatus != null)
         }
         else
         {
-            <div class="stats-row">
-                <a class="stats-card primary" href="@CampaignsHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@activeCampaignCount</span>
-                            <span class="stats-label">Live campaigns</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="megaphone-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card success" href="@FeedbackReportHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))</span>
-                            <span class="stats-label">Average rating</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="star-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card secondary" href="@FeedbackReportHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@feedbackSummary.TotalFeedbacks</span>
-                            <span class="stats-label">Responses</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="chat-square-text-fill" /></div>
-                    </div>
-                </a>
-                <a class="stats-card @(feedbackSummary.PendingResponseCount > 0 ? "warning" : "secondary")" href="@FeedbackInboxHref">
-                    <div class="stats-content">
-                        <div class="stats-info">
-                            <span class="stats-number">@feedbackSummary.PendingResponseCount</span>
-                            <span class="stats-label">Awaiting reply</span>
-                        </div>
-                        <div class="stats-icon"><QIcon Name="reply-fill" /></div>
-                    </div>
-                </a>
-            </div>
+            <QStatRow>
+                <QStatTile Variant="primary" Href="@CampaignsHref" Icon="megaphone-fill"
+                           Value="@activeCampaignCount.ToString()" Label="Live campaigns" />
+                <QStatTile Variant="success" Href="@FeedbackReportHref" Icon="star-fill"
+                           Value="@(feedbackSummary.TotalFeedbacks == 0 ? "—" : feedbackSummary.AverageRating.ToString("0.0"))" Label="Average rating" />
+                <QStatTile Variant="secondary" Href="@FeedbackReportHref" Icon="chat-square-text-fill"
+                           Value="@feedbackSummary.TotalFeedbacks.ToString()" Label="Responses" />
+                <QStatTile Variant="@(feedbackSummary.PendingResponseCount > 0 ? "warning" : "secondary")" Href="@FeedbackInboxHref" Icon="reply-fill"
+                           Value="@feedbackSummary.PendingResponseCount.ToString()" Label="Awaiting reply" />
+            </QStatRow>
         }
     </div>
 }
@@ -654,56 +527,9 @@ else if (hasCoreQueue && queueStatus != null)
         font-size: 24px;
     }
 
-    .stats-row {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
-        gap: var(--qm-statcard-gap);
-        margin-bottom: 18px;
-    }
-
-    /* Every stat tile is an anchor. One without a destination — because this account can't open
-       the page behind it — has no href, which makes it inert and unfocusable by the browser's own
-       rules, exactly the old behaviour. The shared .stats-card already lifts on hover, so that
-       lift is cancelled here for the inert ones rather than promising a click that does nothing. */
-    a.stats-card {
-        display: block;
-        color: inherit;
-        text-decoration: none;
-    }
-
-    a.stats-card:not([href]) {
-        cursor: default;
-    }
-
-    a.stats-card:not([href]):hover {
-        box-shadow: var(--qm-shadow-sm);
-        border-color: var(--qm-border);
-        transform: none;
-    }
-
-    a.stats-card:not([href]):hover::after { opacity: 0; }
-
-    a.stats-card:focus-visible {
-        outline: 3px solid var(--qm-primary);
-        outline-offset: 3px;
-    }
-
-    .stats-card .stats-content {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .stats-card .stats-info {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .stats-card .stats-number small {
-        font-size: 13px;
-        font-weight: 500;
-        margin-left: 4px;
-    }
+    /* The summary tiles are QStatRow / QStatTile (q-components.css). A tile whose Href is null —
+       because this account can't open the page behind it — renders as an inert div, exactly the
+       old href-less anchor behaviour. */
 
     .dashboard-grid {
         display: grid;
@@ -1049,7 +875,7 @@ else if (hasCoreQueue && queueStatus != null)
     }
 
     @@media (max-width: 768px) {
-        .stats-row {
+        .q-stat-row {
             grid-template-columns: repeat(2, 1fr);
         }
 

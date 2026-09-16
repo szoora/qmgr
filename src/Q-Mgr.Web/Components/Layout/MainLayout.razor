@@ -222,6 +222,64 @@ else
                     </li>
                 }
 
+                <!-- Staff Performance (2026-09-16). "My Portal" is every signed-in person's own page and
+                     needs no permission; the rest is gated item by item, and the whole group on the module. -->
+                @if (HasModule(ModuleCodes.StaffPerformance))
+                {
+                    <li class="nav-item">
+                        <a href="portal" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/portal") ? "active" : "")">
+                            <i class="bi bi-person-badge-fill"></i>
+                            <span>My Portal</span>
+                        </a>
+                    </li>
+                }
+                @if ((canViewStaffRecords || canManageStaffDuties || canConductAppraisals || canApproveAppraisals || canViewStaffReports || canManageStaffNotices || canManageStaffParameters || canManageStaffStructure) && HasModule(ModuleCodes.StaffPerformance))
+                {
+                    <li class="nav-item has-submenu @(IsMenuExpanded("staff-performance") ? "open" : "")">
+                        <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("staff-performance"))" @onclick:preventDefault>
+                            <i class="bi bi-people"></i>
+                            <span>Staff Performance</span>
+                            <i class="bi bi-chevron-down submenu-arrow"></i>
+                        </a>
+                        <ul class="submenu">
+                            @if (canViewStaffRecords)
+                            {
+                                <li><a href="admin/staff" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff") ? "active" : "")"><i class="bi bi-person-lines-fill"></i>Staff Directory</a></li>
+                                <li><a href="admin/staff/records" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/records") ? "active" : "")"><i class="bi bi-journal-check"></i>Records</a></li>
+                            }
+                            @if (canManageStaffDuties || canViewStaffRecords)
+                            {
+                                <li><a href="admin/staff/duties" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duties") ? "active" : "")"><i class="bi bi-calendar-check"></i>Duties & Registers</a></li>
+                            }
+                            @if (canConductAppraisals || canApproveAppraisals)
+                            {
+                                <li><a href="admin/staff/appraisals" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/appraisals") ? "active" : "")"><i class="bi bi-clipboard2-check"></i>Appraisals</a></li>
+                            }
+                            @if (canViewStaffReports)
+                            {
+                                <li><a href="admin/staff/reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/reports") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Reports</a></li>
+                            }
+                            @if (canManageStaffNotices)
+                            {
+                                <li><a href="admin/staff/notices" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/notices") ? "active" : "")"><i class="bi bi-megaphone"></i>Notices</a></li>
+                            }
+                            @if (canManageStaffParameters)
+                            {
+                                <li><a href="admin/staff/parameters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/parameters") ? "active" : "")"><i class="bi bi-sliders2"></i>Parameters</a></li>
+                                <li><a href="admin/staff/policy" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/policy") ? "active" : "")"><i class="bi bi-gear-wide-connected"></i>Scoring Policy</a></li>
+                            }
+                            @if (canManageStaffStructure)
+                            {
+                                <li><a href="admin/staff/structure" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/structure") ? "active" : "")"><i class="bi bi-diagram-3"></i>Departments & Structure</a></li>
+                            }
+                            @if (canViewStaffRecords)
+                            {
+                                <li><a href="admin/staff/activity" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/activity") ? "active" : "")"><i class="bi bi-clock-history"></i>Activity Log</a></li>
+                            }
+                        </ul>
+                    </li>
+                }
+
                 <!-- Integrations & API Access (was one buried line inside Administration) -->
                 @if (canViewApiClients && HasModule(ModuleCodes.IntegrationsApi))
                 {
@@ -564,6 +622,10 @@ else
             @* The bell is where somebody who wants fewer emails actually looks, so the way out
                lives here as well as on the profile page. *@
             <div class="notifications-footer">
+                <a href="/notifications" @onclick="@(() => showNotifications = false)">
+                    <i class="bi bi-list-ul"></i>
+                    <span>All notifications</span>
+                </a>
                 <a href="/profile/notifications" @onclick="@(() => showNotifications = false)">
                     <i class="bi bi-sliders"></i>
                     <span>Notification preferences</span>
@@ -632,6 +694,15 @@ else
     private bool canViewMarketing = false;
     private bool canViewBilling = false;
     private bool canViewPlatformAdmin = false;
+    // Staff Performance
+    private bool canViewStaffRecords = false;
+    private bool canManageStaffDuties = false;
+    private bool canConductAppraisals = false;
+    private bool canApproveAppraisals = false;
+    private bool canViewStaffReports = false;
+    private bool canManageStaffNotices = false;
+    private bool canManageStaffParameters = false;
+    private bool canManageStaffStructure = false;
 
     // Modular subscription system: which of the 4 modules this org currently has active.
     // SuperAdmin bypasses this entirely (sees everything, same bypass used everywhere else).
@@ -933,6 +1004,14 @@ else
         canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
         canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
         canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
+        canViewStaffRecords = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView);
+        canManageStaffDuties = await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        canConductAppraisals = await PermissionService.HasPermissionAsync(Permissions.StaffAppraisalsConduct);
+        canApproveAppraisals = await PermissionService.HasPermissionAsync(Permissions.StaffAppraisalsApprove);
+        canViewStaffReports = await PermissionService.HasPermissionAsync(Permissions.StaffReportsView);
+        canManageStaffNotices = await PermissionService.HasPermissionAsync(Permissions.StaffNoticesManage);
+        canManageStaffParameters = await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage);
+        canManageStaffStructure = await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
     }
 
     // An unpurchased module is fully invisible in the nav (per explicit direction — a per-module
@@ -991,6 +1070,19 @@ else
         if (!ModuleState.IsLoaded || !ModuleState.LoadSucceeded || isSuperAdmin) return;
 
         var path = "/" + NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+
+        // Staff Performance: a teacher, support-staff or class-teacher account lands on their own
+        // portal rather than the operational dashboard (plan §10). Only when the module is on, and
+        // only from the root, so a deliberate visit to "/" from the portal's own link still works
+        // by carrying a query flag.
+        if (path == "/" && !NavigationManager.Uri.Contains("dashboard=1", StringComparison.Ordinal)
+            && RoleCodes.IsPortalFirst(currentUser?.RoleCode)
+            && ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        {
+            NavigationManager.NavigateTo("/portal");
+            return;
+        }
+
         // Any one of the listed modules opens the page — see ModuleRouteMap.WebRoutesAnyOf. An
         // empty list means base product.
         var required = ModuleRouteMap.RequiredModulesForPage(path);

@@ -38,26 +38,8 @@
         </div>
     </div>
 
-    <div class="tab-bar" role="tablist" aria-label="Feedback sections">
-        <button type="button" role="tab" id="tab-responses"
-                aria-selected="@(activeTab == ResponsesTab ? "true" : "false")"
-                class="tab-btn @(activeTab == ResponsesTab ? "active" : "")"
-                @onclick="@(() => activeTab = ResponsesTab)">
-            <QIcon Name="chat-quote-fill" />
-            <span>Responses &amp; analytics</span>
-        </button>
-        <button type="button" role="tab" id="tab-questions"
-                aria-selected="@(activeTab == QuestionsTab ? "true" : "false")"
-                class="tab-btn @(activeTab == QuestionsTab ? "active" : "")"
-                @onclick="@OpenQuestionsTab">
-            <QIcon Name="ui-checks" />
-            <span>Survey questions</span>
-            @if (questions.Count > 0)
-            {
-                <span class="tab-count">@questions.Count(q => q.IsActive)</span>
-            }
-        </button>
-    </div>
+    <QTabs Tabs="@FeedbackTabs" ActiveKey="@activeTab" ActiveKeyChanged="@OnTabChanged"
+           AriaLabel="Feedback sections" IdPrefix="tab" />
 
     @if (activeTab == ResponsesTab)
     {
@@ -460,46 +442,7 @@
 </QModal>
 
 <style>
-    /* Tabs, survey-question list and the customer preview. */
-    .tab-bar {
-        display: flex;
-        gap: 4px;
-        margin-bottom: 20px;
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .tab-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 18px;
-        border: none;
-        border-bottom: 2px solid transparent;
-        background: transparent;
-        color: var(--qm-text-secondary);
-        font: inherit;
-        font-weight: 600;
-        cursor: pointer;
-        transition: var(--qm-transition-fast);
-    }
-
-    .tab-btn:hover { color: var(--qm-text-primary); }
-    .tab-btn:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: -2px; }
-
-    .tab-btn.active {
-        color: var(--qm-primary);
-        border-bottom-color: var(--qm-primary);
-    }
-
-    .tab-count {
-        min-width: 20px;
-        padding: 1px 7px;
-        border-radius: var(--qm-radius-full);
-        background: var(--qm-primary);
-        color: var(--qm-text-on-primary);
-        font-size: 0.75rem;
-    }
-
+    /* Survey-question list and the customer preview. (The tab strip is QTabs.) */
     .questions-intro {
         display: flex;
         gap: 24px;
@@ -1112,6 +1055,19 @@
         {
             await LoadQuestions();
         }
+    }
+
+    private IReadOnlyList<QTab> FeedbackTabs => new[]
+    {
+        new QTab(ResponsesTab, "Responses & analytics", "chat-quote-fill"),
+        new QTab(QuestionsTab, "Survey questions", "ui-checks",
+            questions.Count > 0 ? questions.Count(q => q.IsActive) : null)
+    };
+
+    private async Task OnTabChanged(string key)
+    {
+        if (key == QuestionsTab) await OpenQuestionsTab();
+        else activeTab = key;
     }
 
     private async Task LoadQuestions()

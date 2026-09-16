@@ -296,21 +296,10 @@ else
                     <p>Your feedback helps us improve our services</p>
                 </div>
 
-                <div class="star-rating" role="group" aria-label="Rate your experience out of five stars">
-                    @for (int i = 1; i <= 5; i++)
-                    {
-                        var rating = i;
-                        <button type="button"
-                                class="star-btn @(feedbackRating >= rating ? "active" : "") @(hoverRating >= rating ? "hover" : "")"
-                                aria-pressed="@(feedbackRating == rating ? "true" : "false")"
-                                aria-label="@($"Rate your experience {rating} out of 5 stars")"
-                                @onclick="@(() => SetRating(rating))"
-                                @onmouseenter="@(() => hoverRating = rating)"
-                                @onmouseleave="@(() => hoverRating = 0)">
-                            <QIcon Name="@(feedbackRating >= rating || hoverRating >= rating ? "star-fill" : "star")" aria-hidden="true" />
-                        </button>
-                    }
-                </div>
+                @* The kiosk keeps its own colours for the stars (they sit on the industry accent,
+                   not on a themed card) — see the .kiosk-rating rules below — and its own label. *@
+                <QRating Value="@feedbackRating" ValueChanged="@SetRating" Class="kiosk-rating"
+                         AriaLabel="Rate your experience out of five stars" />
 
                 <div class="rating-label" role="status" aria-live="polite">
                     @GetRatingLabel()
@@ -1456,49 +1445,35 @@ else
         font-size: 16px;
     }
 
-    /* Star Rating */
-    .star-rating {
-        display: flex;
-        justify-content: center;
-        gap: 16px;
-        margin-bottom: 16px;
-    }
+    /* Star Rating — QRating, recoloured for the kiosk: the stars sit on the industry accent, not
+       on a themed card, so the resting state is a white glass rather than a token surface. */
+    .kiosk-rating { margin-bottom: 16px; }
+    .kiosk-rating .q-rating__stars { gap: 16px; }
 
-    .star-btn {
+    .kiosk-rating .q-rating__star {
         background: rgba(255, 255, 255, 0.05);
         border: 2px solid rgba(255, 255, 255, 0.1);
-        border-radius: var(--qm-radius-xl);
-        width: 64px;
-        height: 64px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .star-btn .q-icon {
-        font-size: 36px;
+    .kiosk-rating .q-rating__star .q-icon {
         color: rgba(255, 255, 255, 0.3);
-        transition: all 0.3s ease;
     }
 
-    .star-btn:hover, .star-btn.hover {
+    .kiosk-rating .q-rating__star:hover, .kiosk-rating .q-rating__star.hover {
         background: rgba(245, 158, 11, 0.1);
         border-color: rgba(245, 158, 11, 0.3);
-        transform: scale(1.1);
     }
 
-    .star-btn:hover .q-icon, .star-btn.hover .q-icon {
+    .kiosk-rating .q-rating__star:hover .q-icon, .kiosk-rating .q-rating__star.hover .q-icon {
         color: #f59e0b;
     }
 
-    .star-btn.active {
+    .kiosk-rating .q-rating__star.active {
         background: rgba(245, 158, 11, 0.15);
         border-color: #f59e0b;
     }
 
-    .star-btn.active .q-icon {
+    .kiosk-rating .q-rating__star.active .q-icon {
         color: #f59e0b;
         text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
     }
@@ -2167,12 +2142,12 @@ else
         color: rgba(0, 0, 0, 0.6);
     }
 
-    [data-theme="light"] .star-btn {
+    [data-theme="light"] .kiosk-rating .q-rating__star {
         background: rgba(0, 0, 0, 0.04);
         border: 2px solid rgba(0, 0, 0, 0.1);
     }
 
-    [data-theme="light"] .star-btn .q-icon {
+    [data-theme="light"] .kiosk-rating .q-rating__star .q-icon {
         color: rgba(0, 0, 0, 0.25);
     }
 
@@ -2274,7 +2249,6 @@ else
     private bool feedbackSubmitted = false;
     private bool isSubmittingFeedback = false;
     private int feedbackRating = 0;
-    private int hoverRating = 0;
     private FeedbackCategory selectedCategory = FeedbackCategory.General;
     private string? feedbackComment;
     private string? feedbackLinkCode;
@@ -2867,7 +2841,6 @@ else
         showFeedbackModal = true;
         feedbackSubmitted = false;
         feedbackRating = 0;
-        hoverRating = 0;
         selectedCategory = FeedbackCategory.General;
         feedbackComment = null;
         feedbackLinkCode = null;

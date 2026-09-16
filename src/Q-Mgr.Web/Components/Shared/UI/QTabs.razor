@@ -1,0 +1,55 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    A tab strip. Scrolls horizontally on a narrow screen and never wraps: a wrapped tab strip
+    reads as broken in a way a wrapped button row does not (see layout.css). Supports
+    @bind-ActiveKey.
+*@
+
+<div class="q-tabs tab-strip @Class" role="tablist" aria-label="@AriaLabel" @attributes="AdditionalAttributes">
+    @foreach (var tab in Tabs)
+    {
+        var isActive = tab.Key == ActiveKey;
+        <button type="button"
+                role="tab"
+                id="@(string.IsNullOrEmpty(IdPrefix) ? null : $"{IdPrefix}-{tab.Key}")"
+                class="q-tabs__tab @(isActive ? "active" : "")"
+                aria-selected="@(isActive ? "true" : "false")"
+                @onclick="@(() => Select(tab.Key))">
+            @if (!string.IsNullOrEmpty(tab.Icon))
+            {
+                <QIcon Name="@tab.Icon" />
+            }
+            <span>@tab.Label</span>
+            @if (tab.Badge.HasValue)
+            {
+                <span class="q-tabs__badge @(string.Equals(tab.BadgeVariant, "danger", StringComparison.OrdinalIgnoreCase) ? "q-tabs__badge--danger" : "")">@tab.Badge.Value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)</span>
+            }
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<QTab> Tabs { get; set; } = Array.Empty<QTab>();
+
+    [Parameter] public string? ActiveKey { get; set; }
+    [Parameter] public EventCallback<string> ActiveKeyChanged { get; set; }
+
+    /// <summary>Accessible name for the strip ("Feedback sections").</summary>
+    [Parameter] public string? AriaLabel { get; set; }
+
+    /// <summary>When set, each tab button gets id="{IdPrefix}-{Key}" so a panel can point at it.</summary>
+    [Parameter] public string? IdPrefix { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private async Task Select(string key)
+    {
+        if (key == ActiveKey) return;
+        ActiveKey = key;
+        await ActiveKeyChanged.InvokeAsync(key);
+    }
+}

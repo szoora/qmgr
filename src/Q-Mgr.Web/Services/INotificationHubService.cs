@@ -36,6 +36,9 @@ public interface INotificationClientService : IAsyncDisposable
     /// </summary>
     event Func<Task>? OnPermissionsChanged;
 
+    /// <summary>Staff Performance: the caller's score for the current period changed (a record about them was finalised, annulled or corrected).</summary>
+    event Func<StaffScoreUpdatedEvent, Task>? OnStaffScoreUpdated;
+
     /// <summary>
     /// Current connection state
     /// </summary>

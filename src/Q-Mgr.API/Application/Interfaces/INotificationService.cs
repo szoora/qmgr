@@ -56,7 +56,9 @@ public interface INotificationService
     /// notifications belonging to <paramref name="organizationId"/> — a broadcast notification
     /// (UserId == null) from another tenant must never surface here.
     /// </summary>
-    Task<IEnumerable<Notification>> GetUserNotificationsAsync(Guid userId, Guid organizationId, bool unreadOnly = false, int limit = 50, CancellationToken cancellationToken = default);
+    /// <param name="eventKey">Narrows to one NotificationEventKeys category (the notification centre's per-group view). Null = every kind.</param>
+    /// <param name="offset">Rows to skip, for paging the full centre. 0 = the bell's behaviour.</param>
+    Task<IEnumerable<Notification>> GetUserNotificationsAsync(Guid userId, Guid organizationId, bool unreadOnly = false, int limit = 50, CancellationToken cancellationToken = default, string? eventKey = null, int offset = 0);
     Task<int> GetUnreadCountAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -67,6 +69,9 @@ public interface INotificationService
     /// </summary>
     Task<bool> MarkAsReadAsync(Guid notificationId, Guid callerId, Guid organizationId, CancellationToken cancellationToken = default);
     Task MarkAllAsReadAsync(Guid userId, Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>Marks one event category read (the notification centre's per-group "mark all read"). Returns the caller's remaining unread count.</summary>
+    Task<int> MarkAllAsReadAsync(Guid userId, Guid organizationId, string? eventKey, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deletes a notification. Same ownership rule as <see cref="MarkAsReadAsync"/>.
@@ -167,6 +172,17 @@ public class CreateNotificationRequest
     public string? Email { get; set; }
     public string? DeviceToken { get; set; }
     public string? EmailSubject { get; set; }
+
+    /// <summary>
+    /// A ready-made HTML email body (2026-09-16, Staff Performance digests). When set, the EMAIL
+    /// channel sends this verbatim instead of wrapping <see cref="Message"/> in the transactional
+    /// layout — NotificationDispatchJob's WrapEmailBody HTML-encodes the message line by line, which
+    /// is right for staff-authored free text and wrong for a report with tables in it. The bell,
+    /// SMS and the stored row still carry <see cref="Message"/> as plain text, so keep that a
+    /// readable one-line summary. The caller is responsible for having encoded every piece of user
+    /// data inside the HTML (EmailTemplates.P / ReportTable do this).
+    /// </summary>
+    public string? EmailHtmlBody { get; set; }
 
     public DateTime? ExpiresAt { get; set; }
 }

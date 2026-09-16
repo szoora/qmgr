@@ -1713,3 +1713,734 @@
 }
 .q-daterange__caption strong { color: var(--qm-text-primary); font-weight: 600; }
 .q-daterange__warning { color: var(--qm-warning); }
+
+/* ==========================================================================
+   Pager caption — "Showing 21–40 of 57" beside the buttons
+   ========================================================================== */
+.q-pager-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 0 0;
+    margin-top: 12px;
+    border-top: 1px solid var(--qm-border);
+}
+
+.q-pager__caption {
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Timeline — lifted from StudentWelfareTimeline
+   ========================================================================== */
+.q-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.q-timeline__day {
+    position: relative;
+    padding: 4px 0 14px 56px;
+    font-family: var(--qm-font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--qm-text-muted);
+}
+
+.q-timeline__day::before {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--qm-border);
+}
+
+.q-timeline__item {
+    display: flex;
+    gap: 16px;
+    position: relative;
+    padding-bottom: 24px;
+    min-width: 0;
+}
+
+/* The connector rail runs from under the marker to the next item. */
+.q-timeline__item::before {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 40px;
+    bottom: 0;
+    width: 2px;
+    background: var(--qm-border);
+}
+
+.q-timeline__item:last-child::before { display: none; }
+
+.q-timeline__marker {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    flex-shrink: 0;
+    z-index: 1;
+}
+
+.q-timeline__card {
+    flex: 1;
+    min-width: 0;
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-lg);
+    padding: 16px;
+}
+
+.q-timeline__card--draft { border-style: dashed; opacity: 0.85; }
+.q-timeline__card--annulled { opacity: 0.7; }
+.q-timeline__card--annulled .q-timeline__title { text-decoration: line-through; }
+.q-timeline__card--final { border-color: var(--qm-border-active, var(--qm-border)); }
+
+.q-timeline__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.q-timeline__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+    color: var(--qm-text-primary);
+}
+
+.q-timeline__date {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+    white-space: nowrap;
+}
+
+.q-timeline__text {
+    margin: 8px 0;
+    color: var(--qm-text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.q-timeline__meta > * {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0;
+    font-size: 12px;
+    color: var(--qm-text-muted);
+}
+
+/* flex-wrap is the fix for the reported mobile bug: four buttons were wider than a phone, and
+   because a flex child will not shrink below its content by default, the overflow widened the
+   whole PAGE rather than this row (see layout.css). */
+.q-timeline__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--qm-border);
+}
+
+.q-timeline__more {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0 12px;
+}
+
+@media (max-width: 700px) {
+    .q-timeline__item { gap: 10px; }
+    .q-timeline__marker { width: 32px; height: 32px; }
+    .q-timeline__item::before { left: 15px; top: 32px; }
+    .q-timeline__day { padding-left: 42px; }
+    .q-timeline__day::before { left: 15px; }
+}
+
+/* ==========================================================================
+   Stat tiles — lifted from WelfareReports .stat-card, sized by --qm-statcard-*
+   ========================================================================== */
+.q-stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
+    gap: var(--qm-statcard-gap);
+    margin-bottom: 18px;
+}
+
+.q-stat-row > * { min-width: 0; }
+
+.q-stat {
+    display: block;
+    padding: var(--qm-statcard-pad);
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-lg);
+    color: inherit;
+    text-decoration: none;
+    text-align: left;
+    font: inherit;
+    min-width: 0;
+    transition: var(--qm-transition-fast, all 0.15s ease);
+}
+
+.q-stat--link { cursor: pointer; }
+
+.q-stat--link:hover {
+    border-color: var(--qm-primary);
+    box-shadow: var(--qm-shadow-sm);
+    color: inherit;
+    text-decoration: none;
+}
+
+.q-stat--link:focus-visible {
+    outline: 3px solid var(--qm-primary);
+    outline-offset: 3px;
+}
+
+.q-stat__body {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.q-stat__info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.q-stat__value {
+    font-family: var(--qm-font-display);
+    font-size: var(--qm-statcard-value);
+    line-height: 1.1;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.q-stat__unit {
+    font-size: 13px;
+    font-weight: 500;
+    margin-left: 4px;
+}
+
+.q-stat__label {
+    font-size: var(--qm-statcard-label);
+    color: var(--qm-text-muted);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+}
+
+.q-stat__sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 3px 9px;
+    border-radius: var(--qm-radius-full);
+    font-size: 12px;
+}
+
+.q-stat__sub--neutral { color: var(--qm-text-muted); background: var(--qm-bg-elevated); }
+.q-stat__sub--positive { color: var(--qm-success); background: rgba(var(--qm-success-rgb), 0.1); }
+.q-stat__sub--negative { color: var(--qm-danger); background: rgba(var(--qm-danger-rgb), 0.1); }
+
+.q-stat__icon {
+    width: var(--qm-statcard-icon);
+    height: var(--qm-statcard-icon);
+    border-radius: var(--qm-radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: var(--qm-statcard-icon-font);
+    background: var(--qm-bg-elevated);
+    color: var(--qm-text-secondary);
+}
+
+/* A variant colours the figure and tints the icon badge. default/secondary stay neutral. */
+.q-stat--primary .q-stat__value { color: var(--qm-primary); }
+.q-stat--primary .q-stat__icon { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
+.q-stat--success .q-stat__value { color: var(--qm-success); }
+.q-stat--success .q-stat__icon { background: rgba(var(--qm-success-rgb), 0.12); color: var(--qm-success); }
+.q-stat--warning .q-stat__value { color: var(--qm-warning); }
+.q-stat--warning .q-stat__icon { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-warning); }
+.q-stat--danger .q-stat__value { color: var(--qm-danger); }
+.q-stat--danger .q-stat__icon { background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); }
+.q-stat--info .q-stat__value { color: var(--qm-info); }
+.q-stat--info .q-stat__icon { background: rgba(var(--qm-info-rgb), 0.12); color: var(--qm-info); }
+
+/* ==========================================================================
+   Bar list — lifted from WelfareReports .bar-list
+   ========================================================================== */
+.q-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.q-bars__row {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.q-bars--suffixed .q-bars__row { grid-template-columns: 1fr 2fr auto auto; }
+
+.q-bars__label {
+    font-size: 13px;
+    color: var(--qm-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.q-bars__label a { color: inherit; text-decoration: none; }
+.q-bars__label a:hover { color: var(--qm-primary); text-decoration: underline; }
+.q-bars__label em { color: var(--qm-text-muted); font-style: normal; margin-left: 4px; }
+
+.q-bars__track {
+    height: 8px;
+    background: var(--qm-bg-secondary);
+    border-radius: var(--qm-radius-full);
+    overflow: hidden;
+    min-width: 0;
+}
+
+.q-bars__fill {
+    height: 100%;
+    background: var(--qm-primary);
+    border-radius: var(--qm-radius-full);
+    transition: width 0.3s ease;
+}
+
+.q-bars__count {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--qm-text-primary);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.q-bars__suffix {
+    font-size: 11.5px;
+    color: var(--qm-text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.q-bars__empty {
+    font-size: 12px;
+    color: var(--qm-text-muted);
+    margin: 0 0 10px;
+}
+
+@media (max-width: 480px) {
+    .q-bars__row { grid-template-columns: minmax(0, 1fr) auto; }
+    .q-bars__track { grid-column: 1 / -1; }
+    .q-bars--suffixed .q-bars__row { grid-template-columns: minmax(0, 1fr) auto auto; }
+}
+
+/* ==========================================================================
+   Tabs — lifted from WelfareReports .tab-strip. Scrolls sideways, never wraps.
+   ========================================================================== */
+.q-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    border-bottom: 1px solid var(--qm-border);
+    margin-bottom: 20px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    min-width: 0;
+}
+
+.q-tabs > * { flex-shrink: 0; }
+
+.q-tabs__tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--qm-text-muted);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: var(--qm-transition-fast, color 0.15s ease);
+}
+
+.q-tabs__tab:hover { color: var(--qm-text-primary); }
+.q-tabs__tab:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: -2px; }
+
+.q-tabs__tab.active {
+    color: var(--qm-primary);
+    border-bottom-color: var(--qm-primary);
+}
+
+.q-tabs__badge {
+    min-width: 20px;
+    padding: 1px 7px;
+    border-radius: var(--qm-radius-full);
+    background: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.q-tabs__badge--danger { background: var(--qm-danger); }
+
+@media (max-width: 576px) {
+    .q-tabs__tab { padding: 12px 14px; min-height: 44px; }
+}
+
+/* ==========================================================================
+   Chip — status / removable filter / attachment link
+   ========================================================================== */
+.q-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    border-radius: var(--qm-radius-full);
+    background: var(--qm-bg-secondary);
+    color: var(--qm-text-muted);
+    text-decoration: none;
+    line-height: 1.4;
+    vertical-align: middle;
+}
+
+.q-chip__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.q-chip--md { font-size: 12px; padding: 3px 10px; }
+
+.q-chip--sm {
+    font-size: 10px;
+    padding: 2px 7px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    font-weight: 600;
+}
+
+.q-chip--muted { background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
+.q-chip--primary { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
+.q-chip--success { background: rgba(var(--qm-success-rgb), 0.12); color: var(--qm-success); }
+.q-chip--warning { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-warning); }
+.q-chip--danger  { background: rgba(var(--qm-danger-rgb), 0.12); color: var(--qm-danger); }
+.q-chip--info    { background: rgba(var(--qm-info-rgb), 0.12); color: var(--qm-info); }
+
+.q-chip--mono { font-family: var(--qm-font-mono); }
+
+/* An attachment or other link: bordered, and lights up on hover like a control. */
+.q-chip--link {
+    border-radius: var(--qm-radius-md);
+    background: var(--qm-bg-elevated);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-secondary);
+    padding: 4px 10px;
+}
+
+.q-chip--link:hover {
+    border-color: var(--qm-primary);
+    color: var(--qm-primary);
+}
+
+/* A removable filter chip reads as a small statement with a dismiss control. */
+.q-chip--removable {
+    background: var(--qm-primary-light);
+    border: 1px solid var(--qm-border);
+    color: var(--qm-text-secondary);
+    border-radius: var(--qm-radius-md);
+    padding: 6px 8px 6px 12px;
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+}
+
+.q-chip--removable strong { color: var(--qm-text-primary); }
+
+.q-chip__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-left: 2px;
+    border: none;
+    border-radius: var(--qm-radius-full);
+    background: transparent;
+    color: var(--qm-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.q-chip__remove:hover { background: rgba(var(--qm-primary-rgb), 0.12); }
+.q-chip__remove:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
+
+/* ==========================================================================
+   Empty state — lifted from app.css .empty-state
+   ========================================================================== */
+.q-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 20px;
+    background: var(--qm-bg-card);
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-lg);
+    color: var(--qm-text-muted);
+}
+
+.q-empty .q-empty__icon {
+    font-size: 64px;
+    line-height: 1;
+    color: var(--qm-text-muted);
+    opacity: 0.5;
+    margin-bottom: 16px;
+}
+
+.q-empty__title {
+    margin: 0 0 8px;
+    font-size: 20px;
+    font-family: var(--qm-font-display);
+    color: var(--qm-text-primary);
+}
+
+.q-empty__text {
+    margin: 0;
+    color: var(--qm-text-muted);
+    max-width: 48ch;
+}
+
+.q-empty__action {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 20px;
+}
+
+.q-empty--compact { padding: 28px 16px; }
+.q-empty--compact .q-empty__icon { font-size: 36px; margin-bottom: 10px; }
+.q-empty--compact .q-empty__title { font-size: 15px; }
+
+@media (max-width: 576px) {
+    .q-empty { padding: 40px 16px; }
+    .q-empty .q-empty__icon { font-size: 48px; }
+    .q-empty__title { font-size: 18px; }
+    .q-empty__text { font-size: 14px; }
+}
+
+/* ==========================================================================
+   Activity log — generalised from the Document Library's activity modal
+   ========================================================================== */
+.q-activity { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.q-activity__tiles { margin-bottom: 0; }
+
+.q-activity__note {
+    margin: 0;
+    font-size: .85rem;
+    color: var(--qm-text-secondary);
+    line-height: 1.5;
+}
+
+.q-activity__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.q-activity__title {
+    margin: 0;
+    font-family: var(--qm-font-display);
+    font-size: .95rem;
+    color: var(--qm-text-primary);
+}
+
+.q-activity__loading { display: flex; justify-content: center; padding: 2rem; }
+
+.q-activity__table-wrap { overflow-x: auto; }
+
+.q-activity__table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+
+.q-activity__table th,
+.q-activity__table td {
+    text-align: left;
+    padding: .4rem .5rem;
+    border-bottom: 1px solid var(--qm-border);
+    white-space: nowrap;
+    color: var(--qm-text-primary);
+}
+
+.q-activity__table th { color: var(--qm-text-secondary); font-weight: 600; }
+.q-activity__when { font-variant-numeric: tabular-nums; }
+.q-activity__where { color: var(--qm-text-secondary); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.q-activity__row--fail td { color: var(--qm-danger); }
+
+/* ==========================================================================
+   Rating — lifted from FeedbackPage .star-rating
+   ========================================================================== */
+.q-rating { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+.q-rating__stars {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+}
+
+.q-rating--sm .q-rating__stars { gap: 8px; }
+
+.q-rating__star {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--qm-bg-elevated);
+    border: 2px solid var(--qm-border);
+    border-radius: var(--qm-radius-xl);
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.q-rating__star .q-icon {
+    font-size: 36px;
+    color: var(--qm-text-muted);
+    transition: all 0.3s ease;
+}
+
+.q-rating--sm .q-rating__star { width: 48px; height: 48px; }
+.q-rating--sm .q-rating__star .q-icon { font-size: 24px; }
+
+.q-rating__star:hover,
+.q-rating__star.hover {
+    background: rgba(var(--qm-warning-rgb), 0.1);
+    border-color: rgba(var(--qm-warning-rgb), 0.3);
+    transform: scale(1.1);
+}
+
+.q-rating__star:hover .q-icon,
+.q-rating__star.hover .q-icon { color: var(--qm-warning); }
+
+.q-rating__star.active {
+    background: rgba(var(--qm-warning-rgb), 0.15);
+    border-color: var(--qm-warning);
+}
+
+/* Kept on purpose: the conventional "star lights up" affordance on a rating widget (CLAUDE.md). */
+.q-rating__star.active .q-icon {
+    color: var(--qm-warning);
+    text-shadow: 0 0 20px rgba(var(--qm-warning-rgb), 0.5);
+}
+
+.q-rating__star:focus-visible { outline: 3px solid var(--qm-primary); outline-offset: 2px; }
+
+.q-rating--readonly .q-rating__star { cursor: default; }
+.q-rating--readonly .q-rating__star:hover { transform: none; background: var(--qm-bg-elevated); border-color: var(--qm-border); }
+.q-rating--readonly .q-rating__star:hover .q-icon { color: var(--qm-text-muted); }
+.q-rating--readonly .q-rating__star.active:hover { background: rgba(var(--qm-warning-rgb), 0.15); border-color: var(--qm-warning); }
+.q-rating--readonly .q-rating__star.active:hover .q-icon { color: var(--qm-warning); }
+
+.q-rating__label {
+    text-align: center;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--qm-primary);
+    min-height: 24px;
+}
+
+@media (max-width: 576px) {
+    .q-rating__star { width: 52px; height: 52px; }
+    .q-rating__star .q-icon { font-size: 28px; }
+    .q-rating--sm .q-rating__star { width: 42px; height: 42px; }
+    .q-rating--sm .q-rating__star .q-icon { font-size: 20px; }
+}
+
+/* ==========================================================================
+   Filter bar — lifted from WelfareReports .filter-bar
+   ========================================================================== */
+.q-filter-bar {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-bottom: 20px;
+    min-width: 0;
+}
+
+.q-filter-bar--wrap { align-items: center; }
+
+.q-filter-bar__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* ==========================================================================
+   Avatar — initials on a colour from the name, or a photograph
+   ========================================================================== */
+.q-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    border-radius: var(--qm-radius-lg);
+    background: var(--qm-primary);
+    color: var(--qm-text-on-primary);
+    font-family: var(--qm-font-display);
+    font-weight: 600;
+    line-height: 1;
+    user-select: none;
+}
+
+.q-avatar--sm { width: 28px; height: 28px; font-size: 11px; border-radius: var(--qm-radius-md); }
+.q-avatar--md { width: 40px; height: 40px; font-size: 14px; }
+.q-avatar--lg { width: 56px; height: 56px; font-size: 20px; }
+
+.q-avatar__img { width: 100%; height: 100%; object-fit: cover; display: block; }
