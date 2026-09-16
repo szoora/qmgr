@@ -458,6 +458,8 @@ public class NotificationService : INotificationService
             IconClass = request.IconClass ?? GetDefaultIconClass(request.Type),
             ActionUrl = request.ActionUrl,
             MetaData = request.MetaData != null ? JsonSerializer.Serialize(request.MetaData) : null,
+            // Persisted so the bell and the notification centre can group by kind (2026-09-16).
+            EventKey = request.EventKey,
             ExpiresAt = request.ExpiresAt,
             DeliveredVia = NotificationChannel.InApp
         };

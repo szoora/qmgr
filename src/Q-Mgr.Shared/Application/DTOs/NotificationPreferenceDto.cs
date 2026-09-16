@@ -26,6 +26,27 @@ public static class NotificationEventKeys
     /// <summary>A document share link you created was opened for the first time.</summary>
     public const string DocumentShareOpened = "documents.share-opened";
 
+    // ---- Staff Performance Monitor (2026-09-16). Category "Staff Performance". ----
+
+    /// <summary>A record was logged about me (Standard: full; Confidential: existence and title only).</summary>
+    public const string StaffRecordLogged = "staff.record-logged";
+    /// <summary>My points or band moved. Bell only by default.</summary>
+    public const string StaffPointsEarned = "staff.points-earned";
+    /// <summary>A colleague recognised me.</summary>
+    public const string StaffRecognitionReceived = "staff.recognition-received";
+    /// <summary>A duty I am expected at is coming up.</summary>
+    public const string StaffDutyReminder = "staff.duty-reminder";
+    /// <summary>A duty I am the recorder for has ended and its register is not taken.</summary>
+    public const string StaffRegisterDue = "staff.register-due";
+    /// <summary>My appraisal moved to a stage that needs me, or is overdue.</summary>
+    public const string StaffAppraisalStage = "staff.appraisal-stage";
+    /// <summary>A notice was published for me.</summary>
+    public const string StaffNoticePublished = "staff.notice-published";
+    /// <summary>My department, line manager or role changed.</summary>
+    public const string StaffProfileChanged = "staff.profile-changed";
+    /// <summary>The weekly digest.</summary>
+    public const string StaffWeeklyDigest = "staff.weekly-digest";
+
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
 
@@ -46,6 +67,33 @@ public static class NotificationEventKeys
         new(DocumentShareOpened, "A document I shared was opened",
             "The first time someone opens a share link you created. Only for links where you asked to be told.",
             "Document Library", DefaultEmail: true, DefaultSms: false),
+        new(StaffRecordLogged, "A record was logged about me",
+            "Attendance, duties, observations, contributions and conduct logged about you. A confidential record tells you only that one exists.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffPointsEarned, "My points or band changed",
+            "Every time a finalised record moves your points this period.",
+            "Staff Performance", DefaultEmail: false, DefaultSms: false),
+        new(StaffRecognitionReceived, "A colleague recognised me",
+            "Someone gave you recognition and said why.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffDutyReminder, "A duty I am expected at is coming up",
+            "Sent ahead of a meeting, exam session or prep slot you are expected at.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffRegisterDue, "A register I should take is outstanding",
+            "You are the named recorder for a duty that has ended with no register taken.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffAppraisalStage, "My appraisal needs me",
+            "Self-assessment open, appraiser review awaited, moderation done, signed, or overdue.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffNoticePublished, "A staff notice was published for me",
+            "A notice to your branch, department, role or staff group.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffProfileChanged, "My department, line manager or role changed",
+            "Somebody changed who appraises you or which department you belong to.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffWeeklyDigest, "My weekly digest",
+            "Recognition received, points and band movement, duties coming up, and anything awaiting your response.",
+            "Staff Performance", DefaultEmail: true, DefaultSms: false),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),

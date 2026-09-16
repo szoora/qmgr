@@ -12,4 +12,7 @@ public class NotificationDto
     public bool IsRead { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ReadAt { get; set; }
+
+    /// <summary>The NotificationEventKeys category, when the send carried one. Groups the bell and the notification centre.</summary>
+    public string? EventKey { get; set; }
 }

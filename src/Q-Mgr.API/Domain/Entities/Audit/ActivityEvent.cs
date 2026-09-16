@@ -1,0 +1,54 @@
+using System.ComponentModel.DataAnnotations;
+using QMgr.Domain.Common;
+
+namespace QMgr.Domain.Entities.Audit;
+
+/// <summary>
+/// Who did what, to which record, from where. The first general activity log in this codebase;
+/// <c>DocumentShareEvent</c> is the template, generalised with an entity type and an actor.
+///
+/// Written by EXPLICIT calls to IActivityLogger, not by an EF interceptor: an interceptor captures
+/// before/after state indiscriminately, which for this subject means copying confidential text
+/// into a second table by default. <see cref="Summary"/> is written at the actor's visibility, so a
+/// Restricted record's creation reads "Restricted record created for J. Okello" to a reader without
+/// the rung, never with its content. <see cref="DetailJson"/> holds changed fields, never a full dump.
+///
+/// Two tiers, as DocumentShareEvent: the event is kept indefinitely; the attribution columns
+/// (IpAddress, UserAgent) are personal data and are blanked after the tenant's retention window by
+/// StaffPerformanceJobs, leaving the row. Append-only.
+/// </summary>
+public class ActivityEvent : BaseEntity
+{
+    public Guid OrganizationId { get; set; }
+    public Guid? BranchId { get; set; }
+
+    /// <summary>Who did it. Null for a system job.</summary>
+    public Guid? ActorUserId { get; set; }
+
+    /// <summary>Whom it was about, when the entity is about a person (a staff record's subject).</summary>
+    public Guid? SubjectUserId { get; set; }
+
+    /// <summary>A constant from ActivityActions. Wire format; never renamed.</summary>
+    [MaxLength(80)]
+    public string Action { get; set; } = string.Empty;
+
+    [MaxLength(60)]
+    public string EntityType { get; set; } = string.Empty;
+
+    public Guid? EntityId { get; set; }
+
+    [MaxLength(500)]
+    public string Summary { get; set; } = string.Empty;
+
+    public string? DetailJson { get; set; }
+
+    /// <summary>Truncated (IPv4 /24, IPv6 /48). Blanked after retention.</summary>
+    [MaxLength(64)]
+    public string? IpAddress { get; set; }
+
+    /// <summary>Coarse — browser family and OS. Blanked after retention.</summary>
+    [MaxLength(120)]
+    public string? UserAgent { get; set; }
+
+    public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
+}

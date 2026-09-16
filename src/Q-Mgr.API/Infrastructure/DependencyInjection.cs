@@ -58,6 +58,14 @@ public static class DependencyInjection
         // five-minute permission cache, or a teacher removed from a class keeps reading it.
         services.AddScoped<IStudentScopeService, StudentScopeService>();
 
+        // Staff Performance Monitor (2026-09-16). The staff-axis twin of the student scope, the
+        // explicit activity log, the one policy reader, the scorer and the alert rule.
+        services.AddScoped<IStaffScopeService, StaffScopeService>();
+        services.AddScoped<IActivityLogger, ActivityLogger>();
+        services.AddScoped<IStaffPerformancePolicyService, StaffPerformancePolicyService>();
+        services.AddScoped<IStaffScoringService, StaffScoringService>();
+        services.AddScoped<IStaffAlertService, StaffAlertService>();
+
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();
         // Per-user channel preferences, applied before anything leaves the building.

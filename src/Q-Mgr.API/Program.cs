@@ -329,6 +329,13 @@ QMgr.Infrastructure.Services.Storage.UploadLinks.Use(app.Services.GetRequiredSer
         scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.RbacSeeder>>());
     await rbacSeeder.SeedAsync();
 
+    // The module catalog, in EVERY environment. Until 2026-09-16 the only seed lived in DbSeeder,
+    // which runs in Development only, so a module added to the code never reached a production
+    // catalog. Insert-if-missing; never overwrites an administrator's edit.
+    await new QMgr.Infrastructure.Data.ModuleCatalogDefaults(
+        db,
+        scope.ServiceProvider.GetRequiredService<ILogger<QMgr.Infrastructure.Data.ModuleCatalogDefaults>>()).RunAsync();
+
     // Repoint upload links saved with the internal loopback host (http://127.0.0.1:{ApiPort}) onto
     // MediaStorage:PublicBaseUrl. A no-op unless that key is set, and a no-op once repaired.
     var uploadLinkRepair = new QMgr.Infrastructure.Data.UploadLinkRepair(

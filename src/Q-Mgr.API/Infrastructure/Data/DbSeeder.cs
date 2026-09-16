@@ -274,89 +274,11 @@ public class DbSeeder
     /// </summary>
     private async Task SeedModulesAsync()
     {
-        var modules = new Dictionary<string, ModuleDefaults>
-        {
-            [ModuleCodes.CoreQueue] = new(
-                Name: "Core Queue Management", Code: ModuleCodes.CoreQueue, ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 10,
-                MaxTokensPerMonth: 20_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 500,
-                MonthlyPriceUsd: 19m, AnnualPriceUsd: 190m, MonthlyPriceUgx: 80_000m, AnnualPriceUgx: 800_000m,
-                Description: "Live queue board, counter terminal, self-service kiosk, customer display, counters, service types, and tokens.",
-                Badge: null, SortOrder: 0),
-            [ModuleCodes.EngagementCommunications] = new(
-                Name: "Engagement & Communications", Code: ModuleCodes.EngagementCommunications, ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 5, MaxDisplays: 10, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
-                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 5_000,
-                MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 120_000m, AnnualPriceUgx: 1_200_000m,
-                Description: "Digital signage, campaign marketing (SMS/WhatsApp/email broadcasts), and customer feedback & surveys.",
-                Badge: "Most Popular", SortOrder: 1),
-            // "Visitor & Safeguarding" used to be one module covering both of these. It was split
-            // because they sell to different people: a bank or clinic wants a visitor book and has
-            // no use for a student welfare ledger, while "safeguarding" is education-sector
-            // language those buyers do not recognise. Priced so either half alone costs less than
-            // the old bundle, and a school buying both pays slightly more than before for what is
-            // now materially more feature.
-            [ModuleCodes.VisitorManagement] = new(
-                Name: "Visitor Management", Code: ModuleCodes.VisitorManagement, ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
-                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 1_000,
-                MonthlyPriceUsd: 22m, AnnualPriceUsd: 220m, MonthlyPriceUgx: 95_000m, AnnualPriceUgx: 950_000m,
-                Description: "Visitor check-in and check-out, badges and group passes, pre-registered arrivals, watchlist and contractor induction, and the evacuation roll-call.",
-                Badge: null, SortOrder: 2),
-            [ModuleCodes.StudentWelfare] = new(
-                Name: "Student Welfare", Code: ModuleCodes.StudentWelfare, ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
-                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 2_000,
-                MonthlyPriceUsd: 25m, AnnualPriceUsd: 250m, MonthlyPriceUgx: 105_000m, AnnualPriceUgx: 1_050_000m,
-                Description: "Student roster and guardians, visiting-day passes, and the welfare ledger: achievements, behaviour, safeguarding concerns, assigned actions, statements and reports.",
-                Badge: "For schools", SortOrder: 3),
-            [ModuleCodes.IntegrationsApi] = new(
-                Name: "Integrations & API Access", Code: ModuleCodes.IntegrationsApi, ShowAds: false, DedicatedSchema: false,
-                MaxBranches: 3, MaxDisplays: 1, MaxUsersPerBranch: 5, MaxCountersPerBranch: 2,
-                MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 200,
-                MonthlyPriceUsd: 15m, AnnualPriceUsd: 150m, MonthlyPriceUgx: 60_000m, AnnualPriceUgx: 600_000m,
-                Description: "API clients, webhooks, and partner integration adapters (hospital/pharmacy/banking).",
-                Badge: null, SortOrder: 4),
-        };
-
-        var changed = false;
-        foreach (var (code, defaults) in modules)
-        {
-            var existing = await _context.SubscriptionPlans.FirstOrDefaultAsync(p => p.Code == code);
-            if (existing == null)
-            {
-                _context.SubscriptionPlans.Add(new SubscriptionPlan
-                {
-                    Id = Guid.NewGuid(),
-                    Name = defaults.Name,
-                    Code = defaults.Code,
-                    Description = defaults.Description,
-                    ShowAds = defaults.ShowAds,
-                    RequiresDedicatedSchema = defaults.DedicatedSchema,
-                    IsPublic = true,
-                    SortOrder = defaults.SortOrder,
-                    Badge = defaults.Badge,
-                    TrialDays = 14,
-                    MonthlyPriceUsd = defaults.MonthlyPriceUsd,
-                    AnnualPriceUsd = defaults.AnnualPriceUsd,
-                    MonthlyPriceUgx = defaults.MonthlyPriceUgx,
-                    AnnualPriceUgx = defaults.AnnualPriceUgx,
-                    MaxBranches = defaults.MaxBranches,
-                    MaxDisplays = defaults.MaxDisplays,
-                    MaxUsersPerBranch = defaults.MaxUsersPerBranch,
-                    MaxCountersPerBranch = defaults.MaxCountersPerBranch,
-                    MaxTokensPerMonth = defaults.MaxTokensPerMonth,
-                    MaxApiCallsPerMonth = defaults.MaxApiCallsPerMonth,
-                    MaxStorageMb = defaults.MaxStorageMb,
-                    CreatedAt = DateTime.UtcNow
-                });
-                changed = true;
-                _logger.LogInformation("Seeded {ModuleName} module into the catalog", defaults.Name);
-            }
-        }
-
-        if (changed)
-            await _context.SaveChangesAsync();
+        // Delegates to ModuleCatalogDefaults, which runs in EVERY environment from Program.cs; this
+        // dev-only call is kept so a fresh development database is complete before the demo data
+        // below is seeded. Insert-if-missing in both places, so running twice adds nothing.
+        await new ModuleCatalogDefaults(_context,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ModuleCatalogDefaults>.Instance).RunAsync();
     }
 
     /// <summary>
@@ -509,6 +431,7 @@ public class DbSeeder
                     // the row wins, and a class-teacher role created without its scope would
                     // silently see the whole school.
                     DataScope = roleDef.DataScope,
+                    StaffScope = roleDef.StaffScope,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };
@@ -614,10 +537,4 @@ public class DbSeeder
 
     /// <summary>The shape of one module's seeded defaults. Named for the tiers it once described;
     /// every row it seeds is now a module.</summary>
-    private record ModuleDefaults(
-        string Name, string Code, bool ShowAds, bool DedicatedSchema,
-        int MaxBranches, int MaxDisplays, int MaxUsersPerBranch, int MaxCountersPerBranch,
-        int MaxTokensPerMonth, int MaxApiCallsPerMonth, int MaxStorageMb,
-        decimal MonthlyPriceUsd, decimal AnnualPriceUsd, decimal MonthlyPriceUgx, decimal AnnualPriceUgx,
-        string? Description, string? Badge, int SortOrder);
 }

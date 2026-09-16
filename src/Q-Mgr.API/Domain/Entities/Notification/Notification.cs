@@ -23,6 +23,13 @@ public class Notification : BaseEntity
     public string? ActionUrl { get; set; }      // URL to navigate to on click
     public string? MetaData { get; set; }       // JSON metadata for additional context
 
+    /// <summary>
+    /// The NotificationEventKeys category this was sent under, persisted since 2026-09-16 so the
+    /// bell and the notification centre can group by kind and mark a whole group read. Null on
+    /// rows from before that date and on sends made without a key.
+    /// </summary>
+    public string? EventKey { get; set; }
+
     public bool IsRead { get; set; } = false;
     public DateTime? ReadAt { get; set; }
     public DateTime? ExpiresAt { get; set; }

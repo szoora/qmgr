@@ -7,6 +7,7 @@ using QMgr.Application.Tenant;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
+using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 
 namespace QMgr.API.Controllers.v1;
@@ -107,7 +108,9 @@ public class RolesController : ControllerBase
                 IsSystem = r.IsSystem,
                 IsActive = r.IsActive,
                 UserCount = r.Users.Count(u => u.IsActive),
-                PermissionCount = r.RolePermissions.Count
+                PermissionCount = r.RolePermissions.Count,
+                DataScope = r.DataScope,
+                StaffScope = r.StaffScope
             })
             .ToListAsync();
 
@@ -147,6 +150,8 @@ public class RolesController : ControllerBase
                 IsActive = r.IsActive,
                 SortOrder = r.SortOrder,
                 CreatedAt = r.CreatedAt,
+                DataScope = r.DataScope,
+                StaffScope = r.StaffScope,
                 Permissions = r.RolePermissions
                     .Select(rp => rp.Permission.Code)
                     .ToList()
@@ -255,6 +260,11 @@ public class RolesController : ControllerBase
             Icon = request.Icon,
             SortOrder = request.SortOrder ?? 100,
             IsSystem = false,
+            // The two row-scope axes the role editor promised (Role.DataScope's own doc comment) and
+            // never had a caller for until 2026-09-16. A head of year is AssignedClasses on the
+            // student axis; a head of department is AssignedDepartments on the staff axis.
+            DataScope = request.DataScope,
+            StaffScope = request.StaffScope,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -294,6 +304,8 @@ public class RolesController : ControllerBase
             IsActive = role.IsActive,
             SortOrder = role.SortOrder,
             CreatedAt = role.CreatedAt,
+            DataScope = role.DataScope,
+            StaffScope = role.StaffScope,
             Permissions = permissions
         });
     }
@@ -339,12 +351,17 @@ public class RolesController : ControllerBase
             role.Icon = request.Icon;
         if (request.SortOrder.HasValue)
             role.SortOrder = request.SortOrder.Value;
+        if (request.DataScope.HasValue)
+            role.DataScope = request.DataScope.Value;
+        if (request.StaffScope.HasValue)
+            role.StaffScope = request.StaffScope.Value;
 
         role.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();
 
-        // Invalidate permission cache for users with this role
+        // Invalidate permission cache for users with this role. A scope change is honoured on the
+        // very next request regardless — the scope services are per-request and never cached.
         await InvalidateAndNotifyRoleAsync(roleId);
 
         _logger.LogInformation("Updated role: {RoleId} - {RoleCode}", role.Id, role.Code);
@@ -367,6 +384,8 @@ public class RolesController : ControllerBase
             IsActive = role.IsActive,
             SortOrder = role.SortOrder,
             CreatedAt = role.CreatedAt,
+            DataScope = role.DataScope,
+            StaffScope = role.StaffScope,
             Permissions = permissions
         });
     }
@@ -454,6 +473,8 @@ public class RolesController : ControllerBase
             IsActive = role.IsActive,
             SortOrder = role.SortOrder,
             CreatedAt = role.CreatedAt,
+            DataScope = role.DataScope,
+            StaffScope = role.StaffScope,
             Permissions = permissions
         });
     }
@@ -609,6 +630,8 @@ public record RoleListDto
     public bool IsActive { get; init; }
     public int UserCount { get; init; }
     public int PermissionCount { get; init; }
+    public RoleDataScope DataScope { get; init; }
+    public StaffDataScope StaffScope { get; init; }
 }
 
 public record RoleDetailDto
@@ -625,6 +648,9 @@ public record RoleDetailDto
     public int SortOrder { get; init; }
     public DateTime CreatedAt { get; init; }
     public List<string> Permissions { get; init; } = new();
+    /// <summary>Row scope on the student axis (class teacher) and the staff axis (head of department). Both editable on a custom role.</summary>
+    public RoleDataScope DataScope { get; init; }
+    public StaffDataScope StaffScope { get; init; }
 }
 
 public record CreateRoleRequest
@@ -637,6 +663,8 @@ public record CreateRoleRequest
     public string? Icon { get; init; }
     public int? SortOrder { get; init; }
     public List<Guid>? PermissionIds { get; init; }
+    public RoleDataScope DataScope { get; init; } = RoleDataScope.Organization;
+    public StaffDataScope StaffScope { get; init; } = StaffDataScope.Organization;
 }
 
 public record UpdateRoleRequest
@@ -646,6 +674,8 @@ public record UpdateRoleRequest
     public string? Color { get; init; }
     public string? Icon { get; init; }
     public int? SortOrder { get; init; }
+    public RoleDataScope? DataScope { get; init; }
+    public StaffDataScope? StaffScope { get; init; }
 }
 
 public record UpdateRolePermissionsRequest

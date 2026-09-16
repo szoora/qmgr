@@ -176,7 +176,8 @@ public enum NotificationType
     SystemAlert,        // System alerts (for operators/admins)
     CounterAlert,       // Counter-specific alerts
     VisitorArrived,     // A visitor has checked in for a host
-    Custom              // Custom notifications
+    Custom,             // Custom notifications
+    StaffPerformance    // Staff Performance Monitor: records, points, duties, appraisals, notices (appended 2026-09-16)
 }
 
 /// <summary>

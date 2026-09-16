@@ -6,6 +6,7 @@ namespace QMgr.Web.Services;
 public class AuthenticationMessageHandler : DelegatingHandler
 {
     private readonly IAuthService _authService;
+    private readonly ViewerRequestContext _viewer;
     private readonly ILogger<AuthenticationMessageHandler> _logger;
 
     // Access tokens are short-lived (60 min, see JWT:ExpiryMinutes) while a Blazor Server
@@ -18,13 +19,30 @@ public class AuthenticationMessageHandler : DelegatingHandler
 
     public AuthenticationMessageHandler(
         IAuthService authService,
+        ViewerRequestContext viewer,
         ILogger<AuthenticationMessageHandler> logger)
     {
         // IAuthService is safe to depend on directly here: it talks to the API through the
         // separate "QMgrAuthApi" client, which deliberately has no AuthenticationMessageHandler
         // attached, so there's no circular dependency back into this handler.
         _authService = authService;
+        _viewer = viewer;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Every call this app makes reaches the API from the Web server, so the API would otherwise
+    /// see the loopback and no browser. The activity log prefers these two headers (and the API
+    /// truncates and coarsens them before storing). Never overwrites a header a caller set itself.
+    /// </summary>
+    private void RelayViewer(HttpRequestMessage request)
+    {
+        var v = _viewer.Viewer;
+        if (v == null) return;
+        if (!request.Headers.Contains("X-Viewer-Ip") && !string.IsNullOrWhiteSpace(v.IpAddress))
+            request.Headers.TryAddWithoutValidation("X-Viewer-Ip", v.IpAddress);
+        if (!request.Headers.Contains("X-Viewer-Agent") && !string.IsNullOrWhiteSpace(v.UserAgent))
+            request.Headers.TryAddWithoutValidation("X-Viewer-Agent", v.UserAgent);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -41,6 +59,7 @@ public class AuthenticationMessageHandler : DelegatingHandler
         // here, on every request, removes that race entirely instead of relying on callers to
         // have warmed the cache first.
         var token = await _authService.GetAccessTokenAsync();
+        RelayViewer(request);
 
         if (!string.IsNullOrEmpty(token))
         {

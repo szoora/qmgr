@@ -32,6 +32,13 @@ public static class ModuleCodes
     public const string IntegrationsApi = "integrations-api";
 
     /// <summary>
+    /// Staff performance: the parameter catalogue, duties and registers, the append-only staff
+    /// record with evidence, recognition, scoring and bands, the termly appraisal, staff notices,
+    /// the activity log, and every staff member's own portal. See docs/plans/STAFF_PERFORMANCE_MONITOR.md.
+    /// </summary>
+    public const string StaffPerformance = "staff-performance";
+
+    /// <summary>
     /// The retired "Visitor &amp; Safeguarding" module, which bundled visitor management together
     /// with the student roster and welfare ledger. Split into <see cref="VisitorManagement"/> and
     /// <see cref="StudentWelfare"/> because the two serve different buyers: "safeguarding" is
@@ -49,6 +56,7 @@ public static class ModuleCodes
         EngagementCommunications,
         VisitorManagement,
         StudentWelfare,
+        StaffPerformance,
         IntegrationsApi
     };
 

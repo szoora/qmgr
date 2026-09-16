@@ -49,6 +49,28 @@ public static class RoleCodes
     /// </summary>
     public const string Viewer = "viewer";
 
+    // ---- Staff Performance Monitor hierarchy (2026-09-16). All five sit BELOW Manager in All, so
+    // none of them satisfies IsManagerOrAbove: that tier also unlocks the visiting-day repeat
+    // check-in bypass and similar manager-tier overrides in the visitor module, and a head of
+    // department has no business with those. "Administrator" in the requested hierarchy is the
+    // existing Tenant Admin. The staff-axis narrowing lives on Role.StaffScope, enforced by
+    // StaffScopeService — never by comparing against these codes.
+
+    /// <summary>Director of Studies — academic head. Staff scope Organization; conducts and approves appraisals.</summary>
+    public const string DirectorOfStudies = "director-of-studies";
+
+    /// <summary>Academic Assistant — timetabling and duties. Staff scope Organization; no appraisal sign-off, no confidential rung.</summary>
+    public const string AcademicAssistant = "academic-assistant";
+
+    /// <summary>Head of Department — staff scope AssignedDepartments; first-line appraiser for the department's staff.</summary>
+    public const string HeadOfDepartment = "head-of-department";
+
+    /// <summary>Teacher — the portal and recognition; records only through named-recorder delegation on a duty.</summary>
+    public const string Teacher = "teacher";
+
+    /// <summary>Support Staff — the portal and recognition; appraised by their line manager.</summary>
+    public const string SupportStaff = "support-staff";
+
     /// <summary>
     /// All role codes for validation purposes.
     ///
@@ -57,8 +79,19 @@ public static class RoleCodes
     /// rather than from any stored level. ClassTeacher sits between Staff and Viewer deliberately —
     /// placing it above Manager would silently hand every class teacher the manager-tier override
     /// checks, including the visiting-day repeat check-in bypass in VisitorsController.CheckIn.
+    /// The five Staff Performance roles are placed below Manager for the same reason (user decision
+    /// 2026-09-16, plan §13 decision 1).
     /// </summary>
-    public static readonly string[] All = { SuperAdmin, Admin, Manager, Staff, ClassTeacher, Viewer };
+    public static readonly string[] All =
+    {
+        SuperAdmin, Admin, Manager,
+        DirectorOfStudies, AcademicAssistant, HeadOfDepartment,
+        Staff, ClassTeacher, Teacher, SupportStaff, Viewer
+    };
+
+    /// <summary>The roles whose holders are support (non-teaching) staff, for PerformanceParameter.AppliesTo.</summary>
+    public static bool IsSupportStaff(string? roleCode)
+        => string.Equals(roleCode, SupportStaff, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Checks if the given role code is a valid system role

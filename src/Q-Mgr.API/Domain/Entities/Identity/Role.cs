@@ -57,6 +57,15 @@ public class Role : BaseAuditableEntity
     public RoleDataScope DataScope { get; set; } = RoleDataScope.Organization;
 
     /// <summary>
+    /// The same idea for the second subject: how widely this role sees OTHER STAFF. A separate
+    /// column because <see cref="DataScope"/> is about students and one enum cannot say "all
+    /// students, my department's staff". Defaults to Organization so every pre-existing role keeps
+    /// behaving as it did; the seeded teacher / support-staff roles are SelfOnly and head-of-
+    /// department is AssignedDepartments. Enforced by StaffScopeService, the only reader.
+    /// </summary>
+    public StaffDataScope StaffScope { get; set; } = StaffDataScope.Organization;
+
+    /// <summary>
     /// Display order in lists
     /// </summary>
     public int SortOrder { get; set; }

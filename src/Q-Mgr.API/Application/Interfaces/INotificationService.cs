@@ -114,6 +114,13 @@ public interface INotificationHubService
     /// next login.
     /// </summary>
     Task NotifyPermissionsChangedAsync(Guid userId);
+
+    /// <summary>
+    /// Staff Performance: a record about this person was finalised, and here is their new score for
+    /// the period. Consumed by the portal's score tile; the bell is told separately, through a
+    /// notification, when the person wants it.
+    /// </summary>
+    Task SendStaffScoreUpdatedAsync(Guid userId, QMgr.Application.DTOs.StaffScoreUpdatedEvent update);
 }
 
 /// <summary>

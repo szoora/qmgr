@@ -111,6 +111,23 @@ public static class Permissions
     /// </summary>
     public const string ClassTeachersManage = "classes.teachers.manage";
 
+    // Staff Performance Monitor (2026-09-16). Thirteen codes, in all THREE catalogues. The portal's
+    // own endpoints carry none of these: they are the caller's own data, [Authorize] plus the module
+    // gate, following ProfileController.
+    public const string StaffRecordsView = "staff.records.view";           // read other people's records, within the role's StaffScope
+    public const string StaffRecordsCreate = "staff.records.create";       // log a record about staff within scope
+    public const string StaffRecordsEdit = "staff.records.edit";           // notes, annulment, points correction — records are never rewritten
+    public const string StaffConfidentialView = "staff.confidential.view"; // the Confidential rung (observations, welfare-of-staff, appraisals)
+    public const string StaffRestrictedView = "staff.restricted.view";     // the administrator-only rung: an investigation, a grievance
+    public const string StaffDutiesManage = "staff.duties.manage";         // create duties and name their recorders
+    public const string StaffParametersManage = "staff.parameters.manage"; // the parameter catalogue and the scoring policy
+    public const string StaffAppraisalsConduct = "staff.appraisals.conduct"; // act as appraiser
+    public const string StaffAppraisalsApprove = "staff.appraisals.approve"; // open a period, moderate, sign
+    public const string StaffReportsView = "staff.reports.view";           // branch-wide analytics, scoped for a head
+    public const string StaffNoticesManage = "staff.notices.manage";       // publish notices
+    public const string StaffStructureManage = "staff.structure.manage";   // departments, heads, line managers, staff import
+    public const string StaffRecognitionGive = "staff.recognition.give";   // peer recognition within the monthly budget
+
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
@@ -244,6 +261,21 @@ public static class Permissions
         new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7),
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8),
 
+        // Staff Performance Monitor
+        new("staff.records.view", "View Staff Records", "Read performance records about other staff, within the role's staff scope", "Staff Performance", 1),
+        new("staff.records.create", "Log Staff Records", "Log attendance, duties, observations, contributions and conduct about staff within scope", "Staff Performance", 2),
+        new("staff.records.edit", "Follow Up Staff Records", "Add notes, annul a record with a reason, correct points — records are never rewritten", "Staff Performance", 3),
+        new("staff.confidential.view", "View Confidential Staff Records", "Observations, welfare-of-staff records and appraisals — a smaller audience by design", "Staff Performance", 4),
+        new("staff.restricted.view", "View Restricted Staff Records", "Administrator-only records: an investigation or a grievance", "Staff Performance", 5),
+        new("staff.duties.manage", "Manage Staff Duties", "Create meetings, exam and prep supervision slots and lessons, and name who takes the register", "Staff Performance", 6),
+        new("staff.parameters.manage", "Manage Performance Parameters", "Define what is measured, its points, weight and rubric, and the scoring policy", "Staff Performance", 7),
+        new("staff.appraisals.conduct", "Conduct Appraisals", "Act as appraiser: set targets, review a self-assessment, rate", "Staff Performance", 8),
+        new("staff.appraisals.approve", "Approve Appraisals", "Open a period's appraisals, moderate ratings and sign them off", "Staff Performance", 9),
+        new("staff.reports.view", "View Staff Performance Reports", "Bands, attendance, observer dispersion and who-logs-what, scoped to the caller's departments", "Staff Performance", 10),
+        new("staff.notices.manage", "Publish Staff Notices", "Publish notices to a branch, departments, roles or a staff group", "Staff Performance", 11),
+        new("staff.structure.manage", "Manage Staff Structure", "Departments, heads of department, line managers and the staff import", "Staff Performance", 12),
+        new("staff.recognition.give", "Give Recognition", "Recognise a colleague, within the monthly budget", "Staff Performance", 13),
+
         // Marketing
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
         new("marketing.manage", "Manage Marketing", "Manage contacts and create broadcast drafts", "Marketing", 2),
@@ -318,7 +350,8 @@ public static class Permissions
             "#2196F3",
             "account-supervisor",
             2,
-            new[]
+            StaffScope: StaffDataScope.SelfOnly,
+            Permissions: new[]
             {
                 DashboardView,
                 UsersView, UsersCreate, UsersEdit,
@@ -349,7 +382,8 @@ public static class Permissions
             "#4CAF50",
             "account",
             3,
-            new[]
+            StaffScope: StaffDataScope.SelfOnly,
+            Permissions: new[]
             {
                 DashboardView,
                 QueueView, QueueManage,
@@ -382,8 +416,104 @@ public static class Permissions
                 // Scoped by StudentScopeService to the caller's own classes, so
                 // welfare.reports.view answers "how is my class doing" and nothing wider.
                 WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsView,
+                // The staff portal needs no permission; recognition does.
+                StaffRecognitionGive,
             },
-            RoleDataScope.AssignedClasses
+            RoleDataScope.AssignedClasses,
+            StaffDataScope.SelfOnly
+        ),
+
+        // ---- Staff Performance Monitor hierarchy (2026-09-16). See RoleCodes for the rank decision. ----
+
+        [RoleCodes.DirectorOfStudies] = new RoleDefinition(
+            "Director of Studies",
+            RoleCodes.DirectorOfStudies,
+            "Academic head. Sees every member of staff; conducts and approves appraisals; owns the parameters and notices.",
+            "#7A2847",
+            "mortarboard",
+            3,
+            new[]
+            {
+                DashboardView, NotificationsView,
+                UsersView,
+                StudentsView, WelfareView, WelfareReportsView,
+                StaffRecordsView, StaffRecordsCreate, StaffRecordsEdit, StaffConfidentialView,
+                StaffDutiesManage, StaffParametersManage,
+                StaffAppraisalsConduct, StaffAppraisalsApprove,
+                StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
+            },
+            RoleDataScope.Organization,
+            StaffDataScope.Organization
+        ),
+
+        [RoleCodes.AcademicAssistant] = new RoleDefinition(
+            "Academic Assistant",
+            RoleCodes.AcademicAssistant,
+            "Timetables duties and takes registers across the school. No appraisal sign-off and no confidential rung.",
+            "#5A9C92",
+            "calendar-check",
+            3,
+            new[]
+            {
+                DashboardView, NotificationsView,
+                UsersView,
+                StaffRecordsView, StaffRecordsCreate,
+                StaffDutiesManage,
+                StaffReportsView, StaffNoticesManage, StaffRecognitionGive,
+            },
+            RoleDataScope.Organization,
+            StaffDataScope.Organization
+        ),
+
+        [RoleCodes.HeadOfDepartment] = new RoleDefinition(
+            "Head of Department",
+            RoleCodes.HeadOfDepartment,
+            "Sees and appraises the staff of the departments they head. A head with no department sees nobody.",
+            "#C99A5B",
+            "diagram-3",
+            3,
+            new[]
+            {
+                DashboardView, NotificationsView,
+                StaffRecordsView, StaffRecordsCreate, StaffRecordsEdit,
+                StaffDutiesManage,
+                StaffAppraisalsConduct,
+                StaffReportsView, StaffRecognitionGive,
+            },
+            RoleDataScope.Organization,
+            StaffDataScope.AssignedDepartments
+        ),
+
+        [RoleCodes.Teacher] = new RoleDefinition(
+            "Teacher",
+            RoleCodes.Teacher,
+            "The staff portal and recognition. Logs records only as the named recorder on a duty.",
+            "#3F8A80",
+            "person-workspace",
+            4,
+            new[]
+            {
+                DashboardView, NotificationsView,
+                StaffRecognitionGive,
+            },
+            RoleDataScope.Organization,
+            StaffDataScope.SelfOnly
+        ),
+
+        [RoleCodes.SupportStaff] = new RoleDefinition(
+            "Support Staff",
+            RoleCodes.SupportStaff,
+            "The staff portal and recognition; appraised by their line manager.",
+            "#8A7A81",
+            "person-gear",
+            4,
+            new[]
+            {
+                DashboardView, NotificationsView,
+                StaffRecognitionGive,
+            },
+            RoleDataScope.Organization,
+            StaffDataScope.SelfOnly
         ),
 
         [RoleCodes.Viewer] = new RoleDefinition(
@@ -393,7 +523,8 @@ public static class Permissions
             "#607D8B",
             "eye",
             4,
-            new[]
+            StaffScope: StaffDataScope.SelfOnly,
+            Permissions: new[]
             {
                 DashboardView,
                 QueueView,
@@ -433,5 +564,6 @@ public record RoleDefinition(
     string Icon,
     int SortOrder,
     string[] Permissions,
-    RoleDataScope DataScope = RoleDataScope.Organization
+    RoleDataScope DataScope = RoleDataScope.Organization,
+    StaffDataScope StaffScope = StaffDataScope.Organization
 );

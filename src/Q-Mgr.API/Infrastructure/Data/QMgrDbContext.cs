@@ -72,6 +72,24 @@ public class QMgrDbContext : DbContext
 
     #endregion
 
+    #region Staff Performance
+
+    // Department, PerformanceParameter, StaffNotice and ActivityEvent are organization-scoped and
+    // carry a tenant query filter below. StaffDuty, StaffPerformanceRecord (+ notes, attachments)
+    // and StaffAppraisal are branch-scoped like the welfare tables and are NOT filtered: every
+    // controller action reaching one by ID calls VerifyBranchOwnership explicitly.
+    public DbSet<QMgr.Domain.Entities.Staff.Department> Departments => Set<QMgr.Domain.Entities.Staff.Department>();
+    public DbSet<QMgr.Domain.Entities.Staff.PerformanceParameter> PerformanceParameters => Set<QMgr.Domain.Entities.Staff.PerformanceParameter>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffDuty> StaffDuties => Set<QMgr.Domain.Entities.Staff.StaffDuty>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceNote> StaffPerformanceNotes => Set<QMgr.Domain.Entities.Staff.StaffPerformanceNote>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment> StaffPerformanceAttachments => Set<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffAppraisal> StaffAppraisals => Set<QMgr.Domain.Entities.Staff.StaffAppraisal>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffNotice> StaffNotices => Set<QMgr.Domain.Entities.Staff.StaffNotice>();
+    public DbSet<QMgr.Domain.Entities.Audit.ActivityEvent> ActivityEvents => Set<QMgr.Domain.Entities.Audit.ActivityEvent>();
+
+    #endregion
+
     #region Marketing
 
     public DbSet<Contact> Contacts => Set<Contact>();
@@ -226,6 +244,17 @@ public class QMgrDbContext : DbContext
             .HasQueryFilter(e => !TenantIsolationEnabled || e.Share!.MediaContent!.OrganizationId == CurrentOrganizationId);
 
         modelBuilder.Entity<Quote>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+
+        // Staff Performance: the organization-scoped four. UploadAuthorizer and the Hangfire sweeps
+        // use IgnoreQueryFilters where they must read across tenants.
+        modelBuilder.Entity<QMgr.Domain.Entities.Staff.Department>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+        modelBuilder.Entity<QMgr.Domain.Entities.Staff.PerformanceParameter>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+        modelBuilder.Entity<QMgr.Domain.Entities.Staff.StaffNotice>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+        modelBuilder.Entity<QMgr.Domain.Entities.Audit.ActivityEvent>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
 
         // Billing entities - filter by OrganizationId

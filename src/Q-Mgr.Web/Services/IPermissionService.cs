@@ -274,6 +274,21 @@ public static class Permissions
     public const string WelfareCategoriesManage = "welfare.categories.manage";
     public const string WelfareReportsView = "welfare.reports.view";
 
+    // Staff Performance Monitor (2026-09-16) — mirrors Permissions.cs and RbacSeeder.AllPermissions
+    public const string StaffRecordsView = "staff.records.view";
+    public const string StaffRecordsCreate = "staff.records.create";
+    public const string StaffRecordsEdit = "staff.records.edit";
+    public const string StaffConfidentialView = "staff.confidential.view";
+    public const string StaffRestrictedView = "staff.restricted.view";
+    public const string StaffDutiesManage = "staff.duties.manage";
+    public const string StaffParametersManage = "staff.parameters.manage";
+    public const string StaffAppraisalsConduct = "staff.appraisals.conduct";
+    public const string StaffAppraisalsApprove = "staff.appraisals.approve";
+    public const string StaffReportsView = "staff.reports.view";
+    public const string StaffNoticesManage = "staff.notices.manage";
+    public const string StaffStructureManage = "staff.structure.manage";
+    public const string StaffRecognitionGive = "staff.recognition.give";
+
     // Marketing
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage";
@@ -352,6 +367,19 @@ public static class RoleCodes
     /// </summary>
     public const string Viewer = "viewer";
 
+    // Staff Performance Monitor hierarchy (2026-09-16); all rank below Manager, as on the API side.
+    public const string DirectorOfStudies = "director-of-studies";
+    public const string AcademicAssistant = "academic-assistant";
+    public const string HeadOfDepartment = "head-of-department";
+    public const string Teacher = "teacher";
+    public const string SupportStaff = "support-staff";
+
+    /// <summary>The roles whose landing page is the staff portal rather than the operational dashboard.</summary>
+    public static bool IsPortalFirst(string? roleCode)
+        => string.Equals(roleCode, Teacher, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(roleCode, SupportStaff, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(roleCode, ClassTeacher, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Checks if the role code represents a platform administrator
     /// </summary>
@@ -370,7 +398,12 @@ public static class RoleCodes
 
     // Mirrors the API RoleCodes.All ordering, which is load-bearing there: ClassTeacher sits
     // between Staff and Viewer so IsManagerOrAbove keeps meaning what it meant.
-    private static readonly string[] TierOrder = { SuperAdmin, Admin, Manager, Staff, ClassTeacher, Viewer };
+    private static readonly string[] TierOrder =
+    {
+        SuperAdmin, Admin, Manager,
+        DirectorOfStudies, AcademicAssistant, HeadOfDepartment,
+        Staff, ClassTeacher, Teacher, SupportStaff, Viewer
+    };
 
     /// <summary>
     /// Checks if the role is Manager, Admin, or SuperAdmin — mirrors

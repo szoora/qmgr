@@ -82,6 +82,8 @@ builder.Services.AddCascadingAuthenticationState();
 
 // Add custom services
 builder.Services.AddScoped<ITokenStorageService, TokenStorageService>();
+// The browser's address and agent for this circuit, relayed on every API call (see the class).
+builder.Services.AddScoped<ViewerRequestContext>();
 builder.Services.AddScoped<IAppInitializationService, AppInitializationService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
@@ -151,7 +153,7 @@ builder.Services.AddScoped(sp =>
             HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
     }
 
-    var authHandler = new AuthenticationMessageHandler(authService, logger)
+    var authHandler = new AuthenticationMessageHandler(authService, sp.GetRequiredService<ViewerRequestContext>(), logger)
     {
         InnerHandler = innerHandler
     };

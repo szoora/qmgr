@@ -85,6 +85,13 @@ public static class ModuleRouteMap
         // already refuses without the module, so the page was offering a button that bounced.
         ("/admin/industry", ModuleCodes.CoreQueue),
 
+        // ---- Staff Performance ----
+        // The portal is every staff member's own page and the admin pages all live under one
+        // prefix. /notifications is deliberately NOT listed: the notification centre is base
+        // product, it merely gains staff event keys when the module is on.
+        ("/portal", ModuleCodes.StaffPerformance),
+        ("/admin/staff", ModuleCodes.StaffPerformance),
+
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
         ("/admin/integrations", ModuleCodes.IntegrationsApi),
@@ -168,6 +175,10 @@ public static class ModuleRouteMap
         ("api/v1/branches/{branchId}/students", ModuleCodes.StudentWelfare),
         ("api/v1/branches/{branchId}/welfare", ModuleCodes.StudentWelfare),
         ("api/v1/branches/{branchId}/welfare-records", ModuleCodes.StudentWelfare),
+
+        // ---- Staff Performance ----
+        ("api/v1/branches/{branchId}/staff", ModuleCodes.StaffPerformance),
+        ("api/v1/staff", ModuleCodes.StaffPerformance),
 
         // ---- Integrations & API Access ----
         ("api/v1/api-clients", ModuleCodes.IntegrationsApi),

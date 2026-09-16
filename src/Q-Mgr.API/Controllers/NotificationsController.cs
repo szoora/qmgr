@@ -186,7 +186,8 @@ public class NotificationsController : ControllerBase
             ActionUrl = n.ActionUrl,
             IsRead = n.IsRead,
             CreatedAt = n.CreatedAt,
-            ReadAt = n.ReadAt
+            ReadAt = n.ReadAt,
+            EventKey = n.EventKey
         });
 
         return Ok(result);

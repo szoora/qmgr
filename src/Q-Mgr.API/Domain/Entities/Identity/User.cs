@@ -52,6 +52,20 @@ public class User : BaseAuditableEntity
     /// <summary>Free text, e.g. "Head of Year 4" or "Senior Teacher". Distinct from the RBAC role, which is about permissions, not about what the school calls them.</summary>
     public string? JobTitle { get; set; }
 
+    // ---------------------------------------------------------------------------------------
+    // Staff structure (Staff Performance Monitor, 2026-09-16). Two columns on the row that already
+    // exists rather than membership tables: a teacher of Maths and Physics is in two departments
+    // and nothing is stored per membership beyond the id; a line manager is one scalar. Changes
+    // to either are logged in ActivityEvent, which carries the history. A membership-history
+    // table is the upgrade path if "who was in which department when" is ever needed.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>The departments this person belongs to (Department.Id). Native uuid[] column.</summary>
+    public Guid[]? DepartmentIds { get; set; }
+
+    /// <summary>Who appraises and is told about this person. Drives StaffDataScope.DirectReports.</summary>
+    public Guid? LineManagerUserId { get; set; }
+
     /// <summary>
     /// Per-user notification channel overrides, as JSON. Null means "follow the organization
     /// default" (<c>NotificationSettings</c>), which is the state every existing row is in.

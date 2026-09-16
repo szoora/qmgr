@@ -20,7 +20,9 @@ public enum UploadOwnerKind
     /// <summary>A Docs (help centre) cover or body image. The help centre is public.</summary>
     DocsImage = 4,
     VisitorPhoto = 5,
-    StudentPhoto = 6
+    StudentPhoto = 6,
+    /// <summary>Evidence on a staff performance record. About an employee. Never public; the record's own rung and the staff scope apply.</summary>
+    StaffEvidence = 7
 }
 
 /// <summary>
@@ -72,14 +74,17 @@ public class UploadAuthorizer : IUploadAuthorizer
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IStudentScopeService _scope;
+    private readonly IStaffScopeService _staffScope;
 
     public UploadAuthorizer(
         QMgrDbContext db,
         IMemoryCache cache,
         ITenantContextAccessor tenantAccessor,
         IHttpContextAccessor httpContextAccessor,
-        IStudentScopeService scope)
+        IStudentScopeService scope,
+        IStaffScopeService staffScope)
     {
+        _staffScope = staffScope;
         _db = db;
         _cache = cache;
         _tenantAccessor = tenantAccessor;
@@ -129,6 +134,16 @@ public class UploadAuthorizer : IUploadAuthorizer
             .FirstOrDefaultAsync(ct);
         if (welfare != null)
             return new UploadClassification(UploadOwnerKind.WelfareAttachment, IsPublic: false, welfare.OrganizationId, welfare.BranchId, welfare.StudentId, welfare.Visibility);
+
+        // 1b. Staff evidence. The record's rung and its subject travel with it; the subject id is
+        //     carried in the StudentId slot of the classification, which is "the person this file is
+        //     about" for both kinds. Looked up before media for the same reason welfare is.
+        var staff = await _db.StaffPerformanceAttachments.IgnoreQueryFilters().AsNoTracking()
+            .Where(a => a.FileUrl.EndsWith(suffix))
+            .Select(a => new { a.Record!.OrganizationId, a.Record.BranchId, a.Record.SubjectUserId, a.Record.Visibility })
+            .FirstOrDefaultAsync(ct);
+        if (staff != null)
+            return new UploadClassification(UploadOwnerKind.StaffEvidence, IsPublic: false, staff.OrganizationId, staff.BranchId, staff.SubjectUserId, staff.Visibility);
 
         // 2. Student photographs: roster-gated and row-scoped.
         var student = await _db.Students.IgnoreQueryFilters().AsNoTracking()
@@ -212,6 +227,28 @@ public class UploadAuthorizer : IUploadAuthorizer
                 };
                 if (!rungOk) return false;
                 return c.BranchId != null && c.StudentId != null && await _scope.CanSeeStudentAsync(c.BranchId.Value, c.StudentId.Value);
+
+            case UploadOwnerKind.StaffEvidence:
+            {
+                // The subject may always read evidence about themselves at Standard and Confidential
+                // (the portal is the subject-access view); Restricted stays with the rung holders
+                // alone, including from the subject. Anyone else needs staff.records.view, the rung,
+                // and the staff scope — the same three-part test the record itself applies.
+                var callerRaw = _httpContextAccessor.HttpContext?.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                var isSubject = Guid.TryParse(callerRaw, out var callerId) && c.StudentId == callerId;
+                if (isSubject && c.Visibility != WelfareVisibility.Restricted) return true;
+
+                if (!await HasPermissionAsync(Permissions.StaffRecordsView, cancellationToken)) return false;
+                var staffRungOk = c.Visibility switch
+                {
+                    WelfareVisibility.Standard => true,
+                    WelfareVisibility.Confidential => await HasPermissionAsync(Permissions.StaffConfidentialView, cancellationToken),
+                    WelfareVisibility.Restricted => await HasPermissionAsync(Permissions.StaffRestrictedView, cancellationToken),
+                    _ => false
+                };
+                if (!staffRungOk) return false;
+                return c.BranchId != null && c.StudentId != null && await _staffScope.CanSeeStaffAsync(c.BranchId.Value, c.StudentId.Value);
+            }
 
             default:
                 // Public kinds never reach here; anything new fails closed until it is classified.

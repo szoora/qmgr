@@ -177,6 +177,23 @@ public class RbacSeeder
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8, true),
 
         // ============================================
+        // STAFF PERFORMANCE MONITOR (2026-09-16) — mirrored in Permissions.All and the Web copy
+        // ============================================
+        new("staff.records.view", "View Staff Records", "Read performance records about other staff, within the role's staff scope", "Staff Performance", 1, true),
+        new("staff.records.create", "Log Staff Records", "Log attendance, duties, observations, contributions and conduct about staff within scope", "Staff Performance", 2, true),
+        new("staff.records.edit", "Follow Up Staff Records", "Add notes, annul a record with a reason, correct points — records are never rewritten", "Staff Performance", 3, true),
+        new("staff.confidential.view", "View Confidential Staff Records", "Observations, welfare-of-staff records and appraisals — a smaller audience by design", "Staff Performance", 4, true),
+        new("staff.restricted.view", "View Restricted Staff Records", "Administrator-only records: an investigation or a grievance", "Staff Performance", 5, true),
+        new("staff.duties.manage", "Manage Staff Duties", "Create meetings, exam and prep supervision slots and lessons, and name who takes the register", "Staff Performance", 6, true),
+        new("staff.parameters.manage", "Manage Performance Parameters", "Define what is measured, its points, weight and rubric, and the scoring policy", "Staff Performance", 7, true),
+        new("staff.appraisals.conduct", "Conduct Appraisals", "Act as appraiser: set targets, review a self-assessment, rate", "Staff Performance", 8, true),
+        new("staff.appraisals.approve", "Approve Appraisals", "Open a period's appraisals, moderate ratings and sign them off", "Staff Performance", 9, true),
+        new("staff.reports.view", "View Staff Performance Reports", "Bands, attendance, observer dispersion and who-logs-what, scoped to the caller's departments", "Staff Performance", 10, true),
+        new("staff.notices.manage", "Publish Staff Notices", "Publish notices to a branch, departments, roles or a staff group", "Staff Performance", 11, true),
+        new("staff.structure.manage", "Manage Staff Structure", "Departments, heads of department, line managers and the staff import", "Staff Performance", 12, true),
+        new("staff.recognition.give", "Give Recognition", "Recognise a colleague, within the monthly budget", "Staff Performance", 13, true),
+
+        // ============================================
         // MARKETING (contacts + broadcast campaigns)
         // ============================================
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1, true),
@@ -272,6 +289,8 @@ public class RbacSeeder
             Icon: "person-badge",
             SortOrder: 2,
             IsSystemRole: true,
+            // Staff axis: a manager holds the portal only (plan §5.1) — they can be appraised, not appraise.
+            StaffScope: StaffDataScope.SelfOnly,
             Permissions: new[]
             {
                 // Dashboard
@@ -327,6 +346,7 @@ public class RbacSeeder
             Icon: "person",
             SortOrder: 3,
             IsSystemRole: true,
+            StaffScope: StaffDataScope.SelfOnly,
             Permissions: new[]
             {
                 // Dashboard
@@ -382,8 +402,114 @@ public class RbacSeeder
                 "welfare.view", "welfare.create", "welfare.edit", "welfare.notify",
                 // Scoped too, so this answers "how is my class doing" and nothing wider.
                 "welfare.reports.view",
+                // The staff portal needs no permission; recognition does.
+                "staff.recognition.give",
             },
-            DataScope: RoleDataScope.AssignedClasses
+            DataScope: RoleDataScope.AssignedClasses,
+            StaffScope: StaffDataScope.SelfOnly
+        ),
+
+        // ============================================
+        // STAFF PERFORMANCE MONITOR HIERARCHY (2026-09-16)
+        // Director of Studies · Academic Assistant · Head of Department · Teacher · Support Staff.
+        // All five rank below Manager in RoleCodes.All (plan §13 decision 1). What defines a head of
+        // department is not the permission set but StaffScope.AssignedDepartments: a head with no
+        // department sees nobody, as a class teacher with no class sees no students.
+        // ============================================
+        [RoleCodes.DirectorOfStudies] = new RoleDefinition(
+            Name: "Director of Studies",
+            Code: RoleCodes.DirectorOfStudies,
+            Description: "Academic head. Sees every member of staff; conducts and approves appraisals; owns the parameters and notices.",
+            Color: "#7A2847",
+            Icon: "mortarboard",
+            SortOrder: 3,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view", "notifications.view",
+                "users.view",
+                "students.view", "welfare.view", "welfare.reports.view",
+                "staff.records.view", "staff.records.create", "staff.records.edit", "staff.confidential.view",
+                "staff.duties.manage", "staff.parameters.manage",
+                "staff.appraisals.conduct", "staff.appraisals.approve",
+                "staff.reports.view", "staff.notices.manage", "staff.structure.manage", "staff.recognition.give",
+            },
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.Organization
+        ),
+
+        [RoleCodes.AcademicAssistant] = new RoleDefinition(
+            Name: "Academic Assistant",
+            Code: RoleCodes.AcademicAssistant,
+            Description: "Timetables duties and takes registers across the school. No appraisal sign-off and no confidential rung.",
+            Color: "#5A9C92",
+            Icon: "calendar-check",
+            SortOrder: 3,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view", "notifications.view",
+                "users.view",
+                "staff.records.view", "staff.records.create",
+                "staff.duties.manage",
+                "staff.reports.view", "staff.notices.manage", "staff.recognition.give",
+            },
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.Organization
+        ),
+
+        [RoleCodes.HeadOfDepartment] = new RoleDefinition(
+            Name: "Head of Department",
+            Code: RoleCodes.HeadOfDepartment,
+            Description: "Sees and appraises the staff of the departments they head. A head with no department sees nobody.",
+            Color: "#C99A5B",
+            Icon: "diagram-3",
+            SortOrder: 3,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view", "notifications.view",
+                "staff.records.view", "staff.records.create", "staff.records.edit",
+                "staff.duties.manage",
+                "staff.appraisals.conduct",
+                "staff.reports.view", "staff.recognition.give",
+            },
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.AssignedDepartments
+        ),
+
+        [RoleCodes.Teacher] = new RoleDefinition(
+            Name: "Teacher",
+            Code: RoleCodes.Teacher,
+            Description: "The staff portal and recognition. Logs records only as the named recorder on a duty.",
+            Color: "#3F8A80",
+            Icon: "person-workspace",
+            SortOrder: 4,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view", "notifications.view",
+                "staff.recognition.give",
+            },
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.SelfOnly
+        ),
+
+        [RoleCodes.SupportStaff] = new RoleDefinition(
+            Name: "Support Staff",
+            Code: RoleCodes.SupportStaff,
+            Description: "The staff portal and recognition; appraised by their line manager.",
+            Color: "#8A7A81",
+            Icon: "person-gear",
+            SortOrder: 4,
+            IsSystemRole: true,
+            Permissions: new[]
+            {
+                "dashboard.view", "notifications.view",
+                "staff.recognition.give",
+            },
+            DataScope: RoleDataScope.Organization,
+            StaffScope: StaffDataScope.SelfOnly
         ),
 
         // ============================================
@@ -399,6 +525,7 @@ public class RbacSeeder
             Icon: "eye",
             SortOrder: 4,
             IsSystemRole: true,
+            StaffScope: StaffDataScope.SelfOnly,
             Permissions: new[]
             {
                 // Standard viewer permissions
@@ -479,6 +606,7 @@ public class RbacSeeder
                     SortOrder = roleDef.SortOrder,
                     IsSystem = roleDef.IsSystemRole,
                     DataScope = roleDef.DataScope,
+                    StaffScope = roleDef.StaffScope,
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -500,9 +628,17 @@ public class RbacSeeder
         var repaired = 0;
         foreach (var (code, roleDef) in SystemRoles)
         {
-            if (existing.TryGetValue(code, out var role) && role.DataScope != roleDef.DataScope)
+            if (!existing.TryGetValue(code, out var role)) continue;
+            if (role.DataScope != roleDef.DataScope)
             {
                 role.DataScope = roleDef.DataScope;
+                repaired++;
+            }
+            // The staff axis is repaired the same way and for the same reason: a teacher row created
+            // before the column existed would read StaffScope=Organization and see every colleague.
+            if (role.StaffScope != roleDef.StaffScope)
+            {
+                role.StaffScope = roleDef.StaffScope;
                 repaired++;
             }
         }
@@ -510,7 +646,7 @@ public class RbacSeeder
         if (repaired > 0)
         {
             await _context.SaveChangesAsync();
-            _logger.LogWarning("Repaired DataScope on {Count} system role(s)", repaired);
+            _logger.LogWarning("Repaired DataScope/StaffScope on {Count} system role field(s)", repaired);
         }
     }
 
@@ -661,7 +797,8 @@ public class RbacSeeder
         int SortOrder,
         bool IsSystemRole,
         string[] Permissions,
-        RoleDataScope DataScope = RoleDataScope.Organization
+        RoleDataScope DataScope = RoleDataScope.Organization,
+        StaffDataScope StaffScope = StaffDataScope.Organization
     );
 
     #endregion

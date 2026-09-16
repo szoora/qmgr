@@ -179,6 +179,12 @@ public class NotificationHubService : INotificationHubService
         _logger.LogDebug("Notified user {UserId} that their permissions changed", userId);
     }
 
+    public async Task SendStaffScoreUpdatedAsync(Guid userId, QMgr.Application.DTOs.StaffScoreUpdatedEvent update)
+    {
+        await _hubContext.Clients.Group($"user-{userId}").SendAsync("StaffScoreUpdated", update);
+        _logger.LogDebug("Pushed staff score update to user {UserId} ({Period}: {Composite})", userId, update.PeriodKey, update.Composite);
+    }
+
     private static NotificationDto MapToDto(Notification notification) => new()
     {
         Id = notification.Id,
@@ -190,6 +196,7 @@ public class NotificationHubService : INotificationHubService
         ActionUrl = notification.ActionUrl,
         CreatedAt = notification.CreatedAt,
         IsRead = notification.IsRead,
-        ReadAt = notification.ReadAt
+        ReadAt = notification.ReadAt,
+        EventKey = notification.EventKey
     };
 }

@@ -27,5 +27,12 @@ public enum RosterImportKind
     /// last week", they are the same question.
     /// </para>
     /// </summary>
-    Batch = 2
+    Batch = 2,
+
+    /// <summary>
+    /// A staff list (StaffImportRow): name, email, role, departments, line manager. Each row becomes a
+    /// User with a random password and an invitation sent through the existing password-reset link,
+    /// so "invite" needed no new column. A fourth discriminator for the same reason the third was.
+    /// </summary>
+    Staff = 3
 }

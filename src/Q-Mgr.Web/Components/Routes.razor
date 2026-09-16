@@ -69,9 +69,18 @@
   </CascadingValue>
 </CascadingAuthenticationState>
 
+@inject ViewerRequestContext ViewerContext
+
 @code {
     /// <summary>Set by App.razor from the host request; null on any render path that has no HttpContext.</summary>
     [Parameter] public ViewerRequestInfo? Viewer { get; set; }
+
+    /// <summary>
+    /// Hands the browser's address and agent to the per-circuit context that
+    /// AuthenticationMessageHandler reads, so every authenticated API call relays them
+    /// (the staff activity log records them; see ViewerRequestContext).
+    /// </summary>
+    protected override void OnParametersSet() => ViewerContext.Set(Viewer);
 
     private static readonly ConcurrentDictionary<Type, bool> AuthorizationByPage = new();
 
