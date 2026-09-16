@@ -7,10 +7,10 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 ---
 ## ▶ NEXT SESSION — start here (written 2026-09-16, late)
 
-**State: the Staff Performance Monitor is BUILT and VERIFIED on the dev tenant, but NOT PUSHED and
-NOT DEPLOYED.** Branch `phase-85-staff-performance`, 7 commits ahead of
-`origin/phase-82-scope-sweep-and-platform-email` (`8002b1e`), head `5acc54e` plus this handover.
-Nothing on it has left this machine. Production is still `390e5c0`.
+**State: the Staff Performance Monitor is BUILT, VERIFIED on the dev tenant and PUSHED, but NOT
+DEPLOYED and NOT MERGED.** Branch `phase-85-staff-performance` is on `origin` (pushed 2026-09-16 at
+the user's request), 9 commits ahead of `phase-82-scope-sweep-and-platform-email` (`8002b1e`).
+Production is still `390e5c0`.
 `scripts/e2e/class-teacher-e2e.sh`: **374 passed, 0 failed** (section 14 = 201 Staff Performance
 checks via Node). Chrome: teacher portal at desktop and a real 390px frame; in-tab sweep of ten
 teacher routes at both widths, 0 failures. Full detail in the Phase 85 handover §5 below.
@@ -19,7 +19,7 @@ teacher routes at both widths, 0 failures. Full detail in the Phase 85 handover 
 
 **P0 — decide or do before this branch ships** (a deploy without these is a risk, not a delay)
 
-1. `[!]` **Push and deploy — user's call.** Pushing publishes to GitHub; deploying applies
+1. `[!]` **Deploy — user's call.** (Pushed 2026-09-16.) Deploying applies
    `20260916173550_AddStaffPerformanceGroundwork` (nine tables, four columns, nothing dropped),
    and on startup `RbacSeeder` adds five roles and thirteen permissions and `ModuleCatalogDefaults`
    seeds the `staff-performance` catalog row **in production**. Pass the real ports (8586/8587).
