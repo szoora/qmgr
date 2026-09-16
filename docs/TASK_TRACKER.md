@@ -5,27 +5,68 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (written 2026-09-16, end of day)
+## ▶ NEXT SESSION — start here (written 2026-09-16, late)
 
-**State: the Staff Performance Monitor is BUILT but NOT VERIFIED and NOT DEPLOYED.** It is on a
-new branch, `phase-85-staff-performance`, cut from `phase-82-scope-sweep-and-platform-email`. Both
-projects build with 0 errors; `dotnet ef migrations has-pending-model-changes` reports none. **No
-part of it has been run against the dev tenant** — the user asked for the whole feature in one
-pass with testing afterwards. Production is still `390e5c0` (see the 2026-09-15 block below).
+**State: the Staff Performance Monitor is BUILT and VERIFIED on the dev tenant, but NOT PUSHED and
+NOT DEPLOYED.** Branch `phase-85-staff-performance`, 7 commits ahead of
+`origin/phase-82-scope-sweep-and-platform-email` (`8002b1e`), head `5acc54e` plus this handover.
+Nothing on it has left this machine. Production is still `390e5c0`.
+`scripts/e2e/class-teacher-e2e.sh`: **374 passed, 0 failed** (section 14 = 201 Staff Performance
+checks via Node). Chrome: teacher portal at desktop and a real 390px frame; in-tab sweep of ten
+teacher routes at both widths, 0 failures. Full detail in the Phase 85 handover §5 below.
 
-**First job next session: verify it.** Apply the migration by starting the API (it runs
-`MigrateAsync` at startup), grant `staff-performance` to the dev tenant as SuperAdmin
-(`PUT /api/v1/admin/tenants/{org}/modules/staff-performance`), then write section 14 of
-`scripts/e2e/class-teacher-e2e.sh` exactly as plan §14 lists, and drive the portal, the register
-and an appraisal in Chrome. Expect real bugs: nothing here has touched a real row yet.
+### Open items, in priority order
 
-**Genuinely open:**
+**P0 — decide or do before this branch ships** (a deploy without these is a risk, not a delay)
 
-- `[ ]` **Verify Staff Performance end to end** (above). Plan §14 is the assertion list.
-- `[ ]` Price the module — it ships at a placeholder (plan §13 decision 7).
-- `[!]` Merge `phase-82-…` (and now `phase-85-…`) into `master` — the user has not said when.
-- `[!]` The five dev-tenant images in public git history — user's call, no PII found.
-- `[ ]` Restore drill from `qmgr-backup-db.sh` output, and a load test — never run.
+1. `[!]` **Push and deploy — user's call.** Pushing publishes to GitHub; deploying applies
+   `20260916173550_AddStaffPerformanceGroundwork` (nine tables, four columns, nothing dropped),
+   and on startup `RbacSeeder` adds five roles and thirteen permissions and `ModuleCatalogDefaults`
+   seeds the `staff-performance` catalog row **in production**. Pass the real ports (8586/8587).
+   After deploy: run the e2e against a tenant granted the module, and open `/portal` on a phone.
+2. `[!]` **Price the module before any tenant can buy it.** It ships at a placeholder (plan §13
+   decision 7), and the catalog row appears in production on the first start after deploy.
+3. `[ ]` **Re-run the admin UI sweep over NON-Staff pages.** The gutter fix in `layout.css` /
+   `qm-theme.css` (`--qm-page-pad`) changes every page with a `.page-container`: desktop pages
+   went from a 12px to a 24px side gutter and headers now bleed by the variable. Measured clean on
+   `/portal`, `/profile`, `/notifications` at 1920/1280/390/340px only. The 44-pass admin sweep
+   ran BEFORE the fix. Sweep Dashboard, Users & Roles, Welfare Reports, Student Picture, Visitor
+   Management, Library, Billing and Counter Terminal as an administrator. Kiosk, display and
+   share pages use their own layouts and should be unaffected — confirm one of each.
+   The sweep script is `scripts/e2e/ui-sweep.js`; the version injected this session also flagged
+   "clipped past the edge", which the committed copy lacks — fold that check in first.
+
+**P1 — user-visible bugs, small and located**
+
+4. `[ ]` **"Complete record" ranges display "01 Jan 2000".** `DateRange.AllTime()` uses 2000-01-01
+   as a sentinel and `QDateRangePicker` shows the From picker anyway. Affects Staff Timeline and
+   its report, Student Welfare Timeline and its report, and Invoices. Fix once in
+   `QDateRangePicker` (show "Complete record" when `Range.IsAllTime`), not per page.
+5. `[ ]` **Login identify step shows initials from the email's local part** ("E2" for
+   `e2e.admin.ct@…`). `Login.razor` `GetInitials(email)`; use the name when the identify response
+   carries one.
+6. `[ ]` **A teacher sees a near-empty Administration group in the sidebar** (pre-existing, seen
+   in Chrome). Hide a nav group with no permitted children.
+7. `[ ]` **Users grid filter icons are 20px tap targets on a phone** (sweep warning). Raise to the
+   40px the Staff pages now use.
+
+**P2 — not yet exercised, or plan gaps**
+
+8. `[ ]` **Assert the Hangfire jobs.** `StaffPerformanceJobs` registers seven recurring jobs
+   (duty reminders, register chase, appraisal reminders, scheduled notices, weekly digest,
+   monthly summary, attribution purge). They run in the dev API but section 14 asserts none of
+   their effects. Trigger each once and check the notification / email / purged column.
+9. `[ ]` **Browser-only paths not driven in Chrome:** evidence upload through the record dialog,
+   Publish to Library of a report and an appraisal form, the live `StaffScoreUpdated` push, the
+   phone-first register as a recorder, staff import through the UI (the API path is asserted).
+10. `[ ]` Observer pair side-by-side view (plan §6.3; the dispersion report exists).
+11. `[ ]` `WelfareStatusColor()` has two homes: `WelfareOpenActions.razor` and `WelfareReports.razor`.
+
+**Carried from 2026-09-15, unchanged**
+
+- `[!]` Merge `phase-82-…` and `phase-85-…` into `master`; master is far behind. User has not said when.
+- `[!]` The five dev-tenant images in public git history. No PII found; user's call.
+- `[ ]` Restore drill from `qmgr-backup-db.sh` output, and a load test. Never run.
 - `[ ]` SuperAdmin with no organization chosen sees an empty Category list on the welfare create
   form until reload (noted 2026-09-11, not investigated).
 
@@ -33,8 +74,14 @@ and an appraisal in Chrome. Expect real bugs: nothing here has touched a real ro
 settled), PPTX rendering (no server dependencies), pg extensions (none), and the ten Staff
 Performance decisions (taken as proposed; see CLAUDE.md "Staff Performance Monitor").
 
-**Local environment note:** the e2e needs `BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f`. The run
-recipe is in CLAUDE.md under "Running it locally".
+**Local environment:** API on `127.0.0.1:5001` started with `Cors__AllowedOrigins__4=http://127.0.0.1:5003`
+(section 12 needs it), Web on `:5003` with `ApiBaseUrl`/`ApiPublicUrl` set; recipe in CLAUDE.md.
+`BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f`. Seeded staff sign in by username (`e2e.sp.math1`,
+`e2e.sp.hod.math`, `e2e.sp.dos`, …) with `E2eTeacher!2026`; the tenant admin is
+`e2e.admin.ct@qmgr.local`. Chrome was driven through the browser the user named "old computer".
+Everything the suite writes is labelled "E2E" and stays (records are append-only), plus three
+records about Martin Kato seeded for the browser check ("Covered S3 chemistry…", "Led the maths
+clinic…", "Marked mock papers…").
 
 ---
 ## 🧭 SESSION HANDOVER (written 2026-09-16) — Phase 85: the Staff Performance Monitor, planned, then built in one pass
