@@ -2444,3 +2444,136 @@
 .q-avatar--lg { width: 56px; height: 56px; font-size: 20px; }
 
 .q-avatar__img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ==========================================================================
+   Stacked tables (2026-09-16) — a `table.q-stack` becomes a list of cards on a
+   phone. Labels come from the table's own header via js/qStackTable.js, which
+   stamps data-label on each cell. The first cell leads the card unlabelled;
+   an empty header (an actions column) gets no label and its buttons wrap.
+   Desktop is untouched.
+   ========================================================================== */
+@media (max-width: 640px) {
+    table.q-stack,
+    table.q-stack > tbody,
+    table.q-stack > tbody > tr,
+    table.q-stack > tbody > tr > td {
+        display: block;
+        width: 100%;
+    }
+
+    table.q-stack > thead { display: none; }
+
+    table.q-stack > tbody > tr {
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border: 1px solid var(--qm-border);
+        border-radius: var(--qm-radius-lg);
+        background: var(--qm-bg-card);
+    }
+
+    table.q-stack > tbody > tr > td {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 5px 0 !important;
+        border: 0 !important;
+        text-align: right;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    table.q-stack > tbody > tr > td::before {
+        content: attr(data-label);
+        flex: 0 0 38%;
+        text-align: left;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        color: var(--qm-text-muted);
+        padding-top: 2px;
+    }
+
+    table.q-stack > tbody > tr > td:first-child {
+        display: block;
+        text-align: left;
+        padding-bottom: 8px !important;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--qm-border) !important;
+        font-size: 15px;
+    }
+
+    table.q-stack > tbody > tr > td:first-child::before,
+    table.q-stack > tbody > tr > td[data-label=""]::before { display: none; }
+
+    table.q-stack > tbody > tr > td[data-label=""] {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        text-align: left;
+    }
+
+    table.q-stack > tbody > tr > td:last-child:not(:first-child) { padding-bottom: 0 !important; }
+
+    /* The card list sits on the page; the table's own card and scroller are not needed. */
+    .table-wrap:has(> table.q-stack),
+    .q-card:has(table.q-stack) > .q-card__body { overflow: visible; }
+    .q-card--no-padding:has(table.q-stack),
+    .q-card:has(> .q-card__body > .table-wrap > table.q-stack) { background: transparent; border: 0; box-shadow: none; }
+}
+
+/* ==========================================================================
+   Phone polish for filters and tabs (2026-09-16)
+   A filter bar WRAPS on a phone — two controls a row, a date range full width —
+   rather than scrolling sideways, which clipped the last preset and put a
+   dropdown inside a scroller. Tabs still scroll (a wrapped tab strip reads as
+   broken) but without a visible scrollbar, with a fade to say there is more.
+   ========================================================================== */
+@media (max-width: 640px) {
+    .q-filter-bar.filter-bar {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
+        gap: 10px;
+        align-items: stretch;
+    }
+    .q-filter-bar.filter-bar > * {
+        flex: 1 1 calc(50% - 5px) !important;
+        min-width: 0 !important;
+        max-width: 100%;
+    }
+    .q-filter-bar.filter-bar > .q-daterange,
+    .q-filter-bar.filter-bar > .q-input-wrapper:has(input[type="search"]),
+    .q-filter-bar.filter-bar > [class*="search"] {
+        flex-basis: 100% !important;
+    }
+
+    .q-daterange__fields { flex-wrap: wrap; }
+    .q-daterange__presets {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
+        mask-image: linear-gradient(to right, #000 88%, transparent);
+        padding-right: 24px;
+    }
+    .q-daterange__presets::-webkit-scrollbar { display: none; }
+    .q-daterange__presets > * { flex-shrink: 0; }
+
+    .q-tabs {
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(to right, #000 90%, transparent);
+        mask-image: linear-gradient(to right, #000 90%, transparent);
+    }
+    .q-tabs::-webkit-scrollbar { display: none; }
+
+    /* Tap targets: a phone button is at least 40px tall. */
+    .qm-main .q-btn--sm { min-height: 40px; }
+}
+
+/* QBarList Stacked: label and figure share a line, the bar spans beneath (a narrow card's layout). */
+.q-bars--stacked .q-bars__row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+.q-bars--stacked .q-bars__label { grid-row: 1; grid-column: 1; }
+.q-bars--stacked .q-bars__count { grid-row: 1; grid-column: 2; font-weight: 500; color: var(--qm-text-secondary); }
+.q-bars--stacked .q-bars__track { grid-row: 2; grid-column: 1 / -1; }
+.q-bars--stacked .q-bars__label { white-space: normal; }
+.q-bars--stacked .q-bars__row + .q-bars__row { margin-top: 6px; }

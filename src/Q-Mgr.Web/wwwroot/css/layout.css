@@ -1612,11 +1612,20 @@
     }
 }
 
+/* The page and header gutters, per breakpoint, as variables — so the safe-area rule below can take
+   the larger of the gutter and the notch. It used to say max(12px, …) OUTSIDE any media query, which
+   every current browser applies, so every page on every desktop had a 12px gutter instead of 24px
+   and the full-bleed .page-header (margin -24px) hung 12px past the edge. Measured 2026-09-16. */
+:root { --qm-page-pad: 24px; --qm-header-pad: 20px; }
+@media (max-width: 992px) { :root { --qm-page-pad: 20px; } }
+@media (max-width: 576px) { :root { --qm-page-pad: 12px; --qm-header-pad: 12px; } }
+@media (max-width: 360px) { :root { --qm-page-pad: 8px; --qm-header-pad: 8px; } }
+
 /* Safe area insets for notched devices */
 @supports (padding: max(0px)) {
     .qm-header {
-        padding-left: max(12px, env(safe-area-inset-left));
-        padding-right: max(12px, env(safe-area-inset-right));
+        padding-left: max(var(--qm-header-pad), env(safe-area-inset-left));
+        padding-right: max(var(--qm-header-pad), env(safe-area-inset-right));
     }
 
     .qm-sidebar {
@@ -1624,9 +1633,9 @@
     }
 
     .page-container {
-        padding-left: max(12px, env(safe-area-inset-left));
-        padding-right: max(12px, env(safe-area-inset-right));
-        padding-bottom: max(12px, env(safe-area-inset-bottom));
+        padding-left: max(var(--qm-page-pad), env(safe-area-inset-left));
+        padding-right: max(var(--qm-page-pad), env(safe-area-inset-right));
+        padding-bottom: max(var(--qm-page-pad), env(safe-area-inset-bottom));
     }
 
     .qm-footer {

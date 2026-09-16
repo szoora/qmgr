@@ -55,6 +55,10 @@ public class StaffScoringService : IStaffScoringService
         var records = await _db.StaffPerformanceRecords.AsNoTracking()
             .Where(r => r.OrganizationId == organizationId && r.SubjectUserId == userId
                         && r.Status == StaffRecordStatus.Final
+                        // RESTRICTED NEVER SCORES (found in Chrome by the e2e, 2026-09-16): a teacher's own
+                        // breakdown showed Conduct: 4 records, -8 points, while they could see none — the score
+                        // disclosed an investigation the record itself hides. Lower it to Confidential to count it.
+                        && r.Visibility != QMgr.Domain.Enums.WelfareVisibility.Restricted
                         && r.OccurredAt >= start && r.OccurredAt < end)
             .Select(r => new RecordRow(r.SubjectUserId, r.ParameterId, r.Outcome, r.Points, r.Rating, r.OccurredAt))
             .ToListAsync(cancellationToken);
@@ -90,6 +94,10 @@ public class StaffScoringService : IStaffScoringService
             .Where(r => r.OrganizationId == organizationId && r.BranchId == branchId
                         && ids.Contains(r.SubjectUserId)
                         && r.Status == StaffRecordStatus.Final
+                        // RESTRICTED NEVER SCORES (found in Chrome by the e2e, 2026-09-16): a teacher's own
+                        // breakdown showed Conduct: 4 records, -8 points, while they could see none — the score
+                        // disclosed an investigation the record itself hides. Lower it to Confidential to count it.
+                        && r.Visibility != QMgr.Domain.Enums.WelfareVisibility.Restricted
                         && r.OccurredAt >= start && r.OccurredAt < end)
             .Select(r => new RecordRow(r.SubjectUserId, r.ParameterId, r.Outcome, r.Points, r.Rating, r.OccurredAt))
             .ToListAsync(cancellationToken);

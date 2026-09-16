@@ -46,7 +46,7 @@
         {
             <QCard NoPadding="true">
                 <div class="table-wrap">
-                    <table class="data-table">
+                    <table class="data-table q-stack">
                         <thead><tr><th>Department</th><th>Code</th><th>Head</th><th>Deputy</th><th>Members</th><th>State</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var d in departments)
@@ -88,7 +88,7 @@
         {
             <QCard NoPadding="true">
                 <div class="table-wrap">
-                    <table class="data-table">
+                    <table class="data-table q-stack">
                         <thead><tr><th>Name</th><th>Role</th><th>Departments</th><th>Line manager</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var m in PagedStaff)
@@ -177,7 +177,7 @@
                 <QCard Title="@($"Preview — {previewRows.Count} row(s), {previewRows.Count(r => r.Error == null)} ready")" Icon="table" NoPadding="true">
                     <ChildContent>
                     <div class="table-wrap">
-                        <table class="data-table">
+                        <table class="data-table q-stack">
                             <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Departments</th><th>Line manager</th><th>Check</th></tr></thead>
                             <tbody>
                                 @foreach (var r in previewRows.Take(200))
@@ -219,7 +219,7 @@
                     @if (jobEntries.Count > 0)
                     {
                         <div class="table-wrap">
-                            <table class="data-table">
+                            <table class="data-table q-stack">
                                 <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Outcome</th><th>Message</th></tr></thead>
                                 <tbody>
                                     @foreach (var e in jobEntries)
@@ -243,7 +243,7 @@
             {
                 <QCard Title="Earlier imports" Icon="clock-history" NoPadding="true">
                     <div class="table-wrap">
-                        <table class="data-table">
+                        <table class="data-table q-stack">
                             <thead><tr><th>Started</th><th>Rows</th><th>Created</th><th>Already on file</th><th>Failed</th><th>Status</th><th></th></tr></thead>
                             <tbody>
                                 @foreach (var j in recentJobs)

@@ -62,7 +62,9 @@
     private List<StaffMemberDto> directory = new();
     private Guid? personFilter;
     private string? actionFilter;
-    private DateRange range = DateRange.AllTime();
+    // The last 30 days by default: a log opened on "01 Jan 2000 – today" reads as a glitch, and
+    // recent activity is what a person opens the log to see. "All time" is one preset away.
+    private DateRange range = DateRange.LastDays(30);
     private int pageIndex;
 
     private static readonly IReadOnlyList<(string Value, string Label)> ActionOptions =
@@ -76,7 +78,8 @@
     private static string ActionLabel(string action)
     {
         var parts = action.Split('.');
-        var tail = string.Join(' ', parts.Skip(parts[0] == "staff" ? 1 : 0)).Replace('-', ' ');
+        // "auth.signed-in" reads "Signed in"; "staff.record.visibility-changed" reads "Record visibility changed".
+        var tail = string.Join(' ', parts.Skip(parts[0] is "staff" or "auth" ? 1 : 0)).Replace('-', ' ');
         return tail.Length == 0 ? action : char.ToUpperInvariant(tail[0]) + tail[1..];
     }
 

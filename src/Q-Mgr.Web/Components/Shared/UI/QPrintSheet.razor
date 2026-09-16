@@ -79,6 +79,14 @@
     @@media (max-width: 480px) {
         .q-print__sheet { padding: 12px; margin: 8px; }
     }
+
+    /* On a phone SCREEN the A4 sheet keeps its tables at print width and lets each one scroll
+       inside itself, rather than pushing the whole page sideways (found by the UI sweep on the
+       reports print route, 2026-09-16). Screen only: print is untouched. */
+    @@media screen and (max-width: 640px) {
+        .q-print__sheet { max-width: 100%; overflow-x: hidden; }
+        .q-print__sheet table { display: block; max-width: 100%; overflow-x: auto; }
+    }
 </style>
 
 @code {

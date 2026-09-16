@@ -71,7 +71,7 @@
                     else
                     {
                         <div class="table-wrap">
-                            <table class="data-table rp-table">
+                            <table class="data-table q-stack rp-table">
                                 <thead><tr><th>Department</th><th class="rp-num">Staff</th><th class="rp-num">Avg composite</th><th class="rp-num">Attendance</th><th class="rp-num">Recognition</th></tr></thead>
                                 <tbody>
                                     @foreach (var d in reports.ByDepartment.OrderByDescending(d => d.AverageComposite ?? -1))
@@ -140,7 +140,7 @@
                 else
                 {
                     <div class="table-wrap">
-                        <table class="data-table rp-table">
+                        <table class="data-table q-stack rp-table">
                             <thead><tr><th>Observer</th><th class="rp-num">Observations</th><th class="rp-num">Mean rating</th><th class="rp-num">School mean</th><th>Difference</th></tr></thead>
                             <tbody>
                                 @foreach (var o in reports.ObserverDispersion.OrderByDescending(o => Math.Abs(o.MeanRating - o.SchoolMean)))
@@ -173,7 +173,7 @@
                 @if (reports.LeaderboardMode == LeaderboardMode.Public && reports.Leaderboard.Any())
                 {
                     <div class="table-wrap">
-                        <table class="data-table rp-table">
+                        <table class="data-table q-stack rp-table">
                             <thead><tr><th class="rp-num">#</th><th>Name</th><th>Department</th><th class="rp-num">Composite</th><th>Band</th></tr></thead>
                             <tbody>
                                 @foreach (var row in reports.Leaderboard.OrderBy(r => r.Rank))

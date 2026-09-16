@@ -139,7 +139,7 @@
                         </div>
                         @if (a.SelfRatings.Any())
                         {
-                            <table class="ad-mini">
+                            <table class="ad-mini q-stack">
                                 <tbody>
                                     @foreach (var r in a.SelfRatings)
                                     {
@@ -230,7 +230,7 @@
                         @if (a.SupportPlan.Any())
                         {
                             <h4 class="ad-sub">Support plan</h4>
-                            <table class="ad-mini ad-mini--head">
+                            <table class="ad-mini ad-mini--head q-stack">
                                 <thead><tr><th>Gap</th><th>Support</th><th>By when</th></tr></thead>
                                 <tbody>
                                     @foreach (var s in a.SupportPlan)

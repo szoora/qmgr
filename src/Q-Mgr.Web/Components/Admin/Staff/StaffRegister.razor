@@ -79,11 +79,11 @@
     {
         @if (!register.Duty.CanIRecord)
         {
-            <p class="reg-note reg-note--muted"><QIcon Name="eye" Size="sm" /> You can read this register but you are not one of its recorders, so it is read-only.</p>
+            <p class="reg-note reg-note--muted"><QIcon Name="eye" Size="sm" /><span>You can read this register but you are not one of its recorders, so it is read-only.</span></p>
         }
         else if (!editable)
         {
-            <p class="reg-note reg-note--muted"><QIcon Name="lock" Size="sm" /> This register is closed. Use <strong>Reopen and correct</strong> to change a mark — corrections annul the old rows and write new ones, so the history stays.</p>
+            <p class="reg-note reg-note--muted"><QIcon Name="lock" Size="sm" /><span>This register is closed. Use <strong>Reopen and correct</strong> to change a mark — corrections annul the old rows and write new ones, so the history stays.</span></p>
         }
         else if (register.Duty.RegisterClosedAt.HasValue)
         {

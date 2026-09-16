@@ -14,11 +14,11 @@
 // labels everything it writes "E2E". Records are append-only; they stay. Exit code = failures.
 // =====================================================================================================
 
-const API = process.env.API ?? "http://127.0.0.1:5001";
+const API = process.env.API || "http://127.0.0.1:5001";
 const BRANCH = process.env.BRANCH;
-const ORG = process.env.ORG ?? "ef0305f3-40c6-456f-8f9a-48a1f0e3223c";
-const SA_USER = process.env.SA_USER ?? "superadmin";
-const SA_PASS = process.env.SA_PASS ?? "admin";
+const ORG = process.env.ORG || "ef0305f3-40c6-456f-8f9a-48a1f0e3223c";
+const SA_USER = process.env.SA_USER || "superadmin";
+const SA_PASS = process.env.SA_PASS || "admin";
 const PW = "E2eTeacher!2026";
 const RUN = Date.now().toString(36);
 
@@ -279,8 +279,33 @@ eq("RESTRICTED: the head of department cannot read it (404)", (await get(U.hodMa
   truthy("the subject's own timeline omits the Restricted record", !ids.includes(restricted.json?.id));
   const portal = (await get(U.math1.token, "/api/v1/staff/portal")).json;
   truthy("the portal never carries the Restricted record", !JSON.stringify(portal ?? {}).includes("SECRETWORD"));
+  const conductSeen = (tl?.records ?? []).filter((r) => r.parameterName === "Conduct").length;
+  const conductScored = portal?.score?.breakdown?.find((b) => b.name === "Conduct")?.evidenceCount ?? 0;
+  truthy("RESTRICTED NEVER SCORES: the subject's Conduct evidence count equals the Conduct records they can see", conductScored === conductSeen, `scored ${conductScored}, visible ${conductSeen}`);
+  const hodReport = (await get(U.dos.token, `${B}/staff/members/${U.math1.id}/score`)).json;
+  truthy("…and the Director of Studies sees the same score (it does not depend on who asks)", hodReport?.composite === portal?.score?.composite, `${hodReport?.composite} vs ${portal?.score?.composite}`);
   const act = (await get(AD, `${B}/staff/activity?userId=${U.math1.id}&pageSize=200`)).json;
   truthy("the activity log names the Restricted record without its content", !JSON.stringify(act ?? {}).includes("SECRETWORD") && (act?.items ?? []).some((e) => /restricted/i.test(e.summary)), JSON.stringify((act?.items ?? []).slice(0, 3)));
+}
+{
+  // Unseen records: one to-do line however many, and "Mark all as seen" — found in Chrome, where a
+  // teacher's to-do list was eleven identical recognition rows. Fired concurrently: the marked counts
+  // must add up to the unseen count exactly once, and the Restricted record must stay unseen.
+  for (let i = 0; i < 2; i++)
+    await rec(U.hodMath.token, { subjectUserId: U.math1.id, parameterId: P("Co-curricular Activity").id, points: 1, description: `E2E ${RUN} unseen ${i}` });
+  const before = (await get(U.math1.token, "/api/v1/staff/portal")).json;
+  const unseenItems = (before?.openItems ?? []).filter((i) => i.kind === "record-unread");
+  truthy("TO-DO: several unseen records make ONE to-do line, not one per record", before?.unacknowledgedRecords > 1 && unseenItems.length === 1, `${before?.unacknowledgedRecords} unseen, ${unseenItems.length} lines`);
+  truthy("…which names the count and links to the timeline", unseenItems[0]?.title?.startsWith(`${before?.unacknowledgedRecords} records`) && unseenItems[0]?.url === "/portal#my-timeline", JSON.stringify(unseenItems[0]));
+  const both = await Promise.all([1, 2, 3].map(() => post(U.math1.token, "/api/v1/staff/portal/records/acknowledge-all")));
+  truthy("MARK ALL: three concurrent calls all succeed", both.every((r) => r.status === 200), both.map((r) => r.status).join(","));
+  const marked = both.reduce((s, r) => s + (r.json?.marked ?? 0), 0);
+  eq("MARK ALL: the marked counts add up to the unseen count exactly once", marked, before?.unacknowledgedRecords);
+  const after = (await get(U.math1.token, "/api/v1/staff/portal")).json;
+  truthy("…the portal then shows nothing unseen and no to-do line for it", after?.unacknowledgedRecords === 0 && !(after?.openItems ?? []).some((i) => i.kind === "record-unread"), `${after?.unacknowledgedRecords}`);
+  const secret = (await get(AD, `${B}/staff/records/${restricted.json?.id}`)).json;
+  truthy("MARK ALL: the Restricted record the subject cannot see stays unacknowledged", secret && secret.acknowledgedAt == null, secret?.acknowledgedAt);
+  eq("MARK ALL: a second pass marks nothing", (await post(U.math1.token, "/api/v1/staff/portal/records/acknowledge-all")).json?.marked, 0);
 }
 {
   const draft = await rec(U.hodMath.token, { subjectUserId: U.math2.id, parameterId: P("Co-curricular Activity").id, points: 2, saveAsDraft: true, description: `E2E ${RUN} draft about math2` });

@@ -675,5 +675,22 @@ eq "cleanup: shared document deleted" "$(code "$AD" DELETE "/api/v1/media/$SHARE
 eq "cleanup: public document deleted" "$(code "$AD" DELETE "/api/v1/media/$PUBLIC_ID")" "204"
 rm -f "$E2E_PDF"
 
+# --- 14. Staff Performance Monitor ------------------------------------------------------------
+# Written in Node (scripts/e2e/staff-performance-e2e.mjs) because its point is concurrency: the
+# same write fired N times at once, then the invariant checked. Skipped with a notice, not failed,
+# on a machine with no node — say so plainly rather than report a pass nobody ran.
+hdr "14. STAFF PERFORMANCE (Node)"
+if command -v node > /dev/null 2>&1; then
+  SP_OUT=$(API="$API" BRANCH="$BRANCH" ORG="${ORG_ID:-}" SA_USER="$SA_USER" SA_PASS="$SA_PASS" \
+    node "$(dirname "$0")/staff-performance-e2e.mjs" 2>&1)
+  echo "$SP_OUT" | sed 's/^/  /'
+  SP_PASS=$(echo "$SP_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  SP_FAIL=$(echo "$SP_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$SP_PASS" ]; then bad "staff performance suite ran to completion" "a summary line" "none (see output above)"
+  else PASS=$((PASS+SP_PASS)); FAIL=$((FAIL+SP_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 14 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

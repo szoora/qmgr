@@ -116,7 +116,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
             else if (appraisal.Stage == AppraisalStage.Signed && appraisal.SignedAt is { } signed && signed > now.AddDays(-14))
                 openItems.Add(new PortalItemDto
                 {
-                    Kind = "appraisal",
+                    Kind = "appraisal-signed",
                     Title = $"Your {period.Name} appraisal has been signed",
                     Detail = "Read it. You may appeal within the period.",
                     DueAt = signed,
@@ -154,17 +154,39 @@ public class StaffPortalController : StaffPerformanceControllerBase
 
         var unacknowledged = await Db.StaffPerformanceRecords
             .CountAsync(r => r.SubjectUserId == me.Id && r.Status == StaffRecordStatus.Final && r.AcknowledgedAt == null && r.Visibility != WelfareVisibility.Restricted);
-        openItems.AddRange(recent
+        // Unseen records: ONE to-do line, not one per record. Found in Chrome, 2026-09-16: a teacher
+        // with eleven recognitions had a to-do list of eleven identical "Recognition logged about you"
+        // rows burying the appraisal that actually needed them. A single record still links straight
+        // to itself; several link to the timeline, which has "Mark all as seen".
+        var unseen = recent
             .Where(r => r.Status == StaffRecordStatus.Final && r.AcknowledgedAt == null && r.LoggedByUserId != me.Id)
-            .Take(10)
-            .Select(r => new PortalItemDto
+            .ToList();
+        if (unacknowledged == 1 && unseen.Count == 1)
+        {
+            var one = unseen[0];
+            openItems.Add(new PortalItemDto
             {
                 Kind = "record-unread",
-                Title = r.Visibility == WelfareVisibility.Confidential ? "A confidential record was logged about you" : $"{r.Parameter?.Name ?? "A record"} logged about you",
-                Detail = r.Visibility == WelfareVisibility.Confidential ? "Open it to read and respond." : Truncate(r.Description, 120),
-                DueAt = r.CreatedAt,
-                Url = $"/portal/records/{r.Id}"
-            }));
+                Title = one.Visibility == WelfareVisibility.Confidential ? "A confidential record was logged about you" : $"{one.Parameter?.Name ?? "A record"} logged about you",
+                Detail = one.Visibility == WelfareVisibility.Confidential ? "Open it to read and respond." : Truncate(one.Description, 120),
+                DueAt = one.CreatedAt,
+                Url = $"/portal/records/{one.Id}"
+            });
+        }
+        else if (unacknowledged > 1)
+        {
+            var kinds = unseen.Select(x => x.Visibility == WelfareVisibility.Confidential ? "confidential record" : (x.Parameter?.Name ?? "record").ToLowerInvariant())
+                .GroupBy(k => k).OrderByDescending(g => g.Count())
+                .Select(g => g.Count() == 1 ? g.Key : $"{g.Count()} × {g.Key}").Take(3);
+            openItems.Add(new PortalItemDto
+            {
+                Kind = "record-unread",
+                Title = $"{unacknowledged} records about you not yet seen",
+                Detail = string.Join(", ", kinds) + (unacknowledged > unseen.Count ? ", and older ones" : ""),
+                DueAt = unseen.Count > 0 ? unseen.Max(x => x.CreatedAt) : null,
+                Url = "/portal#my-timeline"
+            });
+        }
 
         // ---- Welfare actions I owe (the same rows WelfareController's my-actions returns) ----
         var welfareActions = await Db.WelfareRecords.AsNoTracking().Include(w => w.Student).Include(w => w.Category)
@@ -378,6 +400,32 @@ public class StaffPortalController : StaffPerformanceControllerBase
     // ---------------------------------------------------------------------
     // Notices: acknowledge
     // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Marks every record about me that I have not seen as seen, in one statement. Restricted records
+    /// are excluded (the subject cannot see them, so cannot have seen them) and so are drafts. The
+    /// first timestamp on a record already acknowledged stands. Returns how many were marked.
+    /// </summary>
+    [HttpPost("records/acknowledge-all")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> AcknowledgeAllRecords()
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        var me = self.User!;
+        var now = DateTime.UtcNow;
+
+        var marked = await Db.StaffPerformanceRecords
+            .Where(r => r.SubjectUserId == me.Id && r.Status == StaffRecordStatus.Final && r.AcknowledgedAt == null
+                        && r.Visibility != WelfareVisibility.Restricted && r.LoggedByUserId != me.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.AcknowledgedAt, now));
+
+        if (marked > 0)
+            await Activity.RecordAsync(ActivityActions.RecordAcknowledged, nameof(StaffPerformanceRecord), null, me.Id,
+                $"{StaffPerformanceMapping.FullName(me)} marked {marked} record(s) as seen", new { Marked = marked }, self.BranchId, self.OrganizationId);
+
+        return Ok(new { marked });
+    }
 
     /// <summary>
     /// Adds me to the notice's acknowledgement map. Idempotent: the first timestamp stands. The

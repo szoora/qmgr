@@ -100,9 +100,51 @@ https://claude.ai/artifact/NL5aZ9uCKUAy2w7kb94wAo. The user then asked for it to
 
 ### 4. Verification
 
-**None beyond compilation.** Build: 0 errors in both projects; no pending model changes. Not run
-against the dev tenant, not driven in Chrome, no e2e section written. That is the next session's
-first job, per the user's instruction to test after the build.
+~~None beyond compilation.~~ **Superseded the same day — see §5.**
+
+### 5. The aggressive e2e, in Chrome and against the dev tenant (2026-09-16, later)
+
+Asked for as "a comprehensive and aggressive e2e … identify and fix any gaps, bugs and race
+conditions … see the tests in Chrome … responsive and mobile ready".
+
+**Result: `class-teacher-e2e.sh` 374 passed, 0 failed** (sections 1–13 unchanged plus section 14,
+201 checks, in `scripts/e2e/staff-performance-e2e.mjs`). Section 14 seeds nine staff and two
+departments idempotently and covers the module gate, parameters and policy validation, scope and
+fail-closed, record rungs, drafts, right of reply, evidence gating, recognition, delegated registers,
+notices, appraisals, reports, activity, portal, export, import, a custom DirectReports role and
+sign-out, with concurrent writes wherever an invariant can race.
+
+- [x] **Race: recognition budget overspent** under concurrent gives. Advisory lock per giver.
+- [x] **Race: register double-submit** wrote duplicate rows. Whole submit under a lock per duty.
+- [x] **Race: concurrent notice acknowledgements lost each other.** Atomic jsonb UPDATE.
+- [x] **Race: a notice fanned out twice** when the sweep and a publish overlapped. Claimed first.
+- [x] **Confidentiality leak: Restricted records counted in scores**, reports and coverage, visible
+      to the subject as evidence counts. Excluded everywhere.
+- [x] **Portal to-do flooded** with one row per unseen record, dated "Due". Now one line, "Logged",
+      plus "Mark all as seen" (new `records/acknowledge-all`, concurrent-safe, Restricted untouched).
+      A signed appraisal said "Due" too; it now says "Signed".
+- [x] **Portal layout:** breakdown labels truncated ("— · weight 3") → stacked bars with words;
+      recognition in two cramped columns → one; ten notices at full height → four and "Show more",
+      awaiting-you first; "Coming up" empty state compacted.
+- [x] **Mobile:** tables on every Staff page scrolled sideways at 390px → `q-stack` cards; filter bars,
+      date presets and tab strips wrap or scroll; 40px phone tap targets; the register's notice text
+      split into three columns; the print sheet table overflowed its page.
+- [x] **App-wide: the desktop gutter was 12px, not 24px**, and every page header overhung the right
+      edge, because the safe-area padding rule sat outside any media query. Fixed with
+      `--qm-page-pad`; measured on three pages at 1920, 1280, 390 and 340px with no overhang.
+- [x] Activity page defaulted to "all time" and showed raw `auth` actions; hub startup logged a
+      cancelled connect as an error.
+
+**Seen in Chrome:** the teacher's portal before and after, "Mark all as seen" clicked live (toast
+"5 records marked as seen"), and an in-tab sweep of ten routes at 1280px and 390px as the teacher:
+0 failures; the only warnings were the three admin pages correctly refusing a teacher. The admin
+sweep earlier in the session (44 passed) ran before the gutter fix.
+
+**Not done / still open:** the login identify step shows initials "E2" for an e2e email; a teacher
+sees a near-empty Administration group (pre-existing); the Users grid's filter icons are 20px tap
+targets; the staff timeline's default range reads "01 Jan 2000"; the side-by-side observer pair
+view and `WelfareStatusColor()`'s second home remain from §3. Test data labelled "E2E" stays on the
+dev tenant (records are append-only).
 
 ---
 ## ▶ The 2026-09-15 next-session block (kept for history; production state unchanged since)

@@ -462,7 +462,7 @@ The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md`; the rules that are easy to 
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **165 assertions** (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **374 assertions as of 2026-09-16**, 201 of them section 14, the Staff Performance Monitor, which the script runs through Node (`staff-performance-e2e.mjs`) and skips with a notice where Node is absent. Before that, 165 (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
 2026-09-15, 72 until 2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the
 reports gate, the notification preferences, the delivery log, the three leak shapes above, real
 email delivery, and — since 2026-09-15, section 12 — gated uploads and secure document sharing
@@ -1290,8 +1290,9 @@ default; support staff hold the portal and recognition and are appraised by thei
 activity attribution is blanked after 12 months and appraisals are never purged; the module ships
 at a placeholder price with `MaxUsersPerBranch = 250`; periods default to three Ugandan terms
 (T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec) with an annual roll-up; rewards are certificates, notices and
-the private rank; no wellbeing pulse. **Nothing was verified live**: it is a clean build of both
-projects plus one generated migration. The e2e section 14 the plan describes has not been written.
+the private rank; no wellbeing pulse. **Verified live the same day** by e2e section 14
+(`scripts/e2e/staff-performance-e2e.mjs`, 201 checks, called from `class-teacher-e2e.sh`) and in
+Chrome at desktop and a real 390px frame; see "What the e2e found" below.
 
 - **`Role` now carries TWO scope columns.** `DataScope` (students, `RoleDataScope`) and
   `StaffScope` (other staff, `StaffDataScope { Organization, AssignedDepartments, DirectReports,
@@ -1361,6 +1362,37 @@ projects plus one generated migration. The e2e section 14 the plan describes has
   shows "View Permissions" there.
 - **Staff import job reads are `api/v1/branches/{b}/staff/import-jobs…`**, gated on
   `staff.structure.manage`, not the student ones (which are gated on the student scope).
+
+### What the e2e found (2026-09-16) — rules to keep
+
+- **Section 14 is Node, because its point is concurrency.** It fires the same write several times
+  at once and checks the invariant. Four real races fell out, each fixed with the house pattern:
+  the recognition budget (count and insert under `pg_advisory_xact_lock` on giver), the register
+  double-submit (the whole read-annul-insert under a lock on the duty, duty re-read under the
+  lock), lost notice acknowledgements (one atomic jsonb `||` UPDATE guarded by `jsonb_exists`, never
+  read-modify-write of the map), and duplicate notice fan-out (a conditional UPDATE claims
+  `NotificationsSentAt` before anything is sent). **Any new "at most N" or "exactly once" rule in
+  this module needs one of these, and a concurrent assertion in the suite.**
+- **RESTRICTED NEVER SCORES.** `StaffScoringService` (both queries), `StaffReportBuilder` and
+  `StaffCoverageBuilder` counted Restricted records, so a teacher's own breakdown showed "Conduct: 4
+  records, −8" while they could see none: the score disclosed an investigation the record hides.
+  Every aggregate over staff records must exclude Restricted. Lower a record to Confidential to
+  let it count.
+- **Unseen records make ONE to-do line**, linking to `/portal#my-timeline`, where
+  `POST api/v1/staff/portal/records/acknowledge-all` marks them in one statement (Restricted and
+  self-logged excluded). Eleven identical "Recognition logged about you" rows buried the appraisal.
+- **Mobile:** `table.q-stack` turns a table into labelled cards under 640px (`qStackTable.js` stamps
+  `data-label` from the header, so markup needs only the class). Every Staff table carries it.
+  `QBarList Stacked` puts label and figure on one line with the bar beneath, for a half-width card.
+- **The page gutter was 12px on every desktop page, app-wide.** `layout.css`'s safe-area block
+  sat outside any media query with `max(12px, env(...))`, overriding the 24px gutter, so
+  `.page-header`'s fixed −24px bleed hung 12px past the edge (clipped, so it looked "slightly off"
+  rather than broken). The gutter is now `--qm-page-pad` per breakpoint (24/20/12/8), the safe-area
+  rule takes `max(var(--qm-page-pad), env(...))`, and the header bleeds by the same variable.
+  **Never pair a hard-coded negative margin with a padding set somewhere else.**
+- **Running section 12 locally needs `Cors__AllowedOrigins__4=http://127.0.0.1:5003` on the API**,
+  or the share-link origin check refuses and 34 checks cascade-fail. That is correct behaviour for
+  a misconfigured origin, not a regression.
 
 ## Process note for future sessions
 

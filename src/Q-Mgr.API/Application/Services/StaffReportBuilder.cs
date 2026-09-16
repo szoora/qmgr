@@ -49,6 +49,10 @@ public static class StaffReportBuilder
         var records = await db.StaffPerformanceRecords.AsNoTracking()
             .Where(r => r.OrganizationId == organizationId && r.BranchId == branchId
                         && r.Status == StaffRecordStatus.Final
+                        // RESTRICTED NEVER SCORES (found in Chrome by the e2e, 2026-09-16): a teacher's own
+                        // breakdown showed Conduct: 4 records, -8 points, while they could see none — the score
+                        // disclosed an investigation the record itself hides. Lower it to Confidential to count it.
+                        && r.Visibility != QMgr.Domain.Enums.WelfareVisibility.Restricted
                         && r.OccurredAt >= start && r.OccurredAt < end
                         && idList.Contains(r.SubjectUserId))
             .Select(r => new { r.SubjectUserId, r.ParameterId, r.LoggedByUserId, r.Points, r.Rating, r.OccurredAt })

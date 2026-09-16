@@ -88,6 +88,8 @@ public interface IStaffPerformanceApiService
     Task<ActivityLogPageDto> GetMyActivityAsync(int page = 1, int pageSize = 50);
     Task<List<StaffColleagueDto>> GetColleaguesAsync();
     Task<StaffFileExportDto> ExportMyFileAsync();
+    /// <summary>Marks every record about me as seen; returns how many.</summary>
+    Task<int> AcknowledgeAllMyRecordsAsync();
 }
 
 public class StaffPerformanceApiService : IStaffPerformanceApiService
@@ -213,4 +215,7 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<ActivityLogPageDto> GetMyActivityAsync(int page = 1, int pageSize = 50) => GetAsync<ActivityLogPageDto>($"api/v1/staff/portal/activity{Q(("page", page.ToString()), ("pageSize", pageSize.ToString()))}");
     public Task<List<StaffColleagueDto>> GetColleaguesAsync() => GetAsync<List<StaffColleagueDto>>("api/v1/staff/portal/colleagues");
     public Task<StaffFileExportDto> ExportMyFileAsync() => GetAsync<StaffFileExportDto>("api/v1/staff/portal/export");
+    public async Task<int> AcknowledgeAllMyRecordsAsync()
+        => (await SendAsync<AcknowledgeAllResult>(HttpMethod.Post, "api/v1/staff/portal/records/acknowledge-all")).Marked;
+    private sealed record AcknowledgeAllResult(int Marked);
 }

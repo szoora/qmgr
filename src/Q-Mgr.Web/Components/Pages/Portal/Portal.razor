@@ -92,7 +92,7 @@
         <QCard Title="Coming up" Subtitle="Duties you are expected at" Icon="calendar-event" Class="portal-card">
             @if (!portal.ComingUp.Any())
             {
-                <QEmptyState Icon="calendar-check" Title="Nothing scheduled" Text="No duties are coming up for you in the next while." />
+                <QEmptyState Icon="calendar-check" Title="Nothing scheduled" Text="No duties are coming up for you in the next while." Class="q-empty--compact" />
             }
             else
             {
@@ -152,7 +152,8 @@
                                     }
                                     @if (item.DueAt.HasValue)
                                     {
-                                        <span class="portal-item__date">Due @QDateFormat.D(Local(item.DueAt.Value))</span>
+                                        @* A record waiting to be seen is not due anything: it was LOGGED on that date. A signed appraisal was SIGNED. *@
+                                        <span class="portal-item__date">@ItemDateLabel(item.Kind) @QDateFormat.D(Local(item.DueAt.Value))</span>
                                     }
                                 </div>
                             </li>
@@ -162,7 +163,7 @@
             </QCard>
 
             @* ---- Notices --------------------------------------------------------------------- *@
-            <QCard Title="Notices" Subtitle="Pinned and unread first" Icon="megaphone" Class="portal-card">
+            <QCard Title="Notices" Subtitle="Awaiting you first, then pinned" Icon="megaphone" Class="portal-card">
                 @if (!portal.Notices.Any())
                 {
                     <QEmptyState Icon="megaphone" Title="No notices" Text="Notices published to your branch, department or role will appear here." />
@@ -170,7 +171,7 @@
                 else
                 {
                     <div class="portal-notices">
-                        @foreach (var notice in OrderedNotices)
+                        @foreach (var notice in OrderedNotices.Take(showAllNotices ? int.MaxValue : NoticesShown))
                         {
                             var needsAck = notice.RequiresAcknowledgement && notice.AcknowledgedByMeAt == null;
                             <article class="portal-notice @(notice.IsPinned ? "portal-notice--pinned" : "") @(needsAck ? "portal-notice--ack" : "")">
@@ -212,6 +213,14 @@
                             </article>
                         }
                     </div>
+                    @if (portal.Notices.Count > NoticesShown)
+                    {
+                        <div class="portal-more">
+                            <QButton Text="@(showAllNotices ? "Show fewer" : $"Show {portal.Notices.Count - NoticesShown} more")"
+                                     Icon="@(showAllNotices ? "chevron-up" : "chevron-down")" Size="sm" Variant="ghost"
+                                     OnClick="@(() => showAllNotices = !showAllNotices)" />
+                        </div>
+                    }
                 }
             </QCard>
 
@@ -223,7 +232,7 @@
                 }
                 else
                 {
-                    <QBarList Items="@BreakdownBars" Max="100" />
+                    <QBarList Items="@BreakdownBars" Max="100" Stacked="true" />
                 }
             </QCard>
 
@@ -252,7 +261,7 @@
                                         <li class="portal-recog">
                                             <QAvatar Name="@r.LoggedByName" Size="sm" />
                                             <div>
-                                                <strong>@r.LoggedByName</strong> <span class="portal-muted">· @r.ParameterName · @QDateFormat.D(Local(r.OccurredAt))</span>
+                                                <strong>@r.LoggedByName</strong> <span class="portal-muted">@QDateFormat.D(Local(r.OccurredAt))</span>
                                                 <p>@r.Description</p>
                                             </div>
                                             @if (r.Points.HasValue) { <QChip Text="@StaffDisplay.Points(r.Points)" Size="sm" Variant="success" /> }
@@ -275,7 +284,7 @@
                                         <li class="portal-recog">
                                             <QAvatar Name="@r.SubjectName" Size="sm" />
                                             <div>
-                                                <strong>@r.SubjectName</strong> <span class="portal-muted">· @r.ParameterName · @QDateFormat.D(Local(r.OccurredAt))</span>
+                                                <strong>@r.SubjectName</strong> <span class="portal-muted">@QDateFormat.D(Local(r.OccurredAt))</span>
                                                 <p>@r.Description</p>
                                             </div>
                                         </li>
@@ -289,11 +298,15 @@
         </div>
 
         @* ---- My timeline -------------------------------------------------------------------- *@
-        <QCard Title="My timeline" Subtitle="Records about you, newest first" Icon="journal-text" Class="portal-card">
+        <QCard id="my-timeline" Title="My timeline" Subtitle="Records about you, newest first" Icon="journal-text" Class="portal-card">
             <HeaderActions>
                 @if (portal.UnacknowledgedRecords > 0)
                 {
                     <QChip Text="@($"{portal.UnacknowledgedRecords} not yet seen")" Icon="eye" Size="sm" Variant="warning" />
+                    @if (portal.UnacknowledgedRecords > 1)
+                    {
+                        <QButton Text="Mark all as seen" Icon="check2-all" Size="sm" Variant="secondary" OnClick="@MarkAllSeen" Loading="@markingAll" />
+                    }
                 }
             </HeaderActions>
             <ChildContent>
@@ -521,8 +534,11 @@
     .portal-notice__attachments, .portal-attachments { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .portal-notice__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--qm-text-muted); margin-top: 8px; }
 
+    /* Received above given, never side by side: the card is already half the page wide, and two
+       columns inside it wrapped every name three times (seen in Chrome, 2026-09-16). */
     .portal-recognition { display: grid; grid-template-columns: 1fr; gap: 16px; }
-    @@media (min-width: 560px) { .portal-recognition { grid-template-columns: 1fr 1fr; } }
+    .portal-more { display: flex; justify-content: center; margin-top: 10px; }
+    .portal-recog .portal-muted { display: block; font-size: 12px; }
     .portal-recognition h5 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
     .portal-recog { display: flex; align-items: flex-start; gap: 10px; }
     .portal-recog > div { flex: 1; min-width: 0; font-size: 13px; }
@@ -668,9 +684,29 @@
     private IEnumerable<StaffNoticeDto> OrderedNotices => portal == null
         ? Enumerable.Empty<StaffNoticeDto>()
         : portal.Notices
-            .OrderByDescending(n => n.IsPinned)
-            .ThenByDescending(n => n.RequiresAcknowledgement && n.AcknowledgedByMeAt == null)
+            .OrderByDescending(n => n.RequiresAcknowledgement && n.AcknowledgedByMeAt == null)
+            .ThenByDescending(n => n.IsPinned)
             .ThenByDescending(n => n.PublishAt);
+
+    private bool markingAll;
+    private const int NoticesShown = 4;
+    private bool showAllNotices;
+
+    private async Task MarkAllSeen()
+    {
+        markingAll = true;
+        try
+        {
+            var n = await StaffApi.AcknowledgeAllMyRecordsAsync();
+            Toast.Notify(ToastSeverity.Success, n == 1 ? "1 record marked as seen" : $"{n} records marked as seen");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not mark the records as seen", ex.Message);
+        }
+        finally { markingAll = false; }
+    }
 
     private IReadOnlyList<QBarItem> BreakdownBars => portal == null
         ? Array.Empty<QBarItem>()
@@ -679,22 +715,30 @@
             .Select(b => new QBarItem(
                 b.Name,
                 b.Score ?? 0,
+                // "75 / 100 · 4 records · weight 3" — or, with nothing logged, say so in words.
                 Count: b.Score.HasValue
-                    ? $"{b.Score.Value:0.#} · weight {b.Weight:0.#} · {b.EvidenceCount} {(b.EvidenceCount == 1 ? "item" : "items")}"
-                    : $"— · weight {b.Weight:0.#}",
-                Color: b.Color ?? StaffDisplay.KindColor(b.Kind),
-                Hint: b.EvidenceCount == 0 ? "no evidence yet" : null))
+                    ? $"{b.Score.Value:0.#} / 100 · {b.EvidenceCount} {(b.EvidenceCount == 1 ? "record" : "records")} · weight {b.Weight:0.#}"
+                    : $"No evidence yet · weight {b.Weight:0.#}",
+                Color: b.Color ?? StaffDisplay.KindColor(b.Kind)))
             .ToList();
 
     private string RecognitionSubtitle => portal == null
         ? ""
         : $"{portal.RecognitionBudget.Remaining} of {portal.RecognitionBudget.MonthlyBudget} left to give this month";
 
+    private static string ItemDateLabel(string kind) => kind switch
+    {
+        "record-unread" => "Logged",
+        "appraisal-signed" => "Signed",
+        _ => "Due"
+    };
+
     private static string ItemIcon(string kind) => kind switch
     {
         "welfare-action" => "heart-pulse",
         "register-due" => "clipboard-check",
         "appraisal" => "clipboard2-check",
+        "appraisal-signed" => "patch-check",
         "notice-ack" => "megaphone",
         "record-unread" => "eye",
         _ => "dot"

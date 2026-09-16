@@ -186,6 +186,16 @@ public class NotificationClientService : INotificationClientService
             await RejoinBranchesAsync();
             ConnectionStateChanged?.Invoke();
         }
+        catch (OperationCanceledException ex) when (ex.InnerException is not TimeoutException)
+        {
+            // The circuit went away while the hub was still negotiating — someone navigated or
+            // closed the tab within a second of opening a page. Cancellation is the correct outcome,
+            // not a fault, and logging it as an error with a stack trace (as this did until the UI
+            // sweep of 2026-09-16 filled the log with them) buries real failures. A genuine
+            // connect TIMEOUT carries a TimeoutException inside and still logs as an error below.
+            _logger.LogDebug("Notification hub connect cancelled before it completed (circuit closing)");
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to notification hub");

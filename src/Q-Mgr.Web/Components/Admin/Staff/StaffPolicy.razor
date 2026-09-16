@@ -40,7 +40,7 @@
                 @if (policy.Periods.Any())
                 {
                     <div class="table-wrap">
-                        <table class="data-table pol-table">
+                        <table class="data-table q-stack pol-table">
                             <thead><tr><th>Key</th><th>Name</th><th>Start</th><th>End</th><th></th></tr></thead>
                             <tbody>
                                 @for (var i = 0; i < periodDrafts.Count; i++)
@@ -64,7 +64,7 @@
             <QCard Title="Bands" Icon="bar-chart-steps" Class="pol-card">
                 <p class="form-hint">Five bands, MoES's scale. The <strong>count is fixed</strong> so a stored rating means the same thing across periods; the names and thresholds are yours. Thresholds are the minimum composite (0–100) for the band.</p>
                 <div class="table-wrap">
-                    <table class="data-table pol-table">
+                    <table class="data-table q-stack pol-table">
                         <thead><tr><th class="pol-num">Rating</th><th>Name</th><th class="pol-num">Min score</th></tr></thead>
                         <tbody>
                             @for (var i = 0; i < bandDrafts.Count; i++)
