@@ -79,6 +79,19 @@ public static class StaffNoticeFanOut
     {
         if (!notice.IsActive || notice.NotificationsSentAt.HasValue || notice.PublishAt > DateTime.UtcNow) return 0;
 
+        // CONCURRENCY (found by the e2e's race sections, 2026-09-16): the controller fans out when a
+        // notice becomes due on save, and the 15-minute job fans out whatever is due and unsent.
+        // Both read NotificationsSentAt == null and both would notify every recipient. The CLAIM is
+        // one conditional UPDATE: exactly one caller changes the row, the other sees 0 rows and
+        // stops. Stamped before sending, which is the rule this method already had (a partial
+        // failure must not re-notify everyone); schema-qualified because raw SQL does not inherit
+        // the model's default schema.
+        var claimedAt = DateTime.UtcNow;
+        var claimed = await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE qmgr.\"StaffNotices\" SET \"NotificationsSentAt\" = {claimedAt} WHERE \"Id\" = {notice.Id} AND \"NotificationsSentAt\" IS NULL", ct);
+        if (claimed == 0) return 0;
+        notice.NotificationsSentAt = claimedAt;
+
         var recipients = await ResolveRecipientsAsync(db, notice, ct);
         var summary = Summary(notice.BodyHtml, 160);
         var sent = 0;
@@ -110,9 +123,6 @@ public static class StaffNoticeFanOut
                 logger.LogError(ex, "Staff notice {NoticeId}: could not notify user {UserId}", notice.Id, userId);
             }
         }
-
-        notice.NotificationsSentAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
 
         logger.LogInformation("Staff notice {NoticeId} \"{Title}\" fanned out to {Sent}/{Total} recipient(s)", notice.Id, notice.Title, sent, recipients.Count);
         return sent;

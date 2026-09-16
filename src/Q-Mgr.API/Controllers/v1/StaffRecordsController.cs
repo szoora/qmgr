@@ -715,9 +715,6 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var policy = await _policy.GetAsync(organizationId);
         if (policy.RecognitionMonthlyBudget <= 0) return BadRequestProblem("Peer recognition is switched off for this organization");
-        var used = await RecognitionsUsedThisMonthAsync(organizationId, me);
-        if (used >= policy.RecognitionMonthlyBudget)
-            return BadRequestProblem($"You have used {used} of {policy.RecognitionMonthlyBudget} recognitions this month", "The budget resets on the first of the month.");
 
         var points = Math.Max(1, Math.Abs(parameter.DefaultPoints ?? 1));
         if (parameter.MaxPointsPerEntry > 0) points = Math.Min(points, parameter.MaxPointsPerEntry);
@@ -738,8 +735,38 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             LoggedByUserId = me,
             CreatedBy = me
         };
-        Db.StaffPerformanceRecords.Add(record);
-        await Db.SaveChangesAsync();
+
+        // CONCURRENCY (found by the e2e, 2026-09-16): the budget was count-then-insert with nothing
+        // between the two, so eight simultaneous recognitions against three remaining all read "3
+        // left" and all inserted (measured: 8 of 8 succeeded). The count and the insert now happen
+        // inside one transaction holding pg_advisory_xact_lock keyed on the GIVER — the pattern
+        // AppointmentsController, VisitorsController and TokenRepository already use. Per giver,
+        // so two different people recognising at once never wait on each other.
+        var used = 0;
+        var overBudget = false;
+        var strategy = Db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            Db.ChangeTracker.Clear();
+            overBudget = false;
+            await using var tx = await Db.Database.BeginTransactionAsync();
+            var lockKey = $"staff-recognition:{organizationId}:{me}";
+            await Db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
+
+            used = await RecognitionsUsedThisMonthAsync(organizationId, me);
+            if (used >= policy.RecognitionMonthlyBudget)
+            {
+                overBudget = true;
+                await tx.RollbackAsync();
+                return;
+            }
+
+            Db.StaffPerformanceRecords.Add(record);
+            await Db.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+        if (overBudget)
+            return BadRequestProblem($"You have used {used} of {policy.RecognitionMonthlyBudget} recognitions this month", "The budget resets on the first of the month.");
 
         await Activity.RecordAsync(ActivityActions.RecognitionGiven, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
             $"Recognition given to {StaffPerformanceMapping.FullName(subject)} ({parameter.Name}, +{points} pts)",

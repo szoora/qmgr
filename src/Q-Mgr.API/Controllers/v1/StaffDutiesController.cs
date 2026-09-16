@@ -364,71 +364,93 @@ public class StaffDutiesController : ControllerBase
         if (entries.GroupBy(e => e.UserId).Any(g => g.Count() > 1))
             return Problem400("A person appears more than once in this register");
 
-        var wasClosed = duty.RegisterClosedAt.HasValue;
+        // CONCURRENCY (found by the e2e, 2026-09-16): reading the existing Final rows and writing the
+        // new ones were two unguarded steps, so four simultaneous submits of the same register each
+        // read "nobody marked yet" and each inserted a row — measured: four Final records per person.
+        // A phone on a flaky connection re-sending a register is exactly this. The whole read-annul-
+        // insert now runs in one transaction holding pg_advisory_xact_lock keyed on the duty (the
+        // project's standing pattern), and the duty's open/closed state is re-read under the lock.
+        var wasClosed = false;
         var now = DateTime.UtcNow;
         var userIds = entries.Select(e => e.UserId).ToList();
-
-        var existing = await _context.StaffPerformanceRecords
-            .Where(r => r.DutyId == duty.Id && r.Status == StaffRecordStatus.Final && userIds.Contains(r.SubjectUserId))
-            .ToListAsync();
-
         var created = new List<StaffPerformanceRecord>();
         var annulled = 0;
-        foreach (var entry in entries)
+
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
         {
-            foreach (var old in existing.Where(r => r.SubjectUserId == entry.UserId))
+            // A replayed attempt starts clean: nothing from a failed attempt stays tracked.
+            foreach (var stale in created) _context.Entry(stale).State = EntityState.Detached;
+            created.Clear();
+            annulled = 0;
+
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            var lockKey = $"staff-register:{duty.Id}";
+            await _context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({lockKey})::bigint)");
+            await _context.Entry(duty).ReloadAsync();
+            wasClosed = duty.RegisterClosedAt.HasValue;
+
+            var existing = await _context.StaffPerformanceRecords
+                .Where(r => r.DutyId == duty.Id && r.Status == StaffRecordStatus.Final && userIds.Contains(r.SubjectUserId))
+                .ToListAsync();
+
+            foreach (var entry in entries)
             {
-                old.Status = StaffRecordStatus.Annulled;
-                old.UpdatedAt = now;
-                old.UpdatedBy = me;
-                _context.StaffPerformanceNotes.Add(new StaffPerformanceNote
+                foreach (var old in existing.Where(r => r.SubjectUserId == entry.UserId))
                 {
-                    RecordId = old.Id,
-                    AuthorUserId = me,
-                    Kind = StaffNoteKind.Annulment,
-                    Body = "Register reopened"
-                });
-                annulled++;
+                    old.Status = StaffRecordStatus.Annulled;
+                    old.UpdatedAt = now;
+                    old.UpdatedBy = me;
+                    _context.StaffPerformanceNotes.Add(new StaffPerformanceNote
+                    {
+                        RecordId = old.Id,
+                        AuthorUserId = me,
+                        Kind = StaffNoteKind.Annulment,
+                        Body = "Register reopened"
+                    });
+                    annulled++;
+                }
+
+                var note = string.IsNullOrWhiteSpace(entry.Note) ? null : entry.Note.Trim();
+                var description = note == null ? duty.Title : $"{duty.Title} — {note}";
+                var record = new StaffPerformanceRecord
+                {
+                    OrganizationId = organizationId,
+                    BranchId = branchId,
+                    SubjectUserId = entry.UserId,
+                    ParameterId = duty.ParameterId,
+                    DutyId = duty.Id,
+                    Outcome = entry.Outcome,
+                    Points = PointsFor(duty.Parameter, entry.Outcome),
+                    Description = description.Length > 2000 ? description[..2000] : description,
+                    OccurredAt = duty.StartsAt,
+                    Source = RecordSource.Register,
+                    Status = StaffRecordStatus.Final,
+                    Visibility = WelfareVisibility.Standard,
+                    LoggedByUserId = me,
+                    CreatedBy = me
+                };
+                _context.StaffPerformanceRecords.Add(record);
+                created.Add(record);
             }
 
-            var note = string.IsNullOrWhiteSpace(entry.Note) ? null : entry.Note.Trim();
-            var description = note == null ? duty.Title : $"{duty.Title} — {note}";
-            var record = new StaffPerformanceRecord
+            duty.RegisterOpenedAt ??= now;
+            if (request.Close)
             {
-                OrganizationId = organizationId,
-                BranchId = branchId,
-                SubjectUserId = entry.UserId,
-                ParameterId = duty.ParameterId,
-                DutyId = duty.Id,
-                Outcome = entry.Outcome,
-                Points = PointsFor(duty.Parameter, entry.Outcome),
-                Description = description.Length > 2000 ? description[..2000] : description,
-                OccurredAt = duty.StartsAt,
-                Source = RecordSource.Register,
-                Status = StaffRecordStatus.Final,
-                Visibility = WelfareVisibility.Standard,
-                LoggedByUserId = me,
-                CreatedBy = me
-            };
-            _context.StaffPerformanceRecords.Add(record);
-            created.Add(record);
-        }
+                duty.RegisterClosedAt = now;
+                duty.RegisterClosedByUserId = me;
+            }
+            else if (wasClosed)
+            {
+                duty.RegisterClosedAt = null;
+                duty.RegisterClosedByUserId = null;
+            }
+            duty.UpdatedAt = now;
+            duty.UpdatedBy = me;
 
-        duty.RegisterOpenedAt ??= now;
-        if (request.Close)
-        {
-            duty.RegisterClosedAt = now;
-            duty.RegisterClosedByUserId = me;
-        }
-        else if (wasClosed)
-        {
-            duty.RegisterClosedAt = null;
-            duty.RegisterClosedByUserId = null;
-        }
-        duty.UpdatedAt = now;
-        duty.UpdatedBy = me;
-
-        await _context.SaveChangesAsync();
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
 
         if (wasClosed)
             await _activity.RecordAsync(ActivityActions.RegisterReopened, nameof(StaffDuty), duty.Id, null,

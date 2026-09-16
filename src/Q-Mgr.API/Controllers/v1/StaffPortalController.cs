@@ -401,9 +401,18 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var acks = StaffPerformanceMapping.ParseAcknowledgements(notice.Acknowledgements);
         if (!acks.ContainsKey(me.Id))
         {
-            acks[me.Id] = now;
-            notice.Acknowledgements = StaffPerformanceMapping.SerializeAcknowledgements(acks);
-            await Db.SaveChangesAsync();
+            // CONCURRENCY (found by the e2e, 2026-09-16): this used to read the jsonb map, add one
+            // key and write the WHOLE map back, so two people acknowledging at the same moment each
+            // wrote a map without the other's key — measured: six simultaneous acknowledgements from
+            // three people kept one. The merge now happens inside Postgres in one statement ("||"
+            // adds a key to the stored value, not to a copy), guarded by jsonb_exists so the first
+            // timestamp stands. Raw SQL, so the table is schema-qualified explicitly.
+            var key = me.Id.ToString();
+            var stamp = now.ToString("O");
+            var written = await Db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE qmgr.\"StaffNotices\" SET \"Acknowledgements\" = COALESCE(\"Acknowledgements\", '{{}}'::jsonb) || jsonb_build_object({key}::text, {stamp}::text) WHERE \"Id\" = {notice.Id} AND NOT jsonb_exists(COALESCE(\"Acknowledgements\", '{{}}'::jsonb), {key}::text)");
+            await Db.Entry(notice).ReloadAsync();
+            if (written == 0) return Ok((await MapNoticesAsync(new[] { notice }, me.Id)).First());
 
             await Activity.RecordAsync(ActivityActions.NoticeAcknowledged, nameof(StaffNotice), notice.Id, me.Id,
                 $"{StaffPerformanceMapping.FullName(me)} acknowledged notice '{notice.Title}'", null, notice.BranchId ?? self.BranchId, self.OrganizationId);
