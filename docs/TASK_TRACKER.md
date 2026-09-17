@@ -12,8 +12,8 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 Phase 0A is done; Phase 0's API is done and live-verified; Phase 0's Web screens and Phases 1–6 remain.
 Read the plan's §3 (model), §8 (reminders), §13 (security) and §14 (phases) before writing anything.
 
-**Branch and tree:** `phase-85-staff-performance`, everything UNCOMMITTED (Phases 86–89). Nobody has
-asked for a commit. Both projects build. The dev database has migrations up to
+**Branch and tree:** `phase-85-staff-performance`, committed and pushed as `ec384eb` (Phases 86–89 so far).
+Both projects build. The dev database has migrations up to
 `20260917114532_AddSubjectsAndTieredAssignments` applied.
 
 **How it was verified, and how to show it again:** the user wanted to SEE the tests, so they ran in the
@@ -28,7 +28,7 @@ Deployment is the user's own decision and is **not** tracked here as a task (use
 ### Open
 
 1. `[~]` **Phase 89 — duty rota plan build**, see below.
-2. `[!]` **Commit** the changed files — nobody has asked for a commit yet.
+2. `[x]` **Committed and pushed** 2026-09-17 as `ec384eb` on `phase-85-staff-performance` (Phases 86–89 so far).
 3. `[!]` Merge `phase-82-…` and `phase-85-…` into `master`; the dev-tenant images in public history.
 
 **Do not re-plan:** a test project, per-display theme, PPTX rendering, pg extensions, the ten Staff
