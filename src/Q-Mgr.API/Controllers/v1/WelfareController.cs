@@ -39,6 +39,7 @@ public class WelfareController : ControllerBase
     private readonly IStudentScopeService _scope;
     private readonly IWelfareAlertService _alerts;
     private readonly IStaffSystemAwards _systemAwards;
+    private readonly IStaffPerformancePolicyService _staffPolicy;
     private readonly ILogger<WelfareController> _logger;
 
     // 25MB — bumped from the original 10MB to admit short video/audio evidence clips. Deliberately
@@ -65,8 +66,10 @@ public class WelfareController : ControllerBase
         IStudentScopeService scope,
         IWelfareAlertService alerts,
         IStaffSystemAwards systemAwards,
+        IStaffPerformancePolicyService staffPolicy,
         ILogger<WelfareController> logger)
     {
+        _staffPolicy = staffPolicy;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _notificationService = notificationService;
@@ -482,11 +485,16 @@ public class WelfareController : ControllerBase
             .FirstOrDefaultAsync(r => r.Id == recordId && r.BranchId == branchId);
 
         var isSuperAdmin = RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole);
+        // THE AUTHOR RULE (duty rota plan §5.3): reporting a concern is not reading one, but the person who
+        // wrote a record keeps read access to it below Restricted — a subject teacher who logged a concern
+        // about a child they teach (forced Confidential for a welfare case) can read back what they wrote,
+        // and nothing else about that child.
+        var isAuthor = record != null && record.ReportedByUserId == CurrentUserId() && record.Visibility != WelfareVisibility.Restricted;
         // Same 404-not-403 shape everywhere else in this app: a record above the caller's
         // visibility ceiling, one for a student outside their class scope, or someone else's
         // still-in-progress draft all read identically to a record that doesn't exist.
-        if (record == null || !await CanSeeAsync(record.Visibility) ||
-            !await _scope.CanSeeStudentAsync(branchId, record.StudentId) ||
+        if (record == null || (!isAuthor && !await CanSeeAsync(record.Visibility)) ||
+            (!isAuthor && !await _scope.CanSeeStudentAsync(branchId, record.StudentId)) ||
             (record.Status == WelfareStatus.Draft && record.ReportedByUserId != CurrentUserId() && !isSuperAdmin))
             return NotFound(new ProblemDetails { Title = "Record not found", Status = StatusCodes.Status404NotFound });
 
@@ -512,7 +520,16 @@ public class WelfareController : ControllerBase
         // any child in the school by ID -- and learn their name from the response. Deliberately the
         // SAME message as an unknown student: an out-of-scope child must read as one that is not
         // there, or the error itself confirms the student exists.
-        if (student != null && !await _scope.CanSeeStudentAsync(branchId, student.Id)) student = null;
+        // REPORTING A CONCERN IS NOT READING ONE (duty rota plan §5.3, CPOMS's model): a SUBJECT teacher may
+        // log a concern about a student they teach when the tenant allows it (default on). The pastoral scope
+        // still governs everything they could READ; the author rule on GetRecord gives back only this record.
+        var concernByTeachingTier = false;
+        if (student != null && !await _scope.CanSeeStudentAsync(branchId, student.Id))
+        {
+            concernByTeachingTier = await _scope.GetTierAsync(branchId, student.Id) == StudentAccessTier.Teaching
+                && (await _staffPolicy.GetAsync(await ResolveOrganizationIdAsync(branchId))).SubjectTeachersMayLogConcerns;
+            if (!concernByTeachingTier) student = null;
+        }
         if (student == null)
             return BadRequest(new ProblemDetails { Title = "Student not found", Detail = "The selected student does not exist in this branch, or is no longer active.", Status = StatusCodes.Status400BadRequest });
 
@@ -539,7 +556,9 @@ public class WelfareController : ControllerBase
             // Same scope rule as the primary student above. Without this, the linked-students list
             // is a side door onto exactly what the primary check refuses -- a record on the timeline
             // of any child in the branch.
-            validQuery = await _scope.ApplyAsync(validQuery, branchId);
+            // A teaching-tier concern may link other students the author teaches (a fight in their lesson), and
+            // no one else; every other caller links only students they hold pastorally.
+            validQuery = concernByTeachingTier ? await _scope.ApplyAnyTierAsync(validQuery, branchId) : await _scope.ApplyAsync(validQuery, branchId);
             var validCount = await validQuery.CountAsync();
             if (validCount != additionalStudentIds.Count)
                 return BadRequest(new ProblemDetails { Title = "One or more additional students not found", Detail = "Every linked student must exist in this branch and be active.", Status = StatusCodes.Status400BadRequest });
@@ -1127,7 +1146,7 @@ public class WelfareController : ControllerBase
         // query, and nothing on the page said otherwise.
         var scopedClasses = (await _scope.IsUnscopedAsync())
             ? new List<string>()
-            : (await _scope.GetClassNamesAsync(branchId)).ToList();
+            : (await _scope.GetPastoralClassNamesAsync(branchId)).ToList(); // welfare reports stay pastoral (duty rota plan §5.3)
 
         return Ok(new WelfareSummaryDto
         {

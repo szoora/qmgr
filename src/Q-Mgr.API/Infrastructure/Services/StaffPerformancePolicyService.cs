@@ -32,6 +32,15 @@ public interface IStaffPerformancePolicyService
     /// <summary>Every period that touches the given year, defined or derived, in date order.</summary>
     IReadOnlyList<PerformancePeriodDto> PeriodsForYear(StaffPerformancePolicyDto policy, int year);
 
+    /// <summary>
+    /// The closure that covers <paramref name="whenUtc"/>, or null when it is open: the term containing the
+    /// date, or that year's annual roll-up, whichever was closed. The one reader of ClosedPeriods.
+    /// </summary>
+    ClosedPeriodDto? ClosureFor(StaffPerformancePolicyDto policy, DateTime whenUtc);
+
+    /// <summary>The closure of the period with this key, or null.</summary>
+    ClosedPeriodDto? ClosureOf(StaffPerformancePolicyDto policy, string? key);
+
     /// <summary>The band a composite falls in, highest MinScore first.</summary>
     ScoreBandDto BandFor(StaffPerformancePolicyDto policy, decimal composite);
 
@@ -40,6 +49,24 @@ public interface IStaffPerformancePolicyService
 
     /// <summary>The Ugandan default set of parameters, seeded per tenant on first use.</summary>
     IReadOnlyList<SavePerformanceParameterRequest> DefaultParameters();
+
+    /// <summary>Default parameter name → the default parameter it offsets. Linked by id at seed time.</summary>
+    IReadOnlyList<(string From, string To)> DefaultParameterOffsets();
+
+    /// <summary>
+    /// The reminder ladder for one subject (duty rota plan §8.1): the tenant's own when it defined one with
+    /// stages, otherwise the plan's default. Stages ascending. The ONE reader of ReminderLadders.
+    /// </summary>
+    ReminderLadderDto LadderFor(StaffPerformancePolicyDto policy, ReminderSubject subject);
+
+    /// <summary>The plan's default ladders (§4.2, §4.4, §7.2), for the editor's "restore defaults".</summary>
+    IReadOnlyList<ReminderLadderDto> DefaultLadders(StaffPerformancePolicyDto policy);
+
+    /// <summary>The tenant's duty report template, or the default sections (plan §15 decision 1).</summary>
+    IReadOnlyList<DutyReportSectionDto> ReportTemplate(StaffPerformancePolicyDto policy);
+
+    /// <summary>The Uganda lower-secondary subject set a school sees before configuring anything (plan §5.2).</summary>
+    IReadOnlyList<SaveSubjectRequest> DefaultSubjects();
 }
 
 public class StaffPerformancePolicyService : IStaffPerformancePolicyService
@@ -62,6 +89,17 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
             {
                 var policy = JsonSerializer.Deserialize<StaffPerformancePolicyDto>(element.GetRawText()) ?? new StaffPerformancePolicyDto();
                 if (policy.Bands == null || policy.Bands.Count == 0) policy.Bands = new StaffPerformancePolicyDto().Bands;
+                // The MET ceiling is 50; a blob written before the editor enforced it must not lift it.
+                policy.MaxParameterWeightPercent = Math.Clamp(policy.MaxParameterWeightPercent, 10, 50);
+                policy.ClosedPeriods ??= new();
+                // Duty rota plan additions: a blob written before 2026-09-17 has none of these.
+                policy.ReminderLadders ??= new();
+                policy.QuietHours ??= new QuietHoursDto();
+                policy.DutyReportTemplate ??= new();
+                policy.DutyReportDefaults ??= new DutyReportDefaultsDto();
+                policy.TeachingLoadNorms ??= new TeachingLoadNormsDto();
+                if (policy.LessonReminderMinutes is < 0 or > 120) policy.LessonReminderMinutes = 10;
+                if (string.IsNullOrWhiteSpace(policy.MyDayLocalTime)) policy.MyDayLocalTime = "06:30";
                 return policy;
             }
         }
@@ -145,6 +183,17 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
         new() { Key = $"{year}-T3", Name = $"Term 3 {year}", Start = new DateOnly(year, 9, 1), End = new DateOnly(year, 12, 31) },
     };
 
+    public ClosedPeriodDto? ClosureFor(StaffPerformancePolicyDto policy, DateTime whenUtc)
+    {
+        if (policy.ClosedPeriods == null || policy.ClosedPeriods.Count == 0) return null;
+        var date = DateOnly.FromDateTime(whenUtc);
+        return ClosureOf(policy, PeriodFor(policy, date).Key) ?? ClosureOf(policy, date.Year.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    public ClosedPeriodDto? ClosureOf(StaffPerformancePolicyDto policy, string? key)
+        => string.IsNullOrWhiteSpace(key) ? null
+            : policy.ClosedPeriods?.FirstOrDefault(c => string.Equals(c.Key, key.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public ScoreBandDto BandFor(StaffPerformancePolicyDto policy, decimal composite)
     {
         var bands = (policy.Bands ?? new StaffPerformancePolicyDto().Bands).OrderByDescending(b => b.MinScore).ToList();
@@ -153,6 +202,77 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
 
     public StaffGroup GroupFor(string? roleCode)
         => RoleCodes.IsSupportStaff(roleCode) ? StaffGroup.SupportStaff : StaffGroup.TeachingStaff;
+
+    public ReminderLadderDto LadderFor(StaffPerformancePolicyDto policy, ReminderSubject subject)
+    {
+        var own = policy.ReminderLadders?.FirstOrDefault(l => l.Subject == subject && l.Stages is { Count: > 0 });
+        var ladder = own ?? DefaultLadders(policy).First(l => l.Subject == subject);
+        return ladder with { Stages = ladder.Stages.OrderBy(s => s.Stage).ToList() };
+    }
+
+    public IReadOnlyList<ReminderLadderDto> DefaultLadders(StaffPerformancePolicyDto policy)
+    {
+        const int Hour = 60, Day = 24 * 60;
+        return new List<ReminderLadderDto>
+        {
+            // Plan §4.2: before a rota slot. Stage 4 may break quiet hours; SMS only where the tenant and the person allow it.
+            new() { Subject = ReminderSubject.RotaStart, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = -7 * Day, Channels = ReminderChannels.Digest },
+                new() { Stage = 2, OffsetMinutes = -3 * Day, Channels = ReminderChannels.Bell },
+                new() { Stage = 3, OffsetMinutes = -1 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+                new() { Stage = 4, OffsetMinutes = -2 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email | ReminderChannels.Sms, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor, Interruptive = true },
+            } },
+            // Plan §4.4: after a report's due time, escalating to the supervisor and then the heads' digest.
+            new() { Subject = ReminderSubject.ReportDue, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = 0, Channels = ReminderChannels.Bell },
+                new() { Stage = 2, OffsetMinutes = 12 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+                new() { Stage = 3, OffsetMinutes = 24 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor },
+                new() { Stage = 4, OffsetMinutes = 48 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor | ReminderAudience.Heads },
+            } },
+            // Plan §7.2: one in-app, time-sensitive reminder before each lesson; email and SMS off by default.
+            new() { Subject = ReminderSubject.LessonStart, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = -Math.Max(0, policy.LessonReminderMinutes), Channels = ReminderChannels.Bell, Interruptive = true },
+            } },
+            // Plan §6.3: a new clash in a published timetable, once, to the timetable masters.
+            new() { Subject = ReminderSubject.TimetableClash, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableMasters },
+            } },
+            // The single-shot reminder Session duties always had (DutyReminderLeadHours), now a one-stage ladder that
+            // also reaches recorders who are not expected (plan §2's first finding).
+            new() { Subject = ReminderSubject.SessionStart, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = -Math.Max(1, policy.DutyReminderLeadHours) * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+            } },
+            // The register chase: an hour after a duty ends with its register not taken, to its recorders.
+            new() { Subject = ReminderSubject.RegisterChase, Stages = new()
+            {
+                new() { Stage = 1, OffsetMinutes = 1 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
+            } },
+        };
+    }
+
+    public IReadOnlyList<DutyReportSectionDto> ReportTemplate(StaffPerformancePolicyDto policy)
+        => policy.DutyReportTemplate is { Count: > 0 } own ? own : new List<DutyReportSectionDto>
+        {
+            new() { Key = "arrival", Title = "Arrival and assembly", Hint = "Punctuality of learners and staff, how assembly went.", Required = true },
+            new() { Key = "attendance", Title = "Attendance", Hint = "Learners and staff absent or late, and anything unusual." },
+            new() { Key = "meals", Title = "Meals", Hint = "Breakfast, lunch and supper: served on time, enough, any complaints." },
+            new() { Key = "cleanliness", Title = "Cleanliness", Kind = DutyReportSectionKind.Choice, Choices = new() { "Good", "Fair", "Poor" }, Hint = "Classrooms, compound, dormitories, latrines." },
+            new() { Key = "boarding", Title = "Boarding (if any)", Hint = "Prep, roll call, lights out, dormitory issues." },
+            new() { Key = "incidents", Title = "Incidents", Hint = "Link a welfare or discipline record for anything about a child — do not describe children here." },
+            new() { Key = "recommendations", Title = "Recommendations", Hint = "What the administration should act on." },
+        };
+
+    public IReadOnlyList<SaveSubjectRequest> DefaultSubjects() => QMgr.API.Application.Services.SubjectDefaults.Catalogue;
+
+    public IReadOnlyList<(string From, string To)> DefaultParameterOffsets() => new List<(string, string)>
+    {
+        ("Lesson Recovery", "Lesson Attendance")
+    };
 
     public IReadOnlyList<SavePerformanceParameterRequest> DefaultParameters() => new List<SavePerformanceParameterRequest>
     {
@@ -168,5 +288,11 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
         new() { Name = "Professional Development", Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 2, MaxPointsPerEntry = 5, MaxPointsPerPeriod = 20, Weight = 1, Purpose = "Training, mentoring, subject symposiums and professional learning community work.", Color = "#5a9c92", SortOrder = 10 },
         new() { Name = "Conduct", Kind = ParameterKind.Conduct, AppliesTo = StaffGroup.AllStaff, DefaultPoints = -2, MaxPointsPerEntry = 10, MaxPointsPerPeriod = 30, Weight = 1, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A conduct matter, recorded with the subject's right of reply.", Color = "#a3302a", SortOrder = 11 },
         new() { Name = "Wellbeing", Kind = ParameterKind.Wellbeing, AppliesTo = StaffGroup.AllStaff, DefaultPoints = null, MaxPointsPerEntry = 0, Weight = 0, DefaultVisibility = WelfareVisibility.Confidential, Purpose = "A welfare-of-staff matter — a bereavement, a workload concern, a health matter. Recorded to support, never scored.", Color = "#8a7a81", SortOrder = 12 },
+        // Automatic credit (plan §6 item 5, decision 4). Inert until the policy switches SystemAwardsEnabled on,
+        // and refused as a manual entry so nobody mistakes an automatic credit for a colleague's judgement.
+        new() { Name = StaffSystemAwards.WelfareRecordFiled, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member finalises a student welfare record. Pastoral work counts.", Color = "#5a9c92", SortOrder = 20 },
+        new() { Name = StaffSystemAwards.CustomerServed, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when the staff member completes service for a queue ticket.", Color = "#3f8a80", SortOrder = 21 },
+        new() { Name = StaffSystemAwards.VisitorHosted, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 10, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a visitor the staff member hosts is checked in.", Color = "#a8783a", SortOrder = 22 },
+        new() { Name = StaffSystemAwards.PositiveFeedback, Kind = ParameterKind.Contribution, AppliesTo = StaffGroup.AllStaff, DefaultPoints = 1, MaxPointsPerEntry = 1, MaxPointsPerPeriod = 20, Weight = 1, IsSystemSource = true, Purpose = "Credited automatically when a customer the staff member served rates the service 4 or 5.", Color = "#d1a35e", SortOrder = 23 },
     };
 }

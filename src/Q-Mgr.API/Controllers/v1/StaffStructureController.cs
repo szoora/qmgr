@@ -32,7 +32,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/branches/{branchId:guid}/staff/structure")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — every action also carries its own [RequirePermission]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffStructureController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
@@ -108,6 +108,11 @@ public class StaffStructureController : StaffPerformanceControllerBase
         Db.Departments.Add(department);
         await Db.SaveChangesAsync();
 
+        if (department.HeadUserId is { } newHead)
+            await NotifyProfileChangedAsync(newHead, organizationId, branchId, "You are now head of department", $"You have been made head of {department.Name}. Its staff now appear on your staff pages.");
+        if (department.DeputyHeadUserId is { } newDeputy && newDeputy != department.HeadUserId)
+            await NotifyProfileChangedAsync(newDeputy, organizationId, branchId, "You are now deputy head of department", $"You have been made deputy head of {department.Name}. Its staff now appear on your staff pages.");
+
         var names = await BuildNamesAsync(new[] { department.HeadUserId, department.DeputyHeadUserId });
         await Activity.RecordAsync(ActivityActions.StructureDepartmentSaved, nameof(Department), department.Id, null,
             $"Department '{department.Name}' ({department.Code}) created" + (department.HeadUserId.HasValue ? $", head {names[department.HeadUserId]}" : ""),
@@ -153,6 +158,24 @@ public class StaffStructureController : StaffPerformanceControllerBase
 
         if (headChanged && department.HeadUserId.HasValue)
             await NotifyProfileChangedAsync(department.HeadUserId.Value, organizationId, branchId, "You are now head of department", $"You have been made head of {department.Name}. Its staff now appear on your staff pages.");
+        // The deputy's scope changes exactly as the head's does (StaffScopeService resolves both), so they
+        // are told the same way. Until 2026-09-17 a deputy was assigned in silence.
+        if (before.DeputyHeadUserId != department.DeputyHeadUserId && department.DeputyHeadUserId is { } deputy && deputy != department.HeadUserId)
+            await NotifyProfileChangedAsync(deputy, organizationId, branchId, "You are now deputy head of department", $"You have been made deputy head of {department.Name}. Its staff now appear on your staff pages.");
+        // The people a head change affects most: the department's own staff, whose head (and so whose
+        // appraiser, by default) has changed.
+        if (headChanged)
+        {
+            var headName = department.HeadUserId.HasValue ? names[department.HeadUserId] : "nobody";
+            var members = await Db.Users.AsNoTracking()
+                .Where(u => u.OrganizationId == organizationId && u.IsActive && u.DepartmentIds != null && u.DepartmentIds.Contains(department.Id)
+                            && u.Id != department.HeadUserId && u.Id != before.HeadUserId)
+                .Select(u => u.Id)
+                .ToListAsync();
+            foreach (var member in members)
+                await NotifyProfileChangedAsync(member, organizationId, branchId, $"{department.Name} has a new head",
+                    $"The head of {department.Name} is now {headName}.");
+        }
 
         var counts = await MemberCountsAsync(organizationId, new[] { department.Id });
         return Ok(StaffPerformanceMapping.ToDto(department, names, counts.GetValueOrDefault(department.Id)));

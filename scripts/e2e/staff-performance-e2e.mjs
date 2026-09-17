@@ -69,16 +69,26 @@ const AD = await login("e2e.admin.ct@qmgr.local", PW);
 if (!SA || !AD) { bad("superadmin and tenant admin sign in", "two tokens", `${!!SA} ${!!AD}`); process.exit(1); }
 ok("superadmin and tenant admin signed in");
 
-// Revoke the module, prove the gate, re-grant. A module gate that never refuses is not a gate.
-await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/staff-performance?note=E2E%20gate%20check`);
+// Staff performance is part of the Student Welfare module ("Welfare & Performance") since 2026-09-17.
+// Revoke it, prove the gate, re-grant. A module gate that never refuses is not a gate.
+{
+  const mods = (await get(SA, `/api/v1/admin/tenants/${ORG}/modules`)).json ?? [];
+  const welfare = mods.find((m) => m.moduleCode === "student-welfare");
+  eq("ONE MODULE: the welfare module is called 'Welfare & Performance'", welfare?.moduleName, "Welfare & Performance");
+  truthy("ONE MODULE: there is no separate staff-performance module in the catalog", !mods.some((m) => m.moduleCode === "staff-performance"), JSON.stringify(mods.map((m) => m.moduleCode)));
+  const retired = await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/${"staff" + "-performance"}`, { note: "E2E" });
+  truthy("ONE MODULE: granting the retired staff-performance code is refused", retired.status === 400 || retired.status === 404, `${retired.status} ${retired.text}`);
+}
+await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/student-welfare?note=E2E%20gate%20check`);
 {
   const r = await get(AD, `${B}/staff/structure/departments`);
-  eq("without the module, a staff route refuses (403 MODULE_NOT_PURCHASED)", r.status, 403);
-  truthy("…and says which module", (r.text ?? "").includes("MODULE_NOT_PURCHASED"), r.text);
+  eq("without the welfare module, a staff route refuses (403 MODULE_NOT_PURCHASED)", r.status, 403);
+  truthy("…and names the welfare module", (r.text ?? "").includes("MODULE_NOT_PURCHASED") && (r.text ?? "").includes("student-welfare"), r.text);
 }
 {
-  const r = await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/staff-performance`, { note: "E2E" });
-  eq("module granted back as SuperAdmin", r.status, 200);
+  const r = await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/student-welfare`, { note: "E2E" });
+  eq("welfare module granted back as SuperAdmin", r.status, 200);
+  eq("…and the staff route opens again", (await get(AD, `${B}/staff/structure/departments`)).status, 200);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -199,8 +209,16 @@ truthy("policy readable with five bands", policy?.bands?.length === 5, JSON.stri
   const inverted = { ...policy, bands: policy.bands.map((b, i) => ({ ...b, minScore: i * 10 })) };
   eq("bands whose minimums are not descending are refused (400)", (await put(AD, "/api/v1/staff/policy", inverted)).status, 400);
   eq("a teacher cannot write the policy (403)", (await put(U.math1.token, "/api/v1/staff/policy", policy)).status, 403);
-  const r = await put(AD, "/api/v1/staff/policy", { ...policy, recognitionMonthlyBudget: 3, leaderboardMode: "Private", systemAwardsEnabled: false });
+  const r = await put(AD, "/api/v1/staff/policy", { ...policy, recognitionMonthlyBudget: 3, leaderboardMode: "Private", systemAwardsEnabled: false, lateEntryThresholdDays: 14, maxParameterWeightPercent: 50 });
   eq("policy saved: recognition budget 3, leaderboard private", r.status, 200);
+  eq("WEIGHT CAP: a policy lifting the per-parameter cap above 50% is refused (400)", (await put(AD, "/api/v1/staff/policy", { ...policy, maxParameterWeightPercent: 80 })).status, 400);
+}
+{
+  const sys = ["Welfare record filed", "Customer served", "Visitor hosted", "Positive feedback"].map((n) => params.find((p) => p.name === n) ?? null);
+  truthy("AUTOMATIC CREDIT: the four automatic-credit parameters are seeded and marked system-source", sys.every((p) => p && p.isSystemSource), JSON.stringify(sys.map((p) => p?.name)));
+  truthy("LESSON RECOVERY: the seeded recovery parameter offsets Lesson Attendance", P("Lesson Recovery")?.offsetsParameterId === P("Lesson Attendance")?.id, JSON.stringify(P("Lesson Recovery")));
+  const badOffset = await post(AD, "/api/v1/staff/parameters", { name: `E2E Offset bad ${RUN}`, kind: "Contribution", appliesTo: "AllStaff", defaultPoints: 1, maxPointsPerEntry: 1, weight: 0, purpose: "E2E", offsetsParameterId: P("Co-curricular Activity").id });
+  eq("an offset must point at an Attendance or Duty parameter (400)", badOffset.status, 400);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -253,6 +271,18 @@ const rec = (token, body) => post(token, `${B}/staff/records`, { occurredAt: iso
   eq("a TeachingStaff parameter cannot be logged about support staff (400)", r9.status, 400);
   const r10 = await rec(U.hodMath.token, { subjectUserId: U.math1.id, parameterId: P("Conduct").id, points: -2, visibility: "Restricted", description: "E2E head trying to file restricted" });
   eq("RUNG: a head cannot file into Restricted, a rung they cannot read (400)", r10.status, 400);
+  const sysManual = await rec(AD, { subjectUserId: U.math1.id, parameterId: P("Customer served").id, points: 1, description: "E2E hand-written automatic credit" });
+  eq("AUTOMATIC CREDIT: a system-source parameter cannot be logged by hand (400)", sysManual.status, 400);
+  const lateBody = { subjectUserId: U.math1.id, parameterId: P("Co-curricular Activity").id, points: 1, visibility: "Standard", occurredAt: iso(Date.now() - 20 * 86400_000), description: `E2E ${RUN} backdated twenty days` };
+  const late = await post(U.hodMath.token, `${B}/staff/records`, lateBody);
+  truthy("LATE ENTRY: a record dated past the policy threshold is refused until confirmed (409 LATE_ENTRY)", late.status === 409 && late.text.includes("LATE_ENTRY"), `${late.status} ${late.text}`);
+  const lateOk = await post(U.hodMath.token, `${B}/staff/records?acknowledgeLateEntry=true`, lateBody);
+  truthy("LATE ENTRY: confirmed, it is logged and carries the late-entry flag", lateOk.status === 201 && lateOk.json?.isLateEntry === true, `${lateOk.status} ${lateOk.json?.isLateEntry}`);
+  truthy("PURPOSE: a record carries its parameter's purpose", (lateOk.json?.parameterPurpose ?? "").length > 10, lateOk.json?.parameterPurpose);
+  const draftLate = await post(U.hodMath.token, `${B}/staff/records`, { ...lateBody, saveAsDraft: true, description: `E2E ${RUN} backdated draft` });
+  eq("LATE ENTRY: a backdated DRAFT saves without confirmation (201)", draftLate.status, 201);
+  eq("LATE ENTRY: …but finalising it asks (409)", (await post(U.hodMath.token, `${B}/staff/records/${draftLate.json?.id}/finalize`)).status, 409);
+  eq("LATE ENTRY: …and finalises once confirmed (200)", (await post(U.hodMath.token, `${B}/staff/records/${draftLate.json?.id}/finalize?acknowledgeLateEntry=true`)).status, 200);
 }
 const good = await rec(U.hodMath.token, { subjectUserId: U.math1.id, parameterId: P("Co-curricular Activity").id, points: 3, description: `E2E ${RUN} Ran the debate club final` });
 eq("head of Maths logs a Standard contribution about a Maths teacher (201)", good.status, 201);
@@ -265,6 +295,21 @@ eq("…but the other Maths teacher cannot (404)", (await get(U.math2.token, `${B
 {
   const scored = await rec(AD, { subjectUserId: U.math1.id, parameterId: P("Wellbeing").id, points: 5, description: `E2E ${RUN} wellbeing with points` });
   eq("Wellbeing: a record carrying points is refused with a reason (400)", scored.status, 400);
+}
+const confByDos = await rec(U.dos.token, { subjectUserId: U.math1.id, parameterId: P("Conduct").id, points: -1, description: `E2E ${RUN} CONFWORD late to invigilation twice` });
+truthy("the Director of Studies files a Conduct record, Confidential by default", confByDos.status === 201 && confByDos.json?.visibility === "Confidential", `${confByDos.status} ${confByDos.json?.visibility}`);
+eq("CONFIDENTIAL: the head of department, who did not write it and holds no confidential rung, gets 404", (await get(U.hodMath.token, `${B}/staff/records/${confByDos.json?.id}`)).status, 404);
+{
+  const hodTl = (await get(U.hodMath.token, `${B}/staff/members/${U.math1.id}/timeline`)).json;
+  truthy("CONFIDENTIAL: …and it is absent from the head's view of the timeline", hodTl && !JSON.stringify(hodTl).includes("CONFWORD"));
+  // The decision (2026-09-17): the subject reads a Confidential record IN FULL — right of reply and
+  // subject access both need the content — while the notification about it says only that it exists.
+  const own = await get(U.math1.token, `${B}/staff/records/${confByDos.json?.id}`);
+  truthy("CONFIDENTIAL: the subject reads it in full on their own file (description included)", own.status === 200 && (own.json?.description ?? "").includes("CONFWORD"), `${own.status} ${own.json?.description}`);
+  const told = (await get(U.math1.token, "/api/v1/notifications?eventKey=staff.record-logged&limit=50")).json ?? [];
+  const aboutIt = told.filter((n) => /confidential conduct record/i.test(n.message ?? ""));
+  truthy("CONFIDENTIAL: the subject is notified that a confidential record exists", aboutIt.length > 0, JSON.stringify(told.slice(0, 3).map((n) => n.message)));
+  truthy("CONFIDENTIAL: …and no notification carries its content", !told.some((n) => `${n.title} ${n.message}`.includes("CONFWORD")), JSON.stringify(aboutIt.slice(0, 2)));
 }
 const wb = await rec(AD, { subjectUserId: U.math1.id, parameterId: P("Wellbeing").id, visibility: "Standard", description: `E2E ${RUN} Bereavement, needs cover next week` });
 truthy("Wellbeing: logged unscored, visibility forced to Confidential", wb.status === 201 && wb.json?.points == null && wb.json?.visibility === "Confidential", `${wb.status} ${wb.text}`);
@@ -344,6 +389,18 @@ eq("RESTRICTED: the head of department cannot read it (404)", (await get(U.hodMa
     eq("EVIDENCE: the other Maths teacher gets 404", (await fetch(API + path, { headers: { Authorization: `Bearer ${U.math2.token}` } })).status, 404);
     eq("EVIDENCE: the signed link works on its own", (await fetch(url.replace(/^https?:\/\/[^/]+/, API))).status, 200);
   }
+  if (url) {
+    const pathA = new URL(url).pathname;
+    eq("EVIDENCE: the head who FILED the Confidential observation fetches its evidence (author, 200)", (await fetch(API + pathA, { headers: { Authorization: `Bearer ${U.hodMath.token}` } })).status, 200);
+  }
+  const fd3 = new FormData(); fd3.append("file", new Blob([png], { type: "image/png" }), "e2e-conf-evidence.png");
+  const up3 = await call(U.dos.token, "POST", `${B}/staff/records/${confByDos.json?.id}/attachments`, fd3);
+  eq("evidence uploads to the DoS's Confidential conduct record (201)", up3.status, 201);
+  if (up3.json?.fileUrl) {
+    const p3 = new URL(up3.json.fileUrl).pathname;
+    eq("EVIDENCE: the non-author head gets 404 on Confidential evidence", (await fetch(API + p3, { headers: { Authorization: `Bearer ${U.hodMath.token}` } })).status, 404);
+    eq("EVIDENCE: its subject gets 200", (await fetch(API + p3, { headers: { Authorization: `Bearer ${U.math1.token}` } })).status, 200);
+  }
   const fd2 = new FormData(); fd2.append("file", new Blob(["<html><script>alert(1)</script></html>"], { type: "text/html" }), "x.html");
   eq("EVIDENCE: an HTML file is refused (400/415)", [400, 415].includes((await call(AD, "POST", `${B}/staff/records/${obs.json?.id}/attachments`, fd2)).status), true);
 }
@@ -403,6 +460,15 @@ eq("DELEGATION: a teacher who is not the recorder gets 404 on the register", (aw
   const finalFor = async (uid) => ((await get(AD, `${B}/staff/records?subjectUserId=${uid}&pageSize=200&status=Final`)).json?.items ?? []).filter((r) => r.dutyId === D);
   const counts = await Promise.all([U.dos, U.math1, U.math2, U.support].map(async (u) => (await finalFor(u.id)).length));
   eq("RACE: …and each expected person has exactly ONE final record for the duty", counts.join(","), "1,1,1,1");
+  // The decision (2026-09-17): saving records the marks at once; the register stays open, still counts
+  // as not taken, and its recorder's to-do says how far it got.
+  const openReg = (await get(U.lang1.token, `${B}/staff/duties/${D}/register`)).json;
+  truthy("SAVE WITHOUT CLOSING: the marks are recorded and the register is still open", openReg?.duty?.registerClosedAt == null && (openReg?.rows ?? []).filter((r) => r.outcome).length === 4, JSON.stringify({ closed: openReg?.duty?.registerClosedAt, marked: (openReg?.rows ?? []).filter((r) => r.outcome).length }));
+  const recorderPortal = (await get(U.lang1.token, "/api/v1/staff/portal")).json;
+  const due = (recorderPortal?.openItems ?? []).find((i) => i.kind === "register-due" && i.title === dutyBody().title);
+  truthy("SAVE WITHOUT CLOSING: the recorder's to-do still lists it, saying four are marked and recorded", !!due && /4 marked and recorded/.test(due.detail ?? ""), JSON.stringify(due));
+  const markedToldAbout = (await get(U.math2.token, "/api/v1/notifications?eventKey=staff.record-logged&limit=50")).json ?? [];
+  truthy("SAVE WITHOUT CLOSING: a person marked is told on save, not on close", markedToldAbout.some((n) => (n.message ?? "").includes(dutyBody().title)), JSON.stringify(markedToldAbout.slice(0, 2).map((n) => n.message)));
   const dosRec = (await finalFor(U.dos.id))[0];
   truthy("DELEGATION: a teacher marked the Director of Studies absent, with negative points", dosRec?.outcome === "Absent" && (dosRec?.points ?? 0) < 0, JSON.stringify(dosRec));
   const closed = await post(U.lang1.token, `${B}/staff/duties/${D}/register`, { close: true, entries: entries.map((e) => (e.userId === U.dos.id ? { ...e, outcome: "Present", note: "E2E arrived late, apology accepted" } : e)) });
@@ -427,6 +493,24 @@ eq("DELEGATION: a teacher who is not the recorder gets 404 on the register", (aw
   await rec(AD, { subjectUserId: U.math2.id, parameterId: P("Lesson Attendance").id, outcome: "Recovered", description: `E2E ${RUN} lesson recovered on Saturday` });
   const after = (await get(AD, `${B}/staff/members/${U.math2.id}/score`)).json;
   truthy("RECOVERY: a recovered lesson raises the lesson attendance score", (la(after)?.score ?? 0) > (la(before)?.score ?? 0), `${la(before)?.score} → ${la(after)?.score}`);
+
+  // …and so does a record on the seeded Lesson Recovery parameter, which offsets Lesson Attendance.
+  // Until 2026-09-17 its purpose said so and scoring ignored it.
+  const lesson2 = await post(AD, `${B}/staff/duties`, dutyBody({ parameterId: P("Lesson Attendance").id, title: `E2E ${RUN} S4 maths lesson`, expectedUserIds: [U.math2.id], recorderUserIds: [U.hodMath.id] }));
+  await post(U.hodMath.token, `${B}/staff/duties/${lesson2.json?.id}/register`, { close: true, entries: [{ userId: U.math2.id, outcome: "Absent" }] });
+  const before2 = (await get(AD, `${B}/staff/members/${U.math2.id}/score`)).json;
+  const viaParam = await rec(AD, { subjectUserId: U.math2.id, parameterId: P("Lesson Recovery").id, points: 1, description: `E2E ${RUN} S4 lesson recovered after school` });
+  eq("a Lesson Recovery record is logged (201)", viaParam.status, 201);
+  const after2 = (await get(AD, `${B}/staff/members/${U.math2.id}/score`)).json;
+  truthy("RECOVERY OFFSET: a Lesson Recovery record raises the Lesson Attendance score", (la(after2)?.score ?? 0) > (la(before2)?.score ?? 0) && (la(after2)?.recovered ?? 0) > (la(before2)?.recovered ?? 0), `${la(before2)?.score}/${la(before2)?.recovered} → ${la(after2)?.score}/${la(after2)?.recovered}`);
+
+  // The register writes a line on each marked person's OWN trail.
+  const trail = (await get(U.math2.token, "/api/v1/staff/portal/activity?pageSize=200")).json;
+  truthy("REGISTER TRAIL: the person marked sees the register line on their own file", (trail?.items ?? []).some((e) => e.action === "staff.duty.register-submitted" && /marked Absent/.test(e.summary)), JSON.stringify((trail?.items ?? []).slice(0, 4).map((e) => e.summary)));
+
+  // The observation logged in 14.4 had a feedback session an hour ahead: it is on the roster for both.
+  const fbDuties = (await get(U.math1.token, `${B}/staff/duties?from=${hoursFromNow(-1)}&to=${hoursFromNow(3)}`)).json ?? [];
+  truthy("OBSERVATION FEEDBACK: the feedback session is scheduled as a duty the observed teacher is expected at", fbDuties.some((d) => d.title === "Lesson observation feedback" && d.isExpectedOfMe), JSON.stringify(fbDuties.map((d) => d.title)));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -481,6 +565,7 @@ const PERIOD = `${new Date().getFullYear()}-T${new Date().getMonth() < 4 ? 1 : n
   const targets = await put(U.hodMath.token, `${B}/staff/appraisals/${A}/targets`, { targets: [{ text: "E2E observe two lessons", achieved: false }, { text: "E2E run revision clinic" }] });
   eq("the appraiser sets targets", targets.status, 200);
   eq("the appraiser cannot submit the subject's self-assessment (404)", (await post(U.hodMath.token, `${B}/staff/appraisals/${A}/self`, { selfRating: 5, ratings: [] })).status, 404);
+  eq("SELF-ASSESSMENT: a per-parameter rating outside 1–5 is refused (400)", (await post(T.token, `${B}/staff/appraisals/${A}/self`, { selfRating: 4, ratings: [{ parameterId: P("Lesson Observation").id, rating: 9 }] })).status, 400);
   const self = await post(T.token, `${B}/staff/appraisals/${A}/self`, { selfRating: 4, comments: "E2E I ran the debate club", ratings: [{ parameterId: P("Lesson Observation").id, rating: 4 }] });
   eq("the subject submits a self-assessment", self.status, 200);
   eq("…moving it to Appraiser review", self.json?.stage, "AppraiserReview");
@@ -488,6 +573,12 @@ const PERIOD = `${new Date().getFullYear()}-T${new Date().getMonth() < 4 ? 1 : n
   const review = await post(U.hodMath.token, `${B}/staff/appraisals/${A}/review`, { rating: 4, comments: "E2E solid term", strengths: "E2E pacing", developmentAreas: "E2E assessment", supportPlan: [{ gap: "E2E formative assessment", support: "E2E peer coaching", byWhen: "2026-12-01" }], nextTargets: [{ text: "E2E next term target" }] });
   eq("the appraiser reviews and rates", review.status, 200);
   eq("…moving it to Moderation", review.json?.stage, "Moderation");
+  {
+    const asMod = (await get(U.dos.token, `${B}/staff/appraisals/${A}`)).json;
+    truthy("MODERATION VIEW: the moderator sees this appraiser's ratings against the branch's (five buckets each)", asMod?.appraiserRatingCounts?.length === 5 && asMod?.schoolRatingCounts?.length === 5 && asMod.appraiserRatingCounts.reduce((a, b) => a + b, 0) >= 1, JSON.stringify({ a: asMod?.appraiserRatingCounts, s: asMod?.schoolRatingCounts }));
+    const asSubject = (await get(T.token, `${B}/staff/appraisals/${A}`)).json;
+    eq("MODERATION VIEW: …which the subject does not get", (asSubject?.appraiserRatingCounts ?? []).length, 0);
+  }
   eq("MODERATION: a different final rating without a reason is refused (400)", (await post(U.dos.token, `${B}/staff/appraisals/${A}/moderate`, { finalRating: 3, signNow: true })).status, 400);
   const sign = await post(U.dos.token, `${B}/staff/appraisals/${A}/moderate`, { finalRating: 4, signNow: true });
   eq("the Director of Studies moderates and signs", sign.status, 200);
@@ -506,6 +597,24 @@ const PERIOD = `${new Date().getFullYear()}-T${new Date().getMonth() < 4 ? 1 : n
   eq("an appealed appraisal cannot be signed directly (400/409)", [400, 409].includes((await post(U.dos.token, `${B}/staff/appraisals/${A}/sign`)).status), true);
   const remod = await post(U.dos.token, `${B}/staff/appraisals/${A}/moderate`, { finalRating: 5, reason: "E2E appeal upheld", signNow: true });
   truthy("the appeal is moderated and re-signed", remod.status === 200 && remod.json?.stage === "Signed" && remod.json?.finalRating === 5, `${remod.status} ${remod.json?.stage}`);
+
+  // ANNUAL ROLL-UP: the year's termly appraisals are shown on the annual one, and it is not signed while
+  // one of them is unsigned. A second termly appraisal (Term 1, left open) is the unsigned one.
+  const YEAR = PERIOD.slice(0, 4);
+  const T1 = `${YEAR}-T1`;
+  if (T1 !== PERIOD) {
+    await post(U.dos.token, `${B}/staff/appraisals/open`, { periodKey: T1, subjectUserIds: [T.id] });
+    const opened = await post(U.dos.token, `${B}/staff/appraisals/open`, { periodKey: YEAR, subjectUserIds: [T.id] });
+    const annual = (opened.json ?? [])[0] ?? ((await get(U.dos.token, `${B}/staff/appraisals/board?period=${YEAR}`)).json?.items ?? []).find((a) => a.subjectUserId === T.id);
+    const ann = (await get(U.dos.token, `${B}/staff/appraisals/${annual?.id}`)).json;
+    truthy("ANNUAL: the annual appraisal lists that year's termly appraisals for the person", ann?.isAnnual === true && (ann?.termlyRollup ?? []).some((t) => t.periodKey === PERIOD && t.finalRating === 5) && (ann?.termlyRollup ?? []).some((t) => t.periodKey === T1 && t.finalRating == null), JSON.stringify(ann?.termlyRollup));
+    eq("ANNUAL: …with the signed ones averaged", ann?.termlyAverage, 5);
+    await put(U.hodMath.token, `${B}/staff/appraisals/${annual?.id}/targets`, { targets: [{ text: "E2E annual target" }] });
+    await post(T.token, `${B}/staff/appraisals/${annual?.id}/self`, { selfRating: 4, ratings: [] });
+    await post(U.hodMath.token, `${B}/staff/appraisals/${annual?.id}/review`, { rating: 5 });
+    const blocked = await post(U.dos.token, `${B}/staff/appraisals/${annual?.id}/moderate`, { finalRating: 5, signNow: true });
+    truthy("ANNUAL: signing is refused while a termly appraisal is unsigned, naming the term (409)", blocked.status === 409 && blocked.text.includes(T1), `${blocked.status} ${blocked.text}`);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -527,6 +636,19 @@ hdr("14.9 REPORTS, ACTIVITY, PORTAL, NOTIFICATIONS");
   const mineAct = (await get(U.math1.token, "/api/v1/staff/portal/activity?pageSize=200")).json;
   truthy("SUBJECT ACCESS: a teacher's own trail includes who viewed their timeline", (mineAct?.items ?? []).some((e) => e.action === "staff.timeline.viewed"), JSON.stringify((mineAct?.items ?? []).map((e) => e.action).slice(0, 10)));
   truthy("the trail records a truncated address, not a full one", (mineAct?.items ?? []).every((e) => !e.ipAddress || /\.0$|::$/.test(e.ipAddress)), JSON.stringify((mineAct?.items ?? []).map((e) => e.ipAddress).slice(0, 5)));
+
+  // THE LEAK FOUND BY THE PLAN AUDIT (2026-09-17): the subject's own trail carried "Restricted record
+  // created / viewed for <me>", telling them an investigation exists. The admin read the Restricted record
+  // in 14.4, so a RecordViewed event about math1 at the Restricted rung exists.
+  const adminAct = (await get(AD, `${B}/staff/activity?userId=${U.math1.id}&pageSize=200`)).json;
+  truthy("the administrator's log does hold Restricted events about the Maths teacher (the precondition)", (adminAct?.items ?? []).some((e) => e.visibility === "Restricted"), JSON.stringify((adminAct?.items ?? []).map((e) => e.visibility).slice(0, 8)));
+  truthy("LEAK: the subject's portal trail carries no Restricted event", !(mineAct?.items ?? []).some((e) => e.visibility === "Restricted" || /^Restricted record/.test(e.summary)), JSON.stringify((mineAct?.items ?? []).filter((e) => /Restricted/.test(e.summary)).map((e) => e.summary)));
+  const selfTl = (await get(U.math1.token, `${B}/staff/members/${U.math1.id}/timeline`)).json;
+  truthy("LEAK: …nor does the activity layer of their own timeline", !(selfTl?.activity ?? []).some((e) => e.visibility === "Restricted" || /^Restricted record/.test(e.summary)));
+  const selfExport = await get(U.math1.token, "/api/v1/staff/portal/export");
+  truthy("LEAK: …nor their exported file", selfExport.status === 200 && !(selfExport.json?.activity ?? []).some((e) => e.visibility === "Restricted" || /^Restricted record/.test(e.summary)), selfExport.status);
+  const aaAct = (await get(U.aa.token, `${B}/staff/activity?pageSize=200`)).json;
+  truthy("LEAK: no appraisal event in the log states a rating or a score (read as the Academic Assistant, no confidential rung)", !(aaAct?.items ?? []).some((e) => e.entityType === "StaffAppraisal" && /rating \d|score \d/i.test(e.summary)), JSON.stringify((aaAct?.items ?? []).filter((e) => e.entityType === "StaffAppraisal").map((e) => e.summary).slice(0, 4)));
 }
 for (const key of ["dos", "aa", "hodMath", "hodEmpty", "math1", "lang1", "support"]) {
   const r = await get(U[key].token, "/api/v1/staff/portal");
@@ -590,6 +712,10 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
     const dir = (await get(t, `${B}/staff/structure/members`)).json;
     const ids = (dir?.items ?? []).map((m) => m.userId);
     truthy("DIRECT REPORTS: the line manager sees their report (support staff) and not the Maths teachers", ids.includes(U.support.id) && !ids.includes(U.math1.id), JSON.stringify(ids.length));
+    const told = (await get(t, "/api/v1/notifications?eventKey=staff.profile-changed&limit=20")).json ?? [];
+    truthy("ROLE CHANGE: the person is told (staff.profile-changed, 'Your role changed')", told.some((n) => n.title === "Your role changed"), JSON.stringify(told.map((n) => n.title).slice(0, 3)));
+    const logged = (await get(AD, `${B}/staff/activity?userId=${U.aa.id}&action=staff.structure.role-changed&pageSize=20`)).json;
+    truthy("ROLE CHANGE: …and the change is in the activity log, from what to what", (logged?.items ?? []).some((e) => /role changed from Academic Assistant to E2E Line Manager/i.test(e.summary)), JSON.stringify((logged?.items ?? []).map((e) => e.summary).slice(0, 2)));
   } else bad("move the Academic Assistant onto the custom role", "200", `${r.status} ${r.text}`);
   await put(AD, `/api/v1/users/${U.aa.id}`, { firstName: U.aa.first, lastName: U.aa.last, email: `${U.aa.username}@qmgr.local`, roleId: roleId("academic-assistant"), assignedBranchId: BRANCH, isActive: true });
   if (role.json?.id) await del(AD, `/api/v1/roles/${role.json.id}`);
@@ -603,6 +729,283 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
   truthy("SIGN-OUT: the refresh token no longer works", rr.status === 401 || rr.status === 400, rr.status);
   const trail = (await get(t, "/api/v1/staff/portal/activity?pageSize=50")).json;
   truthy("SIGN-OUT: signed-in and signed-out are both in the person's own trail", (trail?.items ?? []).some((e) => e.action === "auth.signed-in") && (trail?.items ?? []).some((e) => e.action === "auth.signed-out"), JSON.stringify((trail?.items ?? []).map((e) => e.action)));
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.11 CLOSING A PERIOD — refused with unsigned appraisals unless overridden, and a closed period takes no new evidence");
+{
+  // A past period, so closing it cannot disturb anything else this suite does.
+  const LAST = `${new Date().getFullYear() - 1}-T2`;
+  const midLast = iso(new Date(new Date().getFullYear() - 1, 5, 15, 10));
+  const close = (t, body) => post(t, `/api/v1/staff/policy/periods/${LAST}/close`, body ?? {});
+  const reopen = (t, body) => post(t, `/api/v1/staff/policy/periods/${LAST}/reopen`, body ?? {});
+  await reopen(U.dos.token, { reason: "E2E clean slate" }); // idempotent setup: ignore "not closed"
+
+  eq("a teacher cannot close a period (403)", (await close(U.math1.token)).status, 403);
+  eq("a head of department cannot close a period (403)", (await close(U.hodMath.token)).status, 403);
+
+  // An unsigned appraisal in that period makes the override necessary.
+  await post(U.dos.token, `${B}/staff/appraisals/open`, { periodKey: LAST, subjectUserIds: [U.lang1.id] });
+  const status = (await get(U.dos.token, `/api/v1/staff/policy/periods/${LAST}`)).json;
+  truthy("PERIOD STATUS: the period reports its unsigned appraisals", (status?.unsignedAppraisals ?? 0) >= 1 && status?.isClosed === false, JSON.stringify(status));
+  const refused = await close(U.dos.token, {});
+  truthy("CLOSE: refused while an appraisal is unsigned and no reason is given (409, count named)", refused.status === 409 && /not yet signed/i.test(refused.text), `${refused.status} ${refused.text}`);
+  eq("CLOSE: a reason under ten characters does not count as an override (409)", (await close(U.dos.token, { overrideReason: "because" })).status, 409);
+
+  const racers = await Promise.all([1, 2, 3].map(() => close(U.dos.token, { overrideReason: `E2E ${RUN} closing with the Languages appraisal carried over` })));
+  const codes = racers.map((r) => r.status).sort();
+  truthy("RACE: three simultaneous closes → exactly one 200, the rest 409, never a 500", codes.filter((c) => c === 200).length === 1 && codes.every((c) => c === 200 || c === 409), codes.join(","));
+  const closedStatus = racers.find((r) => r.status === 200)?.json;
+  truthy("CLOSE: the closure carries who, the override reason and the unsigned count", closedStatus?.isClosed && closedStatus?.closure?.overrideReason?.includes(RUN) && closedStatus?.closure?.unsignedAppraisalsAtClose >= 1 && !!closedStatus?.closure?.closedByName, JSON.stringify(closedStatus?.closure));
+  const pol = (await get(AD, "/api/v1/staff/policy")).json;
+  eq("CLOSE: the closure is recorded once in the policy", (pol?.closedPeriods ?? []).filter((c) => c.key === LAST).length, 1);
+  eq("CLOSE: saving the policy editor keeps the closure", ((await put(AD, "/api/v1/staff/policy", { ...pol, closedPeriods: [] })).json?.closedPeriods ?? []).filter((c) => c.key === LAST).length, 1);
+
+  const inClosed = { subjectUserId: U.math1.id, parameterId: P("Co-curricular Activity").id, points: 1, visibility: "Standard", occurredAt: midLast, description: `E2E ${RUN} dated in a closed period` };
+  const blocked = await post(AD, `${B}/staff/records?acknowledgeLateEntry=true`, inClosed);
+  truthy("CLOSED: a scored record dated in the closed period is refused (409, period named)", blocked.status === 409 && /is closed/i.test(blocked.text), `${blocked.status} ${blocked.text}`);
+  const wellbeing = await post(AD, `${B}/staff/records?acknowledgeLateEntry=true`, { ...inClosed, parameterId: P("Wellbeing").id, points: null, description: `E2E ${RUN} wellbeing note dated in a closed period` });
+  eq("CLOSED: a Wellbeing record still goes through — support never waits for a reopen (201)", wellbeing.status, 201);
+  const openInClosed = await post(U.dos.token, `${B}/staff/appraisals/open`, { periodKey: LAST, subjectUserIds: [U.math2.id] });
+  eq("CLOSED: no appraisal opens in a closed period (409)", openInClosed.status, 409);
+  const lastDuty = await post(AD, `${B}/staff/duties`, dutyBody({ title: `E2E ${RUN} meeting in a closed period`, startsAt: midLast, endsAt: iso(new Date(new Date(midLast).getTime() + 3600_000)), recorderUserIds: [U.lang1.id] }));
+  if (lastDuty.status === 201) {
+    const reg = await post(U.lang1.token, `${B}/staff/duties/${lastDuty.json.id}/register`, { close: true, entries: [{ userId: U.math1.id, outcome: "Present" }] });
+    eq("CLOSED: a register for a duty in the closed period is refused (409)", reg.status, 409);
+  } else bad("create a duty dated in the closed period", "201", `${lastDuty.status} ${lastDuty.text}`);
+  const board = (await get(U.dos.token, `${B}/staff/appraisals/board?period=${LAST}`)).json;
+  truthy("BOARD: the appraisal board says the period is closed", board?.periodStatus?.isClosed === true, JSON.stringify(board?.periodStatus));
+
+  eq("REOPEN: a reason is required (400)", (await reopen(U.dos.token, { reason: "" })).status, 400);
+  eq("REOPEN: the Director of Studies reopens it with a reason", (await reopen(U.dos.token, { reason: `E2E ${RUN} reopened for the suite` })).status, 200);
+  const act = (await get(AD, `${B}/staff/activity?action=staff.period.closed&pageSize=5`)).json;
+  truthy("ACTIVITY: the close is in the log with the override noted", (act?.items ?? []).some((e) => /override recorded/.test(e.summary)), JSON.stringify((act?.items ?? []).map((e) => e.summary).slice(0, 2)));
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.12 LEADERBOARD MODES on the portal — private by default, department averages, public top-N");
+{
+  const pol = (await get(AD, "/api/v1/staff/policy")).json;
+  const portal = async () => (await get(U.math1.token, "/api/v1/staff/portal")).json;
+  await put(AD, "/api/v1/staff/policy", { ...pol, leaderboardMode: "Private" });
+  let p = await portal();
+  truthy("PRIVATE: no department board and no names on anyone's portal", (p?.departmentBoard ?? []).length === 0 && (p?.leaderboard ?? []).length === 0, JSON.stringify({ d: p?.departmentBoard?.length, l: p?.leaderboard?.length }));
+  await put(AD, "/api/v1/staff/policy", { ...pol, leaderboardMode: "Department" });
+  p = await portal();
+  truthy("DEPARTMENT: department averages appear on the portal, and still no individual names", (p?.departmentBoard ?? []).length > 0 && (p?.leaderboard ?? []).length === 0, JSON.stringify(p?.departmentBoard));
+  truthy("DEPARTMENT: only departments of three or more are shown (an average of one is a person)", (p?.departmentBoard ?? []).every((d) => d.staffCount >= 3), JSON.stringify((p?.departmentBoard ?? []).map((d) => d.staffCount)));
+  await put(AD, "/api/v1/staff/policy", { ...pol, leaderboardMode: "Public", leaderboardTopN: 3 });
+  p = await portal();
+  truthy("PUBLIC: a top-N board of names appears on a teacher's portal, capped at N", (p?.leaderboard ?? []).length > 0 && p.leaderboard.length <= 3, JSON.stringify((p?.leaderboard ?? []).map((r) => r.rank)));
+  await put(AD, "/api/v1/staff/policy", { ...pol, leaderboardMode: "Private" });
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.13 EXPORTS AND PUBLISHES are logged");
+{
+  const exp = (t, body) => post(t, `${B}/staff/activity/exports`, body);
+  eq("a teacher cannot log a reports export (403)", (await exp(U.math1.token, { kind: "reports", format: "csv" })).status, 403);
+  eq("an unknown export kind is refused (400)", (await exp(U.dos.token, { kind: "everything" })).status, 400);
+  eq("SCOPE: the head of Maths cannot log an export of the Languages teacher's timeline (404)", (await exp(U.hodMath.token, { kind: "timeline", subjectUserId: U.lang1.id, format: "pdf" })).status, 404);
+  eq("the head logs an export of a Maths teacher's timeline (204)", (await exp(U.hodMath.token, { kind: "timeline", subjectUserId: U.math1.id, format: "csv", rowCount: 12 })).status, 204);
+  eq("the Director of Studies logs a Publish to Library of the reports (204)", (await exp(U.dos.token, { kind: "reports", published: true, documentName: `E2E ${RUN} Staff report`, periodKey: PERIOD })).status, 204);
+  const trail = (await get(U.math1.token, "/api/v1/staff/portal/activity?pageSize=50")).json;
+  truthy("SUBJECT ACCESS: the teacher sees that their timeline was exported, by whom and as what", (trail?.items ?? []).some((e) => e.action === "staff.timeline.exported" && /as CSV \(12 row/.test(e.summary)), JSON.stringify((trail?.items ?? []).map((e) => e.summary).slice(0, 4)));
+  const log = (await get(AD, `${B}/staff/activity?action=staff.report.published&pageSize=5`)).json;
+  truthy("the publish is in the branch log with the document name", (log?.items ?? []).some((e) => e.summary.includes(`E2E ${RUN} Staff report`)), JSON.stringify((log?.items ?? []).map((e) => e.summary)));
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.14 OBSERVER PAIRS — two observers on one lesson, shown only to the confidential rung");
+{
+  const second = await rec(U.dos.token, { subjectUserId: U.math1.id, parameterId: P("Lesson Observation").id, rating: 1, occurredAt: obs.json?.occurredAt, description: `E2E ${RUN} second observer on the S2 algebra lesson` });
+  eq("the Director of Studies logs a second observation of the same lesson", second.status, 201);
+  const dosR = (await get(U.dos.token, `${B}/staff/reports?period=${PERIOD}`)).json;
+  const pair = (dosR?.observationPairs ?? []).find((x) => x.subjectUserId === U.math1.id && x.ratings.some((r) => r.observerUserId === U.dos.id) && x.ratings.some((r) => r.observerUserId === U.hodMath.id));
+  truthy("PAIRS: the report shows the pair side by side with its spread", !!pair && pair.spread >= 2, JSON.stringify(pair ?? (dosR?.observationPairs ?? []).slice(0, 2)));
+  const aaR = (await get(U.aa.token, `${B}/staff/reports?period=${PERIOD}`)).json;
+  eq("PAIRS: the Academic Assistant (no confidential rung) gets no pairs", (aaR?.observationPairs ?? []).length, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.15 AUTOMATIC CREDIT — the person who served, positive feedback, off by default");
+{
+  const pol = (await get(AD, "/api/v1/staff/policy")).json;
+  // Serving a ticket needs the queue module and a counter. The dev tenant has neither, so this section
+  // grants the module and makes a counter for itself, and puts both back the way it found them.
+  const tenantModules = (await get(SA, `/api/v1/admin/tenants/${ORG}/modules`)).json ?? [];
+  const queueWasActive = tenantModules.some((m) => m.moduleCode === "core-queue" && m.purchased && m.status === "Active");
+  if (!queueWasActive) await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/core-queue`, { note: "E2E automatic credit" });
+  const services = (await get(AD, `/api/v1/branches/${BRANCH}/service-types`)).json ?? [];
+  const svc = (Array.isArray(services) ? services : services.items ?? []).find((s) => s.isActive !== false);
+  let counters = (await get(AD, `/api/v1/branches/${BRANCH}/counters`)).json ?? [];
+  let madeCounter = null;
+  if (svc && !(Array.isArray(counters) ? counters : []).some((c) => c.isActive !== false)) {
+    const made = await post(AD, `/api/v1/branches/${BRANCH}/counters`, { counterNumber: `E2E${RUN}`.slice(0, 10).toUpperCase(), displayName: `E2E ${RUN} counter`, serviceTypeIds: [svc.id], isEnabled: true });
+    if (made.status < 300) madeCounter = made.json;
+    else bad("create a counter to serve at", "201", `${made.status} ${made.text}`);
+    counters = (await get(AD, `/api/v1/branches/${BRANCH}/counters`)).json ?? [];
+  }
+  const ctr = madeCounter ?? (Array.isArray(counters) ? counters : counters.items ?? []).find((c) => c.isActive !== false);
+  if (!svc || !ctr) {
+    bad("AUTOMATIC CREDIT: the tenant has a service type and a counter to serve a ticket at", "both", `${!!svc} ${!!ctr}`);
+  } else {
+    const credited = async (name) => ((await get(AD, "/api/v1/staff/portal/records?pageSize=100")).json?.items ?? []).filter((r) => r.parameterName === name && r.description.includes(RUN)).length;
+    const serve = async (label) => {
+      const tok = await post(AD, `/api/v1/branches/${BRANCH}/tokens`, { serviceTypeCode: svc.code, customer: { name: `E2E ${RUN} ${label}` }, externalReference: `E2E ${RUN} ${label}` });
+      if (tok.status >= 300) return { error: `${tok.status} ${tok.text}` };
+      const called = await post(AD, `/api/v1/counters/${ctr.id}/call/${tok.json.id}`);
+      if (called.status >= 300) return { error: `call ${called.status} ${called.text}` };
+      const done = await post(AD, `/api/v1/counters/${ctr.id}/complete`, { tokenId: tok.json.id, notes: `E2E ${RUN}` });
+      if (done.status >= 300) return { error: `complete ${done.status} ${done.text}` };
+      return { token: tok.json, display: tok.json.displayNumber };
+    };
+
+    await put(AD, "/api/v1/staff/policy", { ...pol, systemAwardsEnabled: false });
+    const off = await serve("off");
+    if (off.error) bad("AUTOMATIC CREDIT: serve a ticket end to end", "ok", off.error);
+    const offCount = ((await get(AD, "/api/v1/staff/portal/records?pageSize=100")).json?.items ?? []).filter((r) => r.parameterName === "Customer served" && r.description.includes(off.display ?? "~")).length;
+    eq("OFF BY DEFAULT: serving a ticket credits nothing while automatic credit is off", offCount, 0);
+
+    await put(AD, "/api/v1/staff/policy", { ...pol, systemAwardsEnabled: true });
+    const on = await serve("on");
+    if (on.error) bad("AUTOMATIC CREDIT: serve a second ticket", "ok", on.error);
+    else {
+      const recs = ((await get(AD, "/api/v1/staff/portal/records?pageSize=100")).json?.items ?? []);
+      truthy("SERVED: completing a ticket credits the person who completed it ('Customer served', automatic)", recs.some((r) => r.parameterName === "Customer served" && r.source === "System" && r.description.includes(on.display)), JSON.stringify(recs.filter((r) => r.source === "System").map((r) => r.description).slice(0, 3)));
+      const fb = await call(null, "POST", `/api/v1/branches/${BRANCH}/tokens/${on.token.id}/feedback`, { rating: 5, comment: `E2E ${RUN} lovely service` });
+      truthy("FEEDBACK: feedback records who served the customer (ServedByUserId was never written before)", fb.status === 201 && !!fb.json?.servedByUserId, `${fb.status} ${fb.json?.servedByUserId} ${fb.text?.slice(0, 200)}`);
+      const recs2 = ((await get(AD, "/api/v1/staff/portal/records?pageSize=100")).json?.items ?? []);
+      truthy("FEEDBACK: a 5-star rating credits the server ('Positive feedback', automatic)", recs2.some((r) => r.parameterName === "Positive feedback" && r.source === "System" && r.description.includes(on.display)), JSON.stringify(recs2.filter((r) => r.source === "System").map((r) => r.description).slice(0, 4)));
+    }
+    await put(AD, "/api/v1/staff/policy", { ...pol, systemAwardsEnabled: false });
+  }
+  if (madeCounter?.id) await del(AD, `/api/v1/branches/${BRANCH}/counters/${madeCounter.id}`);
+  if (!queueWasActive) await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/core-queue?note=E2E%20automatic%20credit%20done`);
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.16 THE SWEEPS — each fires once and not twice, and not at all for a tenant without the module");
+{
+  // Triggered through the Hangfire dashboard, which Development opens to local callers. A production
+  // API refuses this, and the section says so rather than failing.
+  const trigger = async (id) => {
+    const res = await fetch(`${API}/hangfire/recurring/trigger`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: `jobs%5B%5D=${encodeURIComponent(id)}` });
+    return res.status;
+  };
+  const waitFor = async (fn, ms = 20000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 750)); } return v; };
+  const probe = await trigger("staff-activity-attribution-purge");
+  if (probe >= 300 && probe !== 204) {
+    console.log(`  \x1b[33mSKIP\x1b[0m  Hangfire dashboard refused a trigger (${probe}); the sweeps are asserted only against a Development API`);
+  } else {
+    const count = async (token, key, needle) => ((await get(token, `/api/v1/notifications?eventKey=${key}&limit=100`)).json ?? []).filter((n) => (n.title + " " + n.message).includes(needle)).length;
+
+    // Both ladders run in the one 15-minute reminder sweep (duty rota plan §8.1). Quiet hours would hold their
+    // non-interruptive stages overnight, so they are switched off for this block and restored after it.
+    const ladderPol = (await get(AD, "/api/v1/staff/policy")).json;
+    await put(AD, "/api/v1/staff/policy", { ...ladderPol, quietHours: { ...(ladderPol.quietHours ?? {}), enabled: false } });
+
+    // Register chase: a duty that ended with no register, recorder math2.
+    const chaseTitle = `E2E ${RUN} Chase meeting`;
+    const chase = await post(AD, `${B}/staff/duties`, dutyBody({ title: chaseTitle, startsAt: hoursFromNow(-5), endsAt: hoursFromNow(-4), recorderUserIds: [U.math2.id] }));
+    eq("a duty that has ended with no register is created", chase.status, 201);
+
+    // Without the module the sweep must leave it alone.
+    await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/student-welfare?note=E2E%20sweep%20gate`);
+    await trigger("staff-reminder-ladder");
+    await new Promise((r) => setTimeout(r, 6000));
+    await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/student-welfare`, { note: "E2E" });
+    eq("MODULE GATE: with the module revoked, the register chase sends nothing", await count(U.math2.token, "staff.register-due", chaseTitle), 0);
+
+    await trigger("staff-reminder-ladder");
+    const once = await waitFor(async () => (await count(U.math2.token, "staff.register-due", chaseTitle)) >= 1);
+    truthy("CHASE: the named recorder is chased", !!once);
+    await trigger("staff-reminder-ladder");
+    await new Promise((r) => setTimeout(r, 6000));
+    eq("CHASE: a second sweep does not chase again (exactly one)", await count(U.math2.token, "staff.register-due", chaseTitle), 1);
+
+    // Duty reminder: a duty in two hours, inside the default 24-hour lead.
+    const remindTitle = `E2E ${RUN} Reminder meeting`;
+    await post(AD, `${B}/staff/duties`, dutyBody({ title: remindTitle, startsAt: hoursFromNow(2), endsAt: hoursFromNow(3), expectedUserIds: [U.math2.id], recorderUserIds: [U.hodMath.id] }));
+    await trigger("staff-reminder-ladder");
+    truthy("REMINDER: the expected person is reminded", !!(await waitFor(async () => (await count(U.math2.token, "staff.duty-reminder", remindTitle)) >= 1)));
+    await trigger("staff-reminder-ladder");
+    await new Promise((r) => setTimeout(r, 6000));
+    eq("REMINDER: a second sweep does not remind again", await count(U.math2.token, "staff.duty-reminder", remindTitle), 1);
+    truthy("REMINDER: a named recorder who is not expected is reminded too", !!(await waitFor(async () => (await count(U.hodMath.token, "staff.duty-reminder", remindTitle)) >= 1)));
+    await put(AD, "/api/v1/staff/policy", { ...ladderPol });
+
+    // Weekly digest: today, from hour 0, for the fresh appraisee (who has never had one).
+    const pol = (await get(AD, "/api/v1/staff/policy")).json;
+    const kampalaDay = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "Africa/Kampala" }).format(new Date());
+    await put(AD, "/api/v1/staff/policy", { ...pol, digestWeekday: kampalaDay, digestHour: 0 });
+    await trigger("staff-weekly-digests");
+    const digest = await waitFor(async () => (await count(T.token, "staff.weekly-digest", "weekly digest")) >= 1, 45000);
+    truthy("DIGEST: the weekly digest reaches a staff member on the policy day", !!digest);
+    await trigger("staff-weekly-digests");
+    await new Promise((r) => setTimeout(r, 8000));
+    eq("DIGEST: a second sweep the same week does not send again", await count(T.token, "staff.weekly-digest", "weekly digest"), 1);
+    const digestMsg = ((await get(T.token, "/api/v1/notifications?eventKey=staff.weekly-digest&limit=5")).json ?? [])[0]?.message ?? "";
+    truthy("DIGEST: it reports the week's movement ('this week')", /this week/.test(digestMsg) || !/composite/.test(digestMsg), digestMsg);
+    await put(AD, "/api/v1/staff/policy", { ...pol });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.17 STRUCTURE NOTICES — deputy heads and a department's staff are told");
+{
+  const langNow = ((await get(AD, `${B}/staff/structure/departments?includeInactive=true`)).json ?? []).find((d) => d.code === "E2ELANG");
+  const setLang = (headKey, deputyKey) => put(AD, `${B}/staff/structure/departments/${langNow.id}`, { name: langNow.name, code: langNow.code, headUserId: headKey ? U[headKey].id : null, deputyHeadUserId: deputyKey ? U[deputyKey].id : null, sortOrder: 1 });
+  await setLang("hodLang", "support");
+  const deputyTold = ((await get(U.support.token, "/api/v1/notifications?eventKey=staff.profile-changed&limit=20")).json ?? []).some((n) => n.title === "You are now deputy head of department");
+  truthy("DEPUTY: a newly assigned deputy head is told", deputyTold);
+  await setLang("dos", null);
+  const memberTold = ((await get(U.lang1.token, "/api/v1/notifications?eventKey=staff.profile-changed&limit=20")).json ?? []).some((n) => n.title === "E2E Languages has a new head");
+  truthy("HEAD CHANGE: the department's staff are told who their head now is", memberTold);
+  await setLang("hodLang", null);
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.18 WEIGHT CAP on retire and reinstate");
+{
+  const pol = (await get(AD, "/api/v1/staff/policy")).json;
+  const heavy = await post(AD, "/api/v1/staff/parameters", { name: `E2E Reinstate ${RUN}`, kind: "Contribution", appliesTo: "AllStaff", defaultPoints: 1, maxPointsPerEntry: 1, weight: 4, purpose: "E2E reinstate cap check" });
+  eq("a parameter at weight 4 is created under the 50% cap", heavy.status, 201);
+  await patch(AD, `/api/v1/staff/parameters/${heavy.json?.id}/toggle`); // retire
+  await put(AD, "/api/v1/staff/policy", { ...pol, maxParameterWeightPercent: 10 });
+  const back = await patch(AD, `/api/v1/staff/parameters/${heavy.json?.id}/toggle`);
+  eq("REINSTATE: bringing it back above a tightened 10% cap is refused (400)", back.status, 400);
+  await put(AD, "/api/v1/staff/policy", { ...pol, maxParameterWeightPercent: 50 });
+}
+
+// ---------------------------------------------------------------------------------------------------
+hdr("14.19 USAGE METERING — people using the product are not 'API calls'; integration clients are");
+{
+  // Found by the first load test (2026-09-17): every /api/v1 request counted against a module's monthly
+  // API-call allowance, the web app's own included, so 50 staff used a tenant's month up in under a
+  // minute and everything after was a 402. User decision: only X-API-Key traffic is metered.
+  const calls = async () => (await get(AD, "/api/v1/billing/usage")).json?.apiCalls;
+  const before = await calls();
+  truthy("METERING: the tenant's API-call count is readable (billing/usage)", typeof before === "number", JSON.stringify(before));
+  await Promise.all(Array.from({ length: 30 }, () => get(U.math1.token, "/api/v1/staff/portal")));
+  eq("METERING: thirty signed-in portal reads add nothing to the tenant's API calls", await calls(), before);
+
+  const mods = (await get(SA, `/api/v1/admin/tenants/${ORG}/modules`)).json ?? [];
+  const integrationsWasActive = mods.some((m) => m.moduleCode === "integrations-api" && m.purchased && m.status === "Active");
+  if (!integrationsWasActive) await call(SA, "PUT", `/api/v1/admin/tenants/${ORG}/modules/integrations-api`, { note: "E2E metering" });
+  const client = await post(AD, "/api/v1/api-clients", { name: `E2E ${RUN} metering client`, scopes: [] });
+  if (client.status < 300 && client.json?.clientSecret) {
+    const key = `${client.json.client?.clientId}.${client.json.clientSecret}`;
+    // A permission-guarded route: API keys may call only those, and the call is metered before its
+    // scope is checked (this client has none, so it is refused — and still counted, as it should be).
+    const mid = await calls();
+    await call(null, "GET", `${B}/staff/records`, undefined, { "X-API-Key": key });
+    const probe = await call(null, "GET", `${B}/staff/records`, undefined, { "X-API-Key": key });
+    const after = await calls();
+    truthy("METERING: an integration call with an API key IS counted", typeof mid === "number" && after === mid + 2, `${mid} → ${after} (probe ${probe.status})`);
+    if (client.json.client?.id) await del(AD, `/api/v1/api-clients/${client.json.client.id}`);
+  } else bad("METERING: create an API client to meter", "201 with a secret", `${client.status} ${client.text}`);
+  if (!integrationsWasActive) await call(SA, "DELETE", `/api/v1/admin/tenants/${ORG}/modules/integrations-api?note=E2E%20metering%20done`);
 }
 
 // ---------------------------------------------------------------------------------------------------

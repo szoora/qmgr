@@ -112,7 +112,7 @@
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

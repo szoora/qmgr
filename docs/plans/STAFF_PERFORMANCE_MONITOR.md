@@ -1,6 +1,25 @@
 # Staff Performance Monitor — implementation plan
 
-**Status:** PROPOSED. **Written:** 2026-09-16. **Would be Phase 85 onward** in `docs/TASK_TRACKER.md`.
+**Status:** BUILT (Phases 85–86, 2026-09-16 and 2026-09-17), with the amendments below.
+**Written:** 2026-09-16. Tracker: Phase 85 (build) and Phase 86 (audit against this plan, gaps closed).
+
+> **Amendments, 2026-09-17 — where the build and this plan now deliberately differ:**
+>
+> 1. **Not a module of its own.** Staff performance is part of the Student Welfare module (code
+>    `student-welfare`, renamed **"Welfare & Performance"**); every staff route and page is gated on
+>    it. §2's separate `ModuleCodes.StaffPerformance`, §12 Phase 0's separate seed and §13 decision
+>    7's separate price no longer apply: the welfare module's price and a user cap of 250 a branch
+>    cover both. The sidebar keeps its two short groups, "Student Welfare" and "Staff Performance".
+> 2. **A Confidential record: the subject reads it in full; the notification about it is
+>    title-only.** §8's table describes the ALERT and stands. §13 decision 3 is settled that way:
+>    the right of reply (§6) and s.24 subject access (§1.7) both need the content, and the portal is
+>    the subject-access view. §14's "visible to them as title only" now reads "readable by them in
+>    full; their notification carries only that it exists".
+> 3. **A register records its marks on every save, not only on close.** §6.2 said closing writes the
+>    records. Built: each save writes one `Final` record per marked person and notifies them;
+>    closing declares the register complete. A register left open still counts as not taken (portal
+>    to-do, register chase). Reason: a register taken on a phone must not lose its taps to a dropped
+>    connection or a closed tab.
 **Designed artifact:** https://claude.ai/artifact/NL5aZ9uCKUAy2w7kb94wAo
 
 Requested as: a performance monitor for staff against variable parameters (lesson attendance, exam
@@ -397,8 +416,9 @@ seeder ships; with it, a school can add "Deputy Head Teacher" or "House Parent" 
    entry" warning as welfare (a record dated more than 14 days back says so on its face). Available
    to `staff.records.create` within scope.
 2. **Register.** A duty's recorder opens the register: one row per expected person, tap Present /
-   Late / Absent / Excused, optional note, close. Closing writes one `Final` record per person with
-   `Source = Register`, points from the parameter by outcome, and notifies each subject (§8).
+   Late / Absent / Excused, optional note, close. Each save writes one `Final` record per marked
+   person with `Source = Register`, points from the parameter by outcome, and notifies each subject
+   (§8); closing declares the register complete (amendment 3).
    Reopening appends `Annulment` notes and new rows rather than editing. A lesson marked Absent can
    later be matched by a `Recovered` record, which offsets it in scoring (MoES Annex 5). The
    register works on a phone with no more than a tap per person, because the class monitor's paper
@@ -673,7 +693,8 @@ activity log page and retention purge; structure coverage on the dashboard. Migr
    reason; a school that wants the board can have it.
 3. **What a Confidential record tells its subject.** Proposed: existence and title, no content, no
    third party. Alternative A: full content to the subject. Alternative B: nothing, matching the
-   welfare rule exactly. Restricted stays silent under all three.
+   welfare rule exactly. Restricted stays silent under all three. **Settled 2026-09-17: the
+   notification is title-only; the subject reads the full record on their portal (amendment 2).**
 4. **Automatic credit from system activity** (welfare records filed, tokens served, visitors
    hosted). Proposed: built in Phase 6, **off by default**, low points, per-period caps, labelled
    automatic.
@@ -684,6 +705,8 @@ activity log page and retention purge; structure coverage on the dashboard. Migr
    retention principle governs) and never purged automatically in v1.
 7. **Seats and price.** The module's list price, and whether purchasing it lifts the plan's user cap
    or the cap becomes a per-seat charge. `POST /api/v1/users` returns 402 at the cap today.
+   **Superseded 2026-09-17: part of the Student Welfare module, whose cap is 250 a branch
+   (amendment 1).**
 8. **Periods.** Proposed: three terms per year with an annual roll-up, dates entered in the policy
    page per year, the current period derived from today's date. Alternative: months.
 9. **Rewards beyond recognition.** Proposed for v1: certificates (Library PDF), notices and the
@@ -708,8 +731,9 @@ negative ones:
   colleague outside their department;
 - a teacher cannot `POST` a record about anyone, but **can** take the register on a duty they are
   named recorder for, and only for that duty's expected list;
-- a Confidential record about a teacher is invisible to their head, visible to them as title only,
-  and its evidence file returns 404 to the head and 200 to the subject;
+- a Confidential record about a teacher is invisible to their head, readable by them in full with a
+  title-only notification (amendment 2), and its evidence file returns 404 to the head and 200 to
+  the subject;
 - a Restricted record is invisible to everyone but `staff.restricted.view` holders, including its
   subject, and the activity log names it without content;
 - a scoped caller's report summary carries `ScopedToDepartments` and the page shows the banner;

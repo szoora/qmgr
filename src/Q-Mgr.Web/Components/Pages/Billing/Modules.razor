@@ -425,7 +425,15 @@ else
     {
         isLoading = true;
         catalog = await ModuleApi.GetCatalogAsync();
-        mine = await ModuleApi.GetMineAsync();
+        try
+        {
+            mine = await ModuleApi.GetMineAsync();
+        }
+        catch
+        {
+            mine = new();
+            NotificationService.Notify(ToastSeverity.Error, "Could not load your modules", "What you own could not be read just now. Refresh to try again.");
+        }
         isLoading = false;
     }
 

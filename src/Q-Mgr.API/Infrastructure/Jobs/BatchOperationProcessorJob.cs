@@ -42,13 +42,20 @@ public class BatchOperationProcessorJob
         QMgrDbContext context,
         IBatchOperationService resolver,
         IRosterImportBroadcaster broadcaster,
-        ILogger<BatchOperationProcessorJob> logger)
+        ILogger<BatchOperationProcessorJob> logger,
+        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges)
     {
+        _profileChanges = profileChanges;
         _context = context;
         _resolver = resolver;
         _broadcaster = broadcaster;
         _logger = logger;
     }
+
+    private readonly QMgr.Infrastructure.Services.IStaffProfileChangeNotifier _profileChanges;
+
+    /// <summary>Role changes applied in this run, followed up (cache, push, activity, notification) once they are saved.</summary>
+    private readonly List<(Guid UserId, Guid? OldRoleId, Guid NewRoleId)> _roleChanges = new();
 
     [AutomaticRetry(Attempts = 0)] // A half-applied batch must never silently re-run from the top.
     public async Task ProcessAsync(Guid jobId)
@@ -135,6 +142,7 @@ public class BatchOperationProcessorJob
             job.CompletedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
             await BroadcastAsync(job);
+            await FollowUpRoleChangesAsync(job);
 
             _logger.LogInformation(
                 "Batch {JobId} ({Operation}) finished: {Updated} changed, {Skipped} skipped, {Failed} failed of {Total}",
@@ -147,8 +155,21 @@ public class BatchOperationProcessorJob
             job.CompletedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
             await BroadcastAsync(job);
+            await FollowUpRoleChangesAsync(job);
             _logger.LogError(ex, "Batch {JobId} failed outright", jobId);
         }
+    }
+
+    /// <summary>
+    /// After the rows are saved: every role this run changed gets the same follow-up the single-user editor
+    /// gives — permission cache dropped, live push, activity event, staff.profile-changed. Before 2026-09-17
+    /// a bulk demotion left the old permissions cached for up to five minutes.
+    /// </summary>
+    private async Task FollowUpRoleChangesAsync(RosterImportJob job)
+    {
+        foreach (var (userId, oldRoleId, newRoleId) in _roleChanges)
+            await _profileChanges.RoleChangedAsync(job.OrganizationId, userId, oldRoleId, newRoleId, job.CreatedByUserId, "bulk change");
+        _roleChanges.Clear();
     }
 
     /// <summary>
@@ -269,7 +290,11 @@ public class BatchOperationProcessorJob
             case BatchOperation.SetUserRole:
             {
                 var u = await _context.Users.FirstAsync(x => x.Id == row.Id);
-                if (Guid.TryParse(row.NewValue, out var roleId)) u.RoleId = roleId;
+                if (Guid.TryParse(row.NewValue, out var roleId) && u.RoleId != roleId)
+                {
+                    _roleChanges.Add((u.Id, u.RoleId, roleId));
+                    u.RoleId = roleId;
+                }
                 u.UpdatedAt = DateTime.UtcNow;
                 break;
             }

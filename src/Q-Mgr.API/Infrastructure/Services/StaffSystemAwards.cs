@@ -10,8 +10,11 @@ namespace QMgr.Infrastructure.Services;
 /// visitor hosted (plan §6 item 5, decision 4). OFF BY DEFAULT: nothing happens unless the tenant's
 /// policy has <c>SystemAwardsEnabled</c> AND an active PerformanceParameter marked IsSystemSource
 /// whose Name matches the hint the caller passes ("Welfare record filed", "Customer served",
-/// "Visitor hosted"). Nothing is seeded; the tenant creates the parameter with exactly that name
-/// when they want the credit, which is also how they choose its points, cap and weight.
+/// "Visitor hosted", "Positive feedback"). The four are seeded (StaffParameterDefaults) so switching the
+/// policy on credits something; the tenant still chooses each one's points, cap and weight, and can
+/// retire any of them.
+///
+/// Nothing is credited into a CLOSED period: a figure that has been signed off does not move.
 ///
 /// The record it writes is Source = System, Visibility Standard, logged by the subject themselves,
 /// so the timeline labels it "automatic" and nobody mistakes it for a colleague's judgement.
@@ -25,7 +28,13 @@ public interface IStaffSystemAwards
     Task CreditAsync(Guid organizationId, Guid branchId, Guid userId, string parameterNameOrKindHint, string description, CancellationToken cancellationToken = default);
 
     /// <summary>"Customer served": resolves the token's branch, organization and the serving counter's assigned user, then credits. A convenience so the queue controller need not join those itself.</summary>
-    Task CreditTokenServedAsync(Guid tokenId, CancellationToken cancellationToken = default);
+    Task CreditTokenServedAsync(Guid tokenId, Guid? completedByUserId, CancellationToken cancellationToken = default);
+
+    /// <summary>"Positive feedback": a rating of 4 or 5 on feedback whose ServedByUserId is known.</summary>
+    Task CreditPositiveFeedbackAsync(Guid feedbackId, CancellationToken cancellationToken = default);
+
+    /// <summary>Who served a ticket: the completing user, else the latest history row with a user, else the counter's assigned user.</summary>
+    Task<Guid?> ServedByAsync(Guid tokenId, Guid? completedByUserId, Guid? counterUser, CancellationToken cancellationToken = default);
 }
 
 public class StaffSystemAwards : IStaffSystemAwards
@@ -33,6 +42,7 @@ public class StaffSystemAwards : IStaffSystemAwards
     public const string WelfareRecordFiled = "Welfare record filed";
     public const string CustomerServed = "Customer served";
     public const string VisitorHosted = "Visitor hosted";
+    public const string PositiveFeedback = "Positive feedback";
 
     private readonly QMgrDbContext _db;
     private readonly IStaffPerformancePolicyService _policy;
@@ -47,7 +57,7 @@ public class StaffSystemAwards : IStaffSystemAwards
         _logger = logger;
     }
 
-    public async Task CreditTokenServedAsync(Guid tokenId, CancellationToken cancellationToken = default)
+    public async Task CreditTokenServedAsync(Guid tokenId, Guid? completedByUserId, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -57,18 +67,59 @@ public class StaffSystemAwards : IStaffSystemAwards
                 {
                     t.BranchId,
                     OrganizationId = t.Branch!.OrganizationId,
-                    ServedBy = t.Counter != null ? t.Counter.AssignedUserId : null,
+                    CounterUser = t.Counter != null ? t.Counter.AssignedUserId : null,
                     t.DisplayNumber
                 })
                 .FirstOrDefaultAsync(cancellationToken);
-            if (token?.ServedBy == null) return;
+            if (token == null) return;
 
-            await CreditAsync(token.OrganizationId, token.BranchId, token.ServedBy.Value, CustomerServed,
+            // The person who actually completed the service, not whoever the counter happens to be assigned
+            // to (plan §4: TokenHistory.UserId). A relief operator on someone else's counter earns the credit.
+            var servedBy = await ServedByAsync(tokenId, completedByUserId, token.CounterUser, cancellationToken);
+            if (servedBy == null) return;
+
+            await CreditAsync(token.OrganizationId, token.BranchId, servedBy.Value, CustomerServed,
                 $"Served ticket {token.DisplayNumber}. Credited automatically.", cancellationToken);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "System award for token {TokenId} could not be resolved", tokenId);
+        }
+    }
+
+    /// <summary>
+    /// Who served a ticket: the caller who completed it, else the user on its latest history row that
+    /// moved it to Completed or Serving or Called, else the counter's assigned user. Shared with feedback,
+    /// which stamps it on Feedback.ServedByUserId — a column nothing ever wrote before 2026-09-17.
+    /// </summary>
+    public async Task<Guid?> ServedByAsync(Guid tokenId, Guid? completedByUserId, Guid? counterUser, CancellationToken cancellationToken = default)
+    {
+        if (completedByUserId is { } c && c != Guid.Empty) return c;
+        var fromHistory = await _db.TokenHistories.IgnoreQueryFilters().AsNoTracking()
+            .Where(h => h.TokenId == tokenId && h.UserId != null
+                        && (h.ToStatus == TokenStatus.Completed || h.ToStatus == TokenStatus.Serving || h.ToStatus == TokenStatus.Called))
+            .OrderByDescending(h => h.CreatedAt)
+            .Select(h => h.UserId)
+            .FirstOrDefaultAsync(cancellationToken);
+        return fromHistory ?? counterUser;
+    }
+
+    public async Task CreditPositiveFeedbackAsync(Guid feedbackId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var feedback = await _db.Feedbacks.IgnoreQueryFilters().AsNoTracking()
+                .Where(f => f.Id == feedbackId)
+                .Select(f => new { f.BranchId, OrganizationId = f.Branch!.OrganizationId, f.ServedByUserId, f.Rating, f.TokenDisplayNumber })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (feedback?.ServedByUserId == null || feedback.Rating < 4) return;
+
+            await CreditAsync(feedback.OrganizationId, feedback.BranchId, feedback.ServedByUserId.Value, PositiveFeedback,
+                $"A customer rated the service on ticket {feedback.TokenDisplayNumber} {feedback.Rating} out of 5. Credited automatically.", cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "System award for feedback {FeedbackId} could not be resolved", feedbackId);
         }
     }
 
@@ -80,6 +131,7 @@ public class StaffSystemAwards : IStaffSystemAwards
 
             var policy = await _policy.GetAsync(organizationId, cancellationToken);
             if (!policy.SystemAwardsEnabled) return;
+            if (_policy.ClosureFor(policy, DateTime.UtcNow) != null) return;
 
             var hint = parameterNameOrKindHint.Trim().ToLowerInvariant();
             var parameter = await _db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()

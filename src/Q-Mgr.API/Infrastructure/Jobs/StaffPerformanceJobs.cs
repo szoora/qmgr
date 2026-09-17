@@ -18,8 +18,7 @@ namespace QMgr.Infrastructure.Jobs;
 /// <summary>
 /// The Staff Performance module's scheduled sweeps (plan §8), one job class, the welfare pattern:
 ///
-///   Duty reminder ahead of StartsAt        hourly      ReminderSentAt == null, lead time from policy, branch-local
-///   Register not taken after EndsAt        hourly      RegisterClosedAt == null &amp;&amp; RegisterChaseSentAt == null → recorders
+///   Duty reminders and register chases     moved to ReminderLadderJob, every 15 minutes (duty rota plan §8.1)
 ///   Appraisal stage due / overdue          daily 07:00 ReminderSentAt with the 24h re-notify window
 ///   Scheduled notices reaching PublishAt   every 15 min NotificationsSentAt == null → StaffNoticeFanOut
 ///   Weekly digest to each staff member     hourly      policy hour/weekday, branch-local; LastStaffDigestSentAt in the preferences blob
@@ -44,6 +43,19 @@ public class StaffPerformanceJobs
 
     private const int AppraisalStaleDays = 7;
 
+    /// <summary>
+    /// Per-sweep memo of "is Staff Performance active for this organization". Before 2026-09-17 only the
+    /// digest and the monthly summary asked, so a tenant that had let the module lapse still got duty
+    /// reminders, register chases, appraisal nags and scheduled notices for a module it could not open.
+    /// </summary>
+    private readonly Dictionary<Guid, bool> _moduleActive = new();
+
+    private async Task<bool> ModuleActiveAsync(Guid organizationId)
+    {
+        if (_moduleActive.TryGetValue(organizationId, out var active)) return active;
+        return _moduleActive[organizationId] = await _modules.IsModuleActiveAsync(organizationId, ModuleCodes.StudentWelfare);
+    }
+
     public StaffPerformanceJobs(
         QMgrDbContext context,
         INotificationService notifications,
@@ -62,128 +74,7 @@ public class StaffPerformanceJobs
         _logger = logger;
     }
 
-    // ---- (a) Duty reminders ---------------------------------------------------------------------------
-
-    [AutomaticRetry(Attempts = 3)]
-    public async Task SendDutyRemindersAsync()
-    {
-        var now = DateTime.UtcNow;
-        // Widest lead any tenant could reasonably set; the per-organization lead is applied inside.
-        var horizon = now.AddHours(24 * 7);
-
-        var duties = await _context.StaffDuties
-            .Include(d => d.Branch)
-            .Include(d => d.Parameter)
-            .Where(d => d.IsActive && d.ReminderSentAt == null && d.StartsAt > now && d.StartsAt <= horizon)
-            .OrderBy(d => d.StartsAt)
-            .ToListAsync();
-
-        var policies = new Dictionary<Guid, StaffPerformancePolicyDto>();
-        var sent = 0;
-        foreach (var duty in duties)
-        {
-            try
-            {
-                if (!policies.TryGetValue(duty.OrganizationId, out var policy))
-                    policies[duty.OrganizationId] = policy = await _policy.GetAsync(duty.OrganizationId);
-
-                if (duty.StartsAt > now.AddHours(Math.Max(1, policy.DutyReminderLeadHours))) continue; // not yet inside this tenant's window
-
-                var zone = AppointmentScheduling.ResolveTimeZone(duty.Branch?.Timezone);
-                var local = TimeZoneInfo.ConvertTimeFromUtc(duty.StartsAt, zone);
-                var expected = duty.ExpectedUserIds?.ToList()
-                               ?? await StaffLookups.BranchStaff(_context, duty.OrganizationId, duty.BranchId).Select(u => u.Id).ToListAsync();
-
-                foreach (var userId in expected)
-                {
-                    try
-                    {
-                        await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
-                        {
-                            UserId = userId,
-                            OrganizationId = duty.OrganizationId,
-                            BranchId = duty.BranchId,
-                            Title = $"Coming up: {duty.Title}",
-                            Message = $"{local:ddd dd MMM} at {local:HH:mm}{(string.IsNullOrWhiteSpace(duty.Location) ? "" : $", {duty.Location}")} — {duty.Parameter?.Name ?? "duty"}.",
-                            Type = NotificationType.StaffPerformance,
-                            Priority = NotificationPriority.Normal,
-                            Channels = NotificationChannel.InApp | NotificationChannel.Email,
-                            EventKey = NotificationEventKeys.StaffDutyReminder,
-                            ActionUrl = "/portal",
-                            IconClass = "calendar-event"
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Duty reminder for {DutyId} could not reach user {UserId}", duty.Id, userId);
-                    }
-                }
-
-                duty.ReminderSentAt = now;
-                sent++;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Duty reminder sweep failed for duty {DutyId}", duty.Id);
-            }
-        }
-
-        if (sent > 0) await _context.SaveChangesAsync();
-        _logger.LogInformation("Staff duty reminder sweep: {Sent} duty reminder(s) sent out of {Total} upcoming dut(ies)", sent, duties.Count);
-    }
-
-    // ---- (b) Register chase --------------------------------------------------------------------------
-
-    [AutomaticRetry(Attempts = 3)]
-    public async Task ChaseRegistersAsync()
-    {
-        var now = DateTime.UtcNow;
-        var duties = await _context.StaffDuties
-            .Where(d => d.IsActive && d.EndsAt < now && d.RegisterClosedAt == null && d.RegisterChaseSentAt == null)
-            .ToListAsync();
-
-        var sent = 0;
-        foreach (var duty in duties)
-        {
-            try
-            {
-                foreach (var recorder in duty.RecorderUserIds)
-                {
-                    try
-                    {
-                        await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
-                        {
-                            UserId = recorder,
-                            OrganizationId = duty.OrganizationId,
-                            BranchId = duty.BranchId,
-                            Title = $"Register not taken: {duty.Title}",
-                            Message = $"The duty ended {Ago(now - duty.EndsAt)} and its register has not been closed. You are a named recorder.",
-                            Type = NotificationType.StaffPerformance,
-                            Priority = NotificationPriority.High,
-                            Channels = NotificationChannel.InApp | NotificationChannel.Email,
-                            EventKey = NotificationEventKeys.StaffRegisterDue,
-                            ActionUrl = "/admin/staff/duties",
-                            IconClass = "clipboard-x"
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Register chase for {DutyId} could not reach recorder {UserId}", duty.Id, recorder);
-                    }
-                }
-
-                duty.RegisterChaseSentAt = now;
-                sent++;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Register chase failed for duty {DutyId}", duty.Id);
-            }
-        }
-
-        if (sent > 0) await _context.SaveChangesAsync();
-        _logger.LogInformation("Staff register chase: {Sent} dut(ies) chased out of {Total} with no register", sent, duties.Count);
-    }
+    // ---- (a), (b) Duty reminders and register chases moved to ReminderLadderJob (duty rota plan §8.1) -----
 
     // ---- (c) Appraisal stage reminders ----------------------------------------------------------------
 
@@ -213,6 +104,7 @@ public class StaffPerformanceJobs
         {
             try
             {
+                if (!await ModuleActiveAsync(a.OrganizationId)) continue;
                 var subjectName = a.Subject != null ? StaffPerformanceMapping.FullName(a.Subject) : "a member of staff";
                 var recipients = new List<(Guid UserId, string Title, string Message, string Url)>();
 
@@ -293,6 +185,8 @@ public class StaffPerformanceJobs
         {
             try
             {
+                // Left unstamped while the module is off, so it goes out if the tenant renews.
+                if (!await ModuleActiveAsync(notice.OrganizationId)) continue;
                 // The same helper the controller uses; it stamps NotificationsSentAt itself.
                 await StaffNoticeFanOut.FanOutAsync(_context, _notifications, notice, _logger);
                 published++;
@@ -328,7 +222,7 @@ public class StaffPerformanceJobs
         {
             try
             {
-                if (!await _modules.IsModuleActiveAsync(org.Id, ModuleCodes.StaffPerformance)) continue;
+                if (!await ModuleActiveAsync(org.Id)) continue;
                 var policy = await _policy.GetAsync(org.Id);
                 var period = _policy.PeriodFor(policy, DateOnly.FromDateTime(now));
 
@@ -370,7 +264,7 @@ public class StaffPerformanceJobs
                                 BranchId = branch.Id,
                                 Title = $"Your weekly digest — {period.Name}",
                                 Message = score.Composite.HasValue
-                                    ? $"{score.Points} points, composite {score.Composite:0.#} ({score.BandName}); {html.UpcomingCount} dut(ies) coming up; {html.OpenCount} item(s) awaiting you."
+                                    ? $"{score.Points} points ({Signed(html.PointsThisWeek)} this week), composite {score.Composite:0.#} ({score.BandName}); {html.UpcomingCount} dut(ies) coming up; {html.OpenCount} item(s) awaiting you."
                                     : $"{score.Points} points so far; {html.UpcomingCount} dut(ies) coming up; {html.OpenCount} item(s) awaiting you.",
                                 Type = NotificationType.StaffPerformance,
                                 Priority = NotificationPriority.Low,
@@ -402,13 +296,18 @@ public class StaffPerformanceJobs
         _logger.LogInformation("Staff weekly digest sweep: {Sent} digest(s) sent", sent);
     }
 
-    private sealed record DigestBuild(string Html, StaffScoreDto Score, int UpcomingCount, int OpenCount);
+    private sealed record DigestBuild(string Html, StaffScoreDto Score, int UpcomingCount, int OpenCount, int PointsThisWeek);
 
     private async Task<DigestBuild> BuildWeeklyDigestAsync(Guid organizationId, Guid branchId, string branchName, string orgName, Guid userId, string? firstName, PerformancePeriodDto period, StaffPerformancePolicyDto policy, TimeZoneInfo zone)
     {
         var now = DateTime.UtcNow;
         var weekAgo = now.AddDays(-7);
         var score = await _scoring.ComputeAsync(organizationId, branchId, userId, period, includeRank: policy.LeaderboardMode != LeaderboardMode.Private);
+        // "Points and band MOVEMENT" (plan §8): the same score as it stood a week ago, from records that
+        // existed then. Only meaningful inside one period; a new term starts from nothing.
+        var lastWeek = period.Start <= DateOnly.FromDateTime(weekAgo)
+            ? await _scoring.ComputeAsync(organizationId, branchId, userId, period, includeRank: false, knownBefore: weekAgo)
+            : null;
 
         var recent = await _context.StaffPerformanceRecords.AsNoTracking()
             .Include(r => r.Parameter)
@@ -442,9 +341,13 @@ public class StaffPerformanceJobs
         var recognition = recent.Where(r => r.Parameter?.Kind == ParameterKind.Recognition).ToList();
         var body = new System.Text.StringBuilder();
 
-        body.Append(EmailTemplates.ReportStat("Points this period", score.Points.ToString(CultureInfo.InvariantCulture)));
-        body.Append(EmailTemplates.ReportStat("Composite", score.Composite.HasValue ? score.Composite.Value.ToString("0.#", CultureInfo.InvariantCulture) : "—"));
-        body.Append(EmailTemplates.ReportStat("Band", score.BandName ?? "—"));
+        body.Append(EmailTemplates.ReportStat("Points this period", score.Points.ToString(CultureInfo.InvariantCulture)
+            + (lastWeek != null ? $" ({Signed(score.Points - lastWeek.Points)} this week)" : "")));
+        body.Append(EmailTemplates.ReportStat("Composite", (score.Composite.HasValue ? score.Composite.Value.ToString("0.#", CultureInfo.InvariantCulture) : "—")
+            + (lastWeek?.Composite is { } was && score.Composite.HasValue && was != score.Composite.Value ? $" (was {was.ToString("0.#", CultureInfo.InvariantCulture)})" : "")));
+        body.Append(EmailTemplates.ReportStat("Band", lastWeek?.BandName is { } oldBand && score.BandName != null && oldBand != score.BandName
+            ? $"{oldBand} → {score.BandName}"
+            : score.BandName ?? "—"));
         body.Append(EmailTemplates.ReportStat("Duties attended", score.DutiesExpected > 0 ? $"{score.DutiesAttended}/{score.DutiesExpected}" : "—"));
         if (score.RankInBranch.HasValue)
             body.Append(EmailTemplates.ReportStat("Position", $"{score.RankInBranch} of {score.RankedOutOf}"));
@@ -497,7 +400,7 @@ public class StaffPerformanceJobs
             body.ToString(),
             "Sent by Q-Mgr Staff Performance. Turn this digest off under Notification preferences. Times are shown in the branch's local timezone.");
 
-        return new DigestBuild(html, score, upcoming.Count, openCount);
+        return new DigestBuild(html, score, upcoming.Count, openCount, lastWeek != null ? score.Points - lastWeek.Points : score.Points);
     }
 
     // ---- (f) Monthly administrator summary -----------------------------------------------------------
@@ -522,7 +425,7 @@ public class StaffPerformanceJobs
         {
             try
             {
-                if (!await _modules.IsModuleActiveAsync(org.Id, ModuleCodes.StaffPerformance)) continue;
+                if (!await ModuleActiveAsync(org.Id)) continue;
                 var policy = await _policy.GetAsync(org.Id);
 
                 var branches = await _context.Branches.IgnoreQueryFilters().AsNoTracking()
@@ -712,6 +615,8 @@ public class StaffPerformanceJobs
         _logger.LogInformation("Activity attribution purge complete: {Total} event(s) anonymised", total);
     }
 
+    private static string Signed(int n) => n > 0 ? $"+{n}" : n.ToString(CultureInfo.InvariantCulture);
+
     private static string Ago(TimeSpan span)
     {
         if (span.TotalHours < 1) return "less than an hour ago";
@@ -724,12 +629,6 @@ public static class StaffPerformanceJobsRegistration
 {
     public static void RegisterRecurringJobs()
     {
-        // Hourly: the lead time is per tenant and evaluated inside; the row's own ReminderSentAt gate keeps it to one.
-        RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-duty-reminders", job => job.SendDutyRemindersAsync(), Cron.Hourly);
-
-        // Hourly: a register goes overdue the hour after the duty ends; RegisterChaseSentAt keeps it to one chase.
-        RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-register-chase", job => job.ChaseRegistersAsync(), Cron.Hourly);
-
         // Daily 07:00 UTC: a stage is due on a date, not at a moment; the 24h gate is on ReminderSentAt.
         RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-appraisal-reminders", job => job.SendAppraisalRemindersAsync(), Cron.Daily(7));
 

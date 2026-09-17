@@ -1,0 +1,306 @@
+@page "/admin/users/requests"
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using System.Text.Json
+@using System.Net.Http.Json
+@inject IStaffOnboardingApiService Onboarding
+@inject IStaffPerformanceApiService StaffApi
+@inject IStudentApiService StudentApi
+@inject HttpClient Http
+@inject JsonSerializerOptions JsonOptions
+@inject IToastService Toast
+@inject IPermissionService PermissionService
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject NavigationManager Navigation
+
+@*
+    Join requests (duty rota plan §12.4): people who applied through the join link, waiting for an approver.
+    Approve assigns the role, branch, departments, line manager and class-teacher/subject assignments in one
+    form; the API refuses a role above the approver's own and approval past the seat cap. Duplicate signals
+    are for the approver's eyes only — the applicant is never told.
+*@
+
+<PageTitle>Join Requests - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Join Requests</h1>
+            <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
+        </div>
+        <div class="header-actions">
+            <QCheckbox Value="@showClosed" ValueChanged="@ToggleClosed" Label="Show rejected and expired" />
+            <QButton Text="Join link and onboarding" Icon="link-45deg" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/users/onboarding"))" />
+        </div>
+    </div>
+
+    @if (moduleMissing)
+    {
+        <QEmptyState Icon="box-seam" Title="Staff onboarding is part of Welfare & Performance" Text="Add the module under Billing to use the join link and join requests." />
+    }
+    else if (isLoading)
+    {
+        <QSpinner />
+    }
+    else if (requests.Count == 0)
+    {
+        <QEmptyState Icon="person-check" Title="No join requests waiting"
+                     Text="When someone applies through your join link, their request appears here." />
+    }
+    else
+    {
+        <div class="jr-list">
+            @foreach (var r in requests)
+            {
+                <QCard>
+                    <div class="jr-row">
+                        <QAvatar Name="@($"{r.FirstName} {r.LastName}")" Size="md" />
+                        <div class="jr-main">
+                            <div class="jr-name">
+                                @r.FirstName @r.LastName
+                                @if (r.State == JoinRequestState.Rejected) { <QChip Text="Rejected" Variant="danger" Size="sm" /> }
+                                else if (r.State == JoinRequestState.Expired) { <QChip Text="Expired" Variant="muted" Size="sm" /> }
+                            </div>
+                            <div class="jr-meta">
+                                <span><QIcon Name="envelope" /> @r.Email</span>
+                                @if (!string.IsNullOrWhiteSpace(r.Phone)) { <span><QIcon Name="telephone" /> @r.Phone</span> }
+                                @if (!string.IsNullOrWhiteSpace(r.JobTitle)) { <span><QIcon Name="briefcase" /> @r.JobTitle</span> }
+                                @if (!string.IsNullOrWhiteSpace(r.EmployeeNumber)) { <span><QIcon Name="hash" /> @r.EmployeeNumber</span> }
+                                @if (!string.IsNullOrWhiteSpace(r.BranchName)) { <span><QIcon Name="building" /> @r.BranchName</span> }
+                            </div>
+                            <div class="jr-sub">
+                                Asked @QDateFormat.DT(r.RequestedAt.ToLocalTime())
+                                @if (r.State == JoinRequestState.Pending) { <text> · expires @QDateFormat.D(r.ExpiresAt.ToLocalTime())</text> }
+                            </div>
+                            @if (r.DuplicateSignals.Count > 0)
+                            {
+                                <div class="jr-signals" role="note">
+                                    <QIcon Name="exclamation-triangle-fill" />
+                                    <div>
+                                        <strong>This may be somebody already on the system.</strong>
+                                        <ul>@foreach (var s in r.DuplicateSignals) { <li>@s.Detail</li> }</ul>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        @if (r.State == JoinRequestState.Pending && canApprove)
+                        {
+                            <div class="jr-actions">
+                                <QButton Text="Approve" Icon="check-lg" Variant="primary" Size="sm" OnClick="@(() => OpenApprove(r))" />
+                                <QButton Text="Reject" Icon="x-lg" Variant="secondary" Size="sm" OnClick="@(() => OpenReject(r))" />
+                            </div>
+                        }
+                    </div>
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showApprove" Title="@($"Approve {approving?.FirstName} {approving?.LastName}")" Icon="person-check" Size="md">
+    <ChildContent>
+        <p class="jr-lede">Choose what this person can do. You can assign only roles at or below your own.</p>
+        <QSelect TValue="Guid?" TItem="RoleOption" Label="Role" Required="true" @bind-Value="@form.RoleId"
+                 Items="@roles" ValueSelector="@(r => (Guid?)r.Id)" TextSelector="@(r => r.Name)" Placeholder="Choose a role" />
+        <QSelect TValue="Guid?" TItem="BranchOption" Label="Branch" Required="true" Value="@form.BranchId" ValueChanged="@OnBranchChanged"
+                 Items="@branches" ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Placeholder="Choose a branch" />
+        <QMultiSelect TValue="Guid" TItem="DepartmentDto" Label="Departments" @bind-SelectedValues="@form.DepartmentIds"
+                      Items="@departments" ValueSelector="@(d => d.Id)" TextSelector="@(d => d.Name)" Placeholder="None" />
+        <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Line manager" @bind-Value="@form.LineManagerUserId" AllowClear="true"
+                 Items="@lineManagers" ValueSelector="@(m => (Guid?)m.UserId)" TextSelector="@(m => m.FullName)" Placeholder="None" />
+        <QMultiSelect TValue="string" TItem="string" Label="Class teacher of" @bind-SelectedValues="@form.ClassTeacherOf"
+                      Items="@classNames" ValueSelector="@(c => c)" TextSelector="@(c => c)" Placeholder="No class" />
+        <QInput TValue="string" Label="Teaches (optional)" @bind-Value="@form.Teaches"
+                HelperText="Subject code, then classes: MATH:S2A,S2B; PHY:S3A" />
+        @if (approveMessages.Count > 0)
+        {
+            <ul class="jr-messages">@foreach (var m in approveMessages) { <li>@m</li> }</ul>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showApprove = false)" />
+        <QButton Text="Approve" Icon="check-lg" Variant="primary" OnClick="@ApproveAsync" Loading="@saving" Disabled="@(saving || form.RoleId == null || form.BranchId == null)" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showReject" Title="@($"Reject {rejecting?.FirstName} {rejecting?.LastName}")" Icon="x-circle" Size="sm">
+    <ChildContent>
+        <p class="jr-lede">They will be emailed that the request was not approved. The request is deleted after @purgeDays days.</p>
+        <QInput TValue="string" Type="textarea" Rows="3" Label="Reason (optional, included in the email)" @bind-Value="@rejectReason" MaxLength="500" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReject = false)" />
+        <QButton Text="Reject" Icon="x-lg" Variant="danger" OnClick="@RejectAsync" Loading="@saving" Disabled="@saving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .jr-list { display: grid; gap: 12px; }
+    .jr-row { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+    .jr-main { flex: 1 1 280px; min-width: 0; }
+    .jr-name { font-weight: 600; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .jr-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--qm-text-secondary); margin-top: 4px; overflow-wrap: anywhere; }
+    .jr-meta span { display: inline-flex; align-items: center; gap: 5px; }
+    .jr-sub { font-size: 12px; color: var(--qm-text-muted); margin-top: 4px; }
+    .jr-signals { display: flex; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .jr-signals ul { margin: 4px 0 0; padding-left: 18px; }
+    .jr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .jr-lede { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 10px; }
+    .jr-messages { font-size: 13px; color: var(--qm-warning); margin: 8px 0 0; padding-left: 18px; }
+</style>
+
+@code {
+    private bool isLoading = true, saving, showClosed, canApprove, moduleMissing, showApprove, showReject;
+    private int purgeDays = 30;
+    private List<JoinRequestDto> requests = new();
+    private List<RoleOption> roles = new();
+    private List<BranchOption> branches = new();
+    private List<DepartmentDto> departments = new();
+    private List<StaffMemberDto> lineManagers = new();
+    private List<string> classNames = new();
+    private JoinRequestDto? approving, rejecting;
+    private ApproveForm form = new();
+    private List<string> approveMessages = new();
+    private string? rejectReason;
+
+    private sealed class ApproveForm
+    {
+        public Guid? RoleId { get; set; }
+        public Guid? BranchId { get; set; }
+        public IEnumerable<Guid> DepartmentIds { get; set; } = Array.Empty<Guid>();
+        public Guid? LineManagerUserId { get; set; }
+        public IEnumerable<string> ClassTeacherOf { get; set; } = Array.Empty<string>();
+        public string? Teaches { get; set; }
+    }
+
+    private sealed record RoleOption(Guid Id, string Name, string Code);
+    private sealed record BranchOption(Guid Id, string Name);
+    private sealed record RoleApi(Guid Id, string Name, string Code, bool IsActive = true);
+    private sealed record BranchApi(Guid Id, string Name, bool IsActive = true);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.UsersApprove))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        canApprove = true;
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            moduleMissing = true;
+            isLoading = false;
+            return;
+        }
+
+        try
+        {
+            var r = await Http.GetFromJsonAsync<List<RoleApi>>("api/v1/roles", JsonOptions) ?? new();
+            roles = r.Where(x => x.IsActive && !RoleCodes.IsSuperAdmin(x.Code)).Select(x => new RoleOption(x.Id, x.Name, x.Code)).ToList();
+            var b = await Http.GetFromJsonAsync<List<BranchApi>>("api/v1/branches", JsonOptions) ?? new();
+            branches = b.Where(x => x.IsActive).Select(x => new BranchOption(x.Id, x.Name)).OrderBy(x => x.Name).ToList();
+            purgeDays = (await Onboarding.GetSettingsAsync()).PurgeAfterDays;
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load roles and branches", ex.Message);
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try { requests = await Onboarding.GetJoinRequestsAsync(showClosed); }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not load join requests", ex.Message); }
+        finally { isLoading = false; }
+    }
+
+    private async Task ToggleClosed(bool value)
+    {
+        showClosed = value;
+        await LoadAsync();
+    }
+
+    private async Task OpenApprove(JoinRequestDto r)
+    {
+        approving = r;
+        approveMessages = new();
+        form = new ApproveForm
+        {
+            RoleId = roles.FirstOrDefault(x => x.Code == RoleCodes.Teacher)?.Id,
+            BranchId = r.BranchId ?? (branches.Count == 1 ? branches[0].Id : null)
+        };
+        showApprove = true;
+        await LoadBranchListsAsync();
+    }
+
+    private async Task OnBranchChanged(Guid? branchId)
+    {
+        form.BranchId = branchId;
+        form.DepartmentIds = Array.Empty<Guid>();
+        form.LineManagerUserId = null;
+        form.ClassTeacherOf = Array.Empty<string>();
+        await LoadBranchListsAsync();
+    }
+
+    private async Task LoadBranchListsAsync()
+    {
+        departments = new();
+        lineManagers = new();
+        classNames = new();
+        if (form.BranchId is not { } b) return;
+        try { departments = await StaffApi.GetDepartmentsAsync(b); } catch { }
+        try { lineManagers = (await StaffApi.GetDirectoryAsync(b)).Items.Where(m => m.IsActive).OrderBy(m => m.FullName).ToList(); } catch { }
+        try { classNames = (await StudentApi.GetVocabulariesAsync(b)).Classes.Select(c => c.Name).OrderBy(n => n).ToList(); } catch { }
+    }
+
+    private async Task ApproveAsync()
+    {
+        if (approving == null || form.RoleId == null || form.BranchId == null) return;
+        saving = true;
+        try
+        {
+            approveMessages = await Onboarding.ApproveAsync(approving.UserId, new ApproveJoinRequest
+            {
+                RoleId = form.RoleId.Value,
+                BranchId = form.BranchId,
+                DepartmentIds = form.DepartmentIds.ToList(),
+                LineManagerUserId = form.LineManagerUserId,
+                ClassTeacherOf = form.ClassTeacherOf.ToList(),
+                Teaches = string.IsNullOrWhiteSpace(form.Teaches) ? null : form.Teaches.Trim()
+            });
+            Toast.Notify(ToastSeverity.Success, $"{approving.FirstName} {approving.LastName} approved", approveMessages.Count == 0 ? "They have been emailed that they can sign in." : "Approved, with notes about the assignments.");
+            if (approveMessages.Count == 0) showApprove = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not approve", ex.Message); }
+        finally { saving = false; }
+    }
+
+    private void OpenReject(JoinRequestDto r)
+    {
+        rejecting = r;
+        rejectReason = null;
+        showReject = true;
+    }
+
+    private async Task RejectAsync()
+    {
+        if (rejecting == null) return;
+        saving = true;
+        try
+        {
+            await Onboarding.RejectAsync(rejecting.UserId, new RejectJoinRequest { Reason = string.IsNullOrWhiteSpace(rejectReason) ? null : rejectReason.Trim() });
+            Toast.Notify(ToastSeverity.Success, "Request rejected");
+            showReject = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not reject", ex.Message); }
+        finally { saving = false; }
+    }
+}

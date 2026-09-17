@@ -82,7 +82,9 @@ public enum RecordSource
     Observation = 2,
     Recognition = 3,
     System = 4,
-    Import = 5
+    Import = 5,
+    /// <summary>A teacher marked their own lesson taught (duty rota plan §7.3). Shown as a self-report until a lesson supervisor confirms or overrides it.</summary>
+    SelfReport = 6
 }
 
 /// <summary>
@@ -132,4 +134,64 @@ public enum LeaderboardMode
     Department = 1,
     /// <summary>A public top-N board. Off unless the tenant switches it on.</summary>
     Public = 2
+}
+
+// ---- Duty rota, duty reports and the timetable (duty rota plan §3.2, 2026-09-17). Persisted: append only. ----
+
+/// <summary>What kind of expectation a StaffDuty is. Rota slots and lessons are duties so they share the register, reminders, portal and scoring.</summary>
+public enum DutyKind
+{
+    /// <summary>A meeting, invigilation or prep slot — every duty before the rota existed. At most 14 days.</summary>
+    Session = 0,
+    /// <summary>On duty for a span: a day, a week, a month, any custom span up to 92 days.</summary>
+    Rota = 1,
+    /// <summary>One lesson occurrence, materialised from a published timetable. At most one day.</summary>
+    Lesson = 2
+}
+
+/// <summary>How often the people on a rota slot write a report.</summary>
+public enum ReportCadence
+{
+    None = 0,
+    Daily = 1,
+    Weekly = 2,
+    Monthly = 3,
+    /// <summary>Once, at the end of the slot.</summary>
+    EndOfDuty = 4
+}
+
+public enum DutyReportAuthorRole
+{
+    /// <summary>A person on duty, reporting on the period.</summary>
+    OnDuty = 0,
+    /// <summary>The administrator on duty, reporting on their supervision of the teacher(s) on duty.</summary>
+    Supervisor = 1
+}
+
+public enum DutyReportStatus
+{
+    Draft = 0,
+    Submitted = 1,
+    Reviewed = 2,
+    /// <summary>Sent back for changes; the author edits and resubmits, the returned version stays in the notes.</summary>
+    Returned = 3,
+    /// <summary>"No duty that day" — a closure or cancellation, supervisor-approved. Stops the reminder ladder.</summary>
+    NoDuty = 4
+}
+
+/// <summary>A follow-up entry on a duty report. A Response only from the author; Review and Return only from a reviewer.</summary>
+public enum DutyReportNoteKind
+{
+    Comment = 0,
+    Response = 1,
+    Review = 2,
+    Return = 3,
+    Reopen = 4
+}
+
+public enum TimetableStatus
+{
+    Draft = 0,
+    Published = 1,
+    Archived = 2
 }

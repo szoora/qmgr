@@ -1,6 +1,7 @@
 using System.Text.Json;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Entities.Audit;
+using QMgr.Domain.Enums;
 using QMgr.Infrastructure.Data;
 
 namespace QMgr.Infrastructure.Services;
@@ -31,7 +32,8 @@ public interface IActivityLogger
         Guid? branchId = null,
         Guid? organizationId = null,
         Guid? actorUserId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        WelfareVisibility visibility = WelfareVisibility.Standard);
 }
 
 public class ActivityLogger : IActivityLogger
@@ -56,7 +58,8 @@ public class ActivityLogger : IActivityLogger
     public async Task RecordAsync(
         string action, string entityType, Guid? entityId, Guid? subjectUserId, string summary,
         object? detail = null, Guid? branchId = null, Guid? organizationId = null, Guid? actorUserId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        WelfareVisibility visibility = WelfareVisibility.Standard)
     {
         try
         {
@@ -99,6 +102,7 @@ public class ActivityLogger : IActivityLogger
                 EntityId = entityId,
                 Summary = summary.Length > 500 ? summary[..497] + "…" : summary,
                 DetailJson = detail == null ? null : JsonSerializer.Serialize(detail),
+                Visibility = visibility,
                 IpAddress = DocumentShareService.TruncateIp(ip),
                 UserAgent = DocumentShareService.CoarseUserAgent(agent),
                 OccurredAt = DateTime.UtcNow

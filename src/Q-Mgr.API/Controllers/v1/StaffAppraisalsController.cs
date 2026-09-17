@@ -34,7 +34,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffAppraisalsController : ControllerBase
 {
     private readonly QMgrDbContext _context;
@@ -197,9 +197,23 @@ public class StaffAppraisalsController : ControllerBase
         }
 
         var dtos = await MapManyAsync(items, organizationId, policy, me, canApprove, await CanConductAsync(), liveScores: false);
+        var closure = _policy.ClosureOf(policy, p.Key);
+        if (closure != null)
+        {
+            var closerNames = await StaffLookups.LoadNamesAsync(_context, new Guid?[] { closure.ClosedByUserId });
+            closure = closure with { ClosedByName = closerNames[closure.ClosedByUserId] };
+        }
         return Ok(new AppraisalBoardDto
         {
             Period = p,
+            PeriodStatus = new PeriodStatusDto
+            {
+                Period = p,
+                IsClosed = closure != null,
+                Closure = closure,
+                AppraisalCount = items.Count,
+                UnsignedAppraisals = items.Count(a => a.Stage != AppraisalStage.Signed)
+            },
             ByStage = Enum.GetValues<AppraisalStage>().ToDictionary(s => s.ToString(), s => items.Count(a => a.Stage == s)),
             Items = dtos,
             ScopedToDepartments = canApprove ? new List<string>() : (await _scope.GetScopedDepartmentNamesAsync()).ToList()
@@ -229,7 +243,15 @@ public class StaffAppraisalsController : ControllerBase
         var policy = await _policy.GetAsync(organizationId);
         var p = _policy.FindPeriod(policy, request.PeriodKey) ?? _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
         var me = CurrentUserId();
-        var isAnnual = p.Key.Length == 4 && int.TryParse(p.Key, out _);
+        var isAnnual = IsAnnualKey(p.Key);
+
+        if (_policy.ClosureOf(policy, p.Key) != null)
+            return new ConflictObjectResult(new ProblemDetails
+            {
+                Title = $"{p.Name} is closed",
+                Detail = "No new appraisals open in a closed period. An approver can reopen the period first.",
+                Status = StatusCodes.Status409Conflict
+            });
 
         var staffQuery = StaffLookups.BranchStaff(_context, organizationId, branchId);
         if (request.SubjectUserIds is { Count: > 0 } wanted)
@@ -309,7 +331,7 @@ public class StaffAppraisalsController : ControllerBase
         {
             await _activity.RecordAsync(ActivityActions.AppraisalOpened, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
                 $"{p.Name} appraisal opened for {names[a.SubjectUserId]}, appraiser {names[a.AppraiserUserId]}",
-                new { a.PeriodKey, a.AppraiserUserId, Annual = isAnnual, a.AppraiserRating }, branchId, organizationId);
+                new { a.PeriodKey, a.AppraiserUserId, Annual = isAnnual, a.AppraiserRating }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
             await NotifyAsync(a.SubjectUserId, organizationId, branchId, $"Your {p.Name} appraisal is open",
                 $"Targets for the period can now be agreed with {names[a.AppraiserUserId]}. Complete your self-assessment when you are ready.", "/portal");
@@ -368,7 +390,7 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalTargetsSet, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{targets.Count} target(s) set on {SubjectName(a)}'s {a.PeriodKey} appraisal", new { Count = targets.Count }, branchId, organizationId);
+            $"{targets.Count} target(s) set on {SubjectName(a)}'s {a.PeriodKey} appraisal", new { Count = targets.Count }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         if (a.SubjectUserId != me)
             await NotifyAsync(a.SubjectUserId, organizationId, branchId, $"Targets set for your {a.PeriodKey} appraisal",
@@ -395,8 +417,12 @@ public class StaffAppraisalsController : ControllerBase
         if (a == null || a.SubjectUserId != me) return NotFoundAppraisal();
         if (a.Stage is not (AppraisalStage.Open or AppraisalStage.SelfAssessment)) return WrongStage(a, "Open or Self-assessment");
         if (request.SelfRating is < 1 or > 5) return Problem400("Rate yourself from 1 to 5");
+        // Each parameter on the same 1–5 scale; 0 means "not rated" and is dropped. Before 2026-09-17 only
+        // the overall rating was bounded, so a per-parameter 9 was stored and shown to the appraiser.
+        if (request.Ratings?.Any(r => r.Rating is < 0 or > 5) == true)
+            return Problem400("Rate each parameter from 1 to 5", "Leave a parameter unrated rather than rating it outside the scale.");
 
-        a.SelfRatingsJson = StaffPerformanceMapping.SerializeList(request.Ratings?.Where(r => r.Rating > 0).ToList());
+        a.SelfRatingsJson = StaffPerformanceMapping.SerializeList(request.Ratings?.Where(r => r.Rating is >= 1 and <= 5).GroupBy(r => r.ParameterId).Select(g => g.Last()).ToList());
         a.SelfRating = request.SelfRating;
         a.SelfComments = string.IsNullOrWhiteSpace(request.Comments) ? null : request.Comments.Trim();
         a.SelfSubmittedAt = DateTime.UtcNow;
@@ -406,7 +432,7 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalSelfSubmitted, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{SubjectName(a)} submitted their {a.PeriodKey} self-assessment", new { a.SelfRating }, branchId, organizationId);
+            $"{SubjectName(a)} submitted their {a.PeriodKey} self-assessment", new { a.SelfRating }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         await NotifyAsync(a.AppraiserUserId, organizationId, branchId, $"{SubjectName(a)}'s self-assessment is ready",
             $"Their {a.PeriodKey} appraisal is now with you for review.", "/admin/staff/appraisals");
@@ -464,7 +490,7 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalReviewed, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{SubjectName(a)}'s {a.PeriodKey} appraisal reviewed: rating {a.AppraiserRating}", new { a.AppraiserRating }, branchId, organizationId);
+            $"{SubjectName(a)}'s {a.PeriodKey} appraisal reviewed by the appraiser", new { a.AppraiserRating }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         foreach (var moderator in await StaffLookups.UsersWithPermissionAsync(_context, organizationId, Permissions.StaffAppraisalsApprove))
             if (moderator != me)
@@ -497,6 +523,11 @@ public class StaffAppraisalsController : ControllerBase
         if (request.FinalRating is < 1 or > 5) return Problem400("The final rating is 1 to 5");
         if (a.AppraiserRating.HasValue && request.FinalRating != a.AppraiserRating.Value && string.IsNullOrWhiteSpace(request.Reason))
             return Problem400("A reason is required to change the appraiser's rating", $"The appraiser rated {a.AppraiserRating}; you are recording {request.FinalRating}. Say why, so the record carries it.");
+        if (request.SignNow)
+        {
+            var termlyProblem = await AnnualSignProblemAsync(a, organizationId);
+            if (termlyProblem != null) return termlyProblem;
+        }
 
         var before = a.FinalRating;
         a.FinalRating = request.FinalRating;
@@ -517,8 +548,8 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalModerated, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{SubjectName(a)}'s {a.PeriodKey} appraisal moderated: final rating {a.FinalRating} ({bandName}){(a.AppraiserRating != a.FinalRating ? ", changed from the appraiser's " + a.AppraiserRating : "")}",
-            new { Before = before, a.AppraiserRating, a.FinalRating, Reason = a.ModerationReason, Signed = request.SignNow }, branchId, organizationId);
+            $"{SubjectName(a)}'s {a.PeriodKey} appraisal moderated{(a.AppraiserRating != a.FinalRating ? ", rating changed with a recorded reason" : "")}",
+            new { Before = before, a.AppraiserRating, a.FinalRating, Reason = a.ModerationReason, Signed = request.SignNow }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         if (request.SignNow)
             await AfterSignedAsync(a, organizationId, branchId, bandName);
@@ -548,6 +579,8 @@ public class StaffAppraisalsController : ControllerBase
         if (a.Stage != AppraisalStage.Moderation) return WrongStage(a, "Moderation");
         if (a.AppraiserRating == null && a.FinalRating == null)
             return Problem400("Nothing to sign yet", "The appraiser has not recorded a rating.");
+        var termlyProblem = await AnnualSignProblemAsync(a, organizationId);
+        if (termlyProblem != null) return termlyProblem;
 
         var policy = await _policy.GetAsync(organizationId);
         await FreezeAndSignAsync(a, organizationId, branchId, policy, me);
@@ -584,7 +617,7 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalAppealed, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{SubjectName(a)} appealed their {a.PeriodKey} appraisal", null, branchId, organizationId);
+            $"{SubjectName(a)} appealed their {a.PeriodKey} appraisal", null, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         foreach (var moderator in await StaffLookups.UsersWithPermissionAsync(_context, organizationId, Permissions.StaffAppraisalsApprove))
             await NotifyAsync(moderator, organizationId, branchId, $"{SubjectName(a)} has appealed their {a.PeriodKey} appraisal",
@@ -620,7 +653,7 @@ public class StaffAppraisalsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.AppraisalReportPublished, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"Report \"{mediaName}\" attached to {SubjectName(a)}'s {a.PeriodKey} appraisal", new { request.MediaContentId }, branchId, organizationId);
+            $"Report \"{mediaName}\" attached to {SubjectName(a)}'s {a.PeriodKey} appraisal", new { request.MediaContentId }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         var policy = await _policy.GetAsync(organizationId);
         return Ok(await MapOneAsync(a, organizationId, policy, me, includeRank: false));
@@ -648,8 +681,8 @@ public class StaffAppraisalsController : ControllerBase
     private async Task AfterSignedAsync(StaffAppraisal a, Guid organizationId, Guid branchId, string? bandName)
     {
         await _activity.RecordAsync(ActivityActions.AppraisalSigned, nameof(StaffAppraisal), a.Id, a.SubjectUserId,
-            $"{SubjectName(a)}'s {a.PeriodKey} appraisal signed: rating {a.FinalRating} ({bandName}), score {(a.ComputedScore.HasValue ? a.ComputedScore.Value.ToString("0.#") : "—")} frozen",
-            new { a.FinalRating, a.ComputedScore }, branchId, organizationId);
+            $"{SubjectName(a)}'s {a.PeriodKey} appraisal signed; score frozen",
+            new { a.FinalRating, a.ComputedScore }, branchId, organizationId, visibility: WelfareVisibility.Confidential);
 
         await NotifyAsync(a.SubjectUserId, organizationId, branchId, $"Your {a.PeriodKey} appraisal has been signed",
             $"Final rating {a.FinalRating}/5 ({bandName}). Open your portal to read it; you may appeal with a note if you disagree.", "/portal");
@@ -693,12 +726,84 @@ public class StaffAppraisalsController : ControllerBase
 
     private static string SubjectName(StaffAppraisal a) => a.Subject != null ? StaffPerformanceMapping.FullName(a.Subject) : "the subject";
 
+    private static bool IsAnnualKey(string key) => key.Length == 4 && int.TryParse(key, out _);
+
+    /// <summary>
+    /// The annual appraisal is what the termly ones "cumulatively constitute" (MoES), so it is not signed
+    /// while one of that year's termly appraisals for the same person is still unsigned — signing the
+    /// annual first would freeze an average of ratings that can still change. A person with no termly
+    /// appraisals at all (joined late, or a school that appraises annually) is not held up.
+    /// </summary>
+    private async Task<IActionResult?> AnnualSignProblemAsync(StaffAppraisal a, Guid organizationId)
+    {
+        if (!IsAnnualKey(a.PeriodKey)) return null;
+        var policy = await _policy.GetAsync(organizationId);
+        var termKeys = _policy.PeriodsForYear(policy, int.Parse(a.PeriodKey)).Select(t => t.Key).Where(k => k != a.PeriodKey).ToList();
+        var open = await _context.StaffAppraisals.AsNoTracking()
+            .Where(t => t.OrganizationId == organizationId && t.SubjectUserId == a.SubjectUserId && t.IsActive
+                        && termKeys.Contains(t.PeriodKey) && t.Stage != AppraisalStage.Signed)
+            .Select(t => new { t.PeriodKey, t.Stage })
+            .ToListAsync();
+        if (open.Count == 0) return null;
+        return new ConflictObjectResult(new ProblemDetails
+        {
+            Title = "The termly appraisals are not all signed",
+            Detail = $"{string.Join(", ", open.Select(o => $"{o.PeriodKey} is at {Stage(o.Stage)}"))}. Sign those first; the annual rating is their average.",
+            Status = StatusCodes.Status409Conflict
+        });
+    }
+
     private async Task<StaffAppraisalDto> MapOneAsync(StaffAppraisal a, Guid organizationId, StaffPerformancePolicyDto policy, Guid me, bool includeRank)
     {
         var period = PeriodOf(a, policy, _policy);
         var live = await _scoring.ComputeAsync(organizationId, a.BranchId, a.SubjectUserId, period, includeRank);
         var list = await MapManyAsync(new List<StaffAppraisal> { a }, organizationId, policy, me, await CanApproveAsync(), await CanConductAsync(), liveScores: false, live);
-        return list[0];
+        var dto = list[0] with { IsAnnual = IsAnnualKey(a.PeriodKey), PeriodClosed = _policy.ClosureOf(policy, a.PeriodKey) != null };
+
+        // The moderator's view of the appraiser (plan §7): this appraiser's ratings this period against
+        // every appraiser's in the branch. Only for someone who may moderate — it names a colleague's habits.
+        if (await CanApproveAsync())
+        {
+            var ratings = await _context.StaffAppraisals.AsNoTracking()
+                .Where(x => x.OrganizationId == organizationId && x.BranchId == a.BranchId && x.PeriodKey == a.PeriodKey && x.IsActive && x.AppraiserRating != null)
+                .Select(x => new { x.AppraiserUserId, Rating = x.AppraiserRating!.Value })
+                .ToListAsync();
+            var mine = ratings.Where(r => r.AppraiserUserId == a.AppraiserUserId).Select(r => r.Rating).ToList();
+            var all = ratings.Select(r => r.Rating).ToList();
+            dto = dto with
+            {
+                AppraiserRatingCounts = Enumerable.Range(1, 5).Select(n => mine.Count(r => r == n)).ToList(),
+                SchoolRatingCounts = Enumerable.Range(1, 5).Select(n => all.Count(r => r == n)).ToList(),
+                AppraiserMeanRating = mine.Count > 0 ? Math.Round((decimal)mine.Average(), 2) : null,
+                SchoolMeanRating = all.Count > 0 ? Math.Round((decimal)all.Average(), 2) : null
+            };
+        }
+
+        // The annual roll-up, live: the year's termly appraisals for this person and their signed average.
+        if (dto.IsAnnual)
+        {
+            var terms = _policy.PeriodsForYear(policy, int.Parse(a.PeriodKey)).Where(t => t.Key != a.PeriodKey).ToList();
+            var termKeys = terms.Select(t => t.Key).ToList();
+            var termly = await _context.StaffAppraisals.AsNoTracking()
+                .Where(x => x.OrganizationId == organizationId && x.SubjectUserId == a.SubjectUserId && x.IsActive && termKeys.Contains(x.PeriodKey))
+                .Select(x => new { x.Id, x.PeriodKey, x.Stage, x.FinalRating })
+                .ToListAsync();
+            var rows = termly
+                .OrderBy(x => termKeys.IndexOf(x.PeriodKey))
+                .Select(x => new TermRatingDto
+                {
+                    AppraisalId = x.Id,
+                    PeriodKey = x.PeriodKey,
+                    PeriodName = terms.First(t => t.Key == x.PeriodKey).Name,
+                    Stage = x.Stage,
+                    FinalRating = x.Stage == AppraisalStage.Signed ? x.FinalRating : null
+                })
+                .ToList();
+            var signed = rows.Where(r => r.FinalRating.HasValue).Select(r => r.FinalRating!.Value).ToList();
+            dto = dto with { TermlyRollup = rows, TermlyAverage = signed.Count > 0 ? Math.Round((decimal)signed.Average(), 2) : null };
+        }
+
+        return dto;
     }
 
     private async Task<List<StaffAppraisalDto>> MapManyAsync(List<StaffAppraisal> items, Guid organizationId, StaffPerformancePolicyDto policy, Guid me, bool canApprove, bool canConduct, bool liveScores, StaffScoreDto? singleLive = null)

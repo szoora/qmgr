@@ -689,14 +689,18 @@
             {
                 try
                 {
-                    var counters = await Http.GetFromJsonAsync<List<CounterDto>>($"api/v1/branches/{branch.Id}/counters?includeInactive=true", JsonOptions) ?? new();
-                    var services = await Http.GetFromJsonAsync<List<ServiceTypeDto>>($"api/v1/branches/{branch.Id}/service-types?includeInactive=true", JsonOptions) ?? new();
+                    // Each figure is fetched on its own: a role that may see counters but not
+                    // tickets should still see its counter and service counts.
+                    var countersTask = TryGetAsync<List<CounterDto>>($"api/v1/branches/{branch.Id}/counters?includeInactive=true");
+                    var servicesTask = TryGetAsync<List<ServiceTypeDto>>($"api/v1/branches/{branch.Id}/service-types?includeInactive=true");
+                    var todayTask = TryGetAsync<TokensIssuedTodayDto>($"api/v1/branches/{branch.Id}/tokens/issued-today");
+                    await Task.WhenAll(countersTask, servicesTask, todayTask);
 
                     branchStats[branch.Id] = new BranchStats
                     {
-                        CounterCount = counters.Count,
-                        ServiceCount = services.Count,
-                        TodayTokens = 0 // TODO: Get from API
+                        CounterCount = countersTask.Result?.Count ?? 0,
+                        ServiceCount = servicesTask.Result?.Count ?? 0,
+                        TodayTokens = todayTask.Result?.Count ?? 0
                     };
                 }
                 catch
@@ -712,6 +716,18 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task<T?> TryGetAsync<T>(string url) where T : class
+    {
+        try
+        {
+            return await Http.GetFromJsonAsync<T>(url, JsonOptions);
+        }
+        catch
+        {
+            return null;
         }
     }
 

@@ -6,7 +6,10 @@ namespace QMgr.API.Application.Services;
 
 public interface IPasswordValidationService
 {
-    Task<PasswordValidationResult> ValidatePasswordAsync(string password, string? username = null, string? email = null);
+    /// <param name="organizationName">The school's own name; a password built on it is refused (NIST SP 800-63B-4 §3.1.1.2, context-specific words).</param>
+    /// <param name="alsoRefuse">Further values the password must not be — e.g. the temporary password it replaces.</param>
+    Task<PasswordValidationResult> ValidatePasswordAsync(string password, string? username = null, string? email = null,
+        string? organizationName = null, IEnumerable<string>? alsoRefuse = null);
     Task<PasswordPolicySettings> GetPasswordPolicyAsync();
     Task UpdatePasswordPolicyAsync(PasswordPolicySettings policy, Guid updatedBy);
     Task<SecuritySettings> GetSecuritySettingsAsync();
@@ -69,10 +72,19 @@ public class PasswordValidationService : IPasswordValidationService
         _logger.LogInformation("Password policy updated by user {UserId}", updatedBy);
     }
 
-    public async Task<PasswordValidationResult> ValidatePasswordAsync(string password, string? username = null, string? email = null)
+    public async Task<PasswordValidationResult> ValidatePasswordAsync(string password, string? username = null, string? email = null,
+        string? organizationName = null, IEnumerable<string>? alsoRefuse = null)
     {
         var result = new PasswordValidationResult();
         var policy = await GetPasswordPolicyAsync();
+
+        // 0. The blocklist (duty rota plan §12.2; NIST SP 800-63B-4 §3.1.1.2). It runs whatever the
+        //    policy's toggles say: a guessable password is refused by rule, not by preference, and this
+        //    is what stops a school onboarding everyone on "Staff2026!" — which satisfies every
+        //    character-class rule above and is exactly the shared default the plan rules out.
+        var blocked = PasswordBlocklist.Check(password, username, email, organizationName, alsoRefuse);
+        if (blocked != null)
+            result.Errors.Add(blocked);
 
         // 1. Check minimum length
         if (password.Length < policy.MinimumLength)

@@ -339,6 +339,18 @@ else if (loadError != null)
                 publishedFrom: $"Staff reports — {BranchState.CurrentBranchName}, {PeriodName}{(r.ScopedToDepartments.Any() ? $" (scoped to {string.Join(", ", r.ScopedToDepartments)})" : "")}, generated {stamp}",
                 shareable: true);
 
+            // The activity log carries the publish (plan §11). RecordExportAsync never throws: the document
+            // exists either way, and a missing log line is not a reason to tell the user it failed.
+            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+            {
+                Kind = StaffExportKinds.Reports,
+                Published = true,
+                MediaContentId = doc.Id,
+                DocumentName = name,
+                Format = "PDF",
+                PeriodKey = r.Period.Key
+            });
+
             Toast.Notify(ToastSeverity.Success, "Published to the Document Library", "A snapshot as of now. Create a share link from the Library when you are ready.");
             Navigation.NavigateTo($"/content/documents?document={doc.Id}");
         }

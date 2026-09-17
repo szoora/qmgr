@@ -147,7 +147,7 @@
                                 }
                                 @if (record.Status == WelfareStatus.Draft)
                                 {
-                                    <span class="status-badge status-badge--draft"><QIcon Name="pencil-fill" /> Draft</span>
+                                    <QChip Text="Draft" Icon="pencil-fill" Size="sm" Color="@WelfareDisplay.StatusColor(WelfareStatus.Draft)" />
                                 }
                                 else if (canEdit)
                                 {
@@ -157,7 +157,7 @@
                                 }
                                 else
                                 {
-                                    <span class="status-badge status-badge--@record.Status.ToString().ToLowerInvariant()">@record.Status</span>
+                                    <QChip Text="@record.Status.ToString()" Size="sm" Color="@WelfareDisplay.StatusColor(record.Status)" />
                                 }
                     </TitleContent>
                     <ChildContent>
@@ -761,12 +761,6 @@
 
     .warning-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(217, 119, 6, 0.1); border: 1px solid rgba(217, 119, 6, 0.3); border-radius: var(--qm-radius-md); padding: 10px 12px; font-size: 13px; color: var(--qm-accent-orange, #d97706); margin-bottom: 16px; }
 
-    .status-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; background: var(--qm-bg-secondary); color: var(--qm-text-muted); }
-    .status-badge--draft { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
-    .status-badge--open { background: rgba(47, 90, 84, 0.12); color: var(--qm-welfare-concern, #2f5a54); }
-    .status-badge--underreview { background: rgba(217, 119, 6, 0.12); color: var(--qm-accent-orange, #d97706); }
-    .status-badge--actiontaken { background: rgba(var(--qm-primary-rgb), 0.12); color: var(--qm-primary); }
-    .status-badge--resolved { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
     .status-select { display: inline-block; width: auto; min-width: 140px; }
 
     .action-box { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 10px 12px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); border: 1px solid var(--qm-border); font-size: 13px; }

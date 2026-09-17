@@ -5,7 +5,273 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (written 2026-09-16, late)
+## ▶ NEXT SESSION — start here (written 2026-09-17, late evening)
+
+**Resume Phase 89 — the duty rota build — at "Phase 0, remaining" below.** The user asked for
+`docs/plans/DUTY_ROTA_AND_TIMETABLE.md` to be built *"fully, word to word"*, with e2e at the end.
+Phase 0A is done; Phase 0's API is done and live-verified; Phase 0's Web screens and Phases 1–6 remain.
+Read the plan's §3 (model), §8 (reminders), §13 (security) and §14 (phases) before writing anything.
+
+**Branch and tree:** `phase-85-staff-performance`, everything UNCOMMITTED (Phases 86–89). Nobody has
+asked for a commit. Both projects build. The dev database has migrations up to
+`20260917114532_AddSubjectsAndTieredAssignments` applied.
+
+**How it was verified, and how to show it again:** the user wanted to SEE the tests, so they ran in the
+user's own Chrome as a live pass/fail panel injected into `http://127.0.0.1:5003/login` with
+`javascript_tool` (fetches go to the API on 5001, allowed by `Cors__AllowedOrigins__4`). Expect the user to
+want the same for later phases. The Node e2e (`class-teacher-e2e.sh`, 470) has NOT been re-run since
+Phase 0 changed the teacher role's scope and the reminder jobs — run it before trusting section 14.
+
+Deployment is the user's own decision and is **not** tracked here as a task (user instruction,
+2026-09-17).
+
+### Open
+
+1. `[~]` **Phase 89 — duty rota plan build**, see below.
+2. `[!]` **Commit** the changed files — nobody has asked for a commit yet.
+3. `[!]` Merge `phase-82-…` and `phase-85-…` into `master`; the dev-tenant images in public history.
+
+**Do not re-plan:** a test project, per-display theme, PPTX rendering, pg extensions, the ten Staff
+Performance decisions, the Confidential question (subject reads the record, notification title-only),
+registers recording on every save, API metering (only X-API-Key traffic), and Staff Performance as
+part of the Student Welfare module ("Welfare & Performance") rather than a module of its own, and push
+notifications and SSO (both removed as stubs 2026-09-17; each would be its own plan) — all
+decided 2026-09-17. **Nor the duty rota plan's fourteen §15 decisions** — all taken as proposed.
+
+### Phase 89 (started 2026-09-17, evening) — Duty rota, duty reports, subject teachers, timetable, onboarding: BUILD IN PROGRESS
+
+User: *"implement the duty rota plan fully, word to word. we shall perform e2e at the end."* The plan is
+`docs/plans/DUTY_ROTA_AND_TIMETABLE.md`. **All fourteen §15 decisions taken as proposed** (the precedent
+set by the Staff Performance build), including decision 11: no shared default password — slips or
+invitation, and a typed batch password only when it passes the policy and blocklist. Built in the plan's
+phase order; each phase is ticked here as it lands so an interrupted session can resume from the last tick.
+
+- [x] Phase 0A — Onboarding (migration `20260917111119_AddStaffOnboarding`). Built and smoke-tested against the
+      dev tenant (curl): slips re-issue → temporary sign-in → change-only token refused elsewhere (401
+      PASSWORD_CHANGE_REQUIRED) → "Staff2026!xx" refused by the blocklist → change → token spent → old
+      password dead → full sign-in and portal checklist; join link rotate → public info → identical answer for
+      a known email → password on the school's name refused → pending sign-in told it is waiting → HoD 403 →
+      two simultaneous approvals: one 200, one 409 → approved person signs in as teacher. **Found on the way:**
+      `Organization.Settings` is jsonb, so the join-code lookup is a raw jsonb-path SQL (schema-qualified), not a
+      LINQ Contains (which 500ed). **Additions beyond the plan's three columns, both required by it:**
+      `User.JoinRequestRejectedAt` (rejected requests are kept 30 days) and `User.PhotoUrl` (the checklist's
+      profile photo; classified as `UploadOwnerKind.StaffPhoto`). Pending requests no longer count as seats.
+      In Development only, the email code is also written to the API log so the e2e can join. Test rows left:
+      `e2e.ob.smoke` and `e2e.join.smoke*` (safe to delete). Not yet driven in a browser.
+- [~] Phase 0 — Foundations and the security core (migration `20260917114532_AddSubjectsAndTieredAssignments`).
+      **API DONE and verified live; Web screens NOT started.**
+
+      **Built (API):**
+      - Tiered `IStudentScopeService`: `StudentAccessTier {None, Teaching, Pastoral, Unscoped}`.
+        `GetClassNamesAsync` DELETED, replaced by `GetPastoralClassNamesAsync` / `GetTeachingClassNamesAsync`.
+        `ApplyAsync`, `VerifyStudentAccessAsync`, `CanSeeStudentAsync` are PASTORAL (default-deny);
+        `ApplyAnyTierAsync`, `VerifyAnyTierAccessAsync`, `GetTierAsync`, `GetTiersAsync` serve the roster.
+      - `ClassTeacherRole.SubjectTeacher = 2`, `ClassTeacherAssignment.SubjectId` / `PeriodsPerWeek`, partial
+        unique index `ux_subject_teacher_once_per_class_subject`.
+      - `StudentsController.GetStudents` reads any tier; `MapTeachingTier` blanks guardians, flags, consent, DOB,
+        age, residency, dormitory and the restricted marker; learning need only if
+        `ShareLearningNeedsWithTeachingStaff`. `StudentDto.AccessTier` / `TaughtSubjects`.
+      - Welfare: alerts pastoral-only; `CreateRecord` lets a Teaching-tier caller log a concern when
+        `SubjectTeachersMayLogConcerns` (default on); the AUTHOR RULE on `GetRecord` (author reads their own
+        record below Restricted). Student photo readable at any tier; welfare evidence stays pastoral.
+      - `Subject` table + `SubjectsController` (`api/v1/branches/{b}/staff/subjects`): GET has no permission code
+        and seeds 21 Uganda subjects on first read (`SubjectDefaults.SeedIfEmptyAsync`); POST / PUT / PATCH toggle
+        on `staff.structure.manage`; retiring a taught subject is refused; codes cannot contain `: ; ,`.
+      - `ClassTeachersController`: `POST …/class-teachers/subject-teachers`, `PATCH …/class-teachers/{id}/periods`,
+        `GET …/class-teachers/teaching[?userId=]` (own always; another's needs classes.teachers.manage, or
+        staff.records.view with them in staff scope, else 404). The old POST refuses Role=SubjectTeacher.
+        Coverage carries `Level`, `SubjectTeachers` per class and `SubjectGaps` (a stream missing a subject its
+        level teaches elsewhere); `SubjectTeachersWithNoLessons` / `PlannedPeriodMismatches` exist but stay EMPTY
+        until Phase 3 fills them. `TeachingAssignments.AssignSubjectTeacherAsync` is the ONE writer (page, import,
+        approval); `ApplyTeachesAsync` parses "MATH:S2A,S2B; PHY:S3A"; `SummaryAsync` feeds "My teaching".
+      - Permissions in all three catalogues: `staff.dutyreports.view`, `staff.dutyreports.review`,
+        `timetable.manage`, `timetable.lessons.flag`. Grants: DoS all four; Academic Assistant view, manage,
+        flag; HoD view, flag. **`teacher` role → `DataScope = AssignedClasses` + `students.view`** (RbacSeeder
+        repairs existing tenants on start — a teacher with no subject assignment now sees NO students).
+      - Policy additions and their validator (`StaffPolicyController.ValidateDutyRota`): ladders, quiet hours,
+        report template and defaults, load norms, lesson reminder minutes, My Day time, recovery and unrecorded
+        windows. `IStaffPerformancePolicyService.LadderFor` / `DefaultLadders` / `ReportTemplate` / `DefaultSubjects`.
+      - **Reminder engine:** `IReminderLadderService` (singleton: `DueAtUtc`, `DueStage` with collapse, quiet hours
+        and `AtLocalHour`, `ChannelsFor`) and `ReminderLadderJob` (Hangfire id `staff-reminder-ladder`, every 15
+        min, one method per ladder). Session-start and register-chase moved onto it; the old
+        `staff-duty-reminders` / `staff-register-chase` recurring jobs are REMOVED at registration. Session
+        reminders now reach recorders too. **`StaffDuty.Kind` and `StaffDuty.ReminderStage` were added in THIS
+        migration** (the plan lists them under Phase 1, but the engine and the self-mark rule needed them) —
+        Phase 1's `AddDutyRota` must not add them again. The register-chase stage is DERIVED from
+        `RegisterChaseSentAt` (no column). Claims are conditional `ExecuteUpdateAsync`. A reschedule resets the
+        stage only when the time actually moved.
+      - **Recorder self-mark rule:** a register entry for the caller is 400 unless `duty.Kind == Lesson`, where it
+        is written with `Source = RecordSource.SelfReport`.
+      - Section 14's sweep checks re-pointed at `staff-reminder-ladder`, with quiet hours switched off around them.
+
+      **Bug found by the live run and fixed:** the subject seed opened a user transaction outside
+      `NpgsqlRetryingExecutionStrategy` → 400 on the first Subjects read. It now runs through
+      `CreateExecutionStrategy()`, or joins a transaction already open (the import job and approval may hold one).
+
+      **Verified live in the user's Chrome, 2026-09-17** (panel on /login): first block 63/69, re-run 16/16. The
+      6 were a TEST error — the block created an account and expected a forced change, but §12.3 makes a password
+      temporary only after an import or an administrator's RESET; the re-run used a reset and passed. Covered:
+      subjects seeded (21), duplicate code 409, teacher 403 on write; a teacher with no class sees 0 students;
+      assign (loose class name stored canonical), duplicate 409, unknown class 400, old endpoint 400; roster S2-only
+      at the Teaching tier with sensitive fields blank and taught subject shown; own teaching summary, another's
+      404; S4 class teacher also teaching Physics in S2 → S4 Pastoral, S2 Teaching, S4 welfare 200, S2 welfare 404,
+      S2 welfare-context 404, a concern about the S2 student 201 forced Confidential, author reads it 200, the
+      admin's record on that student 404; coverage lists S2's subject teachers; self-mark 400, marking a colleague
+      200; quiet hours hold the reminder, the next sweep sends it to the expected person AND the recorder, a second
+      sweep sends nothing; ending the assignments removes access on the next request. Onboarding through a reset:
+      change-only token 401 everywhere incl. the roster; blocklist refuses "staff", the username and the temporary
+      password itself; strong password 200; old one dead; portal 200; a created-only account is not forced.
+
+      **Test rows left (safe to delete):** two Confidential "Dummy record - duty rota e2e" welfare records on the S2
+      student (the ledger cannot be deleted from); duties "E2E <run> Self-mark meeting" and "E2E <run> Ladder
+      meeting"; users `e2e.dr.temp.*` and `e2e.dr.reset.*`. The 21 subjects on the dev tenant are intended. The
+      test subject-teacher assignments were ended.
+
+      **Phase 0, remaining — resume HERE:**
+      - [ ] `/admin/subjects` page (nav Staff Performance → Structure, label **Subjects**) and Web API service
+            methods (list, create, update, toggle).
+      - [ ] Class-teachers page: each class shows class teacher, assistants and **subject teachers** (subject →
+            teacher, periods a week; assign, change periods, end); coverage panel shows `SubjectGaps`.
+      - [ ] "My teaching" on the portal and on a staff member's profile (`GET …/class-teachers/teaching`).
+      - [ ] Class vocabulary editor: **Level** per class with auto-fill ("S2A" → "S2") and a **Rooms** editor (name,
+            capacity, type). `VocabularyItemDto.Level/Capacity/RoomType` and `BranchVocabulariesDto.Rooms` exist;
+            confirm `UpdateVocabularies` round-trips them.
+      - [ ] Student roster / student page: explain a Teaching-tier row ("You teach this student Mathematics —
+            welfare and guardians are with their class teacher"), hide pastoral actions on it, and a **Log a
+            concern** entry point that opens the welfare create dialog for a Teaching-tier student.
+      - [ ] `QWeekGrid` component (plan §9: rows × columns, cell template, conflict and highlight states, click and
+            keyboard selection, sticky headers, per-day list below 640px, scrolls inside its card).
+      - [ ] Policy editor UI for quiet hours and the ladders (lesson reminder and My Day fields can wait for Phase 4).
+      - [ ] Re-run `class-teacher-e2e.sh` (470): the teacher role's new scope and the moved sweeps may break section
+            14 assertions that assumed a teacher reads the roster, or a recorder marking themselves.
+      - [ ] Browser pass of the new pages at desktop and 390px, then tick Phase 0 and start Phase 1.
+- [ ] Phase 1 — Duty rota (migration `AddDutyRota`)
+- [ ] Phase 2 — Duty reports (migration `AddDutyReports`)
+- [ ] Phase 3 — Timetable builder (migration `AddTimetable`)
+- [ ] Phase 4 — Lessons live (migration `AddLessonDutyColumns`)
+- [ ] Phase 5 — Reports and analysis
+- [ ] Phase 6 — Import and polish
+- [ ] e2e section 15 (at the end, per the user)
+
+### Phase 88 (2026-09-17, afternoon) — unfinished code, portal speed at scale, the stuck page
+
+After a shutdown mid-session the working tree was checked (nothing lost; both projects build) and
+the user asked to fix the code TODOs, portal speed and the stuck page.
+
+- [x] **Stripe health check** is real: `IStripeService.CheckHealthAsync` reads the balance (5 s
+      timeout). Verified with a deliberately invalid key: Critical, 687 ms, "the secret key was
+      refused". Seen on System Health in Chrome as a Critical card at 701 ms. The Healthy path needs a real key and was not exercised.
+- [x] **SSO flag removed** (user decision): `IdentifyResponse.SsoEnabled`/`SsoUrl` on both sides.
+      Nothing read them; single sign-on does not exist. Real SSO would be its own plan.
+- [x] **Push stub removed** (user decision): `SendPushNotificationAsync` and
+      `CreateNotificationRequest.DeviceToken`. No app, no stored device token; the branch marked
+      `DeliveredVia |= Push` even when nothing was sent. `NotificationChannel.Push`, the
+      `Notification.PushSent*` columns and the per-tenant Firebase columns are left in the schema.
+- [x] **Kiosk industry**: `BranchPublicDto.Industry` carries the organization's setting; the kiosk
+      uses it unless the URL previews another. Verified headless: Service → Health changed the class
+      and the welcome text; `/education` still overrides. Tierless Clinic 114843 restored to Service.
+- [x] **Branches page "Today"**: `GET …/tokens/issued-today` (tokens.view, branch-owned). Verified
+      0 → 1 by issuing a ticket at Tierless Clinic 114843 ("Count check (safe to delete)"). The card fetches its three figures independently. In Chrome, with core-queue granted to the dev tenant for
+      the check and revoked straight after (back to Cancelled), the card read Counters 8, Services 3,
+      Today 14, matching the API.
+- [x] **Portal speed**: the branch score set is cached with a data fingerprint, computed once per miss
+      (see CLAUDE.md). Measured on a scratch copy of the dev database seeded to 199 staff and 12,496
+      term records, same data both ways, Release build:
+      50 users — portal p50 269 → 61 ms, p95 1,959 → 369 ms, worst route p95 1,959 → 841 ms, 60 →
+      81 req/s, FAIL → PASS. 200 users — portal p50 6.6 → 2.6 s, p95 15.0 → 10.1 s, 45 → 76 req/s,
+      still saturating this laptop (API, Postgres and 200 virtual users on one machine). A single
+      portal load at that size makes 28 queries that each execute in under 1 ms in Postgres; what is
+      left is the API's own CPU. Scratch database dropped afterwards.
+- [x] **Stuck page**, reproduced headless: a refused refresh cleared the session but nobody was
+      told, so the page's permission check read "signed out" as "not allowed" and sent the person to
+      `/unauthorized`, where `MainLayout` refused to redirect and never rendered the page. Now
+      `AuthService.SessionExpired` → sign-in with a return address; the layout re-checks the user
+      after its first calls; `/unauthorized` redirects an anonymous visitor. Also: a 429/5xx on refresh
+      no longer signs anyone out, a token rotated by another tab is adopted, the expired path clears
+      only this browser (never `auth/logout`, which would revoke another device's session), and
+      `IModuleApiService.GetMineAsync` throws so the fail-open module guard finally runs (a dead
+      session used to detour through `/billing/modules`). Headless check 6/6, then again in the user's Chrome: signed-out /unauthorized → /login; corrupted
+      tokens on /admin/staff → /login?returnUrl=%2Fadmin%2Fstaff with the session cleared and one
+      refused refresh in the log; signing in returned to /admin/staff.
+      **Not exercised:** the other-tab adoption path (needs an access token to expire mid-circuit).
+- [x] e2e **470 passed, 0 failed** with the API changes in place.
+
+---
+### Phase 87 (2026-09-17, later) — the user's follow-up
+
+- [x] **Staff Performance folded into Student Welfare.** Module code `student-welfare` kept (stored on
+      every purchase), renamed "Welfare & Performance" — short on the user's instruction; the sidebar's
+      "Student Welfare" and "Staff Performance" group labels are unchanged. All staff routes, pages, jobs
+      and the role-change notifier gate on it. Its catalog row now allows 250 users a branch and 5 GB.
+      Migration renames the row only where untouched and removes the never-deployed `staff-performance`
+      row and its dev grants. e2e: the name, no separate module, the retired code refused, the gate.
+      Dev tenant side effect: its welfare module is now Active (platform grant) instead of Trialing.
+- [x] **Confidential decision implemented throughout**: plan amended (§13.3, §14), help text,
+      e2e asserts the subject reads the description and no notification carries it.
+- [x] **Register-on-save decision implemented throughout**: plan amended (§6.2), the register page
+      explains it, the recorder's to-do says "N marked and recorded", e2e asserts records written and
+      people told before the close, with the register still open.
+- [x] Deployment removed from the task list; recorded as the user's call.
+
+---
+## 🧭 SESSION HANDOVER (written 2026-09-17) — Phase 86: the Staff Performance plan audited against the code, every gap closed, and what the first load test found
+
+Asked to read the handover and confirm the plan was fully implemented; three read-only audits said it
+was not. Then: *"fix all gaps and bugs, implement all pending items fully."*
+
+### 1. Leaks (both verified in the database before fixing)
+- [x] **The subject could learn a Restricted record existed** — their own activity trail, timeline
+      activity and "Export my file" carried "Restricted record viewed/created for <me>".
+      `ActivityEvent.Visibility` added, set on every record event, backfilled; subject reads filter it.
+- [x] **Appraisal ratings and scores in activity summaries**, readable by any `staff.records.view`
+      holder in scope. Summaries redacted (and backfilled); appraisal events are Confidential.
+- [x] **A head's scoped activity log admitted events about out-of-scope people** when the actor was in
+      scope (surfaced once registers wrote per-person lines). Subject rule now governs.
+
+### 2. Plan items that were missing or partial — all built
+Period close/reopen with override reason and a policy lock · moderation view of the appraiser's rating
+distribution · purpose on every record ("Why this is kept") · export and Publish-to-Library logging ·
+`staff.profile-changed` on role change (single, bulk, undo), deputy head and head-change notices ·
+Lesson Recovery offsets attendance (`OffsetsParameterId`) · automatic-credit parameters seeded, credit
+to the person who completed the ticket, positive-feedback credit, `Feedback.ServedByUserId` finally
+written · 50% weight cap enforced on policy, reinstate and retire · self-assessment ratings bounded ·
+annual appraisal lists and averages its terms, refuses signing while a term is unsigned · late entry
+enforced server-side at the policy threshold · leaderboard modes reach the portal · digest reports
+week-on-week movement · sweeps check the module; reminder horizon 14 days · timeline activity
+interleaved, date-ranged, branch-filtered · register lines on each person's own trail · observation
+links a duty, feedback session scheduled as a duty, observer pairs in reports · records page Annul ·
+notifications unread-only filter (server-side) and pager caption · portal "Activity on my file".
+
+### 3. Handover P1/P2 items — done
+"01 Jan 2000" (picker shows "Complete record") · login initials (neutral icon; identify returns no
+name) · empty Administration group (group visibility = OR of its links; Reports and Welfare groups had
+the same bug) · 40px Users grid filter icons on phones · `WelfareStatusColor` one home
+(`WelfareDisplay`) · all 7 Hangfire sweeps asserted, including "once not twice" and the module gate ·
+browser-only paths driven in Chrome (evidence upload, Publish to Library, live `StaffScoreUpdated`
+67→69 without reload, phone register as named recorder, staff import through the page) · observer pair
+view · component migrations (QAvatar header, QChip, QTabs, QStatTile, QBarList on the pages listed in
+plan §9 and more) · raw datetime inputs and hand-typed display dates · UI sweep of non-Staff pages with
+the new "clipped past the edge" check (Dashboard header and Customer Feedback report fixed at 390px) ·
+module seed verified on an empty database in Production · restore drill (72/72 tables) · load test.
+The carried "SuperAdmin sees an empty Category list" note was already fixed in `fe5053b` — stale.
+
+### 4. Found on the way — fixed
+- **Every signed-in user shared one rate-limit bucket** (Web never sent `X-Real-IP`). Relayed now.
+- **The product's own UI was metered as API calls** (5,000/month) → user decision: API-key traffic only.
+- **Usage counters undercounted** after every cache expiry or restart. Seeded from the stored value.
+- **Bulk role change and its undo never cleared the permission cache.** Now shared with the editor.
+- **Five date-time fields could only hold today's date** (`QDatePicker ShowTime` alone). Paired.
+- Portal breakdown listed automatic-credit parameters while automatic credit was off. Hidden.
+
+### 5. Test data left on the dev tenant
+Everything labelled E2E stays (records are append-only): today's runs, "E2E browser check" records
+about Martin Kato (one with evidence, one live-push), a closed register "E2E browser check: department
+meeting", a Library document "Staff performance report — Martin Kato (Complete record)", and imported
+staff `e2e.sp.uiimport.*`. `usage_records.ApiCalls` for the dev tenant was reset to 0 after the first
+load test spent its month. Modules granted for tests were revoked again.
+
+---
+## ▶ NEXT SESSION — start here (written 2026-09-16, late) — superseded by the 2026-09-17 block above
 
 **State: the Staff Performance Monitor is BUILT, VERIFIED on the dev tenant and PUSHED, but NOT
 DEPLOYED and NOT MERGED.** Branch `phase-85-staff-performance` is on `origin` (pushed 2026-09-16 at

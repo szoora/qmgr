@@ -99,7 +99,8 @@ public static class StaffPerformanceMapping
         Color = p.Color,
         SortOrder = p.SortOrder,
         IsActive = p.IsActive,
-        IsSystemSource = p.IsSystemSource
+        IsSystemSource = p.IsSystemSource,
+        OffsetsParameterId = p.OffsetsParameterId
     };
 
     public static void Apply(PerformanceParameter p, SavePerformanceParameterRequest r)
@@ -122,6 +123,7 @@ public static class StaffPerformanceMapping
         p.Color = string.IsNullOrWhiteSpace(r.Color) ? null : r.Color.Trim();
         p.SortOrder = r.SortOrder;
         p.IsSystemSource = r.IsSystemSource;
+        p.OffsetsParameterId = r.OffsetsParameterId == p.Id ? null : r.OffsetsParameterId;
     }
 
     // ---- Records --------------------------------------------------------------------------------
@@ -138,6 +140,7 @@ public static class StaffPerformanceMapping
             ParameterName = r.Parameter?.Name ?? string.Empty,
             ParameterKind = r.Parameter?.Kind ?? ParameterKind.Contribution,
             ParameterColor = r.Parameter?.Color,
+            ParameterPurpose = r.Parameter?.Purpose ?? string.Empty,
             DutyId = r.DutyId,
             DutyTitle = r.Duty?.Title,
             Outcome = r.Outcome,
@@ -325,6 +328,7 @@ public static class StaffPerformanceMapping
         EntityType = e.EntityType,
         EntityId = e.EntityId,
         Summary = e.Summary,
+        Visibility = e.Visibility,
         IpAddress = e.IpAddress,
         UserAgent = e.UserAgent,
         OccurredAt = e.OccurredAt

@@ -25,7 +25,6 @@ public interface INotificationService
     /// same message.
     /// </summary>
     Task<ChannelSendResult> SendEmailAsync(Guid organizationId, string email, string subject, string body, bool isHtml = true, IReadOnlyList<NotificationAttachment>? attachments = null, CancellationToken cancellationToken = default);
-    Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// chatId is the recipient's numeric Telegram chat ID (Contact.TelegramChatId), not a phone
@@ -170,7 +169,6 @@ public class CreateNotificationRequest
     public NotificationChannel Channels { get; set; } = NotificationChannel.InApp;
     public string? PhoneNumber { get; set; }
     public string? Email { get; set; }
-    public string? DeviceToken { get; set; }
     public string? EmailSubject { get; set; }
 
     /// <summary>

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using QMgr.Domain.Entities.Audit;
 using QMgr.Domain.Entities.Staff;
+using QMgr.Domain.Enums;
 
 namespace QMgr.Infrastructure.Data.Configurations;
 
@@ -63,6 +64,7 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
         b.Property(d => d.Location).HasMaxLength(200);
         b.PrimitiveCollection(d => d.ExpectedUserIds).HasColumnType("uuid[]");
         b.PrimitiveCollection(d => d.RecorderUserIds).HasColumnType("uuid[]");
+        b.HasIndex(d => new { d.Kind, d.StartsAt }).HasDatabaseName("idx_staff_duties_kind_start");
 
         // "What is on this week" and the two sweeps ("starts soon, not reminded", "ended, register not
         // taken") all read by branch and start time.
@@ -196,5 +198,27 @@ public class ActivityEventConfiguration : IEntityTypeConfiguration<ActivityEvent
         b.HasIndex(e => new { e.ActorUserId, e.OccurredAt }).HasDatabaseName("idx_activity_actor_occurred");
         // The retention purge: rows past the window that still carry attribution.
         b.HasIndex(e => e.OccurredAt).HasFilter("\"IpAddress\" IS NOT NULL OR \"UserAgent\" IS NOT NULL").HasDatabaseName("idx_activity_attribution_pending");
+    }
+}
+
+/// <summary>Subjects (duty rota plan §3.2). One live code per organization, so a retired subject's code can be reused.</summary>
+public class SubjectConfiguration : IEntityTypeConfiguration<Subject>
+{
+    public void Configure(EntityTypeBuilder<Subject> b)
+    {
+        b.ToTable("Subjects");
+        b.HasKey(s => s.Id);
+        b.Property(s => s.Name).HasMaxLength(100).IsRequired();
+        b.Property(s => s.Code).HasMaxLength(20).IsRequired();
+        b.Property(s => s.Color).HasMaxLength(9);
+
+        b.HasIndex(s => new { s.OrganizationId, s.Code })
+            .IsUnique()
+            .HasFilter("\"IsActive\" = true")
+            .HasDatabaseName("ux_subjects_org_code_active");
+        b.HasIndex(s => s.DepartmentId).HasDatabaseName("idx_subjects_department");
+
+        b.HasOne(s => s.Organization).WithMany().HasForeignKey(s => s.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(s => s.Department).WithMany().HasForeignKey(s => s.DepartmentId).OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -114,6 +114,41 @@
             </QCard>
         </div>
 
+        @if (ap.IsAnnual)
+        {
+            @* ---- Annual roll-up: the termly appraisals this one averages ---------------------- *@
+            <QCard Title="Your termly appraisals" Icon="calendar3" Class="appr-card"
+                   Subtitle="The annual rating is the average of this year's signed termly ratings">
+                @if (!ap.TermlyRollup.Any())
+                {
+                    <p class="appr-muted">You have no termly appraisals for @ap.PeriodKey.</p>
+                }
+                else
+                {
+                    <div class="appr-readonly">
+                        @foreach (var t in ap.TermlyRollup)
+                        {
+                            <div class="appr-readonly__row">
+                                <span>@t.PeriodName <QChip Text="@StaffDisplay.StageLabel(t.Stage)" Variant="@StaffDisplay.StageVariant(t.Stage)" Size="sm" /></span>
+                                @if (t.FinalRating.HasValue)
+                                {
+                                    <QRating Value="@t.FinalRating.Value" ReadOnly="true" Size="sm" Labels="@BandLabels" />
+                                }
+                                else
+                                {
+                                    <span class="appr-muted">not signed</span>
+                                }
+                            </div>
+                        }
+                        <div class="appr-readonly__row appr-readonly__row--overall">
+                            <span><strong>Signed average</strong></span>
+                            <span>@(ap.TermlyAverage.HasValue ? ap.TermlyAverage.Value.ToString("0.0#") : "—")</span>
+                        </div>
+                    </div>
+                }
+            </QCard>
+        }
+
         @* ---- Self-assessment ---------------------------------------------------------------- *@
         <QCard Title="Self-assessment" Icon="person-check" Class="appr-card"
                Subtitle="@(ap.SelfSubmittedAt.HasValue ? $"Submitted {QDateFormat.LocalDT(ap.SelfSubmittedAt.Value)}" : ap.CanISelfAssess ? "Rate yourself honestly on each parameter; your appraiser sees this beside the evidence" : "Opens when the appraisal reaches the self-assessment stage")">
@@ -361,7 +396,7 @@
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -435,7 +470,9 @@
         {
             var request = new SubmitSelfAssessmentRequest
             {
-                Ratings = selfRatings.Where(kv => kv.Value > 0).Select(kv => new ParameterRatingDto { ParameterId = kv.Key, Rating = kv.Value }).ToList(),
+                // 1–5 or unrated: the API refuses anything else, and QRating never produces it, but a stale
+                // dictionary entry must not turn into a refused submission.
+                Ratings = selfRatings.Where(kv => kv.Value is >= 1 and <= 5).Select(kv => new ParameterRatingDto { ParameterId = kv.Key, Rating = kv.Value }).ToList(),
                 SelfRating = selfOverall,
                 Comments = string.IsNullOrWhiteSpace(selfComments) ? null : selfComments.Trim()
             };

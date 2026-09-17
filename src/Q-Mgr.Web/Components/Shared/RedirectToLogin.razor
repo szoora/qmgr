@@ -45,9 +45,10 @@
 
         // Never redirect to login from login — that self-reload is the sibling bug fixed in
         // MainLayout on the same day. Guarded here too rather than trusting the caller, since
-        // NotAuthorized can in principle render for any route.
-        if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
-            currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
+        // NotAuthorized can in principle render for any route. /unauthorized is NOT exempt: a
+        // signed-out visitor there has somewhere to go, and exempting it was half of a page that sat
+        // on "Initializing..." for good (2026-09-17).
+        if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -57,7 +58,8 @@
         // Genuinely signed in after all — the NotAuthorized branch was a prerender artefact.
         if (await AuthService.GetCurrentUserAsync() != null) return;
 
-        var loginUrl = string.IsNullOrEmpty(currentPath)
+        // No returnUrl back to /unauthorized: the sign-in page refuses it anyway.
+        var loginUrl = string.IsNullOrEmpty(currentPath) || currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase)
             ? "/login"
             : $"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}";
 

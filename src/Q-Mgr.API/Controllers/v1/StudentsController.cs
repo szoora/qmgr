@@ -43,15 +43,19 @@ public class StudentsController : ControllerBase
 
     private readonly ILogger<StudentsController> _logger;
 
+    private readonly IStaffPerformancePolicyService _staffPolicy;
+
     public StudentsController(
         QMgrDbContext context,
         ITenantContextAccessor tenantAccessor,
         IStudentScopeService scope,
+        IStaffPerformancePolicyService staffPolicy,
         ILogger<StudentsController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
+        _staffPolicy = staffPolicy;
         _logger = logger;
     }
 
@@ -203,16 +207,42 @@ public class StudentsController : ControllerBase
             .Where(s => s.BranchId == branchId);
         if (!includeInactive) query = query.Where(s => s.IsActive);
 
-        // Row-level scope: a class teacher's roster is their own classes and nothing else. Fails
-        // closed — no assignments means an empty list, never the whole branch.
-        query = await _scope.ApplyAsync(query, branchId);
+        // Row-level scope, BOTH tiers: a class teacher's roster is their own classes; a subject teacher's is
+        // the classes they teach, blanked to the teaching tier below. Fails closed — no assignments means an
+        // empty list, never the whole branch.
+        query = await _scope.ApplyAnyTierAsync(query, branchId);
 
         var students = await query.OrderBy(s => s.FullName).Take(Math.Clamp(limit, 1, 500)).ToListAsync();
 
         var pastoral = await CanViewPastoralAsync();
         var confidential = await CanViewConfidentialAsync();
         var restricted = await CanViewRestrictedAsync();
-        return Ok(students.Select(s => MapToDto(s, pastoral, confidential, restricted)).ToList());
+        var tiers = await _scope.GetTiersAsync(branchId);
+
+        // The teaching tier, field by field on the server (plan §5.3, §13.3): never hidden in markup.
+        Dictionary<string, List<string>>? subjectsByClass = null;
+        var shareLearningNeeds = false;
+        if (tiers != null && tiers.Values.Any(t => t == StudentAccessTier.Teaching))
+        {
+            var me = CurrentUserId();
+            subjectsByClass = (await _context.ClassTeacherAssignments.AsNoTracking()
+                    .Where(a => a.BranchId == branchId && a.UserId == me && a.EndedAt == null && a.Role == ClassTeacherRole.SubjectTeacher && a.Subject != null)
+                    .Select(a => new { a.ClassName, SubjectName = a.Subject!.Name })
+                    .ToListAsync())
+                .GroupBy(a => a.ClassName.Trim().ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.Select(x => x.SubjectName).Distinct().OrderBy(n => n).ToList());
+            var organizationId = await ResolveOrganizationIdAsync(branchId);
+            shareLearningNeeds = (await _staffPolicy.GetAsync(organizationId)).ShareLearningNeedsWithTeachingStaff;
+        }
+
+        return Ok(students.Select(s =>
+        {
+            var tier = tiers == null ? StudentAccessTier.Unscoped : tiers.GetValueOrDefault(s.Id, StudentAccessTier.None);
+            if (tier == StudentAccessTier.Teaching)
+                return MapTeachingTier(s, shareLearningNeeds,
+                    subjectsByClass!.GetValueOrDefault((s.ClassName ?? string.Empty).Trim().ToLowerInvariant()) ?? new List<string>());
+            return MapToDto(s, pastoral, confidential, restricted) with { AccessTier = tier.ToString() };
+        }).ToList());
     }
 
     /// <summary>
@@ -1085,6 +1115,33 @@ public class StudentsController : ControllerBase
     /// holds information about them, or they cannot know to ask. What that information IS stays
     /// gated.
     /// </summary>
+    /// <summary>
+    /// A student as a SUBJECT TEACHER sees them (duty rota plan §5.3): name, code, class, photo, placement, the
+    /// subjects this teacher teaches them, and the learning-support need only when the tenant shares it. No
+    /// guardians, no flags, no pastoral or health fields, no consent record, no restricted-notes marker. Built
+    /// from the pastoral=false mapping and then emptied further, so a field added to the DTO later defaults to
+    /// hidden here unless somebody decides otherwise.
+    /// </summary>
+    internal static StudentDto MapTeachingTier(Student s, bool shareLearningNeeds, List<string> taughtSubjects)
+        => MapToDto(s, pastoral: false, confidential: false, restricted: false) with
+        {
+            AccessTier = StudentAccessTier.Teaching.ToString(),
+            TaughtSubjects = taughtSubjects,
+            Guardians = new(),
+            GuardianCount = 0,
+            Flags = new(),
+            HasGuardianRestriction = false,
+            HasRestrictedNotes = false,
+            DataConsentGivenAt = null,
+            DataConsentRecordedByUserId = null,
+            DataConsentNotes = null,
+            DateOfBirth = null,
+            AgeYears = null,
+            Residency = null,
+            DormitoryOrStream = null,
+            DisabilityOrLearningNeed = shareLearningNeeds ? s.DisabilityOrLearningNeed : null
+        };
+
     internal static StudentDto MapToDto(Student s, bool pastoral = true, bool confidential = true, bool restricted = true) => new()
     {
         // --- Restricted tier: administrator only.

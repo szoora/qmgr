@@ -47,6 +47,44 @@ public static class NotificationEventKeys
     /// <summary>The weekly digest.</summary>
     public const string StaffWeeklyDigest = "staff.weekly-digest";
 
+    // ---- Duty rota, duty reports, lessons and the timetable (duty rota plan §8.2, 2026-09-17). ----
+    // Every one of these names the thing and links to it; none carries report text, a comment or a
+    // child's name (plan §8.3).
+
+    /// <summary>I was put on a rota slot.</summary>
+    public const string StaffRotaAssigned = "staff.rota-assigned";
+    /// <summary>A rota slot I am on is approaching (the escalating ladder).</summary>
+    public const string StaffRotaReminder = "staff.rota-reminder";
+    /// <summary>Someone I supervise on a rota slot has not acknowledged it (supervisors).</summary>
+    public const string StaffRotaUnacknowledged = "staff.rota-unacknowledged";
+    /// <summary>A duty report of mine is due.</summary>
+    public const string StaffDutyReportDue = "staff.duty-report-due";
+    /// <summary>A duty report is overdue (escalated to supervisors and heads).</summary>
+    public const string StaffDutyReportOverdue = "staff.duty-report-overdue";
+    /// <summary>A duty report was submitted for me to read (reviewers).</summary>
+    public const string StaffDutyReportSubmitted = "staff.duty-report-submitted";
+    /// <summary>A comment was added to a duty report I wrote or reviewed.</summary>
+    public const string StaffDutyReportComment = "staff.duty-report-comment";
+    /// <summary>My duty report was returned for changes.</summary>
+    public const string StaffDutyReportReturned = "staff.duty-report-returned";
+    /// <summary>A lesson of mine starts soon. Bell only by default.</summary>
+    public const string StaffLessonReminder = "staff.lesson-reminder";
+    /// <summary>The morning "My Day" digest.</summary>
+    public const string StaffMyDay = "staff.my-day";
+    /// <summary>A lesson of mine was moved or cancelled.</summary>
+    public const string StaffLessonChanged = "staff.lesson-changed";
+    /// <summary>Lessons of mine are still unrecorded.</summary>
+    public const string StaffLessonUnrecorded = "staff.lesson-unrecorded";
+    /// <summary>A timetable I teach in was published.</summary>
+    public const string StaffTimetablePublished = "staff.timetable-published";
+    /// <summary>New clashes in a published timetable (timetable masters).</summary>
+    public const string StaffTimetableClash = "staff.timetable-clash";
+
+    // ---- Staff onboarding (duty rota plan §12, 2026-09-17). ----
+
+    /// <summary>Staff join requests are waiting for approval (approvers). Content-free: a count and a link.</summary>
+    public const string StaffJoinRequests = "staff.join-requests";
+
     /// <summary>Everything else — system alerts, queue events, and anything sent without a key.</summary>
     public const string General = "general";
 
@@ -94,6 +132,51 @@ public static class NotificationEventKeys
         new(StaffWeeklyDigest, "My weekly digest",
             "Recognition received, points and band movement, duties coming up, and anything awaiting your response.",
             "Staff Performance", DefaultEmail: true, DefaultSms: false),
+        new(StaffRotaAssigned, "I was put on the duty rota",
+            "You were assigned to a rota slot, or a slot was swapped to you.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffRotaReminder, "My duty is coming up",
+            "Reminders before a rota slot you are on. They grow more urgent as it approaches and stop once you acknowledge.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffRotaUnacknowledged, "Someone I supervise has not acknowledged their duty",
+            "For the administrator on duty, shortly before the slot starts.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffDutyReportDue, "My duty report is due",
+            "A report for a duty you are on has reached its due time.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffDutyReportOverdue, "A duty report is overdue",
+            "Your report, or one you supervise, is past due.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffDutyReportSubmitted, "A duty report was submitted for me to read",
+            "For supervisors and reviewers. The message names the report, never its content.",
+            "Duty Rota", DefaultEmail: false, DefaultSms: false),
+        new(StaffDutyReportComment, "A comment on a duty report",
+            "Someone commented on a report you wrote or review.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffDutyReportReturned, "My duty report was returned for changes",
+            "A reviewer asked you to revise a report.",
+            "Duty Rota", DefaultEmail: true, DefaultSms: false),
+        new(StaffLessonReminder, "A lesson of mine starts soon",
+            "A few minutes before each lesson. In-app by default: the morning digest already carries the day.",
+            "Lessons", DefaultEmail: false, DefaultSms: false),
+        new(StaffMyDay, "My Day — the morning digest",
+            "Today's lessons, duties and reports due, in one message.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffLessonChanged, "A lesson of mine moved or was cancelled",
+            "Sent when the day's timetable changes after the morning digest.",
+            "Lessons", DefaultEmail: false, DefaultSms: false),
+        new(StaffLessonUnrecorded, "Lessons of mine are unrecorded",
+            "Past lessons with no taught or missed mark.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffTimetablePublished, "My timetable was published",
+            "A timetable you teach in was published or replaced.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffTimetableClash, "New timetable clashes",
+            "For timetable masters: new clashes found in a published timetable.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffJoinRequests, "Staff join requests are waiting",
+            "For approvers: people who registered through the join link and are waiting for a decision.",
+            "User Management", DefaultEmail: true, DefaultSms: false),
         new(General, "Everything else",
             "System alerts and anything not covered above.",
             "General", DefaultEmail: false, DefaultSms: false),

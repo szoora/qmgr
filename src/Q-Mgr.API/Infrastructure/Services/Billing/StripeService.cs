@@ -71,6 +71,50 @@ public class StripeService : IStripeService
         return _enabled;
     }
 
+    public async Task<StripeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConfiguredAsync();
+        if (!_enabled)
+            return new StripeHealthResult("Unknown", 0, "Stripe is not configured.");
+
+        // A balance read is the lightest call that still needs a valid secret key; it creates
+        // nothing and costs nothing. Five seconds is long enough for a slow link and short enough
+        // that a Stripe outage cannot hold the health page open.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await new BalanceService().GetAsync(cancellationToken: timeout.Token);
+            sw.Stop();
+            return new StripeHealthResult(sw.ElapsedMilliseconds > 2000 ? "Warning" : "Healthy", sw.ElapsedMilliseconds);
+        }
+        catch (StripeException ex) when (ex.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            sw.Stop();
+            _logger.LogWarning("Stripe health check: the secret key was refused");
+            return new StripeHealthResult("Critical", sw.ElapsedMilliseconds, "The secret key was refused.");
+        }
+        catch (StripeException ex)
+        {
+            sw.Stop();
+            _logger.LogWarning(ex, "Stripe health check failed");
+            return new StripeHealthResult("Critical", sw.ElapsedMilliseconds, ex.StripeError?.Message ?? "Stripe returned an error.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            sw.Stop();
+            _logger.LogWarning("Stripe health check timed out after {Elapsed} ms", sw.ElapsedMilliseconds);
+            return new StripeHealthResult("Critical", sw.ElapsedMilliseconds, "Stripe did not answer within 5 seconds.");
+        }
+        catch (HttpRequestException ex)
+        {
+            sw.Stop();
+            _logger.LogWarning(ex, "Stripe health check could not reach Stripe");
+            return new StripeHealthResult("Critical", sw.ElapsedMilliseconds, "Stripe could not be reached.");
+        }
+    }
+
     public async Task<string> CreateCustomerAsync(Organization organization)
     {
         await EnsureConfiguredAsync();

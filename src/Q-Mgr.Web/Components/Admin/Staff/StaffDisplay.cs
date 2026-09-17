@@ -145,8 +145,8 @@ public static class StaffDisplay
     public static string LeaderboardLabel(LeaderboardMode m) => m switch
     {
         LeaderboardMode.Private => "Private — each person sees only their own position",
-        LeaderboardMode.Department => "Departments — department averages are visible",
-        LeaderboardMode.Public => "Public — a top-N board is shown to everyone",
+        LeaderboardMode.Department => "Departments — department averages (teams of three or more) on everyone's portal; no names",
+        LeaderboardMode.Public => "Public — department averages and a top-N board of names on everyone's portal",
         _ => m.ToString()
     };
 

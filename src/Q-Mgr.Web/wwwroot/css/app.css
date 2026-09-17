@@ -1112,26 +1112,8 @@ html, body {
     }
 }
 
-/* Tabs - Mobile Scrollable. New tab strips are QTabs (q-components.css); .tabs-container is kept
-   only because UsersSetup.razor still renders it. The orphan .tab-item rules were removed. */
-.tabs-container {
-    display: flex;
-    gap: 4px;
-    border-bottom: 1px solid var(--qm-border);
-    margin-bottom: 20px;
-}
-
-@media (max-width: 576px) {
-    .tabs-container {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-    }
-
-    .tabs-container::-webkit-scrollbar {
-        display: none;
-    }
-}
+/* Tabs: every tab strip is QTabs (q-components.css). The last hand-built one, UsersSetup's
+   .tabs-container, moved onto it on 2026-09-17 and its rules were removed here. */
 
 /* Search Input - Mobile Optimized */
 .search-input-group {

@@ -19,5 +19,14 @@ public enum ClassTeacherRole
     /// a school that wants cover during a term's absence should not have to end the substantive
     /// assignment to arrange it.
     /// </summary>
-    Assistant = 1
+    Assistant = 1,
+
+    /// <summary>
+    /// A subject teacher of the class (duty rota plan §5.2), appended 2026-09-17. NOT a pastoral seat:
+    /// it carries <c>SubjectId</c> and <c>PeriodsPerWeek</c>, gives the TEACHING tier of the student scope
+    /// (name, photo, class — no guardians, welfare, discipline or pastoral fields), and is never notified
+    /// by the welfare alert. Anything that means "the class teacher(s)" must filter to ClassTeacher and
+    /// Assistant explicitly; <c>IStudentScopeService</c> is the one place that tells the tiers apart.
+    /// </summary>
+    SubjectTeacher = 2
 }

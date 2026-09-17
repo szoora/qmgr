@@ -32,10 +32,13 @@
         </div>
     </div>
 
-    @if (tabs.Count > 1)
-    {
-        <QTabs Tabs="@tabs" ActiveKey="@activeGroup" ActiveKeyChanged="@SwitchGroupAsync" AriaLabel="Notification groups" Class="notif-tabs" />
-    }
+    <div class="notif-filters">
+        @if (tabs.Count > 1)
+        {
+            <QTabs Tabs="@tabs" ActiveKey="@activeGroup" ActiveKeyChanged="@SwitchGroupAsync" AriaLabel="Notification groups" Class="notif-tabs" />
+        }
+        <QCheckbox Value="@unreadOnly" ValueChanged="@SetUnreadOnlyAsync" Label="Unread only" Class="notif-unread" />
+    </div>
 
     @if (isLoading)
     {
@@ -47,16 +50,16 @@
             <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" OnClick="@(() => LoadPageAsync(0))" /></Action>
         </QEmptyState>
     }
-    else if (!pageItems.Any())
+    else if (!VisibleItems.Any())
     {
-        <QEmptyState Icon="bell-slash" Title="@(activeGroup == AllKey ? "No notifications yet" : $"Nothing under {activeGroup}")"
+        <QEmptyState Icon="bell-slash" Title="@(unreadOnly ? "Nothing unread here" : activeGroup == AllKey ? "No notifications yet" : $"Nothing under {activeGroup}")"
                      Text="When something needs your attention — a duty, a record about you, a visitor at the desk — it will be listed here." />
     }
     else
     {
         <QCard NoPadding="true" Class="notif-card">
             <ul class="notif-list">
-                @foreach (var n in pageItems)
+                @foreach (var n in VisibleItems)
                 {
                     <li>
                         <button type="button" class="notif-row @(n.IsRead ? "" : "notif-row--unread")" @onclick="@(() => OpenAsync(n))"
@@ -80,8 +83,14 @@
         </QCard>
 
         <div class="notif-pager">
-            <span class="notif-pager__caption">Showing @(offset + 1)–@(offset + pageItems.Count)@(clientPaged ? $" of {clientBuffer.Count}" : hasMore ? " · more available" : "")</span>
-            <QPager Count="@PagerCount" PageSize="@PageSize" PageIndex="@(offset / PageSize)" PageIndexChanged="@(i => LoadPageAsync(i * PageSize))" ShowCaption="false" />
+            @* QPager's own caption. A server-paged list only knows "there is more", not the total, so the
+               caption would invent a figure there; it is shown whenever the count is real. *@
+            <QPager Count="@PagerCount" PageSize="@PageSize" PageIndex="@(offset / PageSize)" PageIndexChanged="@(i => LoadPageAsync(i * PageSize))"
+                    ShowCaption="@(clientPaged || !hasMore)" ItemLabel="notifications" />
+            @if (!clientPaged && hasMore)
+            {
+                <span class="notif-pager__more">More available on the next page</span>
+            }
         </div>
     }
 </div>
@@ -92,7 +101,10 @@
     .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
     .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-    .notif-tabs { margin-bottom: 12px; }
+    .notif-filters { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .notif-filters .notif-tabs { flex: 1 1 320px; min-width: 0; margin-bottom: 0; }
+    .notif-unread { flex: 0 0 auto; }
+    .notif-pager__more { font-size: 12px; }
     .notif-card { margin-bottom: 12px; }
     .notif-list { list-style: none; margin: 0; padding: 0; }
     .notif-list li + li { border-top: 1px solid var(--qm-border); }
@@ -121,6 +133,7 @@
     private const int PageSize = 50;
 
     private bool isLoading = true;
+    private bool unreadOnly;
     private string? loadError;
     private bool markingAll;
 
@@ -138,7 +151,22 @@
     private bool clientPaged;
     private List<NotificationDto> clientBuffer = new();
 
-    private int PagerCount => clientPaged ? clientBuffer.Count : offset + pageItems.Count + (hasMore ? PageSize : 0);
+    /// <summary>
+    /// The rows on screen. A server-paged list asks the API for unread rows only, so its pages are whole;
+    /// a multi-key category is filtered before it is paged (its buffer is all here). The extra local
+    /// filter covers a row read in another tab since the page loaded.
+    /// </summary>
+    private IEnumerable<NotificationDto> VisibleItems => unreadOnly && !clientPaged ? pageItems.Where(n => !n.IsRead) : pageItems;
+
+    private async Task SetUnreadOnlyAsync(bool value)
+    {
+        unreadOnly = value;
+        await LoadPageAsync(0);
+    }
+
+    private int PagerCount => clientPaged ? FilteredBuffer.Count : offset + pageItems.Count + (hasMore ? PageSize : 0);
+
+    private List<NotificationDto> FilteredBuffer => unreadOnly ? clientBuffer.Where(n => !n.IsRead).ToList() : clientBuffer;
 
     protected override async Task OnInitializedAsync()
     {
@@ -166,7 +194,7 @@
             {
                 clientPaged = false;
                 clientBuffer = new();
-                var page = await NotificationApi.GetNotificationsAsync(keys?.Single(), offset, PageSize);
+                var page = await NotificationApi.GetNotificationsAsync(keys?.Single(), offset, PageSize, unreadOnly);
                 pageItems = page.Items;
                 hasMore = page.HasMore;
                 Absorb(pageItems);
@@ -192,8 +220,9 @@
                     clientBuffer = merged.OrderByDescending(n => n.CreatedAt).ToList();
                     Absorb(clientBuffer);
                 }
-                pageItems = clientBuffer.Skip(offset).Take(PageSize).ToList();
-                hasMore = clientBuffer.Count > offset + PageSize;
+                var buffer = FilteredBuffer;
+                pageItems = buffer.Skip(offset).Take(PageSize).ToList();
+                hasMore = buffer.Count > offset + PageSize;
             }
             RebuildTabs();
         }

@@ -46,14 +46,17 @@ public class BatchController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IStudentScopeService _scope;
     private readonly ILogger<BatchController> _logger;
+    private readonly QMgr.Infrastructure.Services.IStaffProfileChangeNotifier _profileChanges;
 
     public BatchController(
         QMgrDbContext context,
         IBatchOperationService resolver,
         ITenantContextAccessor tenantAccessor,
         IStudentScopeService scope,
-        ILogger<BatchController> logger)
+        ILogger<BatchController> logger,
+        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges)
     {
+        _profileChanges = profileChanges;
         _context = context;
         _resolver = resolver;
         _tenantAccessor = tenantAccessor;
@@ -213,6 +216,16 @@ public class BatchController : ControllerBase
 
         job.FailureReason = $"Reversed on {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC";
         await _context.SaveChangesAsync(ct);
+
+        // Undoing a bulk role change is a role change too: the same cache drop, push, log and notice.
+        if (request.Operation == BatchOperation.SetUserRole)
+        {
+            var actorRaw = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            Guid? actor = Guid.TryParse(actorRaw, out var a) ? a : null;
+            foreach (var e in entries)
+                if (Guid.TryParse(e.NewValue, out var from) && Guid.TryParse(e.PreviousValue, out var to))
+                    await _profileChanges.RoleChangedAsync(job.OrganizationId, e.StudentId!.Value, from, to, actor, "bulk change undone", ct);
+        }
 
         _logger.LogWarning("Batch {JobId} reversed: {Count} records restored", job.Id, reverted);
 

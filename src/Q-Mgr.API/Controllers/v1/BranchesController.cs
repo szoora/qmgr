@@ -158,6 +158,7 @@ public class BranchesController : ControllerBase
                 Name = b.Name,
                 OrganizationName = b.Organization != null ? b.Organization.Name : string.Empty,
                 IsActive = b.IsActive,
+                Industry = b.Organization != null ? b.Organization.IndustryType : IndustryType.Service,
                 // Lets an unauthenticated display skip the advertising zone and banner rather than
                 // asking Engagement-gated endpoints it will always be refused.
                 HasEngagementContent = _dbContext.OrganizationModules.Any(om =>

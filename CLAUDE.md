@@ -258,6 +258,11 @@ PostgreSQL storage and therefore survives a restart. No broker, no new server de
   are persisted in `Users.NotificationPreferences` — treat them as a wire format, not labels.
 - Digests and quiet hours are deliberately absent; the requirement was instant.
 
+- **There is no push sender and no SSO (user decisions, 2026-09-17).** The push stub and
+  `CreateNotificationRequest.DeviceToken` were removed — no app exists and no device token was ever
+  stored; `NotificationChannel.Push` and the Firebase/PushSent columns stay in the schema for the day
+  one does. `IdentifyResponse.SsoEnabled` was removed for the same reason. Either would be its own plan.
+
 ## SSoT: DTO duplication pattern to watch for
 
 `Q-Mgr.Shared/Application/DTOs/` is this codebase's actual single-source-of-truth location for
@@ -456,13 +461,48 @@ The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md`; the rules that are easy to 
   in. **A secret shown as the mask means "set"; empty means "not set".** Add any new secret
   property to `SecretProperties` in that controller or it will leak the same way.
 
+## Rate limits and usage metering: who a request belongs to (found by the first load test, 2026-09-17)
+
+`scripts/e2e/load-test.mjs` (Node, read-only, N virtual users with think time, per-route p50/p95/p99)
+was run for the first time on 2026-09-17 and failed twice before it measured anything. Both failures
+were production bugs, not test bugs:
+
+- **Every signed-in person shared ONE rate-limit bucket.** `IpRateLimiting` keys on `X-Real-IP`, and
+  every call this Blazor Server app makes reaches the API from the Web server's loopback with no such
+  header, so the whole school had 100 requests a minute between them (50 users: 97% 429s). The Web now
+  relays the viewer's address as `X-Real-IP` wherever it already relays `X-Viewer-Ip`
+  (`AuthenticationMessageHandler`, `AuthService`, `DocumentShareApiService`). **A new Web→API client
+  path must relay it too**, or its users share a bucket again. Nginx sets `X-Real-IP` itself on the
+  public paths, so a browser cannot choose its own key there.
+- **The product's own UI was metered as "API calls".** `UsageLimitMiddleware` counted every `/api/v1`
+  request against the modules' monthly `MaxApiCallsPerMonth` (5,000 on every module), so a school's
+  own staff exhausted it within a day or two and then got 402 on everything; the load test used a
+  tenant's month up in under a minute. **User decision, 2026-09-17: only integration traffic —
+  requests authenticated with `X-API-Key` (`auth_method=api_key`) — is checked for API access and
+  metered.** People signed in to the product are never "API calls". Section 14.19 asserts both halves.
+- With both fixed and a 2-second think time: 50 users, 0 errors, worst p95 112 ms; 200 users, 0 errors,
+  worst p95 4.7 s on a Debug build — the portal computes the whole branch's scores for the private
+  rank on every load, which is the first thing to cache if a large school finds the portal slow.
+- **A usage counter's empty cache entry is not zero.** `UsageTrackingService` keeps month-to-date
+  counters in the distributed cache and flushes absolute values to `usage_records`; an entry that
+  expired or died with a restart restarted from 0 and overwrote the stored figure on its first flush,
+  so every counter undercounted. It now seeds from the stored value.
+- **A load test against a real tenant consumes that tenant's allowances.** The first run spent the dev
+  tenant's month; its `usage_records.ApiCalls` was reset by hand. Point it at a scratch tenant.
+
+**Restore drill, run 2026-09-17** with the exact `pg_dump --format=custom` / `pg_restore --no-owner
+--no-privileges` commands `qmgr-backup-db.sh` and `qmgr-restore-db.sh --drill` use: 72 of 72 tables,
+per-table row counts identical except `Notifications`/`NotificationLogs`, which the running API wrote
+between the dump and the count. The drill database was dropped. The production drill is still
+`sudo bash …/qmgr-restore-db.sh <dump> --drill` on the server.
+
 ## Verification: there is no test project, and that is the decision (2026-09-05)
 
 **Do not propose, scaffold, or ask for a test project.** Earlier handovers listed "no automated
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **374 assertions as of 2026-09-16**, 201 of them section 14, the Staff Performance Monitor, which the script runs through Node (`staff-performance-e2e.mjs`) and skips with a notice where Node is absent. Before that, 165 (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **470 assertions as of 2026-09-17**, 297 of them section 14, the Staff Performance Monitor, which the script runs through Node (`staff-performance-e2e.mjs`) and skips with a notice where Node is absent (374 / 201 on 2026-09-16, before the plan audit). Before that, 165 (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
 2026-09-15, 72 until 2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the
 reports gate, the notification preferences, the delivery log, the three leak shapes above, real
 email delivery, and — since 2026-09-15, section 12 — gated uploads and secure document sharing
@@ -584,6 +624,24 @@ Three automation notes worth keeping:
 - **Do not batch a logout with the login that follows it.** `NavigateTo(forceLoad: true)` tears the
   page down mid-batch and the subsequent clicks land on a page that is being replaced, producing
   half-completed logins. One step, one screenshot, then the next.
+
+**When the connected Chrome is on another machine (found 2026-09-17).** `list_connected_browsers`
+showed one browser, `switch_browser` found no other, and it answered "127.0.0.1 refused to connect"
+for both ports while `curl` got 200s — it was not on this PC. Chrome and Edge ARE installed here, so
+drive a local headless one over the DevTools protocol from Node, with nothing to install:
+
+    "/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --remote-debugging-port=9333         --user-data-dir="$(cygpath -w "$TEMP/cdp/profile")" --no-first-run about:blank &
+    # PUT http://127.0.0.1:9333/json/new?about:blank → webSocketDebuggerUrl; Node 24 has WebSocket built in.
+
+Set a Blazor input's value with the native `HTMLInputElement` value setter plus an `input` event —
+`Input.insertText` does not reach `@bind`, the same trap as synthetic `type` above. Record
+`Page.frameNavigated` and `Page.navigatedWithinDocument` for the navigation trail; it is what showed
+the `/billing/modules` detour that the final URL hid.
+
+When the user reconnects, **two browsers can be listed and the session stays on the old one**: select
+the newly connected `deviceId` with `select_browser`. A tab Chrome reports as `visibilityState:
+hidden` screenshots as solid black; read state with `javascript_tool` instead (URL, `innerText`,
+localStorage), which works normally there.
 
 ### The old notes, kept because the constraints behind them still hold
 
@@ -770,6 +828,31 @@ signal is the warning.
 Note the shape of that trap: a `.razor` component takes its name from its **filename**, so grepping
 file *contents* for the component name will not find it. Check `Components/**` for the file itself
 before concluding a component is missing.
+
+## A refused refresh is a sign-out, not a missing permission (fixed 2026-09-17)
+
+The "stuck on Initializing… at /unauthorized" report. A tab from an earlier day made its first calls,
+the API refused the refresh token, and `AuthService` cleared the session and told nobody. `MainLayout`
+showed the shell anyway, the page's permission check found no user, and `PermissionService` answers
+"not signed in" and "not allowed" the same way — so it sent the person to `/unauthorized`, where
+`MainLayout` refused to redirect (that path was exempt) and never rendered the page. Reproduced and
+verified headless (see "Running it locally").
+
+- **`IAuthService.SessionExpired` is the signal.** Raised only when the refresh endpoint REFUSES
+  (400/401/403); `MainLayout` sends the person to `/login?returnUrl=…`. A 429, a 5xx or a network
+  failure leaves the session alone — wiping it turned an API restart into a forced sign-in.
+- **The expired path clears THIS browser only, never `LogoutAsync`.** `auth/logout` revokes the user's
+  one refresh token, which after a sign-in on another device is that device's live session.
+- **A refresh token rotated by another tab is adopted**, not treated as a refusal: re-read
+  localStorage before giving up. (Written, not exercised — it needs an access token to expire
+  mid-circuit.)
+- **`MainLayout` re-reads the user after its first API calls** (`SessionStillValidAsync`) before it
+  sets `authChecked`, because those calls are where a dead session is discovered.
+- **`/unauthorized` is not exempt from the sign-in redirect** — in `MainLayout` or `RedirectToLogin`.
+  Only `/login` is. It carries no returnUrl, since the sign-in page refuses to return there.
+- **`IModuleApiService.GetMineAsync` throws.** It swallowed errors, so `ModuleState.LoadSucceeded` was
+  never false, the documented fail-open never ran, and a dead session (or an API blip) detoured the
+  person through `/billing/modules` as if they owned nothing.
 
 ## Raw SQL must schema-qualify table names explicitly — found live 2026-08-26, was a severe bug
 
@@ -1285,14 +1368,30 @@ The plan is `docs/plans/STAFF_PERFORMANCE_MONITOR.md` (artifact linked at its to
 for it to be built "fully, word for word" in one pass, with tests afterwards, so **the ten §13
 decisions were taken as proposed**: the five new roles rank below `manager`; individual ranks are
 private and a public board is a tenant switch that is off; a Confidential record tells its subject
-that it exists and what it is called, nothing more; system-source awards exist but are off by
+that it exists and what it is called (its NOTIFICATION — the subject reads the record itself; settled 2026-09-17); system-source awards exist but are off by
 default; support staff hold the portal and recognition and are appraised by their line manager;
-activity attribution is blanked after 12 months and appraisals are never purged; the module ships
-at a placeholder price with `MaxUsersPerBranch = 250`; periods default to three Ugandan terms
+activity attribution is blanked after 12 months and appraisals are never purged; the module shipped
+at a placeholder price with `MaxUsersPerBranch = 250` (superseded 2026-09-17, below); periods default to three Ugandan terms
 (T1 Jan–Apr, T2 May–Aug, T3 Sep–Dec) with an annual roll-up; rewards are certificates, notices and
 the private rank; no wellbeing pulse. **Verified live the same day** by e2e section 14
 (`scripts/e2e/staff-performance-e2e.mjs`, 201 checks, called from `class-teacher-e2e.sh`) and in
 Chrome at desktop and a real 390px frame; see "What the e2e found" below.
+
+**Staff Performance is NOT a module of its own (user decision, 2026-09-17).** It is part of the Student
+Welfare module: code `student-welfare` (a stored wire format, unchanged), display name **"Welfare &
+Performance"** — kept short on purpose; the user asked that names stay precise. Every staff controller
+carries `[RequireModule(ModuleCodes.StudentWelfare)]`, the route map sends `/portal`, `/admin/staff` and
+`api/v1/staff…` to it, and the jobs and `IStaffProfileChangeNotifier` check it. The module row's cap is
+250 users a branch (every staff member gets a login). `20260917075614_FoldStaffPerformanceIntoWelfareModule`
+renamed the row and raised its limits only where each field still held its shipped value, and removed
+the never-deployed `staff-performance` row and its dev grants. `ModuleCodes.RetiredStaffPerformance`
+exists only for that migration; nothing gates on it. **The sidebar keeps two short groups, "Student
+Welfare" and "Staff Performance"** — menu labels name the feature, not the product bundle.
+
+**A register records its marks on every save (user decision, 2026-09-17).** Each submit writes one
+`Final` record per marked person and notifies them; closing only declares the register complete. An
+open register still counts as not taken: the recorder's portal to-do says how many are "marked and
+recorded", and the register chase still fires. The register page says so above its buttons.
 
 - **`Role` now carries TWO scope columns.** `DataScope` (students, `RoleDataScope`) and
   `StaffScope` (other staff, `StaffDataScope { Organization, AssignedDepartments, DirectReports,
@@ -1393,6 +1492,111 @@ Chrome at desktop and a real 390px frame; see "What the e2e found" below.
 - **Running section 12 locally needs `Cors__AllowedOrigins__4=http://127.0.0.1:5003` on the API**,
   or the share-link origin check refuses and 34 checks cascade-fail. That is correct behaviour for
   a misconfigured origin, not a regression.
+
+### The plan audit (2026-09-17) — what "fully built" was missing, and the rules it left
+
+An audit of the code against the plan, item by item, found two leaks and a dozen gaps; all are
+closed and asserted in section 14 (now 288 checks). The rules to keep:
+
+- **`ActivityEvent.Visibility` gates the SUBJECT's own trail.** The subject's portal activity, the
+  activity layer of their own timeline and "Export my file" all read the activity log, and none
+  filtered Restricted — so a teacher could read "Restricted record viewed for <me>". The column is
+  set by `IActivityLogger.RecordAsync(..., visibility:)` (a record's rung; the higher rung on a
+  visibility change; Confidential for anything about an appraisal) and backfilled by
+  `20260917063804_AddActivityVisibilityAndParameterOffsets`. The administrator's log still shows the
+  redacted Restricted summary, as the plan says. **Any new event about a record passes its rung.**
+- **An activity summary never states a rating or a score.** Three appraisal events did ("signed:
+  rating 4 (Very Good), score 72") to anyone holding `staff.records.view`. The figures live in
+  `DetailJson`, which no endpoint returns.
+- **The Confidential question is settled: the subject reads the full record on their portal; their
+  NOTIFICATION says only that one exists.** Right of reply and s.24 subject access need the content;
+  the plan's "title only" (decision 3, §14) describes the alert. `StaffRecordDialog`'s help text says so.
+- **Closing a period** is `POST api/v1/staff/policy/periods/{key}/close` (approver; a reason of ten
+  characters or more when any appraisal is unsigned, kept on the closure) and `…/reopen` (a reason).
+  Closures live in `StaffPerformancePolicyDto.ClosedPeriods`, read through `ClosureFor` / `ClosureOf`
+  only, and **every write to the policy blob runs under `pg_advisory_xact_lock` on the organization**
+  (`WithPolicyLockAsync`) — the editor's save re-reads closures inside the lock, so it can never drop
+  one. A closed period refuses new scored records, finalising, annulment, point corrections, registers,
+  recognition, automatic credit and opening appraisals, with one 409 wording
+  (`ClosedPeriodProblem`). **Wellbeing records and visibility changes are never blocked** — support
+  and protecting a record must not wait for a reopen.
+- **`PerformanceParameter.OffsetsParameterId`**: a record on a parameter that offsets an Attendance or
+  Duty parameter counts as one recovered occasion there. Seeded Lesson Recovery → Lesson Attendance.
+  Before this the seeded parameter's purpose promised the offset and scoring ignored it.
+- **The four automatic-credit parameters are seeded** (`StaffParameterDefaults`, on first catalogue
+  read and when the policy switches automatic credit on), refused as manual entries, hidden from
+  breakdowns and coverage while automatic credit is off. "Customer served" credits the user who
+  COMPLETED the ticket (then the history row, then the counter); "Positive feedback" credits a 4–5
+  rating to `Feedback.ServedByUserId` — **a column nothing had ever written until 2026-09-17**.
+- **Late entry is enforced by the API at the policy's threshold** (409 `LATE_ENTRY`, resubmit with
+  `acknowledgeLateEntry=true`, the welfare shape); the Web surfaces it as
+  `LateEntryConfirmationRequiredException`. It used to be a browser prompt hard-coded to 14 days.
+- **The weight cap cannot exceed 50%** (the policy validates 10–50 and the reader clamps old blobs), and
+  it is re-checked when a parameter is reinstated or retiring one would push another over.
+- **An annual appraisal is not signed while that year's termly appraisal for the person is unsigned**;
+  its DTO carries `TermlyRollup` / `TermlyAverage` live. A moderator's view carries this appraiser's
+  rating distribution against the branch's.
+- **Exports and Publish to Library are logged** through `POST …/staff/activity/exports` (the file is
+  built in the browser, so the page reports it; the caller needs the list's own permission and, for a
+  timeline, the person in scope). `ExportResult.Format` carries what was produced.
+- **`IStaffProfileChangeNotifier` is the one home for "somebody's role changed"**: cache drop, live
+  push, activity event, `staff.profile-changed`. The bulk role change and its undo now use it — **they
+  had never cleared the permission cache**, so a person demoted in a batch kept their old permissions
+  for up to five minutes. Deputy heads and a department's staff are told of head changes.
+- **The sweeps check the module per organization** (four of seven did not), and the duty-reminder
+  horizon is the editor's 336-hour maximum.
+- **The leaderboard mode reaches the portal**: Department → department averages (departments of three
+  or more); Public → those plus the top-N names. Private shows neither.
+- **Section 14 triggers the sweeps through the Hangfire dashboard** (`POST /hangfire/recurring/trigger`),
+  which Development opens to local callers; against any other API it prints SKIP rather than failing.
+- **An observation can link a duty** (the dialog's "linked lesson or duty"), a future feedback session
+  becomes a duty on the roster, and the reports show observer pairs to the confidential rung only.
+- **A scoped activity log shows an event about somebody only when that somebody is in scope**; an
+  in-scope actor admits only subject-less events. The actor rule used to be enough on its own, and once
+  registers wrote a line per marked person a head of Maths could read about a Languages teacher.
+- **`QDatePicker ShowTime` is a time-of-day control and nothing else.** A field that needs a moment
+  pairs a date picker and a time picker bound to the same value inside `.q-datetime-pair`. Five Staff
+  fields used `ShowTime` alone from the first build, so a duty could only be scheduled for today and a
+  record could never be backdated — which also made the late-entry path unreachable from the page.
+
+- **The branch score set is cached, and freshness is by fingerprint (2026-09-17).**
+  `StaffScoringService.ComputeBranchCoreAsync` keys an in-process cache on the policy, the active
+  parameters with their last edit, the branch's staff and roles, and the period's records as count +
+  latest `UpdatedAt ?? CreatedAt`. No invalidation to remember, so nothing serves a figure older than
+  the data — **except a raw `ExecuteUpdate`/SQL that changes a scored column without stamping
+  `UpdatedAt`. Never write one.** A miss computes once for all waiting requests, in its own DI scope.
+  Measured on 199 staff / 12,496 records: 50 users, portal p95 1,959 → 369 ms. The person's OWN score
+  is still computed live on every load.
+
+## Duty rota build: the rules Phase 0 left (2026-09-17)
+
+The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.
+
+- **The student scope has TIERS, and the old names mean PASTORAL.** `StudentAccessTier {None, Teaching,
+  Pastoral, Unscoped}`. `ApplyAsync`, `VerifyStudentAccessAsync` and `CanSeeStudentAsync` answer for class
+  teachers and assistants only; a subject teacher (`ClassTeacherRole.SubjectTeacher`) reaches a student only
+  through `ApplyAnyTierAsync` / `VerifyAnyTierAccessAsync` / `GetTierAsync`. The tier-blind
+  `GetClassNamesAsync` was DELETED on purpose — choose `GetPastoralClassNamesAsync` or
+  `GetTeachingClassNamesAsync`. **Welfare, guardians, flags and evidence stay pastoral; never switch a
+  welfare route to the any-tier method.** A Teaching-tier student is blanked field by field in
+  `StudentsController.MapTeachingTier`, never in markup.
+- **Reporting a concern is not reading one.** A Teaching-tier caller may CREATE a welfare record about a
+  student they teach (policy `SubjectTeachersMayLogConcerns`), and reads back only what they wrote (the
+  author rule in `GetRecord`, below Restricted).
+- **The `teacher` role is `AssignedClasses` now.** A teacher with no subject-teacher assignment sees no
+  students — that is fail-closed, not a bug.
+- **One reminder engine.** `IReminderLadderService` decides the stage (collapse, quiet hours, pinned hour);
+  `ReminderLadderJob` (`staff-reminder-ladder`, every 15 min) claims it with a conditional
+  `ExecuteUpdateAsync` BEFORE sending. A new ladder is a method there plus a `ReminderSubject` default in
+  `DefaultLadders` — never a new single-shot timestamp job. e2e that triggers it must switch quiet hours
+  off, or an evening run holds every non-interruptive stage.
+- **Nobody marks their own register entry** except on a Lesson duty, where it is a `SelfReport`.
+- **A user transaction must go through the execution strategy.** The context uses
+  `NpgsqlRetryingExecutionStrategy`; `BeginTransactionAsync` outside `CreateExecutionStrategy().ExecuteAsync`
+  throws (found live: the Subjects page's first read returned 400). A helper that may be called inside an
+  existing transaction checks `Database.CurrentTransaction` and joins it (`SubjectDefaults.SeedIfEmptyAsync`).
+- **A password is temporary after an import or an administrator's RESET, not after account creation**
+  (plan §12.3). A test that expects a forced change after `POST /users` is wrong, as the first live run was.
 
 ## Process note for future sessions
 

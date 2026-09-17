@@ -115,7 +115,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -181,6 +181,8 @@
                 new ExportRows<QActivityRow>(Rows, (log?.TotalCount ?? 0) > Rows.Count),
                 $"{BranchState.CurrentBranchName} · page {pageIndex + 1} · {Rows.Count} of {log?.TotalCount ?? 0} events");
             Toast.Notify(result.Success ? ToastSeverity.Success : ToastSeverity.Error, result.Success ? "Exported" : "Export failed", result.Message);
+            if (result.Success)
+                await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Activity, Format = "CSV", RowCount = result.RowCount });
         }
         catch (Exception ex)
         {

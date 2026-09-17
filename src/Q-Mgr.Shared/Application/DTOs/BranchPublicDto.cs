@@ -1,3 +1,5 @@
+using QMgr.Domain.Enums;
+
 namespace QMgr.Application.DTOs;
 
 /// <summary>
@@ -31,4 +33,11 @@ public record BranchPublicDto
     /// signage" is not sensitive.
     /// </remarks>
     public bool HasEngagementContent { get; init; }
+
+    /// <summary>
+    /// The organization's industry, which picks the kiosk's welcome wording, icon and accent.
+    /// Set by an administrator in Organization settings. Public for the same reason the name is:
+    /// the kiosk shows it to anybody standing in front of it.
+    /// </summary>
+    public IndustryType Industry { get; init; } = IndustryType.Service;
 }

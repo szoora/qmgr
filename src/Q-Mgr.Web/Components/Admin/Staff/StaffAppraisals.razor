@@ -26,12 +26,35 @@
                      TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="sa-period" />
             @if (canApprove && board != null && board.ScopedToDepartments.Count == 0)
             {
-                <QButton Text="Open appraisals for this period" Icon="folder-plus" Variant="primary" OnClick="@OpenDialog" />
+                @if (!IsClosed)
+                {
+                    <QButton Text="Open appraisals for this period" Icon="folder-plus" Variant="primary" OnClick="@OpenDialog" />
+                    <QButton Text="Close period" Icon="lock" Variant="secondary" OnClick="@OpenCloseDialog" />
+                }
+                else
+                {
+                    <QButton Text="Reopen period" Icon="unlock" Variant="secondary" OnClick="@OpenReopenDialog" />
+                }
             }
         </div>
     </div>
 
     <StaffScopeNote Departments="@(board?.ScopedToDepartments)" Noun="appraisals" />
+
+    @if (board?.PeriodStatus is { IsClosed: true, Closure: { } closure })
+    {
+        <div class="sa-closed">
+            <QChip Text="Closed" Icon="lock-fill" Variant="muted" Size="sm" />
+            <span>
+                @board.Period.Name was closed @QDateFormat.LocalDT(DateTime.SpecifyKind(closure.ClosedAt, DateTimeKind.Utc)) by @(closure.ClosedByName ?? "an approver").
+                No new scored records, registers, recognition or appraisals land in it until it is reopened.
+                @if (!string.IsNullOrWhiteSpace(closure.OverrideReason))
+                {
+                    <br /><text>Closed with @closure.UnsignedAppraisalsAtClose appraisal(s) unsigned. Reason: <em>@closure.OverrideReason</em></text>
+                }
+            </span>
+        </div>
+    }
 
     @if (isLoading && board == null)
     {
@@ -56,7 +79,7 @@
             <QEmptyState Icon="clipboard-check" Title="@($"No appraisals open for {board.Period.Name}")"
                          Text="@(canApprove ? "Open appraisals for this period to start the cycle: targets first, then self-assessment, appraiser review, moderation and sign-off." : "An approver opens the period's appraisals. Nothing has been opened yet.")">
                 <Action>
-                    @if (canApprove && board.ScopedToDepartments.Count == 0)
+                    @if (canApprove && board.ScopedToDepartments.Count == 0 && !IsClosed)
                     {
                         <QButton Text="Open appraisals" Icon="folder-plus" Variant="primary" OnClick="@OpenDialog" />
                     }
@@ -130,7 +153,46 @@
     </FooterContent>
 </QModal>
 
+<QModal @bind-Visible="showCloseDialog" Title="@($"Close {board?.Period.Name ?? period}")" Icon="lock" Size="md">
+    <ChildContent>
+        <p class="form-hint">A closed period takes no new scored records, registers, recognition, automatic credit or appraisal openings, and its records cannot be annulled or corrected. Visibility changes stay open. An approver can reopen it.</p>
+        @if (UnsignedCount > 0)
+        {
+            <div class="sa-warn">
+                <QIcon Name="exclamation-triangle" />
+                <span><strong>@UnsignedCount appraisal(s)</strong> for this period are not yet signed. You can still close it, with a reason; the reason is kept on the closure and shown on this board.</span>
+            </div>
+            <QInput TValue="string" @bind-Value="@closeReason" Type="textarea" Rows="3" MaxLength="1000" Label="Why close with appraisals unsigned? *"
+                    Placeholder="At least ten characters." HasError="@closeReasonError" ErrorMessage="Give a reason of at least ten characters." />
+        }
+        else
+        {
+            <p>Every appraisal for this period is signed.</p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showCloseDialog = false)" />
+        <QButton Text="Close period" Icon="lock" Variant="primary" OnClick="@ClosePeriod" Loading="@isClosing" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showReopenDialog" Title="@($"Reopen {board?.Period.Name ?? period}")" Icon="unlock" Size="md">
+    <ChildContent>
+        <p class="form-hint">Reopening lets records, registers and corrections land in this period again, which can move figures that were signed off. Signed appraisals keep their frozen scores.</p>
+        <QInput TValue="string" @bind-Value="@reopenReason" Type="textarea" Rows="3" MaxLength="1000" Label="Reason *"
+                Placeholder="Why the period is being reopened." HasError="@reopenReasonError" ErrorMessage="Give a reason of at least five characters." />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReopenDialog = false)" />
+        <QButton Text="Reopen period" Icon="unlock" Variant="primary" OnClick="@ReopenPeriod" Loading="@isClosing" />
+    </FooterContent>
+</QModal>
+
 <style>
+    .sa-closed { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); font-size: 13.5px; color: var(--qm-text-secondary); }
+    .sa-closed > span { flex: 1 1 260px; min-width: 0; }
+    .sa-warn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-warning); background: var(--qm-bg-secondary); border-radius: var(--qm-radius-sm); font-size: 13.5px; }
+    .sa-warn i { color: var(--qm-warning); }
     .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .sa-period { min-width: 220px; }
@@ -154,6 +216,15 @@
     private bool showOpenDialog, isOpening, openForEveryone = true;
     private List<Guid> selectedSubjects = new();
 
+    private bool showCloseDialog, showReopenDialog, isClosing, closeReasonError, reopenReasonError;
+    private string? closeReason, reopenReason;
+    private PeriodStatusDto? periodStatus;
+
+    private bool IsClosed => board?.PeriodStatus?.IsClosed == true;
+
+    /// <summary>Organization-wide unsigned count from the policy endpoint (the board's own count is this branch only).</summary>
+    private int UnsignedCount => periodStatus?.UnsignedAppraisals ?? board?.PeriodStatus?.UnsignedAppraisals ?? 0;
+
     protected override async Task OnInitializedAsync()
     {
         if (!await PermissionService.HasAnyPermissionAsync(Permissions.StaffAppraisalsConduct, Permissions.StaffAppraisalsApprove))
@@ -163,7 +234,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -253,6 +324,70 @@
         finally
         {
             isOpening = false;
+        }
+    }
+
+    private async Task OpenCloseDialog()
+    {
+        closeReason = null;
+        closeReasonError = false;
+        periodStatus = null;
+        try { periodStatus = await StaffApi.GetPeriodStatusAsync(board!.Period.Key); }
+        catch (Exception) { /* the board's branch count is the fallback; the API re-checks on close */ }
+        showCloseDialog = true;
+    }
+
+    private void OpenReopenDialog()
+    {
+        reopenReason = null;
+        reopenReasonError = false;
+        showReopenDialog = true;
+    }
+
+    private async Task ClosePeriod()
+    {
+        closeReasonError = UnsignedCount > 0 && (closeReason?.Trim().Length ?? 0) < 10;
+        if (closeReasonError) return;
+
+        isClosing = true;
+        try
+        {
+            await StaffApi.ClosePeriodAsync(board!.Period.Key, new ClosePeriodRequest { OverrideReason = UnsignedCount > 0 ? closeReason?.Trim() : null });
+            showCloseDialog = false;
+            Toast.Notify(ToastSeverity.Success, $"{board.Period.Name} closed");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            // A 409 here names the unsigned count the API found, which may have changed since the dialog opened.
+            Toast.Notify(ToastSeverity.Error, "Could not close the period", ex.Message);
+        }
+        finally
+        {
+            isClosing = false;
+        }
+    }
+
+    private async Task ReopenPeriod()
+    {
+        reopenReasonError = (reopenReason?.Trim().Length ?? 0) < 5;
+        if (reopenReasonError) return;
+
+        isClosing = true;
+        try
+        {
+            await StaffApi.ReopenPeriodAsync(board!.Period.Key, new ReopenPeriodRequest { Reason = reopenReason!.Trim() });
+            showReopenDialog = false;
+            Toast.Notify(ToastSeverity.Success, $"{board.Period.Name} reopened");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not reopen the period", ex.Message);
+        }
+        finally
+        {
+            isClosing = false;
         }
     }
 

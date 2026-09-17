@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
@@ -34,6 +35,8 @@ public class ClassTeachersController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IStudentScopeService _scope;
     private readonly INotificationHubService _hubService;
+    private readonly IStaffScopeService _staffScope;
+    private readonly IActivityLogger _activity;
     private readonly ILogger<ClassTeachersController> _logger;
 
     public ClassTeachersController(
@@ -41,8 +44,12 @@ public class ClassTeachersController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         IStudentScopeService scope,
         INotificationHubService hubService,
+        IStaffScopeService staffScope,
+        IActivityLogger activity,
         ILogger<ClassTeachersController> logger)
     {
+        _staffScope = staffScope;
+        _activity = activity;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
@@ -93,6 +100,16 @@ public class ClassTeachersController : ControllerBase
     /// </summary>
     internal static string NormalizeClassName(string? name) => (name ?? string.Empty).Trim().ToLowerInvariant();
 
+    private async Task<bool> HasPermissionAsync(string code)
+    {
+        if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
+        var userId = CurrentUserId();
+        return userId != Guid.Empty && await _context.Users
+            .Where(u => u.Id == userId && u.IsActive)
+            .SelectMany(u => u.Role.RolePermissions)
+            .AnyAsync(rp => rp.Permission.Code == code);
+    }
+
     // ---------------------------------------------------------------------
     // Reads
     // ---------------------------------------------------------------------
@@ -116,7 +133,9 @@ public class ClassTeachersController : ControllerBase
         // roster of who teaches what would be a way around the scope for everything else.
         if (!await _scope.IsUnscopedAsync())
         {
-            var mine = await _scope.GetClassNamesAsync(branchId);
+            // Both tiers: a subject teacher needs to know who the class teacher of a class they teach is,
+            // which is who they tell about a concern. The list is names and contact cards, not the pupils.
+            var mine = (await _scope.GetPastoralClassNamesAsync(branchId)).Concat(await _scope.GetTeachingClassNamesAsync(branchId)).Distinct().ToList();
             if (mine.Count == 0) return Ok(new List<ClassTeacherDto>());
             var normalized = mine.Select(NormalizeClassName).ToList();
             query = query.Where(a => normalized.Contains(a.ClassName.Trim().ToLower()));
@@ -203,9 +222,11 @@ public class ClassTeachersController : ControllerBase
             {
                 ClassName = vc.Name,
                 Color = vc.Color,
+                Level = vc.Level,
                 StudentCount = countsByNormalized.GetValueOrDefault(key),
                 ClassTeacher = primary,
-                Assistants = assistants
+                Assistants = assistants,
+                SubjectTeachers = assigned.Where(a => a.Role == ClassTeacherRole.SubjectTeacher).OrderBy(a => a.SubjectName).ThenBy(a => a.FullName).ToList()
             });
 
             if (primary == null && assistants.Count == 0) noTeacher.Add(vc.Name);
@@ -243,8 +264,29 @@ public class ClassTeachersController : ControllerBase
                     Email = u.Email
                 })
                 .ToList(),
-            UnknownStudentClasses = unknown
+            UnknownStudentClasses = unknown,
+            SubjectGaps = SubjectGaps(classes)
         });
+    }
+
+    /// <summary>A stream's curriculum is what its level teaches anywhere (see <see cref="ClassSubjectGapDto"/>).</summary>
+    private static List<ClassSubjectGapDto> SubjectGaps(List<ClassTeacherCoverageDto> classes)
+    {
+        var gaps = new List<ClassSubjectGapDto>();
+        foreach (var level in classes.Where(c => !string.IsNullOrWhiteSpace(c.Level)).GroupBy(c => c.Level!.Trim().ToLowerInvariant()))
+        {
+            var streams = level.ToList();
+            if (streams.Count < 2) continue;
+            var taught = streams.SelectMany(c => c.SubjectTeachers).Where(t => t.SubjectName != null).Select(t => t.SubjectName!).Distinct().ToList();
+            foreach (var stream in streams)
+            {
+                var mine = stream.SubjectTeachers.Select(t => t.SubjectName).ToHashSet();
+                var missing = taught.Where(s => !mine.Contains(s)).OrderBy(s => s).ToList();
+                if (missing.Count > 0)
+                    gaps.Add(new ClassSubjectGapDto { ClassName = stream.ClassName, Level = stream.Level!, MissingSubjects = missing });
+            }
+        }
+        return gaps;
     }
 
     /// <summary>Full history for one class, ended assignments included — the audit answer to "who could see this class last term".</summary>
@@ -286,6 +328,9 @@ public class ClassTeachersController : ControllerBase
 
         if (!Enum.IsDefined(request.Role))
             return BadRequest(new ProblemDetails { Title = "Unrecognised assignment role", Status = StatusCodes.Status400BadRequest });
+        // A subject teacher needs a subject; that is its own endpoint so the request shape says so.
+        if (request.Role == ClassTeacherRole.SubjectTeacher)
+            return BadRequest(new ProblemDetails { Title = "Pick a subject", Detail = "Subject teachers are assigned with a subject: POST …/class-teachers/subject-teachers.", Status = StatusCodes.Status400BadRequest });
 
         // The class must already exist in the branch's vocabulary. Assigning a teacher to a class
         // that does not exist produces an assignment that matches no student and never fires —
@@ -308,7 +353,7 @@ public class ClassTeachersController : ControllerBase
         var normalized = NormalizeClassName(match.Name);
 
         var duplicate = await _context.ClassTeacherAssignments
-            .AnyAsync(a => a.BranchId == branchId && a.EndedAt == null && a.UserId == user.Id && a.ClassName.Trim().ToLower() == normalized);
+            .AnyAsync(a => a.BranchId == branchId && a.EndedAt == null && a.UserId == user.Id && a.Role != ClassTeacherRole.SubjectTeacher && a.ClassName.Trim().ToLower() == normalized);
         if (duplicate)
             return Conflict(new ProblemDetails { Title = "Already assigned", Detail = $"{user.FullName} already holds {match.Name}.", Status = StatusCodes.Status409Conflict });
 
@@ -356,6 +401,84 @@ public class ClassTeachersController : ControllerBase
         return CreatedAtAction(nameof(GetAssignments), new { branchId }, dto);
     }
 
+    /// <summary>
+    /// Assigns a SUBJECT teacher (duty rota plan §5.2): the Teaching tier of the student scope for that class —
+    /// roster basics, never welfare. Any number of subject teachers per class; the same person teaching the same
+    /// subject in the same class twice is refused here and by <c>ux_subject_teacher_once_per_class_subject</c>.
+    /// Holding the class pastorally as well is allowed: the higher tier wins per student.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/class-teachers/subject-teachers")]
+    [RequirePermission(Permissions.ClassTeachersManage)]
+    [ProducesResponseType(typeof(ClassTeacherDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> AssignSubjectTeacher(Guid branchId, [FromBody] AssignSubjectTeacherRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var result = await TeachingAssignments.AssignSubjectTeacherAsync(_context, organizationId, branchId,
+            request.UserId, request.SubjectId, request.ClassName, request.PeriodsPerWeek, CurrentUserId());
+        if (result.Assignment == null)
+            return result.IsConflict
+                ? Conflict(new ProblemDetails { Title = result.Title, Detail = result.Detail, Status = StatusCodes.Status409Conflict })
+                : BadRequest(new ProblemDetails { Title = result.Title, Detail = result.Detail, Status = StatusCodes.Status400BadRequest });
+
+        var assignment = result.Assignment;
+        await SafePushPermissionsChangedAsync(assignment.UserId);
+        var dto = (await MapAsync(new[] { assignment }, branchId)).Single();
+        await _activity.RecordAsync(ActivityActions.SubjectTeacherAssigned, nameof(ClassTeacherAssignment), assignment.Id, assignment.UserId,
+            $"{dto.FullName} assigned to teach {dto.SubjectName} in {dto.ClassName}", new { assignment.ClassName, assignment.SubjectId, assignment.PeriodsPerWeek },
+            branchId, organizationId);
+        return CreatedAtAction(nameof(GetAssignments), new { branchId }, dto);
+    }
+
+    /// <summary>Changes the planned periods a week on a live subject-teacher assignment. Everything else is end-and-reassign, so the history stays true.</summary>
+    [HttpPatch("branches/{branchId:guid}/class-teachers/{assignmentId:guid}/periods")]
+    [RequirePermission(Permissions.ClassTeachersManage)]
+    [ProducesResponseType(typeof(ClassTeacherDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdatePeriods(Guid branchId, Guid assignmentId, [FromBody] AssignSubjectTeacherRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var assignment = await _context.ClassTeacherAssignments
+            .FirstOrDefaultAsync(a => a.Id == assignmentId && a.BranchId == branchId && a.EndedAt == null && a.Role == ClassTeacherRole.SubjectTeacher);
+        if (assignment == null)
+            return NotFound(new ProblemDetails { Title = "Assignment not found", Status = StatusCodes.Status404NotFound });
+        if (request.PeriodsPerWeek is < 0 or > 60)
+            return BadRequest(new ProblemDetails { Title = "Periods a week must be between 0 and 60", Status = StatusCodes.Status400BadRequest });
+
+        assignment.PeriodsPerWeek = request.PeriodsPerWeek;
+        assignment.UpdatedAt = DateTime.UtcNow;
+        assignment.UpdatedBy = CurrentUserId();
+        await _context.SaveChangesAsync();
+        return Ok((await MapAsync(new[] { assignment }, branchId)).Single());
+    }
+
+    /// <summary>
+    /// A teacher's teaching, grouped by subject: "Mathematics — S2A, S2B (12 periods)" (plan §5.2). The caller's
+    /// own needs nothing; somebody else's needs classes.teachers.manage, or staff.records.view with that person
+    /// inside the caller's staff scope (404 otherwise).
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/class-teachers/teaching")]
+    [ProducesResponseType(typeof(List<TeachingSummaryDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetTeaching(Guid branchId, [FromQuery] Guid? userId = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var me = CurrentUserId();
+        var who = userId ?? me;
+        if (who != me && !await HasPermissionAsync(Permissions.ClassTeachersManage)
+            && !(await HasPermissionAsync(Permissions.StaffRecordsView) && await _staffScope.CanSeeStaffAsync(branchId, who)))
+            return NotFound(new ProblemDetails { Title = "Staff member not found", Status = StatusCodes.Status404NotFound });
+
+        return Ok(await TeachingAssignments.SummaryAsync(_context, branchId, who));
+    }
+
     [HttpDelete("branches/{branchId:guid}/class-teachers/{assignmentId:guid}")]
     [RequirePermission(Permissions.ClassTeachersManage)]
     [ProducesResponseType(typeof(ClassTeacherDto), StatusCodes.Status200OK)]
@@ -389,6 +512,10 @@ public class ClassTeachersController : ControllerBase
             assignment.Id, assignment.UserId, assignment.ClassName);
 
         var dto = (await MapAsync(new[] { assignment }, branchId)).Single();
+        if (assignment.Role == ClassTeacherRole.SubjectTeacher)
+            await _activity.RecordAsync(ActivityActions.SubjectTeacherEnded, nameof(ClassTeacherAssignment), assignment.Id, assignment.UserId,
+                $"{dto.FullName} no longer teaches {dto.SubjectName} in {dto.ClassName}", new { assignment.ClassName, assignment.SubjectId, assignment.EndReason },
+                branchId, assignment.OrganizationId);
         return Ok(dto);
     }
 
@@ -453,6 +580,13 @@ public class ClassTeachersController : ControllerBase
             })
             .ToDictionaryAsync(u => u.Id);
 
+        var subjectIds = list.Where(a => a.SubjectId.HasValue).Select(a => a.SubjectId!.Value).Distinct().ToList();
+        var subjects = subjectIds.Count == 0
+            ? new Dictionary<Guid, (string Name, string Code)>()
+            : await _context.Subjects.IgnoreQueryFilters().AsNoTracking().Where(s => subjectIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.Name, s.Code })
+                .ToDictionaryAsync(s => s.Id, s => (s.Name, s.Code));
+
         // One grouped count for every class in the batch rather than a query per row.
         var classKeys = list.Select(a => NormalizeClassName(a.ClassName)).Distinct().ToList();
         var counts = (await _context.Students
@@ -478,6 +612,10 @@ public class ClassTeachersController : ControllerBase
                 ClassName = a.ClassName,
                 UserId = a.UserId,
                 Role = a.Role,
+                SubjectId = a.SubjectId,
+                SubjectName = a.SubjectId is { } sid && subjects.TryGetValue(sid, out var subject) ? subject.Name : null,
+                SubjectCode = a.SubjectId is { } sid2 && subjects.TryGetValue(sid2, out var subject2) ? subject2.Code : null,
+                PeriodsPerWeek = a.PeriodsPerWeek,
                 FullName = u == null ? "Unknown" : $"{u.FirstName} {u.LastName}".Trim(),
                 Username = u?.Username ?? "",
                 Email = u?.Email ?? "",

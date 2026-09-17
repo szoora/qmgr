@@ -22,7 +22,9 @@ public enum UploadOwnerKind
     VisitorPhoto = 5,
     StudentPhoto = 6,
     /// <summary>Evidence on a staff performance record. About an employee. Never public; the record's own rung and the staff scope apply.</summary>
-    StaffEvidence = 7
+    StaffEvidence = 7,
+    /// <summary>A member of staff's own profile photograph (duty rota plan §12.3). Readable by signed-in staff of the same organization; never public.</summary>
+    StaffPhoto = 8
 }
 
 /// <summary>
@@ -34,7 +36,9 @@ public sealed record UploadClassification(
     Guid? OrganizationId = null,
     Guid? BranchId = null,
     Guid? StudentId = null,
-    WelfareVisibility? Visibility = null)
+    WelfareVisibility? Visibility = null,
+    Guid? AuthorUserId = null,
+    bool IsDraft = false)
 {
     public static readonly UploadClassification Orphan = new(UploadOwnerKind.Unknown, IsPublic: false);
 }
@@ -140,10 +144,10 @@ public class UploadAuthorizer : IUploadAuthorizer
         //     about" for both kinds. Looked up before media for the same reason welfare is.
         var staff = await _db.StaffPerformanceAttachments.IgnoreQueryFilters().AsNoTracking()
             .Where(a => a.FileUrl.EndsWith(suffix))
-            .Select(a => new { a.Record!.OrganizationId, a.Record.BranchId, a.Record.SubjectUserId, a.Record.Visibility })
+            .Select(a => new { a.Record!.OrganizationId, a.Record.BranchId, a.Record.SubjectUserId, a.Record.Visibility, a.Record.LoggedByUserId, IsDraft = a.Record.Status == StaffRecordStatus.Draft })
             .FirstOrDefaultAsync(ct);
         if (staff != null)
-            return new UploadClassification(UploadOwnerKind.StaffEvidence, IsPublic: false, staff.OrganizationId, staff.BranchId, staff.SubjectUserId, staff.Visibility);
+            return new UploadClassification(UploadOwnerKind.StaffEvidence, IsPublic: false, staff.OrganizationId, staff.BranchId, staff.SubjectUserId, staff.Visibility, staff.LoggedByUserId, staff.IsDraft);
 
         // 2. Student photographs: roster-gated and row-scoped.
         var student = await _db.Students.IgnoreQueryFilters().AsNoTracking()
@@ -160,6 +164,14 @@ public class UploadAuthorizer : IUploadAuthorizer
             .FirstOrDefaultAsync(ct);
         if (visitor != null)
             return new UploadClassification(UploadOwnerKind.VisitorPhoto, IsPublic: false, visitor.OrganizationId);
+
+        // 3b. Staff profile photographs. Gated like visitor photos, looked up before media for the same reason.
+        var staffPhoto = await _db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.PhotoUrl != null && u.PhotoUrl.EndsWith(suffix))
+            .Select(u => new { u.OrganizationId, u.Id })
+            .FirstOrDefaultAsync(ct);
+        if (staffPhoto != null)
+            return new UploadClassification(UploadOwnerKind.StaffPhoto, IsPublic: false, staffPhoto.OrganizationId, null, staffPhoto.Id);
 
         // 4. Signage media and Library documents. Public unless share-only. FilePath only.
         var media = await _db.MediaContents.IgnoreQueryFilters().AsNoTracking()
@@ -210,9 +222,16 @@ public class UploadAuthorizer : IUploadAuthorizer
             case UploadOwnerKind.VisitorPhoto:
                 return await HasPermissionAsync(Permissions.VisitorsView, cancellationToken);
 
+            case UploadOwnerKind.StaffPhoto:
+                // A colleague's face is operational within the organization (the directory, a duty rota, a
+                // report's author) and nothing more: any signed-in member of the same tenant, already checked above.
+                return true;
+
             case UploadOwnerKind.StudentPhoto:
                 if (!await HasPermissionAsync(Permissions.StudentsView, cancellationToken)) return false;
-                return c.BranchId != null && c.StudentId != null && await _scope.CanSeeStudentAsync(c.BranchId.Value, c.StudentId.Value);
+                // Any tier: the photo is on the teaching tier's list (duty rota plan §5.3) — a subject teacher
+                // must recognise the children they teach. Welfare evidence below stays pastoral.
+                return c.BranchId != null && c.StudentId != null && await _scope.GetTierAsync(c.BranchId.Value, c.StudentId.Value) != StudentAccessTier.None;
 
             case UploadOwnerKind.WelfareAttachment:
                 if (!await HasPermissionAsync(Permissions.WelfareView, cancellationToken)) return false;
@@ -236,6 +255,13 @@ public class UploadAuthorizer : IUploadAuthorizer
                 // and the staff scope — the same three-part test the record itself applies.
                 var callerRaw = _httpContextAccessor.HttpContext?.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                 var isSubject = Guid.TryParse(callerRaw, out var callerId) && c.StudentId == callerId;
+                // The author keeps what they wrote, below Restricted — the rule CanReadRecordAsync already
+                // applies to the record itself. Without it a head of department could read the Confidential
+                // observation they filed and get a 404 on its evidence (found by the plan audit, 2026-09-17).
+                var isAuthor = callerId != Guid.Empty && c.AuthorUserId == callerId;
+                if (isAuthor && c.Visibility != WelfareVisibility.Restricted) return true;
+                // A draft is its author's alone, evidence included — the record rule again.
+                if (c.IsDraft) return isAuthor && await HasPermissionAsync(Permissions.StaffRestrictedView, cancellationToken);
                 if (isSubject && c.Visibility != WelfareVisibility.Restricted) return true;
 
                 if (!await HasPermissionAsync(Permissions.StaffRecordsView, cancellationToken)) return false;

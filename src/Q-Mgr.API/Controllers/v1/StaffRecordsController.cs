@@ -42,7 +42,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/branches/{branchId:guid}/staff")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — actions carry their own [RequirePermission] or an explicit self check
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffRecordsController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
@@ -57,7 +57,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
     private const long MaxAttachmentSizeBytes = 25 * 1024 * 1024;
     private static readonly string[] AllowedAttachmentMimePrefixes = { "image/", "application/pdf", "video/", "audio/" };
     private const int MaxPageSize = 200;
-    private const int TimelineActivityRows = 50;
+    private const int TimelineActivityRows = 500;
 
     public StaffRecordsController(
         QMgrDbContext db,
@@ -162,7 +162,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
     [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> CreateRecord(Guid branchId, [FromBody] CreateStaffRecordRequest request)
+    public async Task<IActionResult> CreateRecord(Guid branchId, [FromBody] CreateStaffRecordRequest request, [FromQuery] bool acknowledgeLateEntry = false)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
@@ -179,6 +179,9 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (parameter == null) return BadRequestProblem("The parameter was not found");
         if (!parameter.IsActive) return BadRequestProblem($"'{parameter.Name}' has been retired", "Choose an active parameter.");
         if (parameter.Kind == ParameterKind.Recognition && subject.Id == me) return BadRequestProblem("You cannot recognise yourself");
+        // An automatic-credit parameter is written by the system alone, so its records can always be
+        // labelled "automatic" and never mistaken for a colleague's judgement.
+        if (parameter.IsSystemSource) return BadRequestProblem($"'{parameter.Name}' is credited automatically", "Records on it are written by the system when the activity happens; it cannot be logged by hand.");
 
         var group = _policy.GroupFor(subject.Role?.Code);
         if (parameter.AppliesTo != StaffGroup.AllStaff && parameter.AppliesTo != group)
@@ -188,6 +191,24 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             return BadRequestProblem("Describe what happened", "At least 10 characters — a record that says nothing is worth nothing to the person it is about.");
         if (request.OccurredAt > DateTime.UtcNow.AddDays(1))
             return BadRequestProblem("A record cannot be dated in the future");
+
+        var policy = await _policy.GetAsync(organizationId);
+        var occurredAt = DateTime.SpecifyKind(request.OccurredAt, DateTimeKind.Utc);
+
+        // A closed period takes no new scored evidence. Wellbeing is never scored and a person's welfare
+        // must never wait for a period to be reopened, so it is the one kind that passes.
+        if (parameter.Kind != ParameterKind.Wellbeing)
+        {
+            var closed = ClosedPeriodProblem(_policy, policy, occurredAt, "A record");
+            if (closed != null) return closed;
+        }
+
+        // The late-entry confirmation, enforced HERE and at the policy's threshold (the welfare shape:
+        // 409 with acknowledgeLateEntry=true to proceed). Before 2026-09-17 it was a browser-only prompt
+        // with 14 days hard-coded, so an API caller — or a tenant with a different threshold — skipped it.
+        if (!request.SaveAsDraft && policy.LateEntryThresholdDays > 0
+            && occurredAt < DateTime.UtcNow.AddDays(-policy.LateEntryThresholdDays) && !acknowledgeLateEntry)
+            return LateEntryProblem(policy.LateEntryThresholdDays);
 
         if (!Enum.IsDefined(request.Outcome)) return BadRequestProblem("Unrecognised outcome");
 
@@ -219,7 +240,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             Points = points,
             Rating = rating,
             Description = request.Description.Trim(),
-            OccurredAt = DateTime.SpecifyKind(request.OccurredAt, DateTimeKind.Utc),
+            OccurredAt = occurredAt,
             Source = isObservation ? RecordSource.Observation : RecordSource.Manual,
             Status = request.SaveAsDraft ? StaffRecordStatus.Draft : StaffRecordStatus.Final,
             Visibility = visibilityError.Visibility,
@@ -228,11 +249,46 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         };
         Db.StaffPerformanceRecords.Add(record);
 
+        StaffDuty? feedbackDuty = null;
         if (isObservation && (request.PreObservationMeetingAt.HasValue || request.FeedbackSessionAt.HasValue))
         {
             var parts = new List<string>();
             if (request.PreObservationMeetingAt is { } pre) parts.Add($"Pre-observation meeting on {pre.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
             if (request.FeedbackSessionAt is { } fb) parts.Add($"Feedback session on {fb.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
+
+            // "Schedules the feedback session" (plan §6.3), not just remembers it: a future feedback session
+            // becomes a duty on the roster, expecting the observed teacher and the observer, with the observer
+            // as recorder — so both get the Coming-up entry and the duty reminder, and the meeting's own
+            // attendance is taken like any other. The title names no one; the expected list is the only link.
+            if (!request.SaveAsDraft && request.FeedbackSessionAt is { } session && session.ToUniversalTime() > DateTime.UtcNow)
+            {
+                var meetingParameter = await Db.PerformanceParameters.AsNoTracking()
+                    .Where(p => p.OrganizationId == organizationId && p.IsActive && !p.IsSystemSource
+                                && p.Kind == ParameterKind.Attendance && p.AppliesTo == StaffGroup.AllStaff)
+                    .OrderByDescending(p => p.Name == "Meeting Attendance").ThenBy(p => p.SortOrder)
+                    .FirstOrDefaultAsync();
+                if (meetingParameter != null)
+                {
+                    var startsAt = DateTime.SpecifyKind(session.ToUniversalTime(), DateTimeKind.Utc);
+                    feedbackDuty = new StaffDuty
+                    {
+                        OrganizationId = organizationId,
+                        BranchId = branchId,
+                        ParameterId = meetingParameter.Id,
+                        Title = "Lesson observation feedback",
+                        Description = "The feedback session that follows a lesson observation.",
+                        StartsAt = startsAt,
+                        EndsAt = startsAt.AddMinutes(30),
+                        ExpectedUserIds = subject.Id == me ? new[] { me } : new[] { subject.Id, me },
+                        RecorderUserIds = new[] { me },
+                        CreatedByUserId = me,
+                        CreatedBy = me
+                    };
+                    Db.StaffDuties.Add(feedbackDuty);
+                    parts.Add("The feedback session is on the duty roster, with a reminder to both of you.");
+                }
+            }
+
             Db.StaffPerformanceNotes.Add(new StaffPerformanceNote { RecordId = record.Id, Body = string.Join(" ", parts), AuthorUserId = me, Kind = StaffNoteKind.Note });
         }
 
@@ -242,7 +298,11 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         await Activity.RecordAsync(ActivityActions.RecordCreated, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
             RecordSummary(record.Status == StaffRecordStatus.Draft ? "drafted" : "created", record, parameter.Name, subjectName),
             new { record.ParameterId, record.Outcome, record.Points, record.Rating, record.Visibility, record.Status, record.Source, record.DutyId },
-            branchId, organizationId);
+            branchId, organizationId, visibility: record.Visibility);
+        if (feedbackDuty != null)
+            await Activity.RecordAsync(ActivityActions.DutyCreated, nameof(StaffDuty), feedbackDuty.Id, null,
+                $"Observation feedback session scheduled for {feedbackDuty.StartsAt:dd MMM yyyy HH:mm} UTC",
+                new { feedbackDuty.StartsAt, FromRecord = record.Id }, branchId, organizationId);
 
         // A committed record's fan-out must not fail the request; the service never throws.
         if (record.Status == StaffRecordStatus.Final)
@@ -272,7 +332,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         {
             // The subject-access trail: who looked at my file. Reading your own is not an event on it.
             await Activity.RecordAsync(ActivityActions.RecordViewed, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-                RecordSummary("viewed", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+                RecordSummary("viewed", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId, visibility: record.Visibility);
         }
 
         return Ok(await ToDtoAsync(record));
@@ -283,7 +343,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
     [RequirePermission(Permissions.StaffRecordsCreate)]
     [ProducesResponseType(typeof(StaffPerformanceRecordDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> FinalizeRecord(Guid branchId, Guid id)
+    public async Task<IActionResult> FinalizeRecord(Guid branchId, Guid id, [FromQuery] bool acknowledgeLateEntry = false)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
@@ -293,13 +353,22 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         var record = await LoadAsync(id, branchId, r => r.LoggedByUserId == me && r.Status == StaffRecordStatus.Draft);
         if (record == null) return RecordNotFound();
 
+        var policy = await _policy.GetAsync(record.OrganizationId);
+        if (record.Parameter?.Kind != ParameterKind.Wellbeing)
+        {
+            var closed = ClosedPeriodProblem(_policy, policy, record.OccurredAt, "Finalising a record");
+            if (closed != null) return closed;
+        }
+        if (policy.LateEntryThresholdDays > 0 && record.OccurredAt < DateTime.UtcNow.AddDays(-policy.LateEntryThresholdDays) && !acknowledgeLateEntry)
+            return LateEntryProblem(policy.LateEntryThresholdDays);
+
         record.Status = StaffRecordStatus.Final;
         record.UpdatedAt = DateTime.UtcNow;
         record.UpdatedBy = me;
         await Db.SaveChangesAsync();
 
         await Activity.RecordAsync(ActivityActions.RecordFinalized, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-            RecordSummary("finalised", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+            RecordSummary("finalised", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId, visibility: record.Visibility);
         await _alerts.NotifyRecordLoggedAsync(record.Id);
 
         return Ok(await ToDtoAsync(record));
@@ -323,7 +392,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         await Db.SaveChangesAsync();
 
         await Activity.RecordAsync(ActivityActions.RecordNoteAdded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-            RecordSummary("annotated", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+            RecordSummary("annotated", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId, visibility: record.Visibility);
 
         return Ok(await LoadDtoAsync(record.Id, branchId));
     }
@@ -351,7 +420,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var subjectName = SubjectName(record);
         await Activity.RecordAsync(ActivityActions.RecordResponded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-            RecordSummary("responded to by the subject", record, record.Parameter?.Name, subjectName), null, branchId, record.OrganizationId);
+            RecordSummary("responded to by the subject", record, record.Parameter?.Name, subjectName), null, branchId, record.OrganizationId, visibility: record.Visibility);
 
         if (record.LoggedByUserId != me)
         {
@@ -392,7 +461,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             record.AcknowledgedAt = DateTime.UtcNow;
             await Db.SaveChangesAsync();
             await Activity.RecordAsync(ActivityActions.RecordAcknowledged, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-                RecordSummary("acknowledged by the subject", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId);
+                RecordSummary("acknowledged by the subject", record, record.Parameter?.Name, SubjectName(record)), null, branchId, record.OrganizationId, visibility: record.Visibility);
         }
 
         return Ok(await ToDtoAsync(record));
@@ -413,6 +482,11 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (record == null || !await CanActOnRecordAsync(record, branchId)) return RecordNotFound();
         if (record.Status == StaffRecordStatus.Annulled) return BadRequestProblem("This record is already annulled");
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5) return BadRequestProblem("Say why the record is being annulled");
+        if (record.Status == StaffRecordStatus.Final)
+        {
+            var closed = ClosedPeriodProblem(_policy, await _policy.GetAsync(record.OrganizationId), record.OccurredAt, "Annulling a record");
+            if (closed != null) return closed;
+        }
 
         var me = CurrentUserId();
         var wasFinal = record.Status == StaffRecordStatus.Final;
@@ -423,7 +497,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         await Db.SaveChangesAsync();
 
         await Activity.RecordAsync(ActivityActions.RecordAnnulled, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
-            RecordSummary("annulled", record, record.Parameter?.Name, SubjectName(record)), new { WasFinal = wasFinal }, branchId, record.OrganizationId);
+            RecordSummary("annulled", record, record.Parameter?.Name, SubjectName(record)), new { WasFinal = wasFinal }, branchId, record.OrganizationId, visibility: record.Visibility);
 
         if (wasFinal) await _alerts.NotifyScoreUpdatedAsync(record.OrganizationId, record.BranchId, record.SubjectUserId);
 
@@ -477,7 +551,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         var forSummary = to > from ? record : new StaffPerformanceRecord { Visibility = from, Outcome = record.Outcome, Points = record.Points, Rating = record.Rating };
         await Activity.RecordAsync(ActivityActions.RecordVisibilityChanged, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
             RecordSummary($"visibility changed from {from} to {to}", forSummary, record.Parameter?.Name, SubjectName(record)),
-            new { From = from, To = to }, branchId, record.OrganizationId);
+            new { From = from, To = to }, branchId, record.OrganizationId, visibility: to > from ? to : from);
 
         return Ok(await LoadDtoAsync(record.Id, branchId));
     }
@@ -499,6 +573,11 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (record.Parameter == null) return BadRequestProblem("The record's parameter no longer exists");
         if (request.Points == null && request.Rating == null) return BadRequestProblem("Nothing to correct", "Give new points, a new rating, or both.");
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5) return BadRequestProblem("Say why the points are being corrected");
+        if (record.Status == StaffRecordStatus.Final)
+        {
+            var closed = ClosedPeriodProblem(_policy, await _policy.GetAsync(record.OrganizationId), record.OccurredAt, "Correcting a record");
+            if (closed != null) return closed;
+        }
 
         var oldPoints = record.Points;
         var oldRating = record.Rating;
@@ -537,7 +616,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         await Activity.RecordAsync(ActivityActions.RecordPointsCorrected, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
             RecordSummary($"corrected ({string.Join(", ", changes)})", record, record.Parameter.Name, SubjectName(record)),
-            new { OldPoints = oldPoints, NewPoints = newPoints, OldRating = oldRating, NewRating = newRating }, branchId, record.OrganizationId);
+            new { OldPoints = oldPoints, NewPoints = newPoints, OldRating = oldRating, NewRating = newRating }, branchId, record.OrganizationId, visibility: record.Visibility);
 
         if (record.Status == StaffRecordStatus.Final)
             await _alerts.NotifyScoreUpdatedAsync(record.OrganizationId, record.BranchId, record.SubjectUserId);
@@ -600,7 +679,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         await Activity.RecordAsync(ActivityActions.RecordEvidenceAdded, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
             RecordSummary("received evidence", record, record.Parameter?.Name, SubjectName(record)),
-            new { attachment.FileName, attachment.ContentType, attachment.FileSizeBytes }, branchId, record.OrganizationId);
+            new { attachment.FileName, attachment.ContentType, attachment.FileSizeBytes }, branchId, record.OrganizationId, visibility: record.Visibility);
 
         return CreatedAtAction(nameof(GetRecord), new { branchId, id = record.Id }, StaffPerformanceMapping.ToDto(attachment));
     }
@@ -636,8 +715,15 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var score = await _scoring.ComputeAsync(organizationId, branchId, userId, period, includeRank: isSelf);
 
-        var events = await Db.ActivityEvents.AsNoTracking()
-            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == userId)
+        // The file's second layer: what was done between the records. Same period as the records,
+        // this branch plus organization-level rows, and — for the subject reading their own file —
+        // never a Restricted event, or "Restricted record viewed" would tell them one exists.
+        var eventQuery = Db.ActivityEvents.AsNoTracking()
+            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == userId && (e.BranchId == branchId || e.BranchId == null));
+        if (isSelf) eventQuery = eventQuery.Where(e => e.Visibility != WelfareVisibility.Restricted);
+        if (from.HasValue) eventQuery = eventQuery.Where(e => e.OccurredAt >= DateTime.SpecifyKind(from.Value, DateTimeKind.Utc));
+        if (to.HasValue) eventQuery = eventQuery.Where(e => e.OccurredAt <= DateTime.SpecifyKind(to.Value, DateTimeKind.Utc));
+        var events = await eventQuery
             .OrderByDescending(e => e.OccurredAt)
             .Take(TimelineActivityRows)
             .ToListAsync();
@@ -715,6 +801,8 @@ public class StaffRecordsController : StaffPerformanceControllerBase
 
         var policy = await _policy.GetAsync(organizationId);
         if (policy.RecognitionMonthlyBudget <= 0) return BadRequestProblem("Peer recognition is switched off for this organization");
+        var closedNow = ClosedPeriodProblem(_policy, policy, DateTime.UtcNow, "Recognition");
+        if (closedNow != null) return closedNow;
 
         var points = Math.Max(1, Math.Abs(parameter.DefaultPoints ?? 1));
         if (parameter.MaxPointsPerEntry > 0) points = Math.Min(points, parameter.MaxPointsPerEntry);
@@ -978,6 +1066,16 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             .Concat(list.Select(r => (Guid?)r.SubjectUserId))
             .Concat(list.SelectMany(r => r.Notes).Select(n => (Guid?)n.AuthorUserId)));
     }
+
+    /// <summary>The welfare late-entry shape: 409, the threshold named, resubmit with acknowledgeLateEntry=true.</summary>
+    private IActionResult LateEntryProblem(int thresholdDays)
+        => Conflict(new ProblemDetails
+        {
+            Title = "Late entry",
+            Detail = $"The date you entered is more than {thresholdDays} days ago. If that's correct, resubmit with acknowledgeLateEntry=true; the record will say it was logged late.",
+            Status = StatusCodes.Status409Conflict,
+            Extensions = { ["code"] = "LATE_ENTRY", ["thresholdDays"] = thresholdDays }
+        });
 
     private static string SubjectName(StaffPerformanceRecord r) => r.Subject != null ? StaffPerformanceMapping.FullName(r.Subject) : "a member of staff";
     private static string Fmt(int? v) => v?.ToString() ?? "none";

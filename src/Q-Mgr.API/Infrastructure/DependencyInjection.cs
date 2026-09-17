@@ -63,10 +63,17 @@ public static class DependencyInjection
         services.AddScoped<IStaffScopeService, StaffScopeService>();
         services.AddScoped<IActivityLogger, ActivityLogger>();
         services.AddScoped<IStaffPerformancePolicyService, StaffPerformancePolicyService>();
+        services.AddSingleton<IReminderLadderService, ReminderLadderService>();
         services.AddScoped<IStaffScoringService, StaffScoringService>();
         services.AddScoped<IStaffAlertService, StaffAlertService>();
         // Policy-gated automatic credit from welfare, queue and visitor activity (off by default).
         services.AddScoped<IStaffSystemAwards, StaffSystemAwards>();
+        services.AddScoped<IStaffProfileChangeNotifier, StaffProfileChangeNotifier>();
+
+        // Staff onboarding (duty rota plan §12, 2026-09-17): the one reader of
+        // Organization.Settings["StaffOnboarding"], and the email twin of the phone verification code.
+        services.AddScoped<IStaffOnboardingPolicyService, StaffOnboardingPolicyService>();
+        services.AddScoped<IEmailCodeVerificationService, EmailCodeVerificationService>();
 
         // Notification Services
         services.AddScoped<INotificationService, NotificationService>();

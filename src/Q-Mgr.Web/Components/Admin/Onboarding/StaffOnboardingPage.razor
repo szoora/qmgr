@@ -1,0 +1,475 @@
+@page "/admin/users/onboarding"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffOnboardingApiService Onboarding
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IPermissionService PermissionService
+@inject IBranchStateService BranchState
+@inject IAuthService AuthService
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
+
+@*
+    Onboarding (duty rota plan §12.4–12.5). The Status tab is who has not signed in yet, whose temporary
+    password expired and who has not acknowledged the acceptable-use notice — with Re-issue, singly or in
+    bulk, the old password or link invalidated at once. The Join link tab switches staff sign-up on, issues
+    and rotates the link (shown once, with a QR code for the staff-room noticeboard), restricts email
+    domains and sets the acceptable-use notice the first-sign-in checklist asks for. Temporary passwords come
+    back from a re-issue once and live only in this page's memory until printed.
+*@
+
+<PageTitle>Staff Onboarding - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Staff Onboarding</h1>
+            <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
+        </div>
+        @if (pendingJoinRequests > 0)
+        {
+            <div class="header-actions">
+                <QButton Text="@($"{pendingJoinRequests} join request{(pendingJoinRequests == 1 ? "" : "s")} waiting")" Icon="person-check" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/users/requests"))" />
+            </div>
+        }
+    </div>
+
+    @if (moduleMissing)
+    {
+        <QEmptyState Icon="box-seam" Title="Staff onboarding is part of Welfare & Performance" Text="Add the module under Billing to use onboarding and the join link." />
+    }
+    else
+    {
+        <QTabs Tabs="@Tabs" @bind-ActiveKey="activeTab" IdPrefix="ob" AriaLabel="Onboarding" />
+
+        @if (activeTab == "status")
+        {
+            @if (status == null)
+            {
+                <QSpinner />
+            }
+            else
+            {
+                <QStatRow>
+                    <QStatTile Value="@status.NotSignedIn.Count.ToString()" Label="Not signed in yet" Variant="info" />
+                    <QStatTile Value="@status.TemporaryPasswordExpired.Count.ToString()" Label="Temporary password expired" Variant="@(status.TemporaryPasswordExpired.Count > 0 ? "warning" : "secondary")" />
+                    <QStatTile Value="@(status.AcceptableUseNoticeId == null ? "—" : status.NotAcknowledged.Count.ToString())" Label="Acceptable-use not acknowledged" Variant="secondary" />
+                </QStatRow>
+
+                @if (canReissue && selected.Count > 0)
+                {
+                    <div class="ob-bulk" role="region" aria-label="Re-issue selected">
+                        <span>@selected.Count selected</span>
+                        <QButton Text="New temporary passwords (slips)" Icon="printer" Variant="primary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Slips))" Loading="@working" Disabled="@working" />
+                        <QButton Text="By SMS" Icon="phone" Variant="secondary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Sms))" Disabled="@working" />
+                        <QButton Text="New invitation" Icon="envelope" Variant="secondary" Size="sm" OnClick="@(() => ReissueAsync(StaffImportDeliveryMode.Invitation))" Disabled="@working" />
+                        <QButton Text="Clear" Variant="ghost" Size="sm" OnClick="@(() => selected.Clear())" />
+                    </div>
+                }
+
+                @StatusTable("Temporary password expired", "They cannot sign in until you issue a new temporary password or invitation.", status.TemporaryPasswordExpired, showExpiry: true)
+                @StatusTable("Not signed in yet", "Accounts nobody has signed in to. A temporary password or invitation may still be on its way.", status.NotSignedIn, showExpiry: true)
+                @if (status.AcceptableUseNoticeId != null)
+                {
+                    @StatusTable("Has not acknowledged the acceptable-use notice", "Signed in, but has not confirmed they have read it. It is on their portal checklist.", status.NotAcknowledged, showExpiry: false)
+                }
+            }
+        }
+        else if (activeTab == "join")
+        {
+            @if (settings == null)
+            {
+                <QSpinner />
+            }
+            else if (!canApprove)
+            {
+                <QEmptyState Icon="lock" Title="The join link needs Approve Join Requests" Text="Ask a Tenant Admin or Manager to set it up." />
+            }
+            else
+            {
+                <QCard Title="Join link" Icon="link-45deg">
+                    <p class="ob-lede">
+                        Staff open the link, prove their email with a code, and choose a password. They cannot sign in until
+                        someone with <em>Approve Join Requests</em> approves them and picks their role. Anyone holding the
+                        link can apply, so rotate it if it leaks — the old one stops working at once.
+                    </p>
+                    <QCheckbox @bind-Value="@form.JoinEnabled" Label="Staff sign-up is on" />
+                    @if (issued != null)
+                    {
+                        <div class="ob-link" role="region" aria-label="New join link">
+                            <div class="ob-link-text">
+                                <strong>Copy this link now — it will not be shown again.</strong>
+                                <code class="ob-url">@JoinUrl</code>
+                                <div class="ob-link-actions">
+                                    <QButton Text="Copy" Icon="clipboard" Variant="secondary" Size="sm" OnClick="@CopyLinkAsync" />
+                                    <QButton Text="Print noticeboard sheet" Icon="printer" Variant="secondary" Size="sm" OnClick="@(() => showNoticeboard = true)" />
+                                </div>
+                                @if (issued.ExpiresAt != null) { <span class="ob-sub">Valid until @QDateFormat.DT(issued.ExpiresAt.Value.ToLocalTime())</span> }
+                            </div>
+                            <div id="ob-qr" class="ob-qr" aria-label="QR code for the join link"></div>
+                        </div>
+                    }
+                    else if (settings.HasJoinLink)
+                    {
+                        <p class="ob-sub">A link was issued @(settings.JoinCodeIssuedAt is { } at ? QDateFormat.DT(at.ToLocalTime()) : "")@(settings.JoinCodeExpiresAt is { } ex ? $", valid until {QDateFormat.DT(ex.ToLocalTime())}" : ""). The link itself is not stored; rotate to get a new one to share.</p>
+                    }
+                    <div class="ob-actions">
+                        <QInput TValue="int?" Type="number" Label="Link valid for (days, empty = until rotated)" @bind-Value="@linkValidDays" Min="0" Max="365" />
+                        <QButton Text="@(settings.HasJoinLink ? "Rotate link" : "Create link")" Icon="arrow-repeat" Variant="primary" OnClick="@RotateAsync" Loading="@working" Disabled="@working" />
+                    </div>
+                </QCard>
+
+                <QCard Title="Who may apply" Icon="shield-check">
+                    <QInput TValue="string" Label="Allowed email domains (optional)" @bind-Value="@domainsText"
+                            HelperText="Comma-separated, e.g. myschool.ac.ug. Empty means any address — approval still decides." />
+                    @if (branches.Count > 1)
+                    {
+                        <QSelect TValue="Guid?" TItem="BranchChoice" Label="Branch when the applicant does not choose" @bind-Value="@form.DefaultBranchId" AllowClear="true"
+                                 Items="@branches" ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Placeholder="Ask the approver" />
+                    }
+                    <QInput TValue="int" Type="number" Label="Unanswered requests expire after (days)" @bind-Value="@form.RequestExpiryDays" Min="1" Max="90"
+                            HelperText="@($"Rejected and expired requests are deleted {settings.PurgeAfterDays} days later.")" />
+                </QCard>
+
+                <QCard Title="Acceptable-use and data-protection notice" Icon="file-earmark-text">
+                    <p class="ob-lede">New staff confirm they have read this on their first-sign-in checklist. It is a staff notice that asks for acknowledgement, so it records who confirmed and when.</p>
+                    @if (settings.AcceptableUseNoticeId != null)
+                    {
+                        <p>Current notice: <strong>@settings.AcceptableUseNoticeTitle</strong></p>
+                    }
+                    <div class="ob-actions">
+                        <QSelect TValue="Guid?" TItem="StaffNoticeDto" Label="Notice" @bind-Value="@form.AcceptableUseNoticeId" AllowClear="true"
+                                 Items="@acknowledgementNotices" ValueSelector="@(n => (Guid?)n.Id)" TextSelector="@(n => n.Title)" Placeholder="No notice" />
+                        @if (settings.AcceptableUseNoticeId == null)
+                        {
+                            <QButton Text="Create one from a default text" Icon="plus-lg" Variant="secondary" OnClick="@CreateNoticeAsync" Disabled="@working" />
+                        }
+                    </div>
+                </QCard>
+
+                <div class="ob-save">
+                    <QButton Text="Save settings" Icon="check-lg" Variant="primary" OnClick="@SaveSettingsAsync" Loading="@working" Disabled="@working" />
+                </div>
+            }
+        }
+    }
+</div>
+
+@if (slips.Count > 0 && showSlips)
+{
+    <TemporaryPasswordSlips Slips="@slips" OrganizationName="@organizationName" SignInAddress="@($"{Navigation.BaseUri}login")" OnClose="@CloseSlips" />
+}
+
+@if (showNoticeboard && issued != null)
+{
+    <div class="tps-overlay ob-board" role="dialog" aria-modal="true" aria-label="Join link noticeboard sheet">
+        <QPrintSheet SheetId="ob-board-sheet" Title="Join link" OnBack="@(() => showNoticeboard = false)" BackText="Close">
+            <div class="ob-board-sheet">
+                <h1>Join @organizationName on Q-Mgr</h1>
+                <p>Staff: scan the code or type the address to ask for your account. An administrator will approve you.</p>
+                <div id="ob-board-qr" class="ob-board-qr"></div>
+                <p class="ob-board-url">@JoinUrl</p>
+                <p class="ob-sub">Use your own email address. Never share your password with anyone.</p>
+            </div>
+        </QPrintSheet>
+    </div>
+}
+
+<style>
+    .ob-lede { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 10px; }
+    .ob-sub { font-size: 12.5px; color: var(--qm-text-muted); }
+    .ob-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); }
+    .ob-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 10px; }
+    .ob-actions > * { min-width: 0; }
+    .ob-link { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 12px 0; padding: 12px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); }
+    .ob-link-text { flex: 1 1 260px; min-width: 0; display: grid; gap: 6px; }
+    .ob-url { overflow-wrap: anywhere; font-size: 13px; }
+    .ob-link-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ob-qr { background: #fff; padding: 8px; border-radius: var(--qm-radius-sm); }
+    .ob-save { margin-top: 14px; display: flex; justify-content: flex-end; }
+    .ob-table-title { margin: 18px 0 2px; font-size: 15px; }
+    .ob-board-sheet { text-align: center; padding-top: 20mm; }
+    .ob-board-sheet h1 { font-size: 22pt; margin: 0 0 8px; }
+    .ob-board-qr { display: flex; justify-content: center; margin: 14mm 0 8mm; }
+    .ob-board-url { font-family: "Courier New", monospace; font-size: 11pt; overflow-wrap: anywhere; }
+    .admin-page .q-card { margin-top: 14px; }
+    .tps-overlay { position: fixed; inset: 0; z-index: 1200; overflow: auto; background: var(--qm-bg-body, #f3f3f3); }
+    @@media print {
+        body * { visibility: hidden !important; }
+        .ob-board, .ob-board * { visibility: visible !important; }
+        .ob-board { position: absolute; inset: 0; overflow: visible; background: #fff; }
+    }
+</style>
+
+@code {
+    private static readonly IReadOnlyList<QTab> Tabs = new List<QTab>
+    {
+        new("status", "Status", "people"),
+        new("join", "Join link", "link-45deg"),
+    };
+
+    private string activeTab = "status";
+    private bool moduleMissing, canApprove, canReissue, working, showSlips, showNoticeboard;
+    private int pendingJoinRequests;
+    private Guid branchId;
+    private string organizationName = string.Empty;
+    private OnboardingStatusDto? status;
+    private StaffOnboardingSettingsDto? settings;
+    private SaveStaffOnboardingSettingsRequest form = new();
+    private string? domainsText;
+    private int? linkValidDays;
+    private JoinLinkIssuedDto? issued;
+    private List<StaffNoticeDto> acknowledgementNotices = new();
+    private List<BranchChoice> branches = new();
+    private readonly HashSet<Guid> selected = new();
+    private List<TemporaryPasswordSlipDto> slips = new();
+
+    private sealed record BranchChoice(Guid Id, string Name, bool IsActive = true);
+
+    private string JoinUrl => issued == null ? string.Empty : $"{Navigation.BaseUri.TrimEnd('/')}{issued.Path}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.UsersView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        canApprove = await PermissionService.HasPermissionAsync(Permissions.UsersApprove);
+        canReissue = await PermissionService.HasPermissionAsync(Permissions.UsersEdit);
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            moduleMissing = true;
+            return;
+        }
+
+        organizationName = (await AuthService.GetCurrentUserAsync())?.OrganizationName ?? string.Empty;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
+        await LoadStatusAsync();
+        if (canApprove) await LoadSettingsAsync();
+    }
+
+    private async Task LoadStatusAsync()
+    {
+        try
+        {
+            status = await Onboarding.GetStatusAsync(branchId == Guid.Empty ? null : branchId);
+            pendingJoinRequests = status.PendingJoinRequests;
+            selected.RemoveWhere(id => !status.NotSignedIn.Concat(status.TemporaryPasswordExpired).Concat(status.NotAcknowledged).Any(r => r.UserId == id));
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not load onboarding status", ex.Message); }
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        try
+        {
+            settings = await Onboarding.GetSettingsAsync();
+            form = new SaveStaffOnboardingSettingsRequest
+            {
+                JoinEnabled = settings.JoinEnabled,
+                AllowedEmailDomains = settings.AllowedEmailDomains,
+                DefaultBranchId = settings.DefaultBranchId,
+                RequestExpiryDays = settings.RequestExpiryDays,
+                AcceptableUseNoticeId = settings.AcceptableUseNoticeId
+            };
+            domainsText = string.Join(", ", settings.AllowedEmailDomains);
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not load the join link settings", ex.Message); }
+
+        try
+        {
+            var all = await Http.GetFromJsonAsync<List<BranchChoice>>("api/v1/branches", JsonOptions) ?? new();
+            branches = all.Where(b => b.IsActive).OrderBy(b => b.Name).ToList();
+        }
+        catch { branches = new(); }
+
+        try
+        {
+            if (branchId != Guid.Empty && await PermissionService.HasPermissionAsync(Permissions.StaffNoticesManage))
+                acknowledgementNotices = (await StaffApi.GetManagedNoticesAsync(branchId)).Where(n => n.RequiresAcknowledgement).ToList();
+            else if (branchId != Guid.Empty)
+                acknowledgementNotices = (await StaffApi.GetMyNoticesAsync(branchId)).Where(n => n.RequiresAcknowledgement).ToList();
+        }
+        catch { acknowledgementNotices = new(); }
+    }
+
+    private RenderFragment StatusTable(string title, string help, List<OnboardingStatusRowDto> rows, bool showExpiry) => __builder =>
+    {
+        <h3 class="ob-table-title">@title</h3>
+        <p class="ob-sub">@help</p>
+        @if (rows.Count == 0)
+        {
+            <p class="ob-sub"><QIcon Name="check-circle" /> Nobody.</p>
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table q-stack">
+                        <thead>
+                            <tr>
+                                @if (canReissue)
+                                {
+                                    <th><input type="checkbox" aria-label="Select all" checked="@rows.All(r => selected.Contains(r.UserId))" @onchange="@(e => ToggleAll(rows, (bool)(e.Value ?? false)))" /></th>
+                                }
+                                <th>Name</th><th>Username</th><th>Role</th><th>Added</th>@if (showExpiry) { <th>Access</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in rows)
+                            {
+                                <tr>
+                                    @if (canReissue)
+                                    {
+                                        <td><input type="checkbox" aria-label="@($"Select {r.FullName}")" checked="@selected.Contains(r.UserId)" @onchange="@(e => Toggle(r.UserId, (bool)(e.Value ?? false)))" /></td>
+                                    }
+                                    <td>@r.FullName<br /><span class="ob-sub">@r.Email</span></td>
+                                    <td>@r.Username</td>
+                                    <td>@(r.RoleName ?? "—")</td>
+                                    <td>@QDateFormat.D(r.CreatedAt.ToLocalTime())</td>
+                                    @if (showExpiry)
+                                    {
+                                        <td>@AccessText(r)</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+        }
+    };
+
+    private static string AccessText(OnboardingStatusRowDto r)
+    {
+        if (r.TemporaryPasswordExpired) return $"Temporary password expired {QDateFormat.DT(r.TemporaryPasswordExpiresAt?.ToLocalTime())}";
+        if (r.MustChangePassword) return $"Temporary password until {QDateFormat.DT(r.TemporaryPasswordExpiresAt?.ToLocalTime())}";
+        if (r.InvitationPending) return "Invitation sent, not yet used";
+        return "No temporary password or invitation";
+    }
+
+    private void Toggle(Guid id, bool on)
+    {
+        if (on) selected.Add(id); else selected.Remove(id);
+    }
+
+    private void ToggleAll(List<OnboardingStatusRowDto> rows, bool on)
+    {
+        foreach (var r in rows) Toggle(r.UserId, on);
+    }
+
+    private async Task ReissueAsync(StaffImportDeliveryMode mode)
+    {
+        if (selected.Count == 0) return;
+        working = true;
+        try
+        {
+            var result = await Onboarding.ReissueAsync(new ReissueAccessRequest { UserIds = selected.ToList(), Mode = mode });
+            foreach (var m in result.Messages) Toast.Notify(ToastSeverity.Warning, "Re-issue", m);
+            Toast.Notify(ToastSeverity.Success, $"Access re-issued for {result.Reissued} {(result.Reissued == 1 ? "person" : "people")}",
+                mode == StaffImportDeliveryMode.Invitation ? "Invitations sent." : "Print the slips now — the passwords cannot be shown again.");
+            if (result.Slips.Count > 0)
+            {
+                slips = result.Slips;
+                showSlips = true;
+            }
+            selected.Clear();
+            await LoadStatusAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not re-issue", ex.Message); }
+        finally { working = false; }
+    }
+
+    private void CloseSlips()
+    {
+        // Closing discards them: nothing on the server can show them again.
+        showSlips = false;
+        slips = new();
+    }
+
+    private async Task RotateAsync()
+    {
+        working = true;
+        try
+        {
+            issued = await Onboarding.RotateJoinLinkAsync(linkValidDays);
+            Toast.Notify(ToastSeverity.Success, "New join link issued", "Any earlier link has stopped working.");
+            await LoadSettingsAsync();
+            StateHasChanged();
+            await Task.Yield();
+            try { await JS.InvokeAsync<bool>("renderQrInto", "ob-qr", JoinUrl, 160); } catch { }
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not issue the link", ex.Message); }
+        finally { working = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (showNoticeboard && issued != null)
+        {
+            try { await JS.InvokeAsync<bool>("renderQrInto", "ob-board-qr", JoinUrl, 260); } catch { }
+        }
+        if (issued != null && activeTab == "join")
+        {
+            try { await JS.InvokeAsync<bool>("renderQrInto", "ob-qr", JoinUrl, 160); } catch { }
+        }
+    }
+
+    private async Task CopyLinkAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", JoinUrl);
+            Toast.Notify(ToastSeverity.Success, "Link copied");
+        }
+        catch { Toast.Notify(ToastSeverity.Warning, "Copy it by hand", "The browser did not allow copying."); }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        working = true;
+        try
+        {
+            form.AllowedEmailDomains = (domainsText ?? string.Empty).Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            settings = await Onboarding.SaveSettingsAsync(form);
+            Toast.Notify(ToastSeverity.Success, "Onboarding settings saved");
+            await LoadSettingsAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message); }
+        finally { working = false; }
+    }
+
+    private async Task CreateNoticeAsync()
+    {
+        working = true;
+        try
+        {
+            settings = await Onboarding.CreateAcceptableUseNoticeAsync();
+            Toast.Notify(ToastSeverity.Success, "Acceptable-use notice published", "Edit its wording on the Notices page if you wish.");
+            await LoadSettingsAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not create the notice", ex.Message); }
+        finally { working = false; }
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadStatusAsync(); if (canApprove) await LoadSettingsAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

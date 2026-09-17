@@ -80,7 +80,14 @@
             checks in individually on the day.
         </p>
         <div class="form-grid">
-            <label>Expected arrival *<input type="datetime-local" @bind="createExpectedAtLocal" /></label>
+            @* The project's date picker plus a time field, not <input type="datetime-local">, which
+               renders in the browser's locale — the ambiguity QDateFormat exists to remove. *@
+            <div class="q-datetime-pair">
+                <QDatePicker Label="Expected arrival" Required="true" Value="@createExpectedAtLocal"
+                             ValueChanged="@((DateTime? v) => { if (v.HasValue) createExpectedAtLocal = v.Value; })" />
+                <QDatePicker Label="Time" ShowTime="true" Value="@createExpectedAtLocal"
+                             ValueChanged="@((DateTime? v) => { if (v.HasValue) createExpectedAtLocal = v.Value; })" />
+            </div>
             <label>
                 Visitor type
                 <select @bind="createModel.VisitorType">

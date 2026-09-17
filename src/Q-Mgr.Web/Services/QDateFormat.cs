@@ -47,6 +47,9 @@ public static class QDateFormat
     /// <summary>Wednesday. On its own only where the weekday IS the fact ("we are closed on a Wednesday").</summary>
     public const string Weekday = "dddd";
 
+    /// <summary>Wed. A weekday where space is short and the date sits beside it (a booking day chip, a chart tooltip).</summary>
+    public const string WeekdayAbbrev = "ddd";
+
     /// <summary>14:30. 24-hour throughout: no am/pm, no ambiguity, and it sorts.</summary>
     public const string Time = "HH:mm";
 
@@ -140,6 +143,10 @@ public static class QDateFormat
     /// <summary>Wednesday.</summary>
     public static string Day(DateTime value) => value.ToString(Weekday, Inv);
     public static string Day(DateOnly value) => value.ToString(Weekday, Inv);
+
+    /// <summary>Wed.</summary>
+    public static string Dy(DateTime value) => value.ToString(WeekdayAbbrev, Inv);
+    public static string Dy(DateOnly value) => value.ToString(WeekdayAbbrev, Inv);
 
     public static string Iso8601(DateOnly value) => value.ToString(Iso, Inv);
     public static string Iso8601(DateTime value) => value.ToString(Iso, Inv);

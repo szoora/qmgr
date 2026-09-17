@@ -34,7 +34,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffNoticesController : ControllerBase
 {
     private readonly QMgrDbContext _context;

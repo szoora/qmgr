@@ -14,4 +14,10 @@ public record UserInfo
     public string? OrganizationName { get; init; }
     public Guid? BranchId { get; init; }
     public List<string> Permissions { get; init; } = new();
+
+    /// <summary>
+    /// The person signed in with a temporary password: the token they hold can only change it. The
+    /// Web sends them to Set your password and loads nothing else (plan §12.3).
+    /// </summary>
+    public bool MustChangePassword { get; init; }
 }

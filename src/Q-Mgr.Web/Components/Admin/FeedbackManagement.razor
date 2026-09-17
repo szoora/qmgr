@@ -89,28 +89,7 @@
         <!-- Rating Distribution -->
         <div class="rating-distribution">
             <h3>Rating Distribution</h3>
-            <div class="distribution-bars">
-                @for (int star = 5; star >= 1; star--)
-                {
-                    var count = star switch
-                    {
-                        5 => summary.FiveStarCount,
-                        4 => summary.FourStarCount,
-                        3 => summary.ThreeStarCount,
-                        2 => summary.TwoStarCount,
-                        1 => summary.OneStarCount,
-                        _ => 0
-                    };
-                    var percentage = summary.TotalFeedbacks > 0 ? (double)count / summary.TotalFeedbacks * 100 : 0;
-                    <div class="distribution-row">
-                        <span class="star-label">@star <QIcon Name="star-fill" /></span>
-                        <div class="bar-container">
-                            <div class="bar-fill" style="width: @percentage%"></div>
-                        </div>
-                        <span class="bar-count">@count</span>
-                    </div>
-                }
-            </div>
+            <QBarList Items="@RatingBars" Max="@(summary.TotalFeedbacks > 0 ? (decimal?)summary.TotalFeedbacks : null)" />
         </div>
     }
 
@@ -663,53 +642,7 @@
         color: var(--qm-text-primary);
     }
 
-    .distribution-bars {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .distribution-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .star-label {
-        width: 48px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 14px;
-        color: var(--qm-text-secondary);
-    }
-
-    .star-label .rzi {
-        font-size: 16px;
-        color: var(--qm-warning);
-    }
-
-    .bar-container {
-        flex: 1;
-        height: 8px;
-        background: var(--qm-bg-elevated);
-        border-radius: var(--qm-radius-sm);
-        overflow: hidden;
-    }
-
-    .bar-fill {
-        height: 100%;
-        background: linear-gradient(90deg, var(--qm-warning) 0%, var(--qm-warning) 100%);
-        border-radius: var(--qm-radius-sm);
-        transition: width 0.5s ease;
-    }
-
-    .bar-count {
-        width: 40px;
-        text-align: right;
-        font-size: 13px;
-        color: var(--qm-text-muted);
-    }
+    /* The bars are QBarList (q-components.css). */
 
     /* Filters */
     .filters-section {
@@ -1269,6 +1202,18 @@
     // ---- Responses --------------------------------------------------------------------------
     private List<FeedbackDto> feedbacks = new();
     private FeedbackSummaryDto? summary;
+
+    /// <summary>Five bars, best first, each the share of all responses (a count of one still draws a sliver).</summary>
+    private IReadOnlyList<QBarItem> RatingBars => summary == null
+        ? Array.Empty<QBarItem>()
+        : new List<QBarItem>
+        {
+            new("5 stars", summary.FiveStarCount, Color: "var(--qm-warning)"),
+            new("4 stars", summary.FourStarCount, Color: "var(--qm-warning)"),
+            new("3 stars", summary.ThreeStarCount, Color: "var(--qm-warning)"),
+            new("2 stars", summary.TwoStarCount, Color: "var(--qm-warning)"),
+            new("1 star", summary.OneStarCount, Color: "var(--qm-warning)")
+        };
     private bool isLoading = true;
     private bool showDetailDialog = false;
     private int page = 1;

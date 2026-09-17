@@ -124,7 +124,7 @@
                                 <span class="evac-badge">@person.BadgeCode</span>
                                 @if (person.CheckedInAt.HasValue)
                                 {
-                                    <span>In @person.CheckedInAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                                    <span>In @QDateFormat.T(person.CheckedInAt.Value.ToLocalTime())</span>
                                 }
                                 @if (!string.IsNullOrWhiteSpace(person.Phone))
                                 {
@@ -320,7 +320,7 @@
                         <div class="pdetail">{detail}</div>
                     </td>
                     <td class="mono">{System.Net.WebUtility.HtmlEncode(p.BadgeCode)}</td>
-                    <td class="mono">{(p.CheckedInAt.HasValue ? p.CheckedInAt.Value.ToLocalTime().ToString("HH:mm") : "&mdash;")}</td>
+                    <td class="mono">{(p.CheckedInAt.HasValue ? QDateFormat.T(p.CheckedInAt.Value.ToLocalTime()) : "&mdash;")}</td>
                 </tr>
                 """;
         }));
@@ -375,8 +375,8 @@
                 <div class="head">
                     <h1>Evacuation Roll Call</h1>
                     <div class="meta"><strong>{{System.Net.WebUtility.HtmlEncode(report.BranchName)}}</strong> &middot;
-                        As at {{report.GeneratedAt.ToLocalTime():HH:mm:ss}} on {{report.GeneratedAt.ToLocalTime():ddd dd MMM yyyy}} &middot;
-                        Printed {{DateTime.Now:HH:mm:ss}}</div>
+                        As at {{QDateFormat.TS(report.GeneratedAt.ToLocalTime())}} on {{QDateFormat.DD(report.GeneratedAt.ToLocalTime())}} &middot;
+                        Printed {{QDateFormat.TS(DateTime.Now)}}</div>
                     <div class="counts">
                         <div><strong>{{report.TotalOnSite}}</strong> on site</div>
                         <div><strong>{{report.CheckedInVisitorCount}}</strong> named visitors</div>
@@ -390,7 +390,7 @@
                     <tbody>{{rows}}</tbody>
                 </table>
                 {{passRows}}
-                <p class="foot">This sheet is a point-in-time snapshot taken at {{report.GeneratedAt.ToLocalTime():HH:mm:ss}}. Anyone who arrived or left after that time will not be reflected.</p>
+                <p class="foot">This sheet is a point-in-time snapshot taken at {{QDateFormat.TS(report.GeneratedAt.ToLocalTime())}}. Anyone who arrived or left after that time will not be reflected.</p>
                 <div class="sign">Marshal:<span></span> &nbsp;&nbsp; Assembly point:<span></span> &nbsp;&nbsp; All accounted for at:<span></span></div>
             </body>
             </html>

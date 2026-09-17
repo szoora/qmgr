@@ -37,6 +37,10 @@ public class ModuleCatalogDefaults
         decimal MonthlyPriceUsd, decimal AnnualPriceUsd, decimal MonthlyPriceUgx, decimal AnnualPriceUgx,
         string? Description, string? Badge, int SortOrder);
 
+    /// <summary>Shared with the migration that renames an existing Student Welfare row, so the two cannot differ.</summary>
+    public const string StudentWelfareDescription =
+        "Student roster and guardians, visiting-day passes, and the welfare ledger; plus staff performance: duties and registers, recognition, scoring, termly appraisals, staff notices, the activity log and every staff member's own portal.";
+
     /// <summary>The catalog as shipped. One entry per <see cref="ModuleCodes.All"/> code.</summary>
     public static readonly IReadOnlyList<ModuleDefaults> Definitions = new[]
     {
@@ -65,31 +69,25 @@ public class ModuleCatalogDefaults
             MonthlyPriceUsd: 22m, AnnualPriceUsd: 220m, MonthlyPriceUgx: 95_000m, AnnualPriceUgx: 950_000m,
             Description: "Visitor check-in and check-out, badges and group passes, pre-registered arrivals, watchlist and contractor induction, and the evacuation roll-call.",
             Badge: null, SortOrder: 2),
+        // "Welfare & Performance" (one module since 2026-09-17, user decision: the same school
+        // buys both, and staff performance is built on the welfare machinery). MaxUsersPerBranch is 250
+        // because "every staff member gets a login" is the staff side's whole point and POST /api/v1/users
+        // returns 402 at the cap; storage is the larger of the two former modules'. The price is the
+        // welfare module's; the Module Catalog editor is where it is changed.
         new ModuleDefaults(
-            Name: "Student Welfare", Code: ModuleCodes.StudentWelfare, ShowAds: false, DedicatedSchema: false,
-            MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
-            MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 2_000,
-            MonthlyPriceUsd: 25m, AnnualPriceUsd: 250m, MonthlyPriceUgx: 105_000m, AnnualPriceUgx: 1_050_000m,
-            Description: "Student roster and guardians, visiting-day passes, and the welfare ledger: achievements, behaviour, safeguarding concerns, assigned actions, statements and reports.",
-            Badge: "For schools", SortOrder: 3),
-        // Staff Performance (2026-09-16). The list price is a placeholder pending plan §13 decision 7;
-        // the Module Catalog editor is where it is set for real. Priced beside Student Welfare because
-        // it is the same buyer. MaxUsersPerBranch is deliberately generous: "every staff member gets
-        // a login" is the whole point, and POST /api/v1/users returns 402 at the plan's user cap.
-        new ModuleDefaults(
-            Name: "Staff Performance", Code: ModuleCodes.StaffPerformance, ShowAds: false, DedicatedSchema: false,
+            Name: "Welfare & Performance", Code: ModuleCodes.StudentWelfare, ShowAds: false, DedicatedSchema: false,
             MaxBranches: 5, MaxDisplays: 1, MaxUsersPerBranch: 250, MaxCountersPerBranch: 2,
             MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 5_000,
             MonthlyPriceUsd: 25m, AnnualPriceUsd: 250m, MonthlyPriceUgx: 105_000m, AnnualPriceUgx: 1_050_000m,
-            Description: "Staff performance parameters, duties and registers, recognition, scoring and bands, termly appraisals, staff notices, the activity log, and every staff member's own portal.",
-            Badge: "For schools", SortOrder: 4),
+            Description: StudentWelfareDescription,
+            Badge: "For schools", SortOrder: 3),
         new ModuleDefaults(
             Name: "Integrations & API Access", Code: ModuleCodes.IntegrationsApi, ShowAds: false, DedicatedSchema: false,
             MaxBranches: 3, MaxDisplays: 1, MaxUsersPerBranch: 5, MaxCountersPerBranch: 2,
             MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 100_000, MaxStorageMb: 200,
             MonthlyPriceUsd: 15m, AnnualPriceUsd: 150m, MonthlyPriceUgx: 60_000m, AnnualPriceUgx: 600_000m,
             Description: "API clients, webhooks, and partner integration adapters (hospital/pharmacy/banking).",
-            Badge: null, SortOrder: 5),
+            Badge: null, SortOrder: 4),
     };
 
     public async Task RunAsync(CancellationToken cancellationToken = default)

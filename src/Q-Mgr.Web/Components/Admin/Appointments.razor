@@ -117,7 +117,7 @@
                                 </span>
                             }
                             <div class="appointment-time">
-                                <span class="time">@appointment.ScheduledAt.ToLocalTime().ToString("HH:mm")</span>
+                                <span class="time">@QDateFormat.T(appointment.ScheduledAt.ToLocalTime())</span>
                                 <span class="duration">@appointment.DurationMinutes min</span>
                             </div>
                             <div class="appointment-main">
@@ -135,7 +135,7 @@
                                     }
                                 </div>
                             </div>
-                            <span class="status-badge status-@appointment.Status.ToString().ToLowerInvariant()">@DescribeStatus(appointment.Status)</span>
+                            <QChip Text="@DescribeStatus(appointment.Status)" Variant="@StatusVariant(appointment.Status)" Class="appointment-status" />
                             @if (canManage)
                             {
                                 <div class="appointment-actions">
@@ -235,7 +235,7 @@
 
 <QModal @bind-Visible="showCancel" Title="Cancel appointment" Size="sm">
     <ChildContent>
-        <p>Cancel <strong>@cancelTarget?.CustomerName</strong>'s @(cancelTarget?.ScheduledAt.ToLocalTime().ToString("HH:mm") ?? "") appointment?</p>
+        <p>Cancel <strong>@cancelTarget?.CustomerName</strong>'s @(cancelTarget == null ? "" : QDateFormat.T(cancelTarget.ScheduledAt.ToLocalTime())) appointment?</p>
         <div class="form-group">
             <label for="apt-cancel-reason">Reason</label>
             <QInput TValue="string" Id="apt-cancel-reason" @bind-Value="cancelReason" MaxLength="200" Placeholder="Optional, shown in the record" />
@@ -323,18 +323,7 @@
 
     .appointment-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 
-    .status-badge {
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 4px 10px;
-        border-radius: var(--qm-radius-full);
-        background: var(--qm-bg-secondary);
-        color: var(--qm-text-secondary);
-        white-space: nowrap;
-    }
-
-    .status-badge.status-checkedin { background: rgba(var(--qm-success-rgb), 0.14); color: var(--qm-success); }
-    .status-badge.status-noshow { background: rgba(var(--qm-danger-rgb), 0.14); color: var(--qm-danger); }
+    .appointment-status { white-space: nowrap; }
 
     .appointment-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -478,6 +467,14 @@
         AppointmentStatus.CheckedIn => "Checked in",
         AppointmentStatus.NoShow => "No show",
         _ => status.ToString()
+    };
+
+    /// <summary>The two statuses that were tinted before (arrived, did not come); every other reads neutral.</summary>
+    private static string StatusVariant(AppointmentStatus status) => status switch
+    {
+        AppointmentStatus.CheckedIn => "success",
+        AppointmentStatus.NoShow => "danger",
+        _ => "default"
     };
 
     protected override async Task OnInitializedAsync()
@@ -633,7 +630,7 @@
             availability = await AppointmentApi.GetAvailabilityAsync(BranchId, serviceTypeId, DateOnly.FromDateTime(formDate));
             freeSlots = (availability?.Slots ?? new List<AppointmentSlotDto>())
                 .Where(s => s.IsAvailable)
-                .Select(s => new SlotOption(s.StartAt.ToLocalTime().ToString("HH:mm"), s.StartAt))
+                .Select(s => new SlotOption(QDateFormat.T(s.StartAt.ToLocalTime()), s.StartAt))
                 .ToList();
 
             if (formSlot != null && freeSlots.All(s => s.Value != formSlot))
@@ -681,7 +678,7 @@
                     ScheduledAt = slot,
                     Notes = string.IsNullOrWhiteSpace(formNotes) ? null : formNotes.Trim()
                 });
-                NotificationService.Notify(ToastSeverity.Success, "Booked", $"{formName} is booked for {slot.ToLocalTime():HH:mm}.");
+                NotificationService.Notify(ToastSeverity.Success, "Booked", $"{formName} is booked for {QDateFormat.T(slot.ToLocalTime())}.");
             }
             else
             {
@@ -689,7 +686,7 @@
                 {
                     ScheduledAt = slot
                 });
-                NotificationService.Notify(ToastSeverity.Success, "Rescheduled", $"Moved to {slot.ToLocalTime():HH:mm}.");
+                NotificationService.Notify(ToastSeverity.Success, "Rescheduled", $"Moved to {QDateFormat.T(slot.ToLocalTime())}.");
             }
 
             showEditor = false;

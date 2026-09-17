@@ -195,11 +195,11 @@
                         }
                         @if (visitor.CheckedInAt.HasValue)
                         {
-                            <span class="detail-item"><QIcon Name="box-arrow-in-right" /> In: @visitor.CheckedInAt.Value.ToString("HH:mm")</span>
+                            <span class="detail-item"><QIcon Name="box-arrow-in-right" /> In: @QDateFormat.T(visitor.CheckedInAt.Value)</span>
                         }
                         @if (visitor.CheckedOutAt.HasValue)
                         {
-                            <span class="detail-item"><QIcon Name="box-arrow-right" /> Out: @visitor.CheckedOutAt.Value.ToString("HH:mm")</span>
+                            <span class="detail-item"><QIcon Name="box-arrow-right" /> Out: @QDateFormat.T(visitor.CheckedOutAt.Value)</span>
                         }
                     </div>
 
@@ -302,7 +302,12 @@
             <label>Phone<input @bind="preRegisterModel.Phone" placeholder="0753404044" /></label>
             <label>Email<input @bind="preRegisterModel.Email" placeholder="support@getsacc.com" /></label>
             <label>Vehicle Plate<input @bind="preRegisterModel.VehiclePlate" placeholder="KDA 123B" /></label>
-            <label>Scheduled Time<input type="datetime-local" @bind="scheduledAtLocal" /></label>
+            @* The project's date picker plus a time field rather than <input type="datetime-local">,
+               whose date renders in the browser's locale. *@
+            <div class="q-datetime-pair">
+                <QDatePicker Label="Scheduled date" @bind-Value="scheduledAtLocal" Clearable="true" Min="@DateTime.Today" />
+                <QDatePicker Label="Time" ShowTime="true" @bind-Value="scheduledAtLocal" />
+            </div>
             <label>Purpose of Visit *<input @bind="preRegisterModel.Purpose" placeholder="Meeting, delivery, interview..." /></label>
             <label>Host Name<input @bind="preRegisterModel.HostName" placeholder="Who are they visiting?" /></label>
             <label class="full-width">Notes<textarea @bind="preRegisterModel.Notes" rows="2"></textarea></label>

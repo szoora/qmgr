@@ -79,6 +79,7 @@ public class QMgrDbContext : DbContext
     // and StaffAppraisal are branch-scoped like the welfare tables and are NOT filtered: every
     // controller action reaching one by ID calls VerifyBranchOwnership explicitly.
     public DbSet<QMgr.Domain.Entities.Staff.Department> Departments => Set<QMgr.Domain.Entities.Staff.Department>();
+    public DbSet<QMgr.Domain.Entities.Staff.Subject> Subjects => Set<QMgr.Domain.Entities.Staff.Subject>();
     public DbSet<QMgr.Domain.Entities.Staff.PerformanceParameter> PerformanceParameters => Set<QMgr.Domain.Entities.Staff.PerformanceParameter>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDuty> StaffDuties => Set<QMgr.Domain.Entities.Staff.StaffDuty>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();
@@ -255,6 +256,9 @@ public class QMgrDbContext : DbContext
         modelBuilder.Entity<QMgr.Domain.Entities.Staff.StaffNotice>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
         modelBuilder.Entity<QMgr.Domain.Entities.Audit.ActivityEvent>()
+            .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
+        // Duty rota plan (2026-09-17): subjects are organization-scoped like departments.
+        modelBuilder.Entity<QMgr.Domain.Entities.Staff.Subject>()
             .HasQueryFilter(e => !TenantIsolationEnabled || e.OrganizationId == CurrentOrganizationId);
 
         // Billing entities - filter by OrganizationId

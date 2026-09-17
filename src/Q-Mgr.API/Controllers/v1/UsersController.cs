@@ -25,6 +25,13 @@ public class UsersController : ControllerBase
     private readonly ILogger<UsersController> _logger;
     private readonly IPasswordValidationService _passwordValidation;
     private readonly INotificationHubService _notificationHub;
+    private readonly QMgr.Infrastructure.Services.IStaffProfileChangeNotifier _profileChanges;
+
+    private Guid? GetCurrentUserIdOrNull()
+    {
+        var raw = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        return Guid.TryParse(raw, out var id) ? id : null;
+    }
 
     public UsersController(
         QMgrDbContext dbContext,
@@ -32,8 +39,10 @@ public class UsersController : ControllerBase
         IMemoryCache cache,
         ILogger<UsersController> logger,
         IPasswordValidationService passwordValidation,
-        INotificationHubService notificationHub)
+        INotificationHubService notificationHub,
+        QMgr.Infrastructure.Services.IStaffProfileChangeNotifier profileChanges)
     {
+        _profileChanges = profileChanges;
         _notificationHub = notificationHub;
         _dbContext = dbContext;
         _tenantAccessor = tenantAccessor;
@@ -447,6 +456,7 @@ public class UsersController : ControllerBase
 
         // Validate role exists if changing
         var roleChanged = false;
+        var previousRoleId = user.RoleId;
         if (request.RoleId.HasValue)
         {
             var role = await _dbContext.Roles.FindAsync(request.RoleId.Value);
@@ -503,10 +513,12 @@ public class UsersController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Password))
         {
             // Validate password against platform policy
+            var orgName = await _dbContext.Organizations.IgnoreQueryFilters().Where(o => o.Id == user.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
             var passwordValidation = await _passwordValidation.ValidatePasswordAsync(
                 request.Password,
                 user.Username,
-                user.Email);
+                user.Email,
+                orgName);
 
             if (!passwordValidation.IsValid)
                 return BadRequest(new ProblemDetails
@@ -516,7 +528,13 @@ public class UsersController : ControllerBase
                     Status = StatusCodes.Status400BadRequest
                 });
 
+            // A password an administrator typed is a temporary one (duty rota plan §12.3): the
+            // administrator knows it, so the person must replace it at first sign-in, within 72 hours.
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+            user.MustChangePassword = true;
+            user.TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(QMgr.API.Application.Services.TemporaryPasswords.Lifetime);
+            user.RefreshToken = null;
+            user.RefreshTokenExpiry = null;
         }
 
         await _dbContext.SaveChangesAsync();
@@ -526,8 +544,8 @@ public class UsersController : ControllerBase
         // downgrade/revocation, where the old set may be more privileged than the new one.
         if (roleChanged)
         {
-            _cache.InvalidateUserPermissions(user.Id);
-            await NotifyPermissionsChangedSafeAsync(user.Id);
+            // Cache, live push, activity log and staff.profile-changed — one service, shared with the bulk path.
+            await _profileChanges.RoleChangedAsync(user.OrganizationId, user.Id, previousRoleId, user.RoleId, GetCurrentUserIdOrNull(), "edited");
         }
 
         _logger.LogInformation("Updated user: {UserId} - {Username}", user.Id, user.Username);
@@ -742,11 +760,13 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
-        // Validate password against platform policy
+        // Validate password against platform policy and the blocklist, the organization's name included
+        var organizationName = await _dbContext.Organizations.IgnoreQueryFilters().Where(o => o.Id == user.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
         var passwordValidation = await _passwordValidation.ValidatePasswordAsync(
             request.NewPassword,
             user.Username,
-            user.Email);
+            user.Email,
+            organizationName);
 
         if (!passwordValidation.IsValid)
             return BadRequest(new ProblemDetails
@@ -759,6 +779,12 @@ public class UsersController : ControllerBase
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         user.RefreshToken = null; // Invalidate any existing refresh tokens
         user.RefreshTokenExpiry = null;
+        // An administrator's reset issues a temporary password (duty rota plan §12.3): the person must
+        // choose their own at first sign-in, and it stops working after 72 hours.
+        user.MustChangePassword = true;
+        user.TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(QMgr.API.Application.Services.TemporaryPasswords.Lifetime);
+        user.PasswordResetToken = null;
+        user.PasswordResetTokenExpiry = null;
         user.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync();

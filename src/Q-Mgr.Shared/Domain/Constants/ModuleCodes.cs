@@ -23,8 +23,15 @@ public static class ModuleCodes
     public const string VisitorManagement = "visitor-management";
 
     /// <summary>
-    /// Student roster and guardians, visiting-day passes, and the student welfare ledger
-    /// (achievements, behaviour, safeguarding concerns, actions, statements and reports).
+    /// "Welfare &amp; Performance" (the display name since 2026-09-17; short on purpose). Student roster and
+    /// guardians, visiting-day passes, the student welfare ledger (achievements, behaviour,
+    /// safeguarding concerns, actions, statements and reports) AND staff performance: the parameter
+    /// catalogue, duties and registers, the staff record with evidence, recognition, scoring, the
+    /// termly appraisal, staff notices, the activity log and every staff member's own portal.
+    ///
+    /// ONE module on purpose (user decision, 2026-09-17): the same school buys both, and the staff side
+    /// reuses the welfare machinery end to end. The code stays "student-welfare" because it is a wire
+    /// format stored on every purchase; only the name changed.
     /// </summary>
     public const string StudentWelfare = "student-welfare";
 
@@ -32,11 +39,11 @@ public static class ModuleCodes
     public const string IntegrationsApi = "integrations-api";
 
     /// <summary>
-    /// Staff performance: the parameter catalogue, duties and registers, the append-only staff
-    /// record with evidence, recognition, scoring and bands, the termly appraisal, staff notices,
-    /// the activity log, and every staff member's own portal. See docs/plans/STAFF_PERFORMANCE_MONITOR.md.
+    /// Staff Performance as a module of its own, 2026-09-16 to 2026-09-17: built, never deployed, then
+    /// folded into <see cref="StudentWelfare"/>. Kept only so the migration that removes its catalog row
+    /// and any dev grants has a name to point at. Nothing gates on it.
     /// </summary>
-    public const string StaffPerformance = "staff-performance";
+    public const string RetiredStaffPerformance = "staff-performance";
 
     /// <summary>
     /// The retired "Visitor &amp; Safeguarding" module, which bundled visitor management together
@@ -56,7 +63,6 @@ public static class ModuleCodes
         EngagementCommunications,
         VisitorManagement,
         StudentWelfare,
-        StaffPerformance,
         IntegrationsApi
     };
 

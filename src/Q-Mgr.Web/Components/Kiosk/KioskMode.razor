@@ -203,7 +203,7 @@ else
                 </div>
                 <div class="info-row">
                     <span class="info-label">Time Issued</span>
-                    <span class="info-value">@(generatedTicket?.IssuedAt.ToLocalTime().ToString("HH:mm"))</span>
+                    <span class="info-value">@(generatedTicket == null ? null : QDateFormat.T(generatedTicket.IssuedAt.ToLocalTime()))</span>
                 </div>
             </div>
 
@@ -2354,8 +2354,9 @@ else
         }
         else
         {
-            // Production: Load from organization settings via API
-            // TODO: currentIndustry = await QueueApi.GetOrganizationIndustryAsync(BranchId);
+            // Production: the organization's own setting, carried on the public branch record the
+            // kiosk has just fetched, so it costs no extra request.
+            currentIndustry = branchInfo.Industry;
         }
 
         await LoadServiceTypes();

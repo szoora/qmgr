@@ -55,17 +55,15 @@ public class ModuleApiService : IModuleApiService
         }
     }
 
+    /// <summary>
+    /// Throws when the call fails, unlike <see cref="GetCatalogAsync"/>. An empty list here means
+    /// "owns nothing", and every caller turns that into a decision: the layout's module guard sent a
+    /// paying customer to Billing, and after a refused refresh it sent a signed-out one there on the
+    /// way to the sign-in page (found 2026-09-17). Swallowing the error made the fail-open branches in
+    /// ModuleStateService and Dashboard unreachable; they now run.
+    /// </summary>
     public async Task<List<OrganizationModuleStatusDto>> GetMineAsync()
-    {
-        try
-        {
-            return await _httpClient.GetFromJsonAsync<List<OrganizationModuleStatusDto>>("api/v1/modules/mine", _jsonOptions) ?? new();
-        }
-        catch
-        {
-            return new();
-        }
-    }
+        => await _httpClient.GetFromJsonAsync<List<OrganizationModuleStatusDto>>("api/v1/modules/mine", _jsonOptions) ?? new();
 
     public async Task<ModulePurchaseResult> PurchaseAsync(string moduleCode, string phoneNumber, string billingCycle)
     {

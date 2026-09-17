@@ -205,3 +205,14 @@ window.shareUtils = {
     generateQRCode: window.generateQRCode,
     downloadDataUrl: window.downloadDataUrl
 };
+
+// Renders a scannable QR code into an element with the qrcodejs library already loaded in App.razor
+// (the join link's noticeboard QR, duty rota plan §12.4). Clears the element first so a rotated link
+// replaces the old code rather than stacking a second one beneath it.
+window.renderQrInto = function (elementId, text, size = 180) {
+    const el = document.getElementById(elementId);
+    if (!el || typeof QRCode === 'undefined') return false;
+    el.innerHTML = '';
+    new QRCode(el, { text: text, width: size, height: size, correctLevel: QRCode.CorrectLevel.M });
+    return true;
+};

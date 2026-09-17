@@ -186,6 +186,26 @@ public class TokensController : ControllerBase
     }
 
     /// <summary>
+    /// How many tickets this branch has issued today, in every status — the "Today" figure on the
+    /// Branches page. "Today" is the UTC day, the same boundary the queue status summary uses, so
+    /// the two pages cannot disagree about the same branch.
+    /// </summary>
+    [HttpGet("issued-today")]
+    [RequirePermission(Permissions.TokensView)]
+    [ProducesResponseType(typeof(TokensIssuedTodayDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetIssuedTodayCount(Guid branchId)
+    {
+        var verifyResult = await VerifyBranchOwnership(branchId);
+        if (verifyResult != null) return verifyResult;
+
+        var today = DateTime.UtcNow.Date;
+        var count = await _dbContext.Tokens
+            .CountAsync(t => t.BranchId == branchId && t.CreatedAt >= today);
+
+        return Ok(new TokensIssuedTodayDto { BranchId = branchId, Count = count });
+    }
+
+    /// <summary>
     /// Gets all waiting tokens for a branch
     /// </summary>
     [HttpGet("waiting")]

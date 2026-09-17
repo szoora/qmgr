@@ -16,6 +16,12 @@ public interface IStripeService
     Task<bool> IsConfiguredAsync();
 
     /// <summary>
+    /// Makes one cheap authenticated read (the account balance) to prove the key is accepted and
+    /// Stripe is reachable. Never throws: an outage or a revoked key is a health result, not an error.
+    /// </summary>
+    Task<StripeHealthResult> CheckHealthAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Create a Stripe customer for an organization
     /// </summary>
     Task<string> CreateCustomerAsync(Organization organization);
@@ -216,3 +222,13 @@ public record PaymentIntentResult(
     string PaymentIntentId,
     string ClientSecret,
     string Status);
+
+/// <summary>
+/// Outcome of <see cref="IStripeService.CheckHealthAsync"/>. <c>Status</c> uses the health page's
+/// vocabulary (Healthy / Warning / Critical); <c>Detail</c> is safe to show a platform administrator
+/// and never carries the key.
+/// </summary>
+public record StripeHealthResult(
+    string Status,
+    long ResponseTimeMs,
+    string? Detail = null);

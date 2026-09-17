@@ -22,6 +22,7 @@
         <div class="q-daterange__field">
             <QDatePicker Label="@FromLabel"
                          Value="@fromValue"
+                         Placeholder="@(Range.IsAllTime ? "Complete record" : "Choose a date")"
                          ValueChanged="@OnFromChanged"
                          Min="@Min"
                          Max="@Max"
@@ -108,7 +109,10 @@
 
     private void Sync()
     {
-        fromValue = Range.From.ToDateTime(TimeOnly.MinValue);
+        // An all-time range starts on a year-2000 sentinel nobody chose; showing it in the From box read
+        // as "01 Jan 2000", a bug to anyone looking. The box stays empty with a "Complete record"
+        // placeholder, and picking a real date from it narrows the range as normal.
+        fromValue = Range.IsAllTime ? null : Range.From.ToDateTime(TimeOnly.MinValue);
         toValue = Range.To.ToDateTime(TimeOnly.MinValue);
         activeLabel = DateRangePresets.LabelFor(Range, Presets);
         spanExceeded = MaxSpanDays > 0 && Range.Days > MaxSpanDays;

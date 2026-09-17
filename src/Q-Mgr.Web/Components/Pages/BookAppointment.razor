@@ -126,7 +126,7 @@
                         {
                             <button type="button" class="day-chip @(day == selectedDate ? "selected" : "")"
                                     @onclick="@(() => SelectDay(day))">
-                                <span class="day-name">@day.ToString("ddd")</span>
+                                <span class="day-name">@QDateFormat.Dy(day)</span>
                                 <span class="day-num">@day.Day</span>
                                 <span class="day-month">@QDateFormat.Mon(day)</span>
                             </button>

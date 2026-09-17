@@ -1,0 +1,158 @@
+@using QMgr.Application.DTOs
+@using Microsoft.AspNetCore.Components.Forms
+@inject IStaffOnboardingApiService Onboarding
+@inject IToastService Toast
+
+@*
+    The first-sign-in checklist (duty rota plan §12.3): confirm your phone, choose how you are notified,
+    add a photo, and confirm the school's acceptable-use and data-protection notice. Every tick is read from
+    the account itself by the API — nothing here marks an item done by hand — and the card disappears when
+    the last one is done.
+*@
+
+<QCard Title="Finish setting up your account" Icon="list-check" Class="ob-checklist">
+    <p class="obc-lede">@Remaining left. These help the school reach you and keep children's information safe.</p>
+    <ol class="obc-list">
+        <li class="@(Checklist.PhoneConfirmed ? "obc-done" : "")">
+            <QIcon Name="@(Checklist.PhoneConfirmed ? "check-circle-fill" : "circle")" />
+            <div class="obc-item">
+                <strong>Confirm your phone number</strong>
+                @if (!Checklist.PhoneConfirmed)
+                {
+                    <span class="obc-sub">We send a code to the number on your profile. <a href="/profile">Change the number</a> first if it is wrong.</span>
+                    @if (!codeSent)
+                    {
+                        <QButton Text="Send me a code" Icon="phone" Variant="secondary" Size="sm" OnClick="@SendCodeAsync" Loading="@busy" Disabled="@busy" />
+                    }
+                    else
+                    {
+                        <div class="obc-inline">
+                            <input class="form-control obc-code" inputmode="numeric" maxlength="6" aria-label="Code from the SMS" @bind="code" @bind:event="oninput" />
+                            <QButton Text="Confirm" Variant="primary" Size="sm" OnClick="@VerifyAsync" Loading="@busy" Disabled="@(busy || string.IsNullOrWhiteSpace(code))" />
+                        </div>
+                    }
+                }
+            </div>
+        </li>
+        <li class="@(Checklist.NotificationPreferencesReviewed ? "obc-done" : "")">
+            <QIcon Name="@(Checklist.NotificationPreferencesReviewed ? "check-circle-fill" : "circle")" />
+            <div class="obc-item">
+                <strong>Choose how you are notified</strong>
+                @if (!Checklist.NotificationPreferencesReviewed)
+                {
+                    <span class="obc-sub">Email, SMS or in the app only, for each kind of message. Save once, even if you keep the defaults.</span>
+                    <a class="obc-link" href="/profile/notifications">Open notification settings</a>
+                }
+            </div>
+        </li>
+        <li class="@(Checklist.ProfilePhotoAdded ? "obc-done" : "")">
+            <QIcon Name="@(Checklist.ProfilePhotoAdded ? "check-circle-fill" : "circle")" />
+            <div class="obc-item">
+                <strong>Add a profile photo</strong>
+                @if (!Checklist.ProfilePhotoAdded)
+                {
+                    <span class="obc-sub">So colleagues on a duty rota know who to look for. Only staff of your school can see it.</span>
+                    <InputFile OnChange="@UploadPhotoAsync" accept="image/*" disabled="@busy" />
+                }
+            </div>
+        </li>
+        @if (Checklist.AcceptableUseNoticeId is { } noticeId)
+        {
+            <li class="@(Checklist.AcceptableUseAcknowledged ? "obc-done" : "")">
+                <QIcon Name="@(Checklist.AcceptableUseAcknowledged ? "check-circle-fill" : "circle")" />
+                <div class="obc-item">
+                    <strong>Read and confirm the acceptable-use notice</strong>
+                    @if (!Checklist.AcceptableUseAcknowledged)
+                    {
+                        <span class="obc-sub">How the system may be used, and how children's information is protected.</span>
+                        <a class="obc-link" href="@($"/portal/notices/{noticeId}")">Read the notice</a>
+                    }
+                </div>
+            </li>
+        }
+    </ol>
+</QCard>
+
+<style>
+    .ob-checklist { margin-top: 14px; }
+    .obc-lede { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 8px; }
+    .obc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .obc-list li { display: flex; gap: 10px; align-items: flex-start; }
+    .obc-list li > .bi, .obc-list li > i { margin-top: 2px; color: var(--qm-text-muted); }
+    .obc-done { opacity: 0.7; }
+    .obc-done > .bi, .obc-done > i { color: var(--qm-success) !important; }
+    .obc-item { display: grid; gap: 4px; min-width: 0; }
+    .obc-sub { font-size: 12.5px; color: var(--qm-text-muted); }
+    .obc-link { font-size: 13px; }
+    .obc-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .obc-code { width: 9em; letter-spacing: 4px; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public OnboardingChecklistDto Checklist { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool busy, codeSent;
+    private string? code;
+
+    private string Remaining
+    {
+        get
+        {
+            var left = (Checklist.PhoneConfirmed ? 0 : 1) + (Checklist.NotificationPreferencesReviewed ? 0 : 1) + (Checklist.ProfilePhotoAdded ? 0 : 1)
+                       + (Checklist.AcceptableUseNoticeId != null && !Checklist.AcceptableUseAcknowledged ? 1 : 0);
+            return left == 1 ? "One step" : $"{left} steps";
+        }
+    }
+
+    private async Task SendCodeAsync()
+    {
+        busy = true;
+        try
+        {
+            await Onboarding.SendPhoneCodeAsync();
+            codeSent = true;
+            Toast.Notify(ToastSeverity.Success, "Code sent", "Check your phone for a six-digit code.");
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not send the code", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task VerifyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(code)) return;
+        busy = true;
+        try
+        {
+            await Onboarding.VerifyPhoneCodeAsync(code.Trim());
+            Toast.Notify(ToastSeverity.Success, "Phone number confirmed");
+            codeSent = false;
+            code = null;
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "That code did not work", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task UploadPhotoAsync(InputFileChangeEventArgs e)
+    {
+        if (e.File.Size > 5 * 1024 * 1024)
+        {
+            Toast.Notify(ToastSeverity.Warning, "That photo is too large", "Choose one under 5 MB.");
+            return;
+        }
+        busy = true;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(5 * 1024 * 1024);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            buffer.Position = 0;
+            await Onboarding.UploadPhotoAsync(buffer, e.File.Name, e.File.ContentType);
+            Toast.Notify(ToastSeverity.Success, "Photo added");
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { Toast.Notify(ToastSeverity.Error, "Could not add the photo", ex.Message); }
+        finally { busy = false; }
+    }
+}

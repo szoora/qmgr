@@ -107,8 +107,11 @@
                 <button type="button" class="btn-back" aria-label="Back to email entry" @onclick="@GoBackToEmail">
                     <QIcon Name="arrow-left" Size="20" />
                 </button>
-                <div class="user-avatar">
-                    @GetInitials(identifyResponse?.Email ?? "")
+                @* A neutral person mark, not initials. The identify step returns no name — deliberately,
+                   since it answers anyone who types an address — and letters cut from the address read
+                   as nonsense ("E2" for e2e.admin.ct@…). *@
+                <div class="user-avatar" aria-hidden="true">
+                    <QIcon Name="person-fill" Size="28" />
                 </div>
                 <h2 class="user-email">@identifyResponse?.Email</h2>
                 <div class="org-badge">
@@ -338,12 +341,27 @@
 
         try
         {
-            var success = await AuthService.LoginAsync(
+            var outcome = await AuthService.LoginAsync(
                 emailModel.Email.Trim(),
                 passwordModel.Password,
                 identifyResponse?.OrganizationId);
 
-            if (success)
+            if (outcome.Success && outcome.MustChangePassword)
+            {
+                // A temporary password (duty rota plan §12.3): this sign-in can only set a new one.
+                var back = GetSafeReturnUrl();
+                Navigation.NavigateTo(back == "/" ? "/set-password" : $"/set-password?returnUrl={Uri.EscapeDataString(back)}", forceLoad: true);
+                return;
+            }
+
+            if (!outcome.Success && outcome.Message != null)
+            {
+                // The API's specific refusal — waiting for approval, temporary password expired, locked — said as it is.
+                errorMessage = outcome.Message;
+                return;
+            }
+
+            if (outcome.Success)
             {
                 // Save "remember me" preference
                 await LocalStorage.SetItemAsync("remember_me", passwordModel.RememberMe);
@@ -398,15 +416,6 @@
         errorMessage = null;
         successMessage = null;
         loginAttempts = 0;
-    }
-
-    private string GetInitials(string email)
-    {
-        if (string.IsNullOrEmpty(email)) return "?";
-        var parts = email.Split('@');
-        if (parts.Length == 0) return "?";
-        var name = parts[0];
-        return name.Length >= 2 ? name.Substring(0, 2).ToUpper() : name.ToUpper();
     }
 
     private class EmailModel

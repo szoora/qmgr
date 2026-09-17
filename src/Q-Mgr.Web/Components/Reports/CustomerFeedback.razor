@@ -127,18 +127,8 @@
         <div class="charts-row">
             <QCard Class="chart-card">
                 <h4>Rating Distribution</h4>
-                <div class="rating-bars">
-                    @foreach (var dist in report.Distribution)
-                    {
-                        <div class="rating-bar-row">
-                            <span class="bar-label">@dist.Stars star</span>
-                            <div class="bar-container">
-                                <div class="bar-fill @($"bar-{dist.Stars}")" style="width: @(dist.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture))%"></div>
-                            </div>
-                            <span class="bar-count">@dist.Count</span>
-                        </div>
-                    }
-                </div>
+                @* Each bar is its star rating's share of all responses, so Max is 100 and the figure is the count. *@
+                <QBarList Items="@RatingBars" Max="100" />
             </QCard>
 
             <QCard Class="chart-card">
@@ -427,50 +417,7 @@
         margin: 12px 0 0 0;
     }
 
-    .rating-bars {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .rating-bar-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .bar-label {
-        width: 60px;
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-    }
-
-    .bar-container {
-        flex: 1;
-        height: 24px;
-        background: var(--qm-bg-card-hover);
-        border-radius: var(--qm-radius-sm);
-        overflow: hidden;
-    }
-
-    .bar-fill {
-        height: 100%;
-        border-radius: var(--qm-radius-sm);
-        transition: width 0.3s ease;
-    }
-
-    .bar-fill.bar-5 { background: var(--qm-success); }
-    .bar-fill.bar-4 { background: var(--qm-accent-green); }
-    .bar-fill.bar-3 { background: var(--qm-accent-yellow); }
-    .bar-fill.bar-2 { background: var(--qm-accent-orange); }
-    .bar-fill.bar-1 { background: var(--qm-danger); }
-
-    .bar-count {
-        width: 40px;
-        text-align: right;
-        font-size: 13px;
-        font-weight: 600;
-    }
+    /* Rating distribution bars are QBarList (q-components.css). */
 
     .feedback-list-card {
         padding: 20px;
@@ -579,6 +526,19 @@
         color: var(--qm-text-secondary);
     }
 
+    /* Phones. The report had no narrow rules at all: a fixed 300px rating column beside the stats, charts
+       that refused to shrink below 400px and three fixed-width columns per feedback row, so on a 390px
+       screen every card hung past the right edge (found by the UI sweep's clipped-edge check, 2026-09-17). */
+    @@media (max-width: 768px) {
+        .stats-row { grid-template-columns: minmax(0, 1fr); }
+        .mini-stats { flex-wrap: wrap; }
+        .mini-stat { flex: 1 1 140px; min-width: 0; }
+        .charts-row { grid-template-columns: minmax(0, 1fr); }
+        .feedback-item { flex-wrap: wrap; gap: 12px; }
+        .feedback-left, .feedback-right { width: auto; }
+        .feedback-right { text-align: left; }
+    }
+
     .loading-container {
         display: flex;
         flex-direction: column;
@@ -633,6 +593,22 @@
     // range — the JSON sibling of the feedback CSV the Export button downloads. Nothing here is
     // generated, sampled or hardcoded.
     private FeedbackReportDto? report;
+
+    /// <summary>The five star bars, coloured from positive to negative as the page always coloured them.</summary>
+    private IReadOnlyList<QBarItem> RatingBars => report == null
+        ? Array.Empty<QBarItem>()
+        : report.Distribution.Select(d => new QBarItem(
+            $"{d.Stars} star",
+            (decimal)d.Percent,
+            Count: d.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),
+            Color: d.Stars switch
+            {
+                5 => "var(--qm-success)",
+                4 => "var(--qm-accent-green)",
+                3 => "var(--qm-accent-yellow)",
+                2 => "var(--qm-accent-orange)",
+                _ => "var(--qm-danger)"
+            })).ToList();
 
     private string selectedPeriod = "month";
     private string? selectedRating;

@@ -71,8 +71,12 @@
                                         <span class="pp-swatch" style="background: @(p.Color ?? StaffDisplay.KindColor(p.Kind))"></span>
                                         <div>
                                             <strong>@p.Name</strong>
-                                            @if (p.IsSystemSource) { <QChip Text="Automatic" Variant="info" Size="sm" Icon="cpu" /> }
+                                            @if (p.IsSystemSource) { <QChip Text="Automatic" Variant="info" Size="sm" Icon="cpu" Title="Credited by the system when automatic credit is switched on in the scoring policy. It cannot be logged by hand." /> }
                                             @if (!string.IsNullOrWhiteSpace(p.Description)) { <div class="pp-desc">@p.Description</div> }
+                                            @if (p.OffsetsParameterId is { } offsets)
+                                            {
+                                                <div class="pp-desc"><QIcon Name="arrow-return-left" /> Offsets @(parameters.FirstOrDefault(x => x.Id == offsets)?.Name ?? "a retired parameter")</div>
+                                            }
                                         </div>
                                     </div>
                                 </td>
@@ -169,10 +173,19 @@
             </div>
         }
 
+        @if (CanOffset(form.Kind))
+        {
+            <div class="form-group">
+                <QSelect TValue="Guid?" TItem="PerformanceParameterDto" @bind-Value="@form.OffsetsParameterId" Items="@OffsetTargets"
+                         TextSelector="@(p => p.Name)" ValueSelector="@(p => (Guid?)p.Id)" Label="Offsets" Placeholder="Nothing" AllowClear="true"
+                         HelperText="A record here counts as a recovered occasion on that parameter (Lesson Recovery → Lesson Attendance)." />
+            </div>
+        }
+
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@form.Purpose" Type="textarea" Rows="2" Label="Purpose" Required="true" MaxLength="300"
                     Placeholder="e.g. cover planning and appraisal evidence"
-                    HelperText="Shown on every record as “Collected for …”. A member of staff reading their own file should be able to see why this is kept about them." HasError="@purposeError" ErrorMessage="Say what this is collected for." />
+                    HelperText="Shown on every record as “Why this is kept: …”. Write it as a sentence. A member of staff reading their own file should be able to see why this is kept about them." HasError="@purposeError" ErrorMessage="Say what this is collected for." />
         </div>
 
         <div class="form-row">
@@ -193,7 +206,7 @@
 
         <div class="form-group">
             <QCheckbox @bind-Value="@form.IsSystemSource" Label="System source" />
-            <small class="pp-help">Credited automatically from welfare/queue/visitor activity when the scoring policy allows it. Records it creates are labelled “Automatic” on every timeline so nobody mistakes them for a colleague's judgement.</small>
+            <small class="pp-help">Credited automatically from welfare, queue, visitor and feedback activity when automatic credit is switched on in the scoring policy. It cannot be logged by hand, and the records it creates are labelled “Automatic” on every timeline so nobody mistakes them for a colleague's judgement.</small>
         </div>
     </ChildContent>
     <FooterContent>
@@ -249,6 +262,13 @@
     private IEnumerable<PerformanceParameterDto> Visible =>
         parameters.Where(p => showInactive || p.IsActive).OrderBy(p => p.SortOrder).ThenBy(p => p.Name);
 
+    /// <summary>A recovery-style offset only makes sense from a points/rating parameter onto an attendance or duty one (the API refuses the rest).</summary>
+    private static bool CanOffset(ParameterKind k) => k is ParameterKind.Contribution or ParameterKind.Recognition or ParameterKind.Conduct or ParameterKind.Observation;
+
+    private IEnumerable<PerformanceParameterDto> OffsetTargets =>
+        parameters.Where(p => p.IsActive && p.Kind is ParameterKind.Attendance or ParameterKind.Duty && p.Id != editing?.Id)
+            .OrderBy(p => p.SortOrder).ThenBy(p => p.Name);
+
     private decimal TotalWeight => parameters.Where(p => p.IsActive && p.Kind != ParameterKind.Wellbeing).Sum(p => p.Weight);
 
     private static string GroupLabel(StaffGroup g) => g switch
@@ -290,7 +310,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -339,7 +359,8 @@
             Name = p.Name, Description = p.Description, Kind = p.Kind, AppliesTo = p.AppliesTo,
             DefaultPoints = p.DefaultPoints, MaxPointsPerEntry = p.MaxPointsPerEntry, MaxPointsPerPeriod = p.MaxPointsPerPeriod,
             Weight = p.Weight, RatingScale = p.RatingScale, Rubric = new List<string>(p.Rubric),
-            DefaultVisibility = p.DefaultVisibility, Purpose = p.Purpose, Color = p.Color, SortOrder = p.SortOrder, IsSystemSource = p.IsSystemSource
+            DefaultVisibility = p.DefaultVisibility, Purpose = p.Purpose, Color = p.Color, SortOrder = p.SortOrder, IsSystemSource = p.IsSystemSource,
+            OffsetsParameterId = p.OffsetsParameterId
         };
         if (p.Kind == ParameterKind.Observation) ResizeRubric(p.RatingScale ?? 4);
         ClearErrors();
@@ -396,6 +417,7 @@
         if (form.DefaultPoints.HasValue && Math.Abs(form.DefaultPoints.Value) > form.MaxPointsPerEntry) { pointsError = true; pointsErrorText = "The default cannot exceed the per-entry cap."; }
         if (nameError || purposeError || scaleError || pointsError) return;
 
+        if (!CanOffset(form.Kind)) form.OffsetsParameterId = null;
         if (form.Kind != ParameterKind.Observation) { form.RatingScale = null; form.Rubric = new(); }
         else form.Rubric = form.Rubric.Select(r => r?.Trim() ?? string.Empty).ToList();
 

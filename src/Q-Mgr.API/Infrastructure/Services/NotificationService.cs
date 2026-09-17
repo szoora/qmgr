@@ -431,17 +431,6 @@ public class NotificationService : INotificationService
 
     #endregion
 
-    #region Push Notifications
-
-    public Task<bool> SendPushNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null, CancellationToken cancellationToken = default)
-    {
-        // TODO: Implement Firebase Cloud Messaging integration
-        _logger.LogWarning("Push notifications not yet implemented");
-        return Task.FromResult(false);
-    }
-
-    #endregion
-
     #region In-App Notifications
 
     public async Task<Notification> CreateInAppNotificationAsync(CreateNotificationRequest request, CancellationToken cancellationToken = default)
@@ -521,15 +510,9 @@ public class NotificationService : INotificationService
             notification.DeliveredVia |= NotificationChannel.Email;
         }
 
-        // Push has no queue: there is no mobile app yet, so SendPushNotificationAsync is a stub and
-        // enqueueing a job to call a stub would only make the queue harder to read.
-        if (channels.HasFlag(NotificationChannel.Push) && !string.IsNullOrEmpty(request.DeviceToken))
-        {
-            var pushSent = await SendPushNotificationAsync(request.DeviceToken, request.Title, request.Message, null, cancellationToken);
-            notification.PushSent = pushSent;
-            notification.PushSentAt = pushSent ? DateTime.UtcNow : null;
-            notification.DeliveredVia |= NotificationChannel.Push;
-        }
+        // No push branch: there is no mobile app and no device token is ever stored, so a push
+        // sender could only ever be a stub that reported a channel it never used. The enum value
+        // stays for the day an app exists; the sender is built then (user decision, 2026-09-17).
 
         await _context.SaveChangesAsync(cancellationToken);
 

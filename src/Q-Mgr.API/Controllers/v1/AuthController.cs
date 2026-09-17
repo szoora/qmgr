@@ -66,9 +66,12 @@ public class AuthController : ControllerBase
 
         // Build query — the "Email" field on the request is really a generic identifier: it
         // accepts either the user's email or their username.
+        // A join request waiting for approval is identified too, so its owner reaches the password
+        // step and is told, once their password checks out, that they are waiting (plan §12.4).
         var query = _dbContext.Users
             .Include(u => u.Organization)
-            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier) && u.IsActive);
+            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier)
+                        && (u.IsActive || (u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null)));
 
         // If subdomain is resolved, scope to that organization only
         if (tenantContext.IsResolved)
@@ -98,8 +101,7 @@ public class AuthController : ControllerBase
             OrganizationId = user.OrganizationId,
             OrganizationName = user.Organization?.Name ?? "Unknown",
             OrganizationSlug = user.Organization?.Slug ?? "",
-            HasPassword = !string.IsNullOrEmpty(user.PasswordHash),
-            SsoEnabled = false // TODO: Check if organization has SSO configured
+            HasPassword = !string.IsNullOrEmpty(user.PasswordHash)
         });
     }
 
@@ -121,7 +123,8 @@ public class AuthController : ControllerBase
             .ThenInclude(r => r.RolePermissions)
             .ThenInclude(rp => rp.Permission)
             .Include(u => u.Organization)
-            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier) && u.IsActive);
+            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier)
+                        && (u.IsActive || (u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null)));
 
         // Priority 1: Subdomain-scoped (tenant resolved from URL)
         if (tenantContext.IsResolved)
@@ -176,6 +179,55 @@ public class AuthController : ControllerBase
             }
 
             return Unauthorized(new { message = "Invalid email or password" });
+        }
+
+        // A join request (plan §12.4). Told only AFTER the password matched, so the answer confirms
+        // nothing to someone who does not hold it. No token of any kind.
+        if (!user.IsActive)
+        {
+            return Unauthorized(new { error = "PENDING_APPROVAL", message = "Your request is waiting for your administrator's approval. You will be emailed when you can sign in." });
+        }
+
+        // A temporary password (plan §12.3). Expired: refused, with who to ask. Valid: a token that can
+        // only change the password — no refresh token, fifteen minutes, and PasswordChangeOnlyMiddleware
+        // refuses it everywhere else. The failed-attempt counter resets as for any correct password.
+        if (user.MustChangePassword)
+        {
+            user.FailedLoginAttempts = 0;
+            user.LockoutEnd = null;
+            await _dbContext.SaveChangesAsync();
+
+            if (user.TemporaryPasswordExpiresAt is null || user.TemporaryPasswordExpiresAt <= DateTime.UtcNow)
+            {
+                _logger.LogWarning("Sign-in refused for {Username}: temporary password expired", user.Username);
+                return Unauthorized(new { error = "TEMPORARY_PASSWORD_EXPIRED", message = "Your temporary password has expired — ask your administrator for a new one." });
+            }
+
+            var changeToken = GenerateJwtToken(user, TemporaryPasswords.ChangeTokenMinutes, passwordChangeOnly: true);
+            _logger.LogInformation("User {Username} signed in with a temporary password; issued a password-change-only token", user.Username);
+            return Ok(new LoginResponse
+            {
+                AccessToken = changeToken,
+                RefreshToken = string.Empty,
+                ExpiresIn = TemporaryPasswords.ChangeTokenMinutes * 60,
+                MustChangePassword = true,
+                User = new UserInfo
+                {
+                    Id = user.Id,
+                    Username = user.Username,
+                    Email = user.Email,
+                    FullName = user.FullName,
+                    RoleId = user.RoleId,
+                    RoleCode = user.Role.Code,
+                    RoleName = user.Role.Name,
+                    RoleColor = user.Role.Color,
+                    OrganizationId = user.OrganizationId,
+                    OrganizationName = user.Organization?.Name,
+                    BranchId = user.AssignedBranchId,
+                    Permissions = new List<string>(),
+                    MustChangePassword = true
+                }
+            });
         }
 
         var expiryMinutes = await GetTokenExpiryMinutesAsync();
@@ -306,7 +358,8 @@ public class AuthController : ControllerBase
             .FirstOrDefaultAsync(u =>
                 u.RefreshToken == request.RefreshToken &&
                 u.RefreshTokenExpiry > DateTime.UtcNow &&
-                u.IsActive);
+                u.IsActive &&
+                !u.MustChangePassword);
 
         if (user == null)
         {
@@ -419,12 +472,12 @@ public class AuthController : ControllerBase
         return int.TryParse(_configuration["JWT:ExpiryMinutes"], out var m) && m > 0 ? m : 60;
     }
 
-    private string GenerateJwtToken(QMgr.Domain.Entities.Identity.User user, int expiryMinutes)
+    private string GenerateJwtToken(QMgr.Domain.Entities.Identity.User user, int expiryMinutes, bool passwordChangeOnly = false)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]!));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
@@ -435,6 +488,8 @@ public class AuthController : ControllerBase
             new Claim("org_id", user.OrganizationId.ToString()),
             new Claim("branch_id", user.AssignedBranchId?.ToString() ?? "")
         };
+        if (passwordChangeOnly)
+            claims.Add(new Claim(TemporaryPasswords.ChangeOnlyClaim, "true"));
 
         var token = new JwtSecurityToken(
             issuer: _configuration["JWT:Issuer"],
@@ -589,8 +644,9 @@ public class AuthController : ControllerBase
             });
         }
 
+        var organizationName = await _dbContext.Organizations.IgnoreQueryFilters().Where(o => o.Id == user.OrganizationId).Select(o => o.Name).FirstOrDefaultAsync();
         var passwordValidation = await _passwordValidationService.ValidatePasswordAsync(
-            request.NewPassword, user.Username, user.Email);
+            request.NewPassword, user.Username, user.Email, organizationName);
 
         if (!passwordValidation.IsValid)
         {
@@ -605,6 +661,10 @@ public class AuthController : ControllerBase
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
         user.PasswordResetToken = null;
         user.PasswordResetTokenExpiry = null;
+        // A reset through the emailed link is the person choosing their own password, so any temporary
+        // one an administrator issued is gone with it.
+        user.MustChangePassword = false;
+        user.TemporaryPasswordExpiresAt = null;
         // Force re-login everywhere - a leaked reset link shouldn't also inherit whatever
         // refresh token an attacker's own prior session might already hold.
         user.RefreshToken = null;
@@ -655,8 +715,6 @@ public record IdentifyResponse
     public string OrganizationName { get; init; } = string.Empty;
     public string OrganizationSlug { get; init; } = string.Empty;
     public bool HasPassword { get; init; }
-    public bool SsoEnabled { get; init; }
-    public string? SsoUrl { get; init; }
 }
 
 public record LoginRequest
@@ -672,6 +730,8 @@ public record LoginResponse
     public string RefreshToken { get; init; } = string.Empty;
     public int ExpiresIn { get; init; }
     public UserInfo? User { get; init; }
+    /// <summary>The token is password-change-only; the client must send the person to set their password.</summary>
+    public bool MustChangePassword { get; init; }
 }
 
 public record ClientCredentialsRequest

@@ -25,7 +25,7 @@
     <div class="header-right">
         @if (lastUpdated != default)
         {
-            <span class="last-updated">Last updated: @lastUpdated.ToString("HH:mm:ss")</span>
+            <span class="last-updated">Last updated: @QDateFormat.TS(lastUpdated)</span>
         }
         <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@RefreshData" Disabled="@isLoading" />
     </div>
@@ -519,15 +519,20 @@ else if (hasCoreQueue && queueStatus != null)
 
     .page-header {
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-between;
         align-items: flex-start;
+        gap: 12px;
         margin-bottom: 24px;
     }
 
+    /* Wraps under the title on a phone: "Last updated" plus Refresh were wider than the space beside
+       "Dashboard", and the button hung 15px past the edge at 390px (UI sweep, 2026-09-17). */
     .header-right {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        gap: 16px;
+        gap: 8px 16px;
     }
 
     .last-updated {
@@ -1180,7 +1185,7 @@ else if (hasCoreQueue && queueStatus != null)
             var catalog = await ModuleApi.GetMineAsync();
             hasCoreQueue = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.CoreQueue);
             hasStudentWelfare = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StudentWelfare);
-            hasStaffPerformance = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.StaffPerformance);
+            hasStaffPerformance = hasStudentWelfare; // one module since 2026-09-17
             hasVisitorManagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.VisitorManagement);
             hasEngagement = catalog.Any(m => m.Purchased && m.ModuleCode == ModuleCodes.EngagementCommunications);
             activeModuleNames = catalog

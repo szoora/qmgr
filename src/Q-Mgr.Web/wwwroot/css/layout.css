@@ -297,16 +297,12 @@
     background: var(--qm-primary-light);
 }
 
-.user-avatar {
+/* The header avatar is QAvatar; this only sizes it for the header row and keeps it round. */
+.q-avatar.header-avatar {
     width: 34px;
     height: 34px;
     border-radius: 50%;
-    background: var(--qm-primary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     font-weight: 600;
-    color: var(--qm-text-on-primary);
     font-size: 14px;
 }
 
@@ -1445,7 +1441,7 @@
         display: none;
     }
 
-    .user-avatar {
+    .q-avatar.header-avatar {
         width: 32px;
         height: 32px;
         font-size: 13px;

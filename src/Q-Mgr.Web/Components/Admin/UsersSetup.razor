@@ -39,14 +39,7 @@
         </div>
     </div>
 
-    <div class="tabs-container">
-        <div class="tab @(activeTab == "users" ? "active" : "")" @onclick="@(() => activeTab = "users")">
-            <QIcon Name="people-fill" /> Users
-        </div>
-        <div class="tab @(activeTab == "roles" ? "active" : "")" @onclick="@(() => activeTab = "roles")">
-            <QIcon Name="shield-lock-fill" /> Roles
-        </div>
-    </div>
+    <QTabs Tabs="@PageTabs" @bind-ActiveKey="activeTab" AriaLabel="Users and roles" IdPrefix="users-tab" />
 
     @if (activeTab == "users")
     {
@@ -539,32 +532,6 @@
     .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
 
-    .tabs-container {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 24px;
-        border-bottom: 1px solid var(--qm-border);
-        padding-bottom: 0;
-    }
-
-    .tab {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 12px 20px;
-        cursor: pointer;
-        color: var(--qm-text-muted);
-        border-bottom: 2px solid transparent;
-        transition: all 0.2s ease;
-        margin-bottom: -1px;
-    }
-
-    .tab:hover { color: var(--qm-text-primary); }
-    .tab.active {
-        color: var(--qm-primary);
-        border-bottom-color: var(--qm-primary);
-    }
-
     .loading-container {
         display: flex;
         justify-content: center;
@@ -584,15 +551,13 @@
         gap: 12px;
     }
 
-    .user-avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: var(--qm-radius-lg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 600;
-        color: var(--qm-text-on-primary);
+    /* Radzen's column filter icons are ~20px buttons, too small to hit with a thumb. On a phone they
+       get the 40px target the Staff pages use (sweep warning, 2026-09-16). */
+    @@media (max-width: 640px) {
+        .data-table-container .rz-grid-filter-icon {
+            min-width: 40px;
+            min-height: 40px;
+        }
     }
 
     .user-info { display: flex; flex-direction: column; }
@@ -912,6 +877,12 @@
     };
 
     private string activeTab = "users";
+
+    private static readonly IReadOnlyList<QTab> PageTabs = new List<QTab>
+    {
+        new("users", "Users", "people-fill"),
+        new("roles", "Roles", "shield-lock-fill")
+    };
     private bool isLoading = true;
     private bool isLoadingRoles = true;
     private bool showDialog = false;

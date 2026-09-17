@@ -49,8 +49,11 @@ public class FeedbackController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly ILogger<FeedbackController> _logger;
 
-    public FeedbackController(QMgrDbContext context, ITenantContextAccessor tenantAccessor, ILogger<FeedbackController> logger)
+    private readonly QMgr.Infrastructure.Services.IStaffSystemAwards _systemAwards;
+
+    public FeedbackController(QMgrDbContext context, ITenantContextAccessor tenantAccessor, ILogger<FeedbackController> logger, QMgr.Infrastructure.Services.IStaffSystemAwards systemAwards)
     {
+        _systemAwards = systemAwards;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _logger = logger;
@@ -173,8 +176,13 @@ public class FeedbackController : ControllerBase
         // Generate unique feedback code
         var feedbackCode = GenerateFeedbackCode();
 
+        // Who served this customer. Feedback.ServedByUserId existed from the first migration and nothing
+        // ever wrote it, so every "feedback by staff member" view was empty (found 2026-09-17).
+        var servedBy = await _systemAwards.ServedByAsync(tokenId, null, token.Counter?.AssignedUserId);
+
         var feedback = new Feedback
         {
+            ServedByUserId = servedBy,
             Id = Guid.NewGuid(),
             BranchId = branchId,
             TokenId = tokenId,
@@ -217,6 +225,9 @@ public class FeedbackController : ControllerBase
         }
 
         _logger.LogInformation("Feedback {FeedbackId} submitted for token {TokenId}", feedback.Id, tokenId);
+
+        // Staff Performance automatic credit — after the commit, policy-gated (off by default), never throws.
+        await _systemAwards.CreditPositiveFeedbackAsync(feedback.Id);
 
         var dto = MapToDto(feedback, token.ServiceType?.Name, token.Counter?.DisplayName);
         return CreatedAtAction(nameof(GetFeedback), new { branchId, feedbackId = feedback.Id }, dto);
@@ -329,6 +340,8 @@ public class FeedbackController : ControllerBase
 
         _logger.LogInformation("Offsite feedback submitted via code {FeedbackCode}", request.FeedbackCode);
 
+        await _systemAwards.CreditPositiveFeedbackAsync(feedback.Id);
+
         var dto = MapToDto(feedback, feedback.ServiceType?.Name, feedback.Counter?.DisplayName);
         return Ok(dto);
     }
@@ -389,8 +402,10 @@ public class FeedbackController : ControllerBase
 
         // Create a placeholder feedback entry with just the code
         var feedbackCode = GenerateFeedbackCode();
+        var servedBy = await _systemAwards.ServedByAsync(tokenId, null, token.Counter?.AssignedUserId);
         var feedback = new Feedback
         {
+            ServedByUserId = servedBy,
             Id = Guid.NewGuid(),
             BranchId = branchId,
             TokenId = tokenId,

@@ -102,6 +102,42 @@ public class User : BaseAuditableEntity
     /// <summary>Expiry for PasswordResetToken. AuthController.ResetPassword rejects the token past this time.</summary>
     public DateTime? PasswordResetTokenExpiry { get; set; }
 
+    // ---------------------------------------------------------------------------------------
+    // Staff onboarding (duty rota plan §12, 2026-09-17). Columns on the row that already exists:
+    // each is a state of this person's account, not a thing of its own.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The password on file is a temporary one — issued by a temporary-password import or an
+    /// administrator's reset. Sign-in with it yields a password-change-only token and nothing else
+    /// loads until the person chooses their own. Cleared by the change.
+    /// </summary>
+    public bool MustChangePassword { get; set; }
+
+    /// <summary>When the temporary password stops working (72 hours after issue). Past it, sign-in is refused with a message naming the administrator.</summary>
+    public DateTime? TemporaryPasswordExpiresAt { get; set; }
+
+    /// <summary>
+    /// Set when this account is a self-registration waiting for an administrator (plan §12.4). Such
+    /// an account is inactive, holds the viewer role as a placeholder, and cannot sign in. Cleared on
+    /// approval. A request unanswered past the policy's expiry reads as expired.
+    /// </summary>
+    public DateTime? PendingApprovalAt { get; set; }
+
+    /// <summary>
+    /// When an administrator rejected this join request. The row is kept so the queue can show the
+    /// outcome and the address cannot immediately re-apply, then deleted by the onboarding purge
+    /// after the policy window (DPPA s.3: no applicant data without purpose).
+    /// </summary>
+    public DateTime? JoinRequestRejectedAt { get; set; }
+
+    /// <summary>
+    /// The person's profile photograph (onboarding checklist, plan §12.3). A stored-upload link like
+    /// every other photo column: gated per file (UploadOwnerKind.StaffPhoto), signed when a DTO carries
+    /// it, stripped of its token when a client sends it back.
+    /// </summary>
+    public string? PhotoUrl { get; set; }
+
     #region Navigation Properties
 
     public virtual Organization.Organization? Organization { get; set; }

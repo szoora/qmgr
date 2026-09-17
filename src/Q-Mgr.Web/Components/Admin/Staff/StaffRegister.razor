@@ -89,6 +89,13 @@
         {
             <p class="reg-note reg-note--warn"><QIcon Name="exclamation-triangle" Size="sm" /> Every row you close now is written afresh; the earlier rows are annulled with a note, not deleted.</p>
         }
+        else
+        {
+            @* Saving records the marks at once; closing only says the register is complete (decided
+               2026-09-17). A register taken on a phone in a corridor must not lose twenty taps to a
+               dropped connection or a closed tab, so nothing waits for the close. *@
+            <p class="reg-note reg-note--muted"><QIcon Name="info-circle" Size="sm" /><span>Each save records the marks straight away and tells the people marked. <strong>Close</strong> when everyone is marked; until then the register counts as not taken and you will be reminded.</span></p>
+        }
 
         <div class="reg-legend" aria-hidden="true">
             @foreach (var o in Options)
@@ -253,7 +260,7 @@
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -346,7 +353,7 @@
                 return;
             }
 
-            Toast.Notify(ToastSeverity.Success, "Register saved", $"{request.Entries.Count} of {register.Rows.Count} marked. It stays open until you close it.");
+            Toast.Notify(ToastSeverity.Success, "Marks recorded", $"{request.Entries.Count} of {register.Rows.Count} marked and recorded. The register stays open until you close it.");
             await LoadAsync();
         }
         catch (Exception ex)

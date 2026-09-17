@@ -82,11 +82,27 @@
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <QDatePicker @bind-Value="@preObservationAt" ShowTime="true" Label="Pre-observation meeting" Clearable="true" Placeholder="When you met beforehand" />
+                                <div class="q-datetime-pair">
+                                    <QDatePicker @bind-Value="@preObservationAt" Label="Pre-observation meeting" Clearable="true" Placeholder="When you met beforehand" Max="@DateTime.Now" />
+                                    <QDatePicker @bind-Value="@preObservationAt" ShowTime="true" Label="Time" />
+                                </div>
                             </div>
                             <div class="form-group">
-                                <QDatePicker @bind-Value="@feedbackSessionAt" ShowTime="true" Label="Feedback session" Clearable="true" Placeholder="When feedback is scheduled" />
+                                <div class="q-datetime-pair">
+                                    <QDatePicker @bind-Value="@feedbackSessionAt" Label="Feedback session" Clearable="true" Placeholder="When feedback is scheduled" />
+                                    <QDatePicker @bind-Value="@feedbackSessionAt" ShowTime="true" Label="Time" />
+                                </div>
+                                @if (feedbackSessionAt.HasValue && feedbackSessionAt.Value > DateTime.Now)
+                                {
+                                    <small class="srd-muted">It will be put on the duty roster, with a reminder to both of you.</small>
+                                }
                             </div>
+                        </div>
+                        <div class="form-group">
+                            <QSelect TValue="Guid?" TItem="StaffDutyDto" @bind-Value="@dutyId" Items="@recentDuties" AllowClear="true"
+                                     TextSelector="@(d => $"{d.Title} — {QDateFormat.DT(d.StartsAt.ToLocalTime())}")" ValueSelector="@(d => (Guid?)d.Id)"
+                                     Label="Linked lesson or duty" Placeholder="@(isLoadingDuties ? "Loading duties..." : "Optional")"
+                                     HelperText="When a second observer links the same lesson, the two ratings show side by side in the reports." />
                         </div>
                         break;
 
@@ -118,7 +134,10 @@
 
             <div class="form-row">
                 <div class="form-group">
-                    <QDatePicker @bind-Value="@occurredAt" ShowTime="true" Label="When it happened" Required="true" Max="@DateTime.Now" />
+                    <div class="q-datetime-pair">
+                        <QDatePicker @bind-Value="@occurredAt" Label="When it happened" Required="true" Max="@DateTime.Now" />
+                        <QDatePicker @bind-Value="@occurredAt" ShowTime="true" Label="Time" Required="true" />
+                    </div>
                 </div>
                 <div class="form-group">
                     <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@visibility" Items="@ReadableVisibilities"
@@ -127,18 +146,19 @@
                 </div>
             </div>
 
-            @if (IsLateEntry)
+            @if (lateEntryDays.HasValue)
             {
+                @* Shown only after the API refused the date: the threshold is the tenant's policy, not a number the page guesses. *@
                 <div class="warning-banner">
                     <QIcon Name="exclamation-triangle-fill" />
-                    <span>This date is more than 14 days ago. The record will say so on its face. Confirm this is correct before saving.</span>
-                    <QCheckbox @bind-Value="@acknowledgeLateEntry" Label="Yes, this is a late entry" />
+                    <span>This date is more than @lateEntryDays days ago. The record will say it was logged late. Check the date, or confirm and save.</span>
+                    <QButton Text="Yes, save as a late entry" Icon="check-lg" Variant="secondary" Size="sm" OnClick="@(() => Save(lateEntryAsDraft, acknowledgeLate: true))" Disabled="@isSaving" />
                 </div>
             }
 
             @if (SelectedParameter != null && !string.IsNullOrWhiteSpace(SelectedParameter.Purpose))
             {
-                <p class="srd-purpose"><QIcon Name="info-circle" /> <span>Collected for @PurposeText.</span></p>
+                <p class="srd-purpose"><QIcon Name="info-circle" /> <span>Why this is kept: @PurposeText</span></p>
             }
         }
     </ChildContent>
@@ -203,6 +223,11 @@
     };
 
     private List<PerformanceParameterDto> allParameters = new();
+    private List<StaffDutyDto> recentDuties = new();
+    private bool isLoadingDuties, dutiesLoaded;
+    private Guid? dutyId;
+    private int? lateEntryDays;
+    private bool lateEntryAsDraft;
     private bool isLoadingParameters, parametersLoaded, isSaving;
     private bool canConfidential, canRestricted, rungsLoaded;
 
@@ -215,7 +240,6 @@
     private string description = string.Empty;
     private DateTime? occurredAt = DateTime.Now;
     private WelfareVisibility visibility = WelfareVisibility.Standard;
-    private bool acknowledgeLateEntry;
 
     private bool subjectError, parameterError, ratingError, pointsError, descriptionError;
 
@@ -227,7 +251,6 @@
     private StaffMemberDto? Subject => Subjects.FirstOrDefault(s => s.UserId == (SubjectUserId ?? subjectId));
     private PerformanceParameterDto? SelectedParameter => allParameters.FirstOrDefault(p => p.Id == parameterId);
     private int DescriptionLength => description?.Length ?? 0;
-    private bool IsLateEntry => occurredAt.HasValue && occurredAt.Value < DateTime.Now.AddDays(-14);
     private string PurposeText => (SelectedParameter?.Purpose ?? string.Empty).TrimEnd('.');
 
     private string PointsHelp
@@ -242,14 +265,14 @@
         }
     }
 
-    /// <summary>Active, not Recognition (that has its own form and budget), and applying to the subject's staff group.</summary>
+    /// <summary>Active, not Recognition (that has its own form and budget), not automatic credit (the API refuses it by hand), and applying to the subject's staff group.</summary>
     private List<PerformanceParameterDto> ApplicableParameters
     {
         get
         {
             var group = Subject?.StaffGroup;
             return allParameters
-                .Where(p => p.IsActive && p.Kind != ParameterKind.Recognition)
+                .Where(p => p.IsActive && p.Kind != ParameterKind.Recognition && !p.IsSystemSource)
                 .Where(p => group == null || p.AppliesTo == StaffGroup.AllStaff || p.AppliesTo == group)
                 .OrderBy(p => p.SortOrder).ThenBy(p => p.Name)
                 .ToList();
@@ -278,7 +301,7 @@
     private string VisibilityHelp => visibility switch
     {
         WelfareVisibility.Restricted => "Administrators only. The subject is not told.",
-        WelfareVisibility.Confidential => "Line managers and above. The subject sees that a record exists and its title, not its content.",
+        WelfareVisibility.Confidential => "Holders of the confidential permission, and the subject, who can read it on their portal. Their notification says only that a record exists.",
         _ => "Everyone who may read this person's file, including the subject."
     };
 
@@ -327,7 +350,8 @@
         description = string.Empty;
         occurredAt = DateTime.Now;
         visibility = WelfareVisibility.Standard;
-        acknowledgeLateEntry = false;
+        dutyId = null;
+        lateEntryDays = null;
         subjectError = parameterError = ratingError = pointsError = descriptionError = false;
     }
 
@@ -347,6 +371,31 @@
         pointsMagnitude = p.DefaultPoints.HasValue ? Math.Abs(p.DefaultPoints.Value) : null;
         // Default from the parameter, clamped to the highest rung the caller can read back.
         visibility = ReadableVisibilities.Contains(p.DefaultVisibility) ? p.DefaultVisibility : ReadableVisibilities.Last();
+        if (p.Kind == ParameterKind.Observation && !dutiesLoaded && !isLoadingDuties) _ = LoadRecentDutiesAsync();
+    }
+
+    /// <summary>Duties from a fortnight back to tomorrow — the lesson an observation is most likely about.</summary>
+    private async Task LoadRecentDutiesAsync()
+    {
+        isLoadingDuties = true;
+        try
+        {
+            recentDuties = (await StaffApi.GetDutiesAsync(BranchId, DateTime.UtcNow.AddDays(-14), DateTime.UtcNow.AddDays(1)))
+                .Where(d => d.IsActive)
+                .OrderByDescending(d => d.StartsAt)
+                .ToList();
+            dutiesLoaded = true;
+        }
+        catch
+        {
+            // An optional field: without the duty list the observation is simply not linked.
+            recentDuties = new();
+        }
+        finally
+        {
+            isLoadingDuties = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private Task OnVisibleChanged(bool value)
@@ -357,7 +406,9 @@
 
     private Task Close() => OnVisibleChanged(false);
 
-    private async Task Save(bool asDraft)
+    private Task Save(bool asDraft) => Save(asDraft, acknowledgeLate: false);
+
+    private async Task Save(bool asDraft, bool acknowledgeLate)
     {
         var p = SelectedParameter;
         var subject = SubjectUserId ?? subjectId;
@@ -370,12 +421,6 @@
             && (pointsMagnitude == null || pointsMagnitude < 0 || pointsMagnitude > p.MaxPointsPerEntry);
 
         if (subjectError || parameterError || descriptionError || ratingError || pointsError) return;
-
-        if (!asDraft && IsLateEntry && !acknowledgeLateEntry)
-        {
-            Toast.Notify(ToastSeverity.Warning, "This looks like a late entry", "Tick the confirmation under the date, or change the date, then save again.");
-            return;
-        }
 
         var request = new CreateStaffRecordRequest
         {
@@ -394,18 +439,26 @@
                 _ => null
             },
             PreObservationMeetingAt = p.Kind == ParameterKind.Observation ? preObservationAt?.ToUniversalTime() : null,
-            FeedbackSessionAt = p.Kind == ParameterKind.Observation ? feedbackSessionAt?.ToUniversalTime() : null
+            FeedbackSessionAt = p.Kind == ParameterKind.Observation ? feedbackSessionAt?.ToUniversalTime() : null,
+            DutyId = p.Kind == ParameterKind.Observation ? dutyId : null
         };
 
         isSaving = true;
         try
         {
-            createdRecord = await StaffApi.CreateRecordAsync(BranchId, request);
+            createdRecord = await StaffApi.CreateRecordAsync(BranchId, request, acknowledgeLate);
             createdRecordId = createdRecord.Id;
+            lateEntryDays = null;
             Toast.Notify(ToastSeverity.Success, asDraft ? "Draft saved" : "Record saved",
                 $"{createdRecord.ParameterName} for {createdRecord.SubjectName}.");
             await OnVisibleChanged(false);
             showAttachDialog = true;
+        }
+        catch (LateEntryConfirmationRequiredException late)
+        {
+            // The API's own threshold; the banner offers the confirmed resubmit.
+            lateEntryDays = late.ThresholdDays;
+            lateEntryAsDraft = asDraft;
         }
         catch (Exception ex)
         {

@@ -1,0 +1,231 @@
+@page "/join/{Code}"
+@layout PublicLayout
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@using Microsoft.AspNetCore.Authorization
+@using QMgr.Application.DTOs
+@using QMgr.Web.Components.Shared
+@attribute [AllowAnonymous]
+@inject IStaffOnboardingApiService Onboarding
+
+@*
+    Staff self-registration (duty rota plan §12.4). The code in the link decides the organization — nothing
+    here chooses one. The email is proved with a one-time code before anything reaches an administrator, and
+    the page answers the same way whether or not the address already has an account: a duplicate is the
+    approver's to see, never the applicant's. The account this creates cannot sign in until approved.
+    /join/{BranchId:guid} is the queue's page; a join code is base32 and can never parse as a GUID.
+*@
+
+<PageTitle>Join your school - Q-Mgr</PageTitle>
+
+<div class="login-container">
+    <AmbientBackground />
+    <div class="login-card join-card @(busy ? "loading" : "")">
+        @if (loading)
+        {
+            <div class="login-header"><h1>One moment…</h1></div>
+        }
+        else if (info == null)
+        {
+            <div class="login-header">
+                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="link-45deg" Size="32" /></div></div>
+                <h1>This join link is not valid</h1>
+                <p>It may have expired or been replaced by a new one. Ask your school's administrator for the current link.</p>
+            </div>
+            <a href="/login" class="btn-login"><QIcon Name="box-arrow-in-right" Size="18" /><span>I already have an account</span></a>
+        }
+        else if (done)
+        {
+            <div class="login-header">
+                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="check-circle-fill" Size="32" /></div></div>
+                <h1>Request sent</h1>
+                <p>@doneMessage</p>
+            </div>
+            <a href="/login" class="btn-login"><QIcon Name="box-arrow-in-right" Size="18" /><span>Go to sign in</span></a>
+        }
+        else
+        {
+            <div class="login-header">
+                <div class="logo-wrapper"><div class="logo-circle"><QIcon Name="person-plus-fill" Size="32" /></div></div>
+                <h1>Join @info.OrganizationName</h1>
+                <p>Ask for a staff account. An administrator will check your details and choose your role before you can sign in.</p>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="auth-alert auth-alert-danger auth-animate-in" role="alert">
+                    <div class="auth-alert-icon"><QIcon Name="exclamation-circle-fill" /></div>
+                    <div class="auth-alert-content"><p>@errorMessage</p></div>
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(infoMessage))
+            {
+                <div class="auth-alert auth-alert-success auth-animate-in" role="status">
+                    <div class="auth-alert-icon"><QIcon Name="envelope-check" /></div>
+                    <div class="auth-alert-content"><p>@infoMessage</p></div>
+                </div>
+            }
+
+            <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+                <div class="join-row">
+                    <div class="form-group">
+                        <label for="firstName"><span>First name</span></label>
+                        <input id="firstName" class="form-control" autocomplete="given-name" maxlength="100" @bind="form.FirstName" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    </div>
+                    <div class="form-group">
+                        <label for="lastName"><span>Last name</span></label>
+                        <input id="lastName" class="form-control" autocomplete="family-name" maxlength="100" @bind="form.LastName" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="email"><QIcon Name="envelope-fill" Size="16" /><span>Email</span></label>
+                    <input id="email" type="email" class="form-control" autocomplete="email" maxlength="256" @bind="form.Email" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    @if (info.AllowedEmailDomains.Count > 0)
+                    {
+                        <p class="join-hint">Use your school address: @string.Join(", ", info.AllowedEmailDomains.Select(d => "@" + d))</p>
+                    }
+                </div>
+                <div class="join-row">
+                    <div class="form-group">
+                        <label for="phone"><span>Phone (optional)</span></label>
+                        <input id="phone" type="tel" class="form-control" autocomplete="tel" maxlength="30" @bind="form.Phone" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    </div>
+                    <div class="form-group">
+                        <label for="employee"><span>Employee number (optional)</span></label>
+                        <input id="employee" class="form-control" maxlength="50" @bind="form.EmployeeNumber" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="jobTitle"><span>Job title (optional)</span></label>
+                    <input id="jobTitle" class="form-control" maxlength="100" placeholder="e.g. Mathematics teacher" @bind="form.JobTitle" @bind:event="oninput" disabled="@(busy || codeSent)" />
+                </div>
+                @if (info.Branches.Count > 1)
+                {
+                    <div class="form-group">
+                        <label for="branch"><span>Where you work</span></label>
+                        <select id="branch" class="form-control" @bind="branchValue" disabled="@(busy || codeSent)">
+                            <option value="">Choose…</option>
+                            @foreach (var b in info.Branches)
+                            {
+                                <option value="@b.Id">@b.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                @if (!codeSent)
+                {
+                    <button type="button" class="btn-login" @onclick="SendCodeAsync" disabled="@(busy || !DetailsComplete)">
+                        @if (busy) { <span class="auth-spinner"></span><span>Sending…</span> }
+                        else { <QIcon Name="envelope-arrow-up" Size="18" /><span>Email me a code</span> }
+                    </button>
+                }
+                else
+                {
+                    <div class="form-group">
+                        <label for="code"><QIcon Name="shield-lock-fill" Size="16" /><span>Code from the email</span></label>
+                        <input id="code" class="form-control join-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" @bind="form.EmailCode" @bind:event="oninput" disabled="@busy" />
+                        <p class="join-hint"><a href="" @onclick="EditDetails" @onclick:preventDefault="true">Change my details</a> · <a href="" @onclick="SendCodeAsync" @onclick:preventDefault="true">Send the code again</a></p>
+                    </div>
+                    <div class="form-group">
+                        <label for="password"><QIcon Name="lock-fill" Size="16" /><span>Choose a password</span></label>
+                        <input id="password" type="password" class="form-control" autocomplete="new-password" @bind="form.Password" @bind:event="oninput" disabled="@busy" placeholder="At least @info.PasswordMinimumLength characters" />
+                        <p class="join-hint">Avoid the school's name, your email and common words such as "staff".</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm"><QIcon Name="lock-fill" Size="16" /><span>Confirm password</span></label>
+                        <input id="confirm" type="password" class="form-control" autocomplete="new-password" @bind="form.ConfirmPassword" @bind:event="oninput" disabled="@busy" />
+                        @if (!string.IsNullOrEmpty(form.ConfirmPassword) && form.Password != form.ConfirmPassword)
+                        {
+                            <span class="validation-message">The passwords do not match</span>
+                        }
+                    </div>
+                    <button type="submit" class="btn-login" disabled="@(busy || string.IsNullOrWhiteSpace(form.EmailCode) || string.IsNullOrEmpty(form.Password) || form.Password != form.ConfirmPassword)">
+                        @if (busy) { <span class="auth-spinner"></span><span>Sending…</span> }
+                        else { <QIcon Name="send-fill" Size="18" /><span>Send my request</span> }
+                    </button>
+                }
+            </form>
+        }
+
+        <div class="login-footer">
+            <p>Already have an account? <a href="/login" class="link-register">Sign in</a></p>
+            <p class="powered-by">Powered by SACC Software</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .join-card { max-width: 560px; }
+    .join-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .join-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }
+    .join-code { letter-spacing: 6px; font-size: 20px; text-align: center; }
+    @@media (max-width: 520px) { .join-row { grid-template-columns: 1fr; gap: 0; } }
+</style>
+
+@code {
+    [Parameter] public string Code { get; set; } = string.Empty;
+
+    private JoinLinkInfoDto? info;
+    private readonly JoinApplicationRequest form = new();
+    private bool loading = true, busy, codeSent, done;
+    private string? errorMessage, infoMessage, doneMessage;
+
+    private string branchValue
+    {
+        get => form.BranchId?.ToString() ?? string.Empty;
+        set => form.BranchId = Guid.TryParse(value, out var g) ? g : null;
+    }
+
+    private bool DetailsComplete => !string.IsNullOrWhiteSpace(form.FirstName) && !string.IsNullOrWhiteSpace(form.LastName)
+                                    && !string.IsNullOrWhiteSpace(form.Email) && form.Email.Contains('@')
+                                    && (info == null || info.Branches.Count <= 1 || form.BranchId != null);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { info = await Onboarding.GetJoinLinkAsync(Code); }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; info = null; }
+        catch (HttpRequestException) { info = null; }
+        loading = false;
+        StateHasChanged();
+    }
+
+    private async Task SendCodeAsync()
+    {
+        if (!DetailsComplete) return;
+        errorMessage = null;
+        infoMessage = null;
+        busy = true;
+        try
+        {
+            infoMessage = await Onboarding.SendJoinEmailCodeAsync(Code, form.Email.Trim());
+            codeSent = true;
+        }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
+        catch (HttpRequestException) { errorMessage = "Unable to reach the server. Please try again."; }
+        finally { busy = false; }
+    }
+
+    private void EditDetails()
+    {
+        codeSent = false;
+        infoMessage = null;
+        form.EmailCode = string.Empty;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!codeSent || form.Password != form.ConfirmPassword) return;
+        errorMessage = null;
+        busy = true;
+        try
+        {
+            doneMessage = await Onboarding.ApplyAsync(Code, form);
+            form.Password = form.ConfirmPassword = string.Empty;
+            done = true;
+        }
+        catch (InvalidOperationException ex) { errorMessage = ex.Message; }
+        catch (HttpRequestException) { errorMessage = "Unable to reach the server. Please try again."; }
+        finally { busy = false; }
+    }
+}

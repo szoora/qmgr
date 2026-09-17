@@ -24,7 +24,8 @@ public static class StaffReportBuilder
         PerformancePeriodDto period,
         StaffPerformancePolicyDto policy,
         HashSet<Guid>? visible,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool includeConfidentialDetail = false)
     {
         var start = period.Start.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
         var end = period.End.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
@@ -55,7 +56,7 @@ public static class StaffReportBuilder
                         && r.Visibility != QMgr.Domain.Enums.WelfareVisibility.Restricted
                         && r.OccurredAt >= start && r.OccurredAt < end
                         && idList.Contains(r.SubjectUserId))
-            .Select(r => new { r.SubjectUserId, r.ParameterId, r.LoggedByUserId, r.Points, r.Rating, r.OccurredAt })
+            .Select(r => new { r.SubjectUserId, r.ParameterId, r.LoggedByUserId, r.Points, r.Rating, r.OccurredAt, r.DutyId, r.Visibility })
             .ToListAsync(ct);
 
         var duties = await db.StaffDuties.AsNoTracking()
@@ -136,6 +137,52 @@ public static class StaffReportBuilder
             .OrderByDescending(o => o.Observations)
             .ToList();
 
+        // ---- Observation pairs (plan §6.3: "a second observer on the same lesson is a second record linked
+        //      by DutyId; the reports show the pair"). Paired by duty when the observers linked one, otherwise
+        //      by person, parameter and day. Only for a reader who holds the confidential rung: a pair names
+        //      the person observed and both ratings, and observations default to Confidential.
+        var pairs = new List<ObservationPairDto>();
+        if (includeConfidentialDetail)
+        {
+            var dutyTitles = await db.StaffDuties.AsNoTracking()
+                .Where(d => d.OrganizationId == organizationId && d.BranchId == branchId && d.StartsAt >= start.AddDays(-1) && d.StartsAt < end)
+                .Select(d => new { d.Id, d.Title })
+                .ToDictionaryAsync(d => d.Id, d => d.Title, ct);
+            var subjectNames = staff.ToDictionary(s => s.Id, StaffPerformanceMapping.FullName);
+            pairs = rated
+                .GroupBy(r => r.DutyId.HasValue
+                    ? $"{r.SubjectUserId}|duty|{r.DutyId}"
+                    : $"{r.SubjectUserId}|{r.ParameterId}|{DateOnly.FromDateTime(r.OccurredAt):yyyy-MM-dd}")
+                .Where(g => g.Select(r => r.LoggedByUserId).Distinct().Count() >= 2)
+                .Select(g =>
+                {
+                    var first = g.First();
+                    var parameter = parameterById.GetValueOrDefault(first.ParameterId);
+                    var ratings = g.GroupBy(r => r.LoggedByUserId)
+                        .Select(o => new ObserverRatingDto
+                        {
+                            ObserverUserId = o.Key,
+                            ObserverName = names[o.Key] is { Length: > 0 } on ? on : "Unknown",
+                            Rating = o.OrderByDescending(r => r.OccurredAt).First().Rating!.Value
+                        })
+                        .OrderBy(o => o.ObserverName)
+                        .ToList();
+                    return new ObservationPairDto
+                    {
+                        SubjectUserId = first.SubjectUserId,
+                        SubjectName = subjectNames.GetValueOrDefault(first.SubjectUserId, "Unknown"),
+                        ParameterName = parameter?.Name ?? string.Empty,
+                        RatingScale = parameter?.RatingScale,
+                        ObservedOn = DateOnly.FromDateTime(g.Min(r => r.OccurredAt)),
+                        DutyTitle = first.DutyId is { } d ? dutyTitles.GetValueOrDefault(d) : null,
+                        Ratings = ratings,
+                        Spread = ratings.Max(x => x.Rating) - ratings.Min(x => x.Rating)
+                    };
+                })
+                .OrderByDescending(p => p.Spread).ThenByDescending(p => p.ObservedOn)
+                .ToList();
+        }
+
         // ---- Who logs what
         var whoLogs = records.GroupBy(r => r.LoggedByUserId)
             .Select(g => new LoggerCountDto
@@ -203,11 +250,76 @@ public static class StaffReportBuilder
             BandDistribution = bands,
             TrendByWeek = trend,
             ObserverDispersion = dispersion,
+            ObservationPairs = pairs,
             WhoLogsWhat = whoLogs,
             Leaderboard = leaderboard,
             LeaderboardMode = policy.LeaderboardMode,
             Coverage = coverage
         };
+    }
+
+    /// <summary>
+    /// What the PORTAL shows everyone, by the tenant's leaderboard mode (plan §1.5, decision 2): Private —
+    /// nothing beyond the person's own position; Department — department averages, no names; Public — the
+    /// department averages and a top-N board of names. Before 2026-09-17 the top-N board existed only
+    /// inside the reports page (staff.reports.view), so "shown to everyone" reached nobody, and the
+    /// Department mode had no effect at all.
+    /// </summary>
+    public static async Task<(List<DepartmentScoreDto> Departments, List<LeaderboardRowDto> Leaderboard)> BuildPortalBoardsAsync(
+        QMgrDbContext db, IStaffScoringService scoring, Guid organizationId, Guid branchId,
+        PerformancePeriodDto period, StaffPerformancePolicyDto policy, CancellationToken ct = default)
+    {
+        if (policy.LeaderboardMode == LeaderboardMode.Private) return (new(), new());
+
+        var staff = await StaffLookups.BranchStaff(db, organizationId, branchId).ToListAsync(ct);
+        var staffById = staff.ToDictionary(s => s.Id);
+        var scores = (await scoring.ComputeBranchAsync(organizationId, branchId, period, ct))
+            .Where(s => staffById.ContainsKey(s.SubjectUserId))
+            .ToList();
+        var departmentNames = await StaffLookups.LoadDepartmentNamesAsync(db, organizationId, ct);
+
+        var departments = scores
+            .SelectMany(s => (staffById[s.SubjectUserId].DepartmentIds is { Length: > 0 } ids ? ids : Array.Empty<Guid>()).Select(id => (DeptId: id, Score: s)))
+            .GroupBy(x => x.DeptId)
+            .Select(g => new DepartmentScoreDto
+            {
+                DepartmentId = g.Key,
+                Name = departmentNames.GetValueOrDefault(g.Key, "Unknown department"),
+                StaffCount = g.Count(),
+                AverageComposite = Average(g.Select(x => x.Score.Composite)),
+                AttendanceRate = AttendanceRate(g.Select(x => x.Score)),
+                RecognitionCount = g.Sum(x => x.Score.RecognitionReceived)
+            })
+            // A department of one or two is a person, not a team: an "average" there is somebody's score.
+            .Where(d => d.StaffCount >= 3 && d.AverageComposite.HasValue)
+            .OrderByDescending(d => d.AverageComposite)
+            .ToList();
+
+        var leaderboard = new List<LeaderboardRowDto>();
+        if (policy.LeaderboardMode == LeaderboardMode.Public)
+        {
+            var rank = 0;
+            leaderboard = scores.Where(s => s.Composite.HasValue)
+                .OrderByDescending(s => s.Composite)
+                .Take(Math.Max(1, policy.LeaderboardTopN))
+                .Select(s =>
+                {
+                    var u = staffById[s.SubjectUserId];
+                    return new LeaderboardRowDto
+                    {
+                        Rank = ++rank,
+                        UserId = s.SubjectUserId,
+                        Name = StaffPerformanceMapping.FullName(u),
+                        DepartmentName = StaffLookups.DepartmentNames(u.DepartmentIds, departmentNames),
+                        Composite = s.Composite!.Value,
+                        Band = s.Band ?? 0,
+                        BandName = s.BandName ?? string.Empty
+                    };
+                })
+                .ToList();
+        }
+
+        return (departments, leaderboard);
     }
 
     private static decimal? Average(IEnumerable<decimal?> values)

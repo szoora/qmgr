@@ -55,6 +55,7 @@ public class RbacSeeder
         new("users.create", "Create Users", "Create new users in the organization", "User Management", 2, true),
         new("users.edit", "Edit Users", "Edit user details and assignments", "User Management", 3, true),
         new("users.delete", "Delete Users", "Deactivate or delete users", "User Management", 4, true),
+        new("users.approve", "Approve Join Requests", "Approve or reject staff who registered through the join link, and assign their role", "User Management", 5, true),
 
         // ============================================
         // ROLE MANAGEMENT
@@ -192,6 +193,11 @@ public class RbacSeeder
         new("staff.notices.manage", "Publish Staff Notices", "Publish notices to a branch, departments, roles or a staff group", "Staff Performance", 11, true),
         new("staff.structure.manage", "Manage Staff Structure", "Departments, heads of department, line managers and the staff import", "Staff Performance", 12, true),
         new("staff.recognition.give", "Give Recognition", "Recognise a colleague, within the monthly budget", "Staff Performance", 13, true),
+        // Duty rota plan (2026-09-17) — mirrored in Permissions.All and the Web copy
+        new("staff.dutyreports.view", "View Duty Reports", "Read the reports written by staff and administrators on duty, within the role's staff scope", "Staff Performance", 14, true),
+        new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15, true),
+        new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16, true),
+        new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17, true),
 
         // ============================================
         // MARKETING (contacts + broadcast campaigns)
@@ -295,8 +301,8 @@ public class RbacSeeder
             {
                 // Dashboard
                 "dashboard.view",
-                // Users (limited)
-                "users.view", "users.create", "users.edit",
+                // Users (limited). users.approve: a manager can admit a join request, at or below their own rank.
+                "users.view", "users.create", "users.edit", "users.approve",
                 // Branches (limited)
                 "branches.view", "branches.edit",
                 // Counters (full)
@@ -433,6 +439,9 @@ public class RbacSeeder
                 "staff.duties.manage", "staff.parameters.manage",
                 "staff.appraisals.conduct", "staff.appraisals.approve",
                 "staff.reports.view", "staff.notices.manage", "staff.structure.manage", "staff.recognition.give",
+                // Duty rota plan §15 decisions 4 and 10: the DoS reads and reviews duty reports, is a timetable
+                // master, and supervises lessons school-wide.
+                "staff.dutyreports.view", "staff.dutyreports.review", "timetable.manage", "timetable.lessons.flag",
             },
             DataScope: RoleDataScope.Organization,
             StaffScope: StaffDataScope.Organization
@@ -453,6 +462,8 @@ public class RbacSeeder
                 "staff.records.view", "staff.records.create",
                 "staff.duties.manage",
                 "staff.reports.view", "staff.notices.manage", "staff.recognition.give",
+                // Duty rota plan §15 decision 10: the academic assistant is a timetable master and reads duty reports.
+                "staff.dutyreports.view", "timetable.manage", "timetable.lessons.flag",
             },
             DataScope: RoleDataScope.Organization,
             StaffScope: StaffDataScope.Organization
@@ -473,6 +484,8 @@ public class RbacSeeder
                 "staff.duties.manage",
                 "staff.appraisals.conduct",
                 "staff.reports.view", "staff.recognition.give",
+                // Duty rota plan §15 decision 4: a head flags and reads for their department only (the staff scope does that).
+                "staff.dutyreports.view", "timetable.lessons.flag",
             },
             DataScope: RoleDataScope.Organization,
             StaffScope: StaffDataScope.AssignedDepartments
@@ -481,7 +494,7 @@ public class RbacSeeder
         [RoleCodes.Teacher] = new RoleDefinition(
             Name: "Teacher",
             Code: RoleCodes.Teacher,
-            Description: "The staff portal and recognition. Logs records only as the named recorder on a duty.",
+            Description: "The staff portal and recognition. Sees the students of the classes they teach, at the teaching tier. Logs records only as the named recorder on a duty.",
             Color: "#3F8A80",
             Icon: "person-workspace",
             SortOrder: 4,
@@ -490,8 +503,12 @@ public class RbacSeeder
             {
                 "dashboard.view", "notifications.view",
                 "staff.recognition.give",
+                // Duty rota plan §5.3: students.view ONLY — never a welfare permission — and only together with
+                // AssignedClasses below, which moved FIRST: granting students.view on an Organization scope
+                // would have shown every teacher the whole school.
+                "students.view",
             },
-            DataScope: RoleDataScope.Organization,
+            DataScope: RoleDataScope.AssignedClasses,
             StaffScope: StaffDataScope.SelfOnly
         ),
 

@@ -97,8 +97,13 @@ public class UsageLimitMiddleware
             }
         }
 
-        // Check API call limit for all API endpoints
-        if (IsApiEndpoint(path))
+        // API access and the monthly API-call allowance apply to INTEGRATION traffic only: a request an
+        // API client authenticated with X-API-Key (ApiKeyAuthenticationMiddleware marks it
+        // auth_method=api_key). Until 2026-09-17 every /api/v1 request counted, including the school's own
+        // staff using the web app, so a 5,000-call allowance locked a real school out within a day or two
+        // (found by the first load test, which used a tenant's month up in under a minute). User decision,
+        // 2026-09-17: people signed in to the product are never metered as "API calls".
+        if (IsApiEndpoint(path) && IsIntegrationCall(context))
         {
             // Check if plan has API access
             var subscription = await billingService.GetSubscriptionWithPlanAsync(organizationId);
@@ -146,6 +151,9 @@ public class UsageLimitMiddleware
 
         await _next(context);
     }
+
+    private static bool IsIntegrationCall(HttpContext context)
+        => string.Equals(context.User?.FindFirst("auth_method")?.Value, "api_key", StringComparison.Ordinal);
 
     private static bool IsExemptEndpoint(string path)
     {

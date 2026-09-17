@@ -75,3 +75,10 @@ public record CounterThroughputDto
     public int TokensServed { get; init; }
     public double AverageServiceMinutes { get; init; }
 }
+
+/// <summary>Tickets a branch issued today, in any status (<c>GET …/tokens/issued-today</c>).</summary>
+public record TokensIssuedTodayDto
+{
+    public Guid BranchId { get; init; }
+    public int Count { get; init; }
+}

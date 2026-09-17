@@ -35,7 +35,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffDutiesController : ControllerBase
 {
     private readonly QMgrDbContext _context;
@@ -43,6 +43,7 @@ public class StaffDutiesController : ControllerBase
     private readonly IStaffScopeService _scope;
     private readonly IStaffAlertService _alerts;
     private readonly IActivityLogger _activity;
+    private readonly IStaffPerformancePolicyService _policy;
     private readonly ILogger<StaffDutiesController> _logger;
 
     private const int MaxRangeDays = 400;
@@ -53,8 +54,10 @@ public class StaffDutiesController : ControllerBase
         IStaffScopeService scope,
         IStaffAlertService alerts,
         IActivityLogger activity,
+        IStaffPerformancePolicyService policy,
         ILogger<StaffDutiesController> logger)
     {
+        _policy = policy;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
@@ -345,6 +348,15 @@ public class StaffDutiesController : ControllerBase
         if (duty.Parameter == null || !duty.Parameter.IsActive)
             return Problem400("This duty's parameter has been retired", "Reassign the duty to an active Attendance or Duty parameter before taking its register.");
 
+        var policy = await _policy.GetAsync(organizationId);
+        if (_policy.ClosureFor(policy, duty.StartsAt) is { } closure)
+            return new ConflictObjectResult(new ProblemDetails
+            {
+                Title = $"{_policy.FindPeriod(policy, closure.Key)?.Name ?? closure.Key} is closed",
+                Detail = "A register dated in a closed period would change figures that have been signed off. An approver can reopen the period first.",
+                Status = StatusCodes.Status409Conflict
+            });
+
         var entries = request.Entries ?? new List<RegisterEntryRequest>();
         if (entries.Count == 0 && !request.Close)
             return Problem400("Nothing to record", "Mark at least one person, or close the register.");
@@ -360,6 +372,11 @@ public class StaffDutiesController : ControllerBase
                 return Problem400($"{(names[entry.UserId] is { Length: > 0 } n ? n : "That person")} is not expected at this duty", "A register can only mark the people the duty expects.");
             if (entry.Outcome == DutyOutcome.NotApplicable)
                 return Problem400("Choose an outcome for every entry", "Present, Late, Absent, Excused, Recovered, Completed or Not completed.");
+            // INTEGRITY (duty rota plan §7.3, §13.8): nobody marks their own attendance — a register is somebody
+            // else's account of who was there. The one exception is a Lesson duty, where the teacher's own
+            // "taught" is recorded as a SELF-REPORT for a lesson supervisor to confirm or override.
+            if (entry.UserId == me && duty.Kind != DutyKind.Lesson)
+                return Problem400("You cannot mark yourself", "Another recorder, or somebody who manages duties, marks your own attendance.");
         }
         if (entries.GroupBy(e => e.UserId).Any(g => g.Count() > 1))
             return Problem400("A person appears more than once in this register");
@@ -424,7 +441,7 @@ public class StaffDutiesController : ControllerBase
                     Points = PointsFor(duty.Parameter, entry.Outcome),
                     Description = description.Length > 2000 ? description[..2000] : description,
                     OccurredAt = duty.StartsAt,
-                    Source = RecordSource.Register,
+                    Source = entry.UserId == me ? RecordSource.SelfReport : RecordSource.Register,
                     Status = StaffRecordStatus.Final,
                     Visibility = WelfareVisibility.Standard,
                     LoggedByUserId = me,
@@ -459,6 +476,15 @@ public class StaffDutiesController : ControllerBase
             $"Register for \"{duty.Title}\": {created.Count} marked ({Tally(entries)}){(request.Close ? ", closed" : "")}",
             new { Marked = created.Count, Closed = request.Close, Outcomes = entries.GroupBy(e => e.Outcome).ToDictionary(g => g.Key.ToString(), g => g.Count()) },
             branchId, organizationId);
+
+        // One line per person on THEIR file too, so the person marked absent sees who marked it and when,
+        // and a department head's scoped log (which follows subjects) shows the register at all. Before
+        // 2026-09-17 the only register event had no subject, so neither was true.
+        var markedNames = await StaffLookups.LoadNamesAsync(_context, created.Select(r => (Guid?)r.SubjectUserId));
+        foreach (var record in created)
+            await _activity.RecordAsync(ActivityActions.RegisterSubmitted, nameof(StaffPerformanceRecord), record.Id, record.SubjectUserId,
+                $"{markedNames[record.SubjectUserId]} marked {record.Outcome} on the register for \"{duty.Title}\"",
+                new { DutyId = duty.Id, record.Outcome, record.Points }, branchId, organizationId);
 
         // After the commit, bounded by the expected list, never a background job. The alert service
         // never throws; a failed bell must not fail a register that is already on the books.
@@ -550,12 +576,20 @@ public class StaffDutiesController : ControllerBase
         duty.Title = title.Length > 200 ? title[..200] : title;
         duty.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
         duty.Location = string.IsNullOrWhiteSpace(request.Location) ? null : request.Location.Trim();
+        var moved = duty.StartsAt != startsAt;
+        var endMoved = duty.EndsAt != endsAt;
         duty.StartsAt = startsAt;
         duty.EndsAt = endsAt;
         duty.ExpectedUserIds = expected?.ToArray();
         duty.RecorderUserIds = recorders.ToArray();
-        // A rescheduled duty deserves a fresh reminder; a chase for a register on the old time is moot.
-        if (duty.ReminderSentAt.HasValue && startsAt > DateTime.UtcNow) duty.ReminderSentAt = null;
+        // A rescheduled duty deserves a fresh reminder ladder (duty rota plan §4.2: rescheduling resets); a chase
+        // for a register on the old end time is moot. Only a real move resets — editing a title must not re-page.
+        if (moved && startsAt > DateTime.UtcNow)
+        {
+            duty.ReminderSentAt = null;
+            duty.ReminderStage = 0;
+        }
+        if (endMoved && endsAt > DateTime.UtcNow) duty.RegisterChaseSentAt = null;
         return null;
     }
 

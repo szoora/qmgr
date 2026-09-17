@@ -85,6 +85,11 @@
 
             <h5>What was recorded</h5>
             <p class="rec-desc">@record.Description</p>
+            @if (!string.IsNullOrWhiteSpace(record.ParameterPurpose))
+            {
+                @* Purpose limitation (DPPA s.3): what this was collected for, on the record's face. *@
+                <p class="rec-muted rec-purpose"><QIcon Name="info-circle" Size="sm" /> Why this is kept: @record.ParameterPurpose</p>
+            }
 
             @if (!string.IsNullOrEmpty(record.DutyTitle))
             {
@@ -148,6 +153,7 @@
     .rec-rating { margin-bottom: 12px; }
     .rec-card h5 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
     .rec-card h5:first-of-type { margin-top: 4px; }
+    .rec-muted.rec-purpose { margin-top: 6px; }
     .rec-desc { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--qm-text-primary); font-size: 15px; }
     .rec-muted { color: var(--qm-text-muted); font-size: 13px; margin: 8px 0 0; }
     .rec-attachments { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -183,7 +189,7 @@
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

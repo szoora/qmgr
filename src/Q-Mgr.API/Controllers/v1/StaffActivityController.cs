@@ -24,7 +24,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/branches/{branchId:guid}/staff/activity")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — the action also carries its own [RequirePermission]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffActivityController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
@@ -72,8 +72,13 @@ public class StaffActivityController : StaffPerformanceControllerBase
             else
             {
                 var ids = visible.ToList();
+                // An event ABOUT somebody is shown only when that somebody is in scope; the actor rule
+                // covers subject-less events alone (a head seeing their teacher edit a duty). Before
+                // 2026-09-17 an in-scope actor was enough, so once registers wrote a line per marked
+                // person, a Maths teacher recording a mixed meeting put "Luke Opio marked Present" —
+                // a Languages teacher — into the head of Maths's log (caught by e2e 14.9).
                 query = query.Where(e => (e.SubjectUserId != null && ids.Contains(e.SubjectUserId.Value))
-                                         || (e.ActorUserId != null && ids.Contains(e.ActorUserId.Value)));
+                                         || (e.SubjectUserId == null && e.ActorUserId != null && ids.Contains(e.ActorUserId.Value)));
             }
         }
 
@@ -98,5 +103,66 @@ public class StaffActivityController : StaffPerformanceControllerBase
             CountsByAction = counts,
             ScopedToDepartments = (await StaffScope.GetScopedDepartmentNamesAsync()).ToList()
         });
+    }
+
+    /// <summary>
+    /// Records an export or a Publish to Library that happened in the browser (plan §11: "exports and PDF
+    /// publishes"). The CSV/Excel/PDF is produced client-side by QDataExport and the print route renders its
+    /// own PDF, so the server never sees the file — the page reports it here straight after. The caller
+    /// must hold the permission the exported list itself needs, and a person's timeline needs that person
+    /// in scope, so this cannot be used to write a line about someone the caller could not have exported.
+    /// Before 2026-09-17 two of these actions were defined and never written; only "export my file" was.
+    /// </summary>
+    [HttpPost("exports")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RecordExport(Guid branchId, [FromBody] RecordStaffExportRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        var (permission, label) = request.Kind switch
+        {
+            StaffExportKinds.Directory => (Permissions.StaffRecordsView, "the staff directory"),
+            StaffExportKinds.Records => (Permissions.StaffRecordsView, "a staff records search"),
+            StaffExportKinds.Timeline => (Permissions.StaffRecordsView, "a staff timeline"),
+            StaffExportKinds.Reports => (Permissions.StaffReportsView, "the staff performance reports"),
+            StaffExportKinds.NoticeAcknowledgements => (Permissions.StaffNoticesManage, "a notice's acknowledgements"),
+            StaffExportKinds.Activity => (Permissions.StaffRecordsView, "the activity log"),
+            _ => (null, null)
+        };
+        if (permission == null) return BadRequestProblem("Unrecognised export kind");
+        if (!await HasPermissionAsync(permission)) return Forbid();
+
+        string? subjectName = null;
+        if (request.SubjectUserId is { } subjectId)
+        {
+            if (subjectId != CurrentUserId())
+            {
+                var scopeError = await StaffScope.VerifyStaffAccessAsync(branchId, subjectId);
+                if (scopeError != null) return scopeError;
+            }
+            var names = await BuildNamesAsync(new Guid?[] { subjectId });
+            subjectName = names[subjectId];
+        }
+
+        var format = string.IsNullOrWhiteSpace(request.Format) ? null : request.Format.Trim().ToUpperInvariant();
+        var what = subjectName != null ? $"{label} of {subjectName}" : label;
+        var summary = request.Published
+            ? $"Published {what} to the Library" + (string.IsNullOrWhiteSpace(request.DocumentName) ? "" : $" as \"{Truncate(request.DocumentName.Trim(), 120)}\"")
+            : $"Exported {what}" + (format != null ? $" as {format}" : "") + (request.RowCount is { } rows ? $" ({rows} row(s))" : "");
+
+        var action = request.Published
+            ? ActivityActions.ReportPublished
+            : request.Kind == StaffExportKinds.Timeline ? ActivityActions.TimelineExported : ActivityActions.ListExported;
+
+        await Activity.RecordAsync(action, request.Kind, request.MediaContentId, request.SubjectUserId, summary,
+            new { request.Kind, Format = format, request.RowCount, request.Published, request.MediaContentId, request.PeriodKey },
+            branchId, organizationId);
+
+        return NoContent();
     }
 }

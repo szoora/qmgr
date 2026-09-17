@@ -40,6 +40,18 @@ public class ClassTeacherAssignmentConfiguration : IEntityTypeConfiguration<Clas
             .HasFilter("\"EndedAt\" IS NULL AND \"Role\" = 0")
             .HasDatabaseName("ux_class_teacher_one_primary_per_class");
 
+        // The same teacher cannot hold the same subject in the same class twice (duty rota plan §3.2).
+        // Role = 2 is ClassTeacherRole.SubjectTeacher, written as the stored int for the same reason as above.
+        builder.HasIndex(a => new { a.BranchId, a.ClassName, a.UserId, a.SubjectId })
+            .IsUnique()
+            .HasFilter("\"EndedAt\" IS NULL AND \"Role\" = 2")
+            .HasDatabaseName("ux_subject_teacher_once_per_class_subject");
+
+        builder.HasOne(a => a.Subject)
+            .WithMany()
+            .HasForeignKey(a => a.SubjectId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasOne(a => a.Organization)
             .WithMany()
             .HasForeignKey(a => a.OrganizationId)

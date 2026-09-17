@@ -85,12 +85,16 @@ public static class ModuleRouteMap
         // already refuses without the module, so the page was offering a button that bounced.
         ("/admin/industry", ModuleCodes.CoreQueue),
 
-        // ---- Staff Performance ----
+        // ---- Staff Performance (part of Student Welfare since 2026-09-17) ----
         // The portal is every staff member's own page and the admin pages all live under one
         // prefix. /notifications is deliberately NOT listed: the notification centre is base
         // product, it merely gains staff event keys when the module is on.
-        ("/portal", ModuleCodes.StaffPerformance),
-        ("/admin/staff", ModuleCodes.StaffPerformance),
+        ("/portal", ModuleCodes.StudentWelfare),
+        ("/admin/staff", ModuleCodes.StudentWelfare),
+        // Staff onboarding (duty rota plan §12, 2026-09-17): Users & Roles itself stays base product; the
+        // join requests and onboarding pages beneath it belong to the module their API belongs to.
+        ("/admin/users/requests", ModuleCodes.StudentWelfare),
+        ("/admin/users/onboarding", ModuleCodes.StudentWelfare),
 
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
@@ -176,9 +180,10 @@ public static class ModuleRouteMap
         ("api/v1/branches/{branchId}/welfare", ModuleCodes.StudentWelfare),
         ("api/v1/branches/{branchId}/welfare-records", ModuleCodes.StudentWelfare),
 
-        // ---- Staff Performance ----
-        ("api/v1/branches/{branchId}/staff", ModuleCodes.StaffPerformance),
-        ("api/v1/staff", ModuleCodes.StaffPerformance),
+        // ---- Staff Performance (part of Student Welfare) ----
+        ("api/v1/branches/{branchId}/staff", ModuleCodes.StudentWelfare),
+        ("api/v1/staff", ModuleCodes.StudentWelfare),
+        ("api/v1/staff-onboarding", ModuleCodes.StudentWelfare),
 
         // ---- Integrations & API Access ----
         ("api/v1/api-clients", ModuleCodes.IntegrationsApi),

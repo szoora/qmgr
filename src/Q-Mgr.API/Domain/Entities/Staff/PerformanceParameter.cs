@@ -67,6 +67,16 @@ public class PerformanceParameter : BaseAuditableEntity
     /// </summary>
     public bool IsSystemSource { get; set; }
 
+    /// <summary>
+    /// The Attendance or Duty parameter this one OFFSETS. A record here counts as one recovered
+    /// occasion on that parameter's attendance score — the MoES Lesson Recovery Schedule, where "a
+    /// recovered lesson should not be considered as a lesson missed". Seeded on "Lesson Recovery" →
+    /// "Lesson Attendance". A nullable column rather than a kind or a name match: a school that calls
+    /// it "Make-up Lessons" must still get the offset, and a second recovery parameter for exam
+    /// supervision must be able to point somewhere else.
+    /// </summary>
+    public Guid? OffsetsParameterId { get; set; }
+
     public virtual Organization.Organization? Organization { get; set; }
     public virtual ICollection<StaffPerformanceRecord> Records { get; set; } = new List<StaffPerformanceRecord>();
 }

@@ -184,5 +184,17 @@ window.rosterImport = (function () {
         }
     }
 
-    return { parseFile };
+    // The staff import keeps its own column parsing in C# (StaffStructure.razor) and only needs the
+    // first sheet as CSV text: a .csv file is returned as it is, an .xlsx/.xls sheet is converted with
+    // cells as their displayed text, so a phone number keeps its leading zero (duty rota plan §12.5).
+    async function sheetToCsv(inputElementId) {
+        const input = document.getElementById(inputElementId);
+        const file = input?.files?.[0];
+        if (!file) return '';
+        if (/\.csv$/i.test(file.name) || file.type === 'text/csv') return await file.text();
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        return XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]], { blankrows: false, rawNumbers: false });
+    }
+
+    return { parseFile, sheetToCsv };
 })();

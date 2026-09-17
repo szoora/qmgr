@@ -108,9 +108,8 @@ else
             <!-- User Dropdown -->
             <div class="dropdown">
                 <button class="user-dropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                    <div class="user-avatar">
-                        <span>@(currentUser?.FullName?.Substring(0, 1).ToUpper() ?? "U")</span>
-                    </div>
+                    @* QAvatar, not a hand-built initial: FullName.Substring(0, 1) threw on an empty name. *@
+                    <QAvatar Name="@(string.IsNullOrWhiteSpace(currentUser?.FullName) ? currentUser?.Username : currentUser?.FullName)" Size="sm" Class="header-avatar" />
                     <i class="bi bi-chevron-down"></i>
                 </button>
                 <ul class="dropdown-menu dropdown-menu-end">
@@ -184,7 +183,7 @@ else
                     </li>
                 }
 
-                @if ((canViewStudents || canViewWelfare || canViewWelfareReports) && HasModule(ModuleCodes.StudentWelfare))
+                @if (CanViewWelfareSection)
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("student-welfare") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("student-welfare"))" @onclick:preventDefault>
@@ -224,7 +223,7 @@ else
 
                 <!-- Staff Performance (2026-09-16). "My Portal" is every signed-in person's own page and
                      needs no permission; the rest is gated item by item, and the whole group on the module. -->
-                @if (HasModule(ModuleCodes.StaffPerformance))
+                @if (HasModule(ModuleCodes.StudentWelfare))
                 {
                     <li class="nav-item">
                         <a href="portal" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/portal") ? "active" : "")">
@@ -233,7 +232,7 @@ else
                         </a>
                     </li>
                 }
-                @if ((canViewStaffRecords || canManageStaffDuties || canConductAppraisals || canApproveAppraisals || canViewStaffReports || canManageStaffNotices || canManageStaffParameters || canManageStaffStructure) && HasModule(ModuleCodes.StaffPerformance))
+                @if ((canViewStaffRecords || canManageStaffDuties || canConductAppraisals || canApproveAppraisals || canViewStaffReports || canManageStaffNotices || canManageStaffParameters || canManageStaffStructure) && HasModule(ModuleCodes.StudentWelfare))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("staff-performance") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("staff-performance"))" @onclick:preventDefault>
@@ -331,7 +330,7 @@ else
                 <!-- Reports & Analytics -->
                 @* Every report belongs to some module, so the whole group disappears rather than
                    opening onto an empty submenu when none of them are available. *@
-                @if (canViewReports && (ModuleAllows("/reports") || (canViewVisitors && ModuleAllows("/reports/visitors"))))
+                @if (CanViewReportsSection)
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("reports") ? "open" : "")">
                         <a href="#" class="nav-link" @onclick="@(() => ToggleMenu("reports"))" @onclick:preventDefault>
@@ -340,16 +339,16 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            @if (ModuleAllows("/reports"))
+                            @if (ShowReportsOverview)
                             {
                                 <li><a href="reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports") ? "active" : "")"><i class="bi bi-bar-chart"></i>Overview</a></li>
                             }
-                            @if (ModuleAllows("/reports/queue"))
+                            @if (ShowReportsQueue)
                             {
                                 <li><a href="reports/queue" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/queue") ? "active" : "")"><i class="bi bi-activity"></i>Queue Analytics</a></li>
                                 <li><a href="reports/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/counters") ? "active" : "")"><i class="bi bi-speedometer"></i>Counter Performance</a></li>
                             }
-                            @if (canViewVisitors && ModuleAllows("/reports/visitors"))
+                            @if (ShowReportsVisitors)
                             {
                                 <li><a href="reports/visitors" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/visitors") ? "active" : "")"><i class="bi bi-person-badge"></i>Visitors</a></li>
                             }
@@ -384,36 +383,45 @@ else
                                nothing else, so a school holding only Student Welfare was being offered
                                a kiosk theme picker for a kiosk it does not have. See the notes on
                                those two entries in ModuleRouteMap. *@
-                            @if (canViewCounters && ModuleAllows("/admin/counters"))
+                            @if (ShowAdminCounters)
                             {
                                 <li><a href="admin/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
                             }
-                            @if (canViewServiceTypes && ModuleAllows("/admin/service-types"))
+                            @if (ShowAdminServiceTypes)
                             {
                                 <li><a href="admin/service-types" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
                             }
-                            @if (canViewUsers || canViewRoles)
+                            @if (ShowAdminUsers)
                             {
-                                <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
+                                <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") && !IsActive("/admin/users/requests") && !IsActive("/admin/users/onboarding") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
                             }
-                            @if (canViewSettings && ModuleAllows("/admin/printer-settings"))
+                            @* Staff onboarding (duty rota plan §12). Its API is part of Welfare & Performance, so the links follow the module. *@
+                            @if (ShowAdminJoinRequests)
+                            {
+                                <li><a href="admin/users/requests" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users/requests") ? "active" : "")"><i class="bi bi-person-check"></i>Join Requests</a></li>
+                            }
+                            @if (ShowAdminOnboarding)
+                            {
+                                <li><a href="admin/users/onboarding" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users/onboarding") ? "active" : "")"><i class="bi bi-person-plus"></i>Onboarding</a></li>
+                            }
+                            @if (ShowAdminPrinterAndKiosk)
                             {
                                 <li><a href="admin/printer-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
                                 <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
                             }
-                            @if (canViewSettings && ModuleAllows("/admin/industry"))
+                            @if (ShowAdminIndustry)
                             {
                                 <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
                             }
-                            @if (canViewSettings && ModuleAllows("/admin/branding-settings"))
+                            @if (ShowAdminBranding)
                             {
                                 <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
                             }
-                            @if (canViewSettings && ModuleAllows("/admin/integrations"))
+                            @if (ShowAdminIntegrations)
                             {
                                 <li><a href="admin/integrations" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
                             }
-                            @if (canViewSettings && ModuleAllows("/admin/customer-links"))
+                            @if (ShowAdminCustomerLinks)
                             {
                                 <li><a href="admin/customer-links" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
                             }
@@ -680,6 +688,7 @@ else
     private bool canViewCounters = false;
     private bool canViewServiceTypes = false;
     private bool canViewUsers = false;
+    private bool canApproveJoinRequests = false;
     private bool canViewRoles = false;
     private bool canViewSettings = false;
     private bool canViewNotifications = false;
@@ -721,6 +730,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        AuthService.SessionExpired += HandleSessionExpired;
+
         // During pre-rendering, TokenStorageService is empty and localStorage isn't available
         // We'll load everything in OnAfterRenderAsync instead
         currentUser = await AuthService.GetCurrentUserAsync();
@@ -728,6 +739,7 @@ else
         // If we have a user from TokenStorageService (already logged in this session)
         if (currentUser != null)
         {
+            if (RedirectIfPasswordChangeRequired()) return;
             isSuperAdmin = await PermissionService.IsSuperAdminAsync();
 
             // Load permissions for menu visibility
@@ -741,6 +753,12 @@ else
             await LoadNotifications();
 
             await BuildApiDocsUrlAsync();
+
+            // The loads above are the first API calls this circuit makes, so they are where a dead
+            // session is discovered: the refresh is refused and the stored user is cleared. Showing the
+            // shell anyway handed the page a user who no longer exists, whose permission check then
+            // read "signed out" as "not allowed" and sent them to /unauthorized.
+            if (!await SessionStillValidAsync()) return;
 
             // Mark auth as checked since we already have a user
             authChecked = true;
@@ -809,11 +827,14 @@ else
                 // If we now have a user, refresh the UI
                 if (currentUser != null)
                 {
+                    if (RedirectIfPasswordChangeRequired()) return;
                     isSuperAdmin = await PermissionService.IsSuperAdminAsync();
                     await LoadPermissionsAsync();
                     await LoadBranches();
                     await LoadNotifications();
                     await BuildApiDocsUrlAsync();
+
+                    if (!await SessionStillValidAsync()) return;
 
                     // Mark auth as checked and show the app
                     authChecked = true;
@@ -822,31 +843,7 @@ else
                 else
                 {
                     // No auth found, redirect to login.
-                    var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
-
-                    // Already on login (or unauthorized): there is nowhere to redirect TO, and the
-                    // old code still called NavigateTo("/login", forceLoad: true) here — a FULL
-                    // PAGE RELOAD of the page the user is already looking at, which discarded
-                    // whatever they had typed into the login form. The condition was written to
-                    // keep "/login" out of the returnUrl, which is right, but it then fell into a
-                    // branch that navigated anyway. Do nothing instead: the login page owns this
-                    // state and does not need the layout to send it anywhere.
-                    //
-                    // Note this deliberately does NOT set authChecked — that gate is what keeps
-                    // the admin chrome hidden from someone who is not signed in, and flipping it
-                    // here to "finish" the check would reveal the shell to an anonymous visitor.
-                    if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase) ||
-                        currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return;
-                    }
-
-                    // An empty path is the root ("/") — a real protected page, so it still
-                    // redirects; it just has no meaningful returnUrl to carry.
-                    var loginUrl = string.IsNullOrEmpty(currentPath)
-                        ? "/login"
-                        : $"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}";
-                    NavigationManager.NavigateTo(loginUrl, forceLoad: true);
+                    SendToSignIn();
                 }
             }
             catch (Exception ex)
@@ -990,6 +987,7 @@ else
         canViewCounters = await PermissionService.HasPermissionAsync(Permissions.CountersView);
         canViewServiceTypes = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesView);
         canViewUsers = await PermissionService.HasPermissionAsync(Permissions.UsersView);
+        canApproveJoinRequests = await PermissionService.HasPermissionAsync(Permissions.UsersApprove);
         canViewRoles = await PermissionService.HasPermissionAsync(Permissions.RolesView);
         canViewSettings = await PermissionService.HasPermissionAsync(Permissions.SettingsView);
         canViewNotifications = await PermissionService.HasPermissionAsync(Permissions.NotificationsView);
@@ -1077,7 +1075,7 @@ else
         // by carrying a query flag.
         if (path == "/" && !NavigationManager.Uri.Contains("dashboard=1", StringComparison.Ordinal)
             && RoleCodes.IsPortalFirst(currentUser?.RoleCode)
-            && ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+            && ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             NavigationManager.NavigateTo("/portal");
             return;
@@ -1135,11 +1133,36 @@ else
         catch { }
     }
 
-    // Helper property to check if admin section should be visible
+    // ---- Nav group visibility ------------------------------------------------------------------
+    // A group is shown exactly when at least one of its own links is. Each link's condition is written
+    // once below and used by both the link and its group, so the two cannot drift. Before 2026-09-17
+    // Administration also counted welfare.view, welfare reports, API clients and feedback — none of which
+    // has a link inside it — so a class teacher or teacher saw an Administration group with nothing
+    // (or almost nothing) in it.
+
+    private bool ShowAdminCounters => canViewCounters && ModuleAllows("/admin/counters");
+    private bool ShowAdminServiceTypes => canViewServiceTypes && ModuleAllows("/admin/service-types");
+    private bool ShowAdminUsers => canViewUsers || canViewRoles;
+    private bool ShowAdminJoinRequests => canApproveJoinRequests && ModuleAllows("/admin/users/requests");
+    private bool ShowAdminOnboarding => canViewUsers && ModuleAllows("/admin/users/onboarding");
+    private bool ShowAdminPrinterAndKiosk => canViewSettings && ModuleAllows("/admin/printer-settings");
+    private bool ShowAdminIndustry => canViewSettings && ModuleAllows("/admin/industry");
+    private bool ShowAdminBranding => canViewSettings && ModuleAllows("/admin/branding-settings");
+    private bool ShowAdminIntegrations => canViewSettings && ModuleAllows("/admin/integrations");
+    private bool ShowAdminCustomerLinks => canViewSettings && ModuleAllows("/admin/customer-links");
+
     private bool CanViewAdminSection =>
-        canViewBranches || canViewCounters || canViewServiceTypes || canViewWelfare || canViewWelfareReports ||
-        canViewUsers || canViewRoles || canViewSettings ||
-        canViewNotifications || canViewApiClients || canViewFeedback;
+        canViewBranches || ShowAdminCounters || ShowAdminServiceTypes || ShowAdminUsers || ShowAdminPrinterAndKiosk
+        || ShowAdminIndustry || ShowAdminBranding || ShowAdminIntegrations || ShowAdminCustomerLinks
+        || canViewNotifications || canViewSettings;
+
+    private bool ShowReportsOverview => canViewReports && ModuleAllows("/reports");
+    private bool ShowReportsQueue => canViewReports && ModuleAllows("/reports/queue");
+    private bool ShowReportsVisitors => canViewReports && canViewVisitors && ModuleAllows("/reports/visitors");
+    private bool CanViewReportsSection => ShowReportsOverview || ShowReportsQueue || ShowReportsVisitors;
+
+    private bool CanViewWelfareSection => HasModule(ModuleCodes.StudentWelfare)
+        && (canViewStudents || canManageClassTeachers || canManageWelfareCategories || canViewWelfare || canViewWelfareReports);
 
     private async Task ConnectToNotificationHub(Guid userId)
     {
@@ -1483,10 +1506,68 @@ else
     }
 
     private bool disposed;
+    private bool redirectingToLogin;
+
+    /// <summary>
+    /// A session signed in with a temporary password can only set a new one (duty rota plan §12.3): the
+    /// API refuses its token everywhere else, so the shell must not even try to load. Straight to the page.
+    /// </summary>
+    private bool RedirectIfPasswordChangeRequired()
+    {
+        if (currentUser?.MustChangePassword != true || disposed || redirectingToLogin) return false;
+        redirectingToLogin = true;
+        var path = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        NavigationManager.NavigateTo(string.IsNullOrEmpty(path) ? "/set-password" : $"/set-password?returnUrl={Uri.EscapeDataString("/" + path)}", forceLoad: true);
+        return true;
+    }
+
+    /// <summary>
+    /// Re-reads the user after the layout's first API calls. False means the session died during them
+    /// and the visitor is already on their way to the sign-in page.
+    /// </summary>
+    private async Task<bool> SessionStillValidAsync()
+    {
+        if (disposed) return false;
+        currentUser = await AuthService.GetCurrentUserAsync();
+        if (currentUser != null) return true;
+        SendToSignIn();
+        return false;
+    }
+
+    /// <summary>
+    /// The API refused this circuit's refresh token (an old tab, or a sign-in elsewhere rotated it).
+    /// The person is signed out, so they go to sign in again and come back to this page — not to
+    /// "Access denied", which is where the page's own permission check used to send them.
+    /// </summary>
+    private void HandleSessionExpired() => _ = InvokeAsync(SendToSignIn);
+
+    private void SendToSignIn()
+    {
+        if (disposed || redirectingToLogin) return;
+
+        var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+
+        // Already on login: there is nowhere to redirect TO, and navigating anyway is a FULL PAGE
+        // RELOAD of the form the user is typing into. (Login has its own layout, so this is a guard,
+        // not a path that normally runs.) Deliberately does NOT set authChecked — that gate keeps the
+        // admin chrome hidden from someone who is not signed in.
+        if (currentPath.StartsWith("login", StringComparison.OrdinalIgnoreCase)) return;
+
+        // /unauthorized used to be exempt too, which left a signed-out visitor there on
+        // "Initializing..." for good: this layout would not redirect and never rendered the page, so
+        // the page's own redirect never ran either (2026-09-17). It has no layout of its own, so this is
+        // the only place that can move them. No returnUrl: the sign-in page refuses to return there.
+        redirectingToLogin = true;
+        var loginUrl = string.IsNullOrEmpty(currentPath) || currentPath.StartsWith("unauthorized", StringComparison.OrdinalIgnoreCase)
+            ? "/login"
+            : $"/login?returnUrl={Uri.EscapeDataString("/" + currentPath)}";
+        NavigationManager.NavigateTo(loginUrl, forceLoad: true);
+    }
 
     public async ValueTask DisposeAsync()
     {
         disposed = true;
+        AuthService.SessionExpired -= HandleSessionExpired;
         clockTimer?.Dispose();
 
         // Unsubscribe from notification events

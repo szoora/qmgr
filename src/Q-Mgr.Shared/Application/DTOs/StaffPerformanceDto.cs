@@ -7,7 +7,7 @@ namespace QMgr.Application.DTOs;
 // Staff Performance Monitor — the DTO contract between Q-Mgr.API and Q-Mgr.Web.
 // Plan: docs/plans/STAFF_PERFORMANCE_MONITOR.md. One file per feature, flat, as every other DTO file.
 //
-// ROUTES (all [Authorize] + [RequireModule(ModuleCodes.StaffPerformance)]; branch routes call
+// ROUTES (all [Authorize] + [RequireModule(ModuleCodes.StudentWelfare)]; branch routes call
 // VerifyBranchOwnership; anything reaching a staff member other than the caller goes through
 // IStaffScopeService and answers 404, never 403, when out of scope):
 //
@@ -136,6 +136,8 @@ public record PerformanceParameterDto
     public int SortOrder { get; init; }
     public bool IsActive { get; init; }
     public bool IsSystemSource { get; init; }
+    /// <summary>The Attendance or Duty parameter a record here offsets as a recovered occasion (Lesson Recovery → Lesson Attendance).</summary>
+    public Guid? OffsetsParameterId { get; init; }
 }
 
 public record SavePerformanceParameterRequest
@@ -155,6 +157,7 @@ public record SavePerformanceParameterRequest
     [MaxLength(9)] public string? Color { get; set; }
     public int SortOrder { get; set; }
     public bool IsSystemSource { get; set; }
+    public Guid? OffsetsParameterId { get; set; }
 }
 
 // ---- Records ----------------------------------------------------------------------------------------
@@ -169,6 +172,8 @@ public record StaffPerformanceRecordDto
     public string ParameterName { get; init; } = string.Empty;
     public ParameterKind ParameterKind { get; init; }
     public string? ParameterColor { get; init; }
+    /// <summary>Why this was collected — the parameter's purpose, shown on the record's face (purpose limitation, DPPA s.3).</summary>
+    public string ParameterPurpose { get; init; } = string.Empty;
     public Guid? DutyId { get; init; }
     public string? DutyTitle { get; init; }
     public DutyOutcome Outcome { get; init; }
@@ -527,6 +532,73 @@ public record StaffPerformancePolicyDto
     public int SummaryHour { get; set; } = 6;
     public DateTime? LastSummarySentAt { get; set; }
     [MaxLength(200)] public string? DataProtectionOfficerContact { get; set; }
+    /// <summary>
+    /// Periods an approver has closed. Written ONLY by the close / reopen endpoints (the policy editor keeps
+    /// whatever is stored, as it does LastSummarySentAt). A closed period takes no new scored records,
+    /// registers, recognition, automatic credit, appraisal openings, annulments or point corrections;
+    /// a visibility change is always allowed, because protecting a record must never be blocked.
+    /// </summary>
+    public List<ClosedPeriodDto> ClosedPeriods { get; set; } = new();
+
+    // ---- Duty rota plan §3.1 (2026-09-17). The same one reader and one lock as everything above. ----
+
+    /// <summary>
+    /// The escalating reminder ladders (plan §4.2, §4.4, §7.2, §8.1). Empty in a stored blob means "the
+    /// defaults"; <c>IStaffPerformancePolicyService.LadderFor</c> is the only reader.
+    /// </summary>
+    public List<ReminderLadderDto> ReminderLadders { get; set; } = new();
+    public QuietHoursDto QuietHours { get; set; } = new();
+    /// <summary>The tenant's duty report sections (plan §15 decision 1). Empty means the default template.</summary>
+    public List<DutyReportSectionDto> DutyReportTemplate { get; set; } = new();
+    public DutyReportDefaultsDto DutyReportDefaults { get; set; } = new();
+    public TeachingLoadNormsDto TeachingLoadNorms { get; set; } = new();
+    /// <summary>Minutes before a lesson its in-app reminder goes (plan §7.2, decision 8: 10).</summary>
+    public int LessonReminderMinutes { get; set; } = 10;
+    /// <summary>Branch-local time of the morning "My Day" digest (plan §7.2: 06:30).</summary>
+    public string MyDayLocalTime { get; set; } = "06:30";
+    /// <summary>Days a missed lesson has to be recovered before it reads "not recovered" (plan §7.3).</summary>
+    public int LessonRecoveryDeadlineDays { get; set; } = 14;
+    /// <summary>Days a lesson may stay unrecorded before it goes to the supervisor's weekly analysis (plan §7.3).</summary>
+    public int UnrecordedLessonWindowDays { get; set; } = 3;
+    /// <summary>
+    /// A subject teacher holding welfare.create may log a concern about a student they teach (plan §5.3,
+    /// decision 5: on). Reporting a concern is not reading one: they keep what they wrote and nothing else.
+    /// </summary>
+    public bool SubjectTeachersMayLogConcerns { get; set; } = true;
+    /// <summary>A student's learning-support need is shown to the teachers who teach them (plan §5.3). Off by default.</summary>
+    public bool ShareLearningNeedsWithTeachingStaff { get; set; }
+}
+
+public record ClosedPeriodDto
+{
+    public string Key { get; set; } = string.Empty;
+    public DateTime ClosedAt { get; set; }
+    public Guid ClosedByUserId { get; set; }
+    public string? ClosedByName { get; set; }
+    /// <summary>Set when the period was closed with appraisals still unsigned: why that was right.</summary>
+    [MaxLength(1000)] public string? OverrideReason { get; set; }
+    public int UnsignedAppraisalsAtClose { get; set; }
+}
+
+public record ClosePeriodRequest
+{
+    /// <summary>Required when any appraisal for the period is not yet Signed.</summary>
+    [MaxLength(1000)] public string? OverrideReason { get; set; }
+}
+
+public record ReopenPeriodRequest
+{
+    [Required, MinLength(5), MaxLength(1000)] public string Reason { get; set; } = string.Empty;
+}
+
+/// <summary>One period as the appraisal board and the policy page show it.</summary>
+public record PeriodStatusDto
+{
+    public PerformancePeriodDto Period { get; init; } = new();
+    public bool IsClosed { get; init; }
+    public ClosedPeriodDto? Closure { get; init; }
+    public int AppraisalCount { get; init; }
+    public int UnsignedAppraisals { get; init; }
 }
 
 // ---- Reports ----------------------------------------------------------------------------------------
@@ -567,6 +639,27 @@ public record ObserverStatDto
     public decimal SchoolMean { get; init; }
 }
 
+/// <summary>Two or more observers' ratings of the same lesson (plan §6.3), largest disagreement first.</summary>
+public record ObservationPairDto
+{
+    public Guid SubjectUserId { get; init; }
+    public string SubjectName { get; init; } = string.Empty;
+    public string ParameterName { get; init; } = string.Empty;
+    public int? RatingScale { get; init; }
+    public DateOnly ObservedOn { get; init; }
+    public string? DutyTitle { get; init; }
+    public List<ObserverRatingDto> Ratings { get; init; } = new();
+    /// <summary>Highest rating minus lowest. A spread of two or more on a four-level scale is worth a calibration conversation.</summary>
+    public int Spread { get; init; }
+}
+
+public record ObserverRatingDto
+{
+    public Guid ObserverUserId { get; init; }
+    public string ObserverName { get; init; } = string.Empty;
+    public int Rating { get; init; }
+}
+
 public record LoggerCountDto
 {
     public Guid UserId { get; init; }
@@ -601,6 +694,8 @@ public record StaffReportsDto
     public List<BandCountDto> BandDistribution { get; init; } = new();
     public List<ScoreTrendPointDto> TrendByWeek { get; init; } = new();
     public List<ObserverStatDto> ObserverDispersion { get; init; } = new();
+    /// <summary>Filled only for a reader who holds staff.confidential.view.</summary>
+    public List<ObservationPairDto> ObservationPairs { get; init; } = new();
     public List<LoggerCountDto> WhoLogsWhat { get; init; } = new();
     /// <summary>Filled only when the tenant's LeaderboardMode allows it for this caller.</summary>
     public List<LeaderboardRowDto> Leaderboard { get; init; } = new();
@@ -674,11 +769,36 @@ public record StaffAppraisalDto
     public bool CanIAppraise { get; init; }
     public bool CanIModerate { get; init; }
     public bool CanIAppeal { get; init; }
+    /// <summary>
+    /// For a moderator: how THIS appraiser has rated everyone this period against how every appraiser in
+    /// the branch has, index 0 = rating 1 … index 4 = rating 5. The MET "home field" check — an appraiser
+    /// who rates everyone a 4 is visible before their 4 is signed. Empty for anyone else.
+    /// </summary>
+    public List<int> AppraiserRatingCounts { get; init; } = new();
+    public List<int> SchoolRatingCounts { get; init; } = new();
+    public decimal? AppraiserMeanRating { get; init; }
+    public decimal? SchoolMeanRating { get; init; }
+    /// <summary>Annual appraisals only: that year's termly appraisals for the same person, which the annual rating averages.</summary>
+    public List<TermRatingDto> TermlyRollup { get; init; } = new();
+    public decimal? TermlyAverage { get; init; }
+    public bool IsAnnual { get; init; }
+    public bool PeriodClosed { get; init; }
+}
+
+public record TermRatingDto
+{
+    public Guid AppraisalId { get; init; }
+    public string PeriodKey { get; init; } = string.Empty;
+    public string PeriodName { get; init; } = string.Empty;
+    public AppraisalStage Stage { get; init; }
+    public int? FinalRating { get; init; }
 }
 
 public record AppraisalBoardDto
 {
     public PerformancePeriodDto Period { get; init; } = new();
+    /// <summary>Whether the period is closed, by whom and with what override.</summary>
+    public PeriodStatusDto? PeriodStatus { get; init; }
     public Dictionary<string, int> ByStage { get; init; } = new();
     public List<StaffAppraisalDto> Items { get; init; } = new();
     public List<string> ScopedToDepartments { get; init; } = new();
@@ -760,6 +880,12 @@ public record StaffPortalDto
     public RecognitionBudgetDto RecognitionBudget { get; init; } = new();
     public int UnacknowledgedRecords { get; init; }
     public LeaderboardMode LeaderboardMode { get; init; }
+    /// <summary>Department averages (departments of three or more), when the mode is Department or Public.</summary>
+    public List<DepartmentScoreDto> DepartmentBoard { get; init; } = new();
+    /// <summary>The top-N board, only when the tenant has switched the mode to Public.</summary>
+    public List<LeaderboardRowDto> Leaderboard { get; init; } = new();
+    /// <summary>The first-sign-in checklist (duty rota plan §12.3). The portal shows it until every item is done.</summary>
+    public OnboardingChecklistDto Onboarding { get; init; } = new();
 }
 
 public record StaffColleagueDto
@@ -797,10 +923,25 @@ public record StaffImportRow
     /// <summary>Department codes, comma-separated in the file, split here.</summary>
     public List<string> DepartmentCodes { get; set; } = new();
     public string? LineManagerEmail { get; set; }
+    /// <summary>This row's delivery, overriding the import's (plan §12.5). Null follows the import.</summary>
+    public StaffImportDeliveryMode? DeliveryMode { get; set; }
+    /// <summary>Classes this person is class teacher of, e.g. "S2A" or "S2A;S2B". Validated against the class vocabulary.</summary>
+    public string? ClassTeacherOf { get; set; }
+    /// <summary>Subjects taught, e.g. "MATH:S2A,S2B; PHY:S3A". Validated against the subject catalogue and the classes.</summary>
+    public string? Teaches { get; set; }
 }
 
 public record StartStaffImportRequest
 {
     public List<StaffImportRow> Rows { get; set; } = new();
+    /// <summary>Kept for older callers: true means <see cref="StaffImportDeliveryMode.Invitation"/> when no mode is given.</summary>
     public bool SendInvites { get; set; } = true;
+    /// <summary>How people get in. Null follows <see cref="SendInvites"/> (Invitation when true, no delivery when false).</summary>
+    public StaffImportDeliveryMode? DeliveryMode { get; set; }
+    /// <summary>
+    /// Off by default. A temporary password the administrator typed for this batch, used instead of a
+    /// generated one per person. Accepted only when it passes the password policy and the blocklist (so
+    /// never "staff", the school's name or a username); it still expires in 72 hours with a forced change.
+    /// </summary>
+    public string? BatchTemporaryPassword { get; set; }
 }

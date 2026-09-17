@@ -27,7 +27,7 @@
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
             }
             <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
-                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync"
+                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
                          Disabled="@(!Visible.Any())" DisabledReason="Nothing matches the current filters." />
         </div>
     </div>
@@ -144,6 +144,11 @@
 </style>
 
 @code {
+    /// <summary>The activity log carries every export (plan §11); the file itself was built in the browser.</summary>
+    private Task OnExported(ExportResult export) => export.Success
+        ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Directory, Format = export.Format?.ToString(), RowCount = export.RowCount })
+        : Task.CompletedTask;
+
     private const int pageSize = 25;
 
     private Guid branchId;
@@ -223,7 +228,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

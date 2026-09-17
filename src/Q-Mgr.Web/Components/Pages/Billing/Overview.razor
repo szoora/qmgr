@@ -77,47 +77,12 @@ else
         </QCard>
 
         <!-- Quick Stats -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon success">
-                    <QIcon Name="check-circle-fill" Size="24" />
-                </div>
-                <div class="stat-content">
-                    <span class="stat-label">Account Status</span>
-                    <span class="stat-value">@billingInfo.Status</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon primary">
-                    <QIcon Name="calendar-event-fill" Size="24" />
-                </div>
-                <div class="stat-content">
-                    <span class="stat-label">Days Until Renewal</span>
-                    <span class="stat-value">@GetDaysUntilRenewal()</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon warning">
-                    <QIcon Name="receipt" Size="24" />
-                </div>
-                <div class="stat-content">
-                    <span class="stat-label">Unpaid Invoices</span>
-                    <span class="stat-value">@unpaidInvoices.Count</span>
-                </div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon info">
-                    <QIcon Name="graph-up" Size="24" />
-                </div>
-                <div class="stat-content">
-                    <span class="stat-label">This Month's Total</span>
-                    <span class="stat-value">@billingInfo.Currency @billingInfo.MonthlyAmount.ToString("N2")</span>
-                </div>
-            </div>
-        </div>
+        <QStatRow Class="stats-grid billing-stats">
+            <QStatTile Value="@billingInfo.Status" Label="Account Status" Icon="check-circle-fill" Variant="success" />
+            <QStatTile Value="@GetDaysUntilRenewal().ToString()" Label="Days Until Renewal" Icon="calendar-event-fill" Variant="primary" />
+            <QStatTile Value="@unpaidInvoices.Count.ToString()" Label="Unpaid Invoices" Icon="receipt" Variant="warning" />
+            <QStatTile Value="@($"{billingInfo.Currency} {billingInfo.MonthlyAmount:N2}")" Label="This Month's Total" Icon="graph-up" Variant="info" />
+        </QStatRow>
     </div>
 
     <!-- Usage Summary -->
@@ -438,66 +403,15 @@ else
         gap: 12px;
     }
 
-    .stats-grid {
-        display: grid;
+    /* QStatTile/QStatRow. Two columns beside the plan card; the variant tints the icon badge only —
+       these are facts about the account, not alarms, so the figures stay in the ordinary text colour. */
+    .billing-stats.stats-grid {
         grid-template-columns: 1fr 1fr;
         gap: 16px;
+        margin-bottom: 0;
     }
 
-    .stat-card {
-        background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-lg);
-        padding: var(--qm-statcard-pad);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .stat-icon {
-        width: var(--qm-statcard-icon);
-        height: var(--qm-statcard-icon);
-        border-radius: var(--qm-radius-lg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .stat-icon.success {
-        background: color-mix(in srgb, var(--qm-success) 15%, transparent);
-        color: var(--qm-success);
-    }
-
-    .stat-icon.primary {
-        background: var(--qm-primary-light);
-        color: var(--qm-primary);
-    }
-
-    .stat-icon.warning {
-        background: color-mix(in srgb, var(--qm-warning) 15%, transparent);
-        color: var(--qm-warning);
-    }
-
-    .stat-icon.info {
-        background: color-mix(in srgb, var(--qm-info) 15%, transparent);
-        color: var(--qm-info);
-    }
-
-    .stat-content {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .stat-label {
-        font-size: 13px;
-        color: var(--qm-text-secondary);
-    }
-
-    .stat-value {
-        font-size: 24px;
-        font-weight: 700;
-        color: var(--qm-text-primary);
-    }
+    .billing-stats .q-stat__value { color: var(--qm-text-primary); }
 
     .usage-summary,
     .recent-invoices,
@@ -704,7 +618,7 @@ else
 
     @@media (max-width: 968px) {
         .billing-grid,
-        .stats-grid {
+        .billing-stats.stats-grid {
             grid-template-columns: 1fr;
         }
     }

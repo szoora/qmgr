@@ -86,6 +86,10 @@ public class WelfareAlertService : IWelfareAlertService
             .AsNoTracking()
             .Where(a => a.BranchId == student.BranchId
                         && a.EndedAt == null
+                        // PASTORAL ONLY (duty rota plan §5.3): a subject teacher is never alerted about a
+                        // child's welfare. Named roles, not "not SubjectTeacher", so a role appended later
+                        // is excluded until somebody decides it should be told.
+                        && (a.Role == ClassTeacherRole.ClassTeacher || a.Role == ClassTeacherRole.Assistant)
                         && a.ClassName.Trim().ToLower() == key)
             .Select(a => new
             {

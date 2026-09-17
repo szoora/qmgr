@@ -193,6 +193,7 @@ public static class Permissions
     public const string UsersCreate = "users.create";
     public const string UsersEdit = "users.edit";
     public const string UsersDelete = "users.delete";
+    public const string UsersApprove = "users.approve";
 
     // Roles
     public const string RolesView = "roles.view";
@@ -288,6 +289,10 @@ public static class Permissions
     public const string StaffNoticesManage = "staff.notices.manage";
     public const string StaffStructureManage = "staff.structure.manage";
     public const string StaffRecognitionGive = "staff.recognition.give";
+    public const string StaffDutyReportsView = "staff.dutyreports.view";
+    public const string StaffDutyReportsReview = "staff.dutyreports.review";
+    public const string TimetableManage = "timetable.manage";
+    public const string TimetableLessonsFlag = "timetable.lessons.flag";
 
     // Marketing
     public const string MarketingView = "marketing.view";

@@ -171,24 +171,12 @@
         }
         else
         {
-            <div class="stats-tiles">
-                <div class="stats-tile">
-                    <div class="stats-tile-value">@stats.TotalImpressions.ToString("N0")</div>
-                    <div class="stats-tile-label">Total Impressions</div>
-                </div>
-                <div class="stats-tile">
-                    <div class="stats-tile-value">@stats.UniqueMediaItems.ToString("N0")</div>
-                    <div class="stats-tile-label">Media Items Shown</div>
-                </div>
-                <div class="stats-tile">
-                    <div class="stats-tile-value">@StatsDayCount.ToString("N0")</div>
-                    <div class="stats-tile-label">Days in Range</div>
-                </div>
-                <div class="stats-tile">
-                    <div class="stats-tile-value">@StatsPerDay.ToString("N1")</div>
-                    <div class="stats-tile-label">Avg. per Day</div>
-                </div>
-            </div>
+            <QStatRow Class="stats-tiles">
+                <QStatTile Value="@stats.TotalImpressions.ToString("N0")" Label="Total Impressions" Variant="primary" />
+                <QStatTile Value="@stats.UniqueMediaItems.ToString("N0")" Label="Media Items Shown" Variant="primary" />
+                <QStatTile Value="@StatsDayCount.ToString("N0")" Label="Days in Range" Variant="primary" />
+                <QStatTile Value="@StatsPerDay.ToString("N1")" Label="Avg. per Day" Variant="primary" />
+            </QStatRow>
 
             <div class="stats-chart-card">
                 <h4>Impressions by Day</h4>
@@ -202,54 +190,15 @@
             </div>
 
             <div class="stats-tables-row">
+                @* Each bar is that row's share of every impression in the period; the figure is the count. *@
                 <div class="stats-table-card">
                     <h4>By Media</h4>
-                    <table class="stats-table">
-                        <thead>
-                            <tr>
-                                <th>Media</th>
-                                <th class="stats-share-col">Share</th>
-                                <th class="stats-count-col">Impressions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var m in stats.ByMedia)
-                            {
-                                <tr>
-                                    <td class="stats-name-col" title="@m.Title">@m.Title</td>
-                                    <td class="stats-share-col">
-                                        <div class="stats-bar"><div class="stats-bar-fill" style="width: @SharePercent(m.Count)%"></div></div>
-                                    </td>
-                                    <td class="stats-count-col">@m.Count.ToString("N0")</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                    <QBarList Items="@MediaBars" Max="@(stats.TotalImpressions > 0 ? (decimal?)stats.TotalImpressions : null)" EmptyText="No impressions in this period." />
                 </div>
 
                 <div class="stats-table-card">
                     <h4>By Branch</h4>
-                    <table class="stats-table">
-                        <thead>
-                            <tr>
-                                <th>Branch</th>
-                                <th class="stats-share-col">Share</th>
-                                <th class="stats-count-col">Impressions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var b in stats.ByBranch)
-                            {
-                                <tr>
-                                    <td class="stats-name-col" title="@b.BranchName">@b.BranchName</td>
-                                    <td class="stats-share-col">
-                                        <div class="stats-bar"><div class="stats-bar-fill" style="width: @SharePercent(b.Count)%"></div></div>
-                                    </td>
-                                    <td class="stats-count-col">@b.Count.ToString("N0")</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                    <QBarList Items="@BranchBars" Max="@(stats.TotalImpressions > 0 ? (decimal?)stats.TotalImpressions : null)" EmptyText="No impressions in this period." />
                 </div>
             </div>
         }
@@ -491,34 +440,9 @@
         font-size: 13px;
     }
 
-    .stats-tiles {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
-        margin-bottom: 20px;
-    }
+    /* The summary figures are QStatTile/QStatRow (q-components.css). */
+    .stats-tiles { margin-bottom: 20px; }
 
-    .stats-tile {
-        padding: 14px 16px;
-        background: var(--qm-bg-elevated);
-        border: 1px solid var(--qm-border);
-        border-radius: var(--qm-radius-md);
-        text-align: center;
-    }
-
-    .stats-tile-value {
-        font-family: var(--qm-font-display);
-        font-size: 26px;
-        font-weight: 700;
-        color: var(--qm-primary);
-        line-height: 1.2;
-    }
-
-    .stats-tile-label {
-        margin-top: 4px;
-        font-size: 12px;
-        color: var(--qm-text-muted);
-    }
 
     .stats-chart-card, .stats-table-card {
         padding: 16px;
@@ -544,64 +468,8 @@
         gap: 20px;
     }
 
-    .stats-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-    }
+    /* The per-media and per-branch shares are QBarList (q-components.css). */
 
-    .stats-table th {
-        text-align: left;
-        padding: 6px 8px;
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--qm-text-muted);
-        border-bottom: 1px solid var(--qm-border);
-    }
-
-    .stats-table td {
-        padding: 8px;
-        border-bottom: 1px solid var(--qm-border);
-        color: var(--qm-text-primary);
-        vertical-align: middle;
-    }
-
-    .stats-table tr:last-child td {
-        border-bottom: none;
-    }
-
-    .stats-name-col {
-        max-width: 220px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .stats-share-col {
-        width: 34%;
-    }
-
-    .stats-count-col {
-        width: 90px;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        font-weight: 600;
-    }
-
-    .stats-bar {
-        height: 8px;
-        background: var(--qm-primary-light);
-        border-radius: var(--qm-radius-sm);
-        overflow: hidden;
-    }
-
-    .stats-bar-fill {
-        height: 100%;
-        background: var(--qm-primary);
-        border-radius: var(--qm-radius-sm);
-    }
 
     @@media (max-width: 900px) {
         .stats-tables-row {
@@ -870,8 +738,13 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private int SharePercent(int count) =>
-        stats == null || stats.TotalImpressions == 0 ? 0 : (int)Math.Round(100.0 * count / stats.TotalImpressions);
+    private IReadOnlyList<QBarItem> MediaBars => stats == null
+        ? Array.Empty<QBarItem>()
+        : stats.ByMedia.Select(m => new QBarItem(m.Title, m.Count, Count: m.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture))).ToList();
+
+    private IReadOnlyList<QBarItem> BranchBars => stats == null
+        ? Array.Empty<QBarItem>()
+        : stats.ByBranch.Select(b => new QBarItem(b.BranchName, b.Count, Count: b.Count.ToString("N0", System.Globalization.CultureInfo.InvariantCulture))).ToList();
 
     /// <summary>
     /// The per-impression rows only exist server-side — this page holds the rolled-up statistics,

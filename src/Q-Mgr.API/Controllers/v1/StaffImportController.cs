@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Hangfire;
+using Microsoft.AspNetCore.DataProtection;
+using QMgr.API.Application.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -33,13 +35,15 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffImportController : ControllerBase
 {
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IStaffScopeService _scope;
     private readonly IActivityLogger _activity;
+    private readonly IPasswordValidationService _passwords;
+    private readonly IDataProtectionProvider _dataProtection;
     private readonly ILogger<StaffImportController> _logger;
 
     private const int MaxRows = 2000;
@@ -49,12 +53,16 @@ public class StaffImportController : ControllerBase
         ITenantContextAccessor tenantAccessor,
         IStaffScopeService scope,
         IActivityLogger activity,
+        IPasswordValidationService passwords,
+        IDataProtectionProvider dataProtection,
         ILogger<StaffImportController> logger)
     {
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
         _activity = activity;
+        _passwords = passwords;
+        _dataProtection = dataProtection;
         _logger = logger;
     }
 
@@ -112,7 +120,7 @@ public class StaffImportController : ControllerBase
     [HttpPost("branches/{branchId:guid}/staff/import-jobs")]
     [RequirePermission(Permissions.UsersCreate)]
     [RequirePermission(Permissions.StaffStructureManage)]
-    [ProducesResponseType(typeof(RosterImportJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(StaffImportStartedDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> StartImport(Guid branchId, [FromBody] StartStaffImportRequest request)
@@ -134,6 +142,54 @@ public class StaffImportController : ControllerBase
 
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
+        // Delivery per row (plan §12.2): the row's own mode, else the import's, else the legacy SendInvites flag.
+        var payload = new StaffImportJobPayload { Rows = request.Rows, SendInvites = request.SendInvites, DeliveryMode = request.DeliveryMode };
+        for (var i = 0; i < request.Rows.Count; i++)
+            payload.ResolvedDelivery[i] = request.Rows[i].DeliveryMode ?? request.DeliveryMode ?? (request.SendInvites ? StaffImportDeliveryMode.Invitation : null);
+
+        var needsTemporary = payload.ResolvedDelivery.Values.Any(m => m is StaffImportDeliveryMode.Slips or StaffImportDeliveryMode.Sms);
+        string? batchPassword = null;
+        if (needsTemporary && !string.IsNullOrWhiteSpace(request.BatchTemporaryPassword))
+        {
+            // Off by default, and only ever as strong as a password a person would be allowed to choose:
+            // the policy and the blocklist, so never "staff", the school's name or a username (plan §12.2).
+            var orgName = await _context.Organizations.IgnoreQueryFilters().Where(o => o.Id == organizationId).Select(o => o.Name).FirstOrDefaultAsync();
+            var check = await _passwords.ValidatePasswordAsync(request.BatchTemporaryPassword, null, null, orgName,
+                request.Rows.SelectMany(r => new[] { r.Username ?? string.Empty }).Where(u => u.Length > 0));
+            if (!check.IsValid)
+                return BadRequest(new ProblemDetails { Title = "That batch password is refused", Detail = check.ErrorMessage + " A generated password per person is safer — leave the batch password empty to use one.", Status = StatusCodes.Status400BadRequest });
+            foreach (var row in request.Rows)
+            {
+                var local = (row.Email ?? string.Empty).Split('@')[0];
+                if ((!string.IsNullOrWhiteSpace(row.Username) && request.BatchTemporaryPassword.Contains(row.Username, StringComparison.OrdinalIgnoreCase))
+                    || (local.Length >= 3 && request.BatchTemporaryPassword.Contains(local, StringComparison.OrdinalIgnoreCase)))
+                    return BadRequest(new ProblemDetails { Title = "That batch password is refused", Detail = "It contains the username or email of someone in the file.", Status = StatusCodes.Status400BadRequest });
+            }
+            batchPassword = request.BatchTemporaryPassword;
+        }
+
+        var slips = new List<TemporaryPasswordSlipDto>();
+        if (needsTemporary)
+        {
+            var protector = _dataProtection.CreateProtector(TemporaryPasswords.ImportProtectorPurpose).ToTimeLimitedDataProtector();
+            for (var i = 0; i < request.Rows.Count; i++)
+            {
+                if (payload.ResolvedDelivery[i] is not (StaffImportDeliveryMode.Slips or StaffImportDeliveryMode.Sms)) continue;
+                var temporary = batchPassword ?? TemporaryPasswords.Generate();
+                payload.ProtectedTemporaryPasswords[i] = protector.Protect(temporary, TimeSpan.FromDays(2));
+                var row = request.Rows[i];
+                slips.Add(new TemporaryPasswordSlipDto
+                {
+                    RowNumber = i + 1,
+                    FullName = $"{row.FirstName} {row.LastName}".Trim(),
+                    Username = row.Username,
+                    Email = row.Email,
+                    TemporaryPassword = temporary,
+                    ExpiresAt = DateTime.UtcNow.Add(TemporaryPasswords.Lifetime)
+                });
+            }
+        }
+
         var job = new RosterImportJob
         {
             OrganizationId = organizationId,
@@ -144,19 +200,22 @@ public class StaffImportController : ControllerBase
             Kind = RosterImportKind.Staff,
             Status = RosterImportStatus.Pending,
             TotalRows = request.Rows.Count,
-            RowsJson = JsonSerializer.Serialize(request)
+            RowsJson = JsonSerializer.Serialize(payload)
         };
         _context.RosterImportJobs.Add(job);
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.StaffImportStarted, nameof(RosterImportJob), job.Id, null,
-            $"Staff import started: {request.Rows.Count} row(s){(request.SendInvites ? ", invitations on" : ", no invitations")}",
-            new { Rows = request.Rows.Count, request.SendInvites }, branchId, organizationId);
+            $"Staff import started: {request.Rows.Count} row(s), {slips.Count} temporary password(s){(payload.ResolvedDelivery.Values.Any(m => m == StaffImportDeliveryMode.Invitation) ? ", invitations on" : "")}",
+            new { Rows = request.Rows.Count, TemporaryPasswords = slips.Count, BatchPassword = batchPassword != null, Sms = payload.ResolvedDelivery.Values.Count(m => m == StaffImportDeliveryMode.Sms) }, branchId, organizationId);
 
         BackgroundJob.Enqueue<RosterImportProcessorJob>(j => j.ProcessAsync(job.Id));
         _logger.LogInformation("Staff import job {JobId} queued for branch {BranchId} with {Rows} row(s)", job.Id, branchId, request.Rows.Count);
 
-        return AcceptedAtAction(nameof(StudentsController.GetImportJob), "Students", new { branchId, jobId = job.Id }, StudentsController.MapToDto(job));
+        // The temporary passwords, once. The page prints the created rows' slips when the job has finished;
+        // nothing can show them again (re-issue instead).
+        return AcceptedAtAction(nameof(StudentsController.GetImportJob), "Students", new { branchId, jobId = job.Id },
+            new StaffImportStartedDto { Job = StudentsController.MapToDto(job), TemporaryPasswords = slips });
     }
 
     /// <summary>

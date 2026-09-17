@@ -163,11 +163,17 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <QDatePicker @bind-Value="@formStartsAt" ShowTime="true" Label="Starts" Required="true" HasError="@formErrors.Contains("starts")" ErrorMessage="When does it start?" />
+                <div class="q-datetime-pair">
+                    <QDatePicker @bind-Value="@formStartsAt" Label="Starts" Required="true" HasError="@formErrors.Contains("starts")" ErrorMessage="When does it start?" />
+                    <QDatePicker @bind-Value="@formStartsAt" ShowTime="true" Label="Time" Required="true" />
+                </div>
             </div>
             <div class="form-group">
-                <QDatePicker @bind-Value="@formEndsAt" ShowTime="true" Label="Ends" Required="true" Min="@formStartsAt"
-                             HasError="@formErrors.Contains("ends")" ErrorMessage="The end must be after the start" />
+                <div class="q-datetime-pair">
+                    <QDatePicker @bind-Value="@formEndsAt" Label="Ends" Required="true" Min="@formStartsAt"
+                                 HasError="@formErrors.Contains("ends")" ErrorMessage="The end must be after the start" />
+                    <QDatePicker @bind-Value="@formEndsAt" ShowTime="true" Label="Time" Required="true" />
+                </div>
             </div>
         </div>
         <div class="form-group">
@@ -285,7 +291,7 @@
     protected override async Task OnInitializedAsync()
     {
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

@@ -40,7 +40,13 @@
                         · appraiser @a.AppraiserName
                         @if (!string.IsNullOrWhiteSpace(a.ModeratorName)) { <text> · moderator @a.ModeratorName</text> }
                     </p>
-                    <QChip Text="@StaffDisplay.StageLabel(a.Stage)" Variant="@StaffDisplay.StageVariant(a.Stage)" />
+                    <div class="ad-chips">
+                        <QChip Text="@StaffDisplay.StageLabel(a.Stage)" Variant="@StaffDisplay.StageVariant(a.Stage)" />
+                        @if (a.PeriodClosed)
+                        {
+                            <QChip Text="Period closed" Icon="lock" Size="sm" Variant="muted" Title="An approver has closed this period. No new scored records land in it; the appraisal itself can still be finished." />
+                        }
+                    </div>
                 </div>
             </div>
             <div class="header-actions">
@@ -272,7 +278,32 @@
                     }
                     else if (a.CanIModerate && a.Stage is AppraisalStage.Moderation or AppraisalStage.Appealed)
                     {
-                        <p class="form-hint">You see the appraiser's rating against the evidence. Adjusting it needs a recorded reason; a "rate everyone average" pattern is what this step exists to catch.</p>
+                        @if (a.AppraiserRatingCounts.Count == 5 && a.SchoolRatingCounts.Count == 5 && a.SchoolRatingCounts.Sum() > 0)
+                        {
+                            <div class="ad-dispersion">
+                                <p class="ad-dispersion__lead">
+                                    @if (a.AppraiserMeanRating.HasValue && a.SchoolMeanRating.HasValue)
+                                    {
+                                        <text>@a.AppraiserName's mean rating this period is <strong>@a.AppraiserMeanRating.Value.ToString("0.0#")</strong> against the branch's <strong>@a.SchoolMeanRating.Value.ToString("0.0#")</strong>, over @a.AppraiserRatingCounts.Sum() of @a.SchoolRatingCounts.Sum() rated appraisals.</text>
+                                    }
+                                    else
+                                    {
+                                        <text>@a.AppraiserName has not rated anyone else this period.</text>
+                                    }
+                                </p>
+                                <div class="ad-dispersion__cols">
+                                    <div>
+                                        <span class="ad-label">This appraiser</span>
+                                        <QBarList Items="@RatingBars(a.AppraiserRatingCounts)" EmptyText="No ratings yet." />
+                                    </div>
+                                    <div>
+                                        <span class="ad-label">Every appraiser in the branch</span>
+                                        <QBarList Items="@RatingBars(a.SchoolRatingCounts)" EmptyText="No ratings yet." />
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                        <p class="form-hint">You see the appraiser's rating against the evidence and against how they have rated everyone else. Adjusting it needs a recorded reason; a "rate everyone average" pattern is what this step exists to catch.</p>
                         <div class="form-group">
                             <label>Final rating <span class="q-input__required">*</span></label>
                             <QRating @bind-Value="@moderation.FinalRating" Max="5" Labels="@BandLabels" ShowLabels="true" Size="lg" AriaLabel="Final rating" EmptyLabel="Choose a band" />
@@ -322,6 +353,35 @@
                         <p class="ad-muted ad-small">Live: changes as records are logged, until the appraisal is signed.</p>
                     }
                 </QCard>
+
+                @if (a.IsAnnual)
+                {
+                    <QCard Title="Termly appraisals" Icon="calendar3" Class="ad-card">
+                        @if (!a.TermlyRollup.Any())
+                        {
+                            <p class="ad-muted">No termly appraisals for @a.PeriodKey. The annual rating stands on its own.</p>
+                        }
+                        else
+                        {
+                            <table class="ad-mini q-stack">
+                                <tbody>
+                                    @foreach (var t in a.TermlyRollup)
+                                    {
+                                        <tr>
+                                            <td data-label="Term">@t.PeriodName</td>
+                                            <td data-label="Stage"><QChip Text="@StaffDisplay.StageLabel(t.Stage)" Variant="@StaffDisplay.StageVariant(t.Stage)" Size="sm" /></td>
+                                            <td data-label="Final rating">@(t.FinalRating.HasValue ? RatingText(t.FinalRating) : "not signed")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                            <p class="ad-muted ad-small">
+                                Signed termly average: <strong>@(a.TermlyAverage.HasValue ? a.TermlyAverage.Value.ToString("0.0#") : "—")</strong>.
+                                The annual rating is their average, so it cannot be signed while a term listed here is unsigned.
+                            </p>
+                        }
+                    </QCard>
+                }
 
                 @if (a.SelfRating.HasValue || a.AppraiserRating.HasValue || a.FinalRating.HasValue)
                 {
@@ -385,6 +445,11 @@
     .ad-dl { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 8px 0 0; }
     .ad-dl dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 0; }
     .ad-dl dd { margin: 0; font-size: 13.5px; white-space: pre-wrap; }
+    .ad-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .ad-dispersion { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .ad-dispersion__lead { margin: 0 0 10px; font-size: 13.5px; color: var(--qm-text-secondary); }
+    .ad-dispersion__cols { display: flex; flex-wrap: wrap; gap: 16px; }
+    .ad-dispersion__cols > div { flex: 1 1 220px; min-width: 0; }
     .ad-composite { margin-bottom: 12px; }
     .ad-composite__n { display: block; font-size: 32px; font-weight: 700; line-height: 1; color: var(--qm-text-primary); font-variant-numeric: tabular-nums; }
     .ad-composite__l { font-size: 12px; color: var(--qm-text-muted); }
@@ -460,6 +525,21 @@
                 Color: b.Color ?? StaffDisplay.KindColor(b.Kind)))
             .ToList();
 
+    /// <summary>Counts per rating (index 0 = rating 1) as bars, highest rating first, named by band.</summary>
+    private IReadOnlyList<QBarItem> RatingBars(List<int> counts) =>
+        Enumerable.Range(1, 5).Reverse()
+            .Select(r => new QBarItem($"{r} — {BandLabels.ElementAtOrDefault(r - 1) ?? ""}", counts.ElementAtOrDefault(r - 1),
+                Count: counts.ElementAtOrDefault(r - 1).ToString(), Color: BandFill(r)))
+            .ToList();
+
+    private static string BandFill(int rating) => rating switch
+    {
+        >= 4 => "var(--qm-success)",
+        3 => "var(--qm-info, var(--qm-primary))",
+        2 => "var(--qm-warning)",
+        _ => "var(--qm-danger)"
+    };
+
     private static DateTime? ToDateTime(DateOnly? d) => d?.ToDateTime(TimeOnly.MinValue);
     private static DateOnly? ToDateOnly(DateTime? d) => d.HasValue ? DateOnly.FromDateTime(d.Value) : null;
 
@@ -472,7 +552,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

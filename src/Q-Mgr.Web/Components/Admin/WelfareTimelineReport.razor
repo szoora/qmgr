@@ -85,15 +85,15 @@
         @* ---------------- Summary ---------------- *@
         <section class="wr-summary">
             <h2>Summary</h2>
-            <div class="wr-tiles">
-                <div class="wr-tile"><span class="wr-tile__n">@FinalizedRecords.Count</span><span class="wr-tile__l">Records</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">@AchievementCount</span><span class="wr-tile__l">Achievements</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">@BehaviorCount</span><span class="wr-tile__l">Behaviour</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">+@AchievementPoints</span><span class="wr-tile__l">Positive points</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">@BehaviorPoints</span><span class="wr-tile__l">Negative points</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">@(NetPoints > 0 ? "+" : "")@NetPoints</span><span class="wr-tile__l">Net</span></div>
-                <div class="wr-tile"><span class="wr-tile__n">@OpenActionCount</span><span class="wr-tile__l">Open actions</span></div>
-            </div>
+            <QStatRow Class="wr-tiles">
+                <QStatTile Value="@FinalizedRecords.Count.ToString()" Label="Records" />
+                <QStatTile Value="@AchievementCount.ToString()" Label="Achievements" />
+                <QStatTile Value="@BehaviorCount.ToString()" Label="Behaviour" />
+                <QStatTile Value="@($"+{AchievementPoints}")" Label="Positive points" />
+                <QStatTile Value="@BehaviorPoints.ToString()" Label="Negative points" />
+                <QStatTile Value="@($"{(NetPoints > 0 ? "+" : "")}{NetPoints}")" Label="Net" />
+                <QStatTile Value="@OpenActionCount.ToString()" Label="Open actions" />
+            </QStatRow>
 
             @if (CategoryBreakdown.Any())
             {
@@ -290,10 +290,13 @@ else if (loadError != null)
 
     .wr-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 12pt; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
 
-    .wr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
-    .wr-tile { border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
-    .wr-tile__n { display: block; font-size: 15pt; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
-    .wr-tile__l { display: block; font-size: 7.5pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+    /* QStatTile on paper: the sheet is always white whatever the app theme, so the tile's themed card
+       surface is swapped for the sheet's own ink and rule colours, and it is sized in points like the
+       rest of the document. */
+    .wr-sheet .wr-tiles { grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; margin-bottom: 0; }
+    .wr-sheet .wr-tiles .q-stat { background: transparent; border: 1px solid #c9c0bb; border-radius: 3px; padding: 7px 9px; }
+    .wr-sheet .wr-tiles .q-stat__value { font-family: inherit; font-size: 15pt; color: inherit; }
+    .wr-sheet .wr-tiles .q-stat__label { font-size: 7.5pt; letter-spacing: .05em; color: #5b524d; }
 
     .wr-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 9.5pt; }
     .wr-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
@@ -335,7 +338,6 @@ else if (loadError != null)
         /* A record must not be split across a page break: half an incident on one sheet and half
            on the next is how a reader draws the wrong conclusion from a file. */
         .wr-record,
-        .wr-tile,
         .wr-block { break-inside: avoid; page-break-inside: avoid; }
 
         .wr-timeline h2,

@@ -75,6 +75,10 @@
 
         <QFilterBar Wrap="true">
             <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Presets="@TimelinePresets" />
+            @if (activeTab == "records")
+            {
+                <QCheckbox @bind-Value="@showActivityBetween" Label="Show activity between records" />
+            }
         </QFilterBar>
 
         <QTabs Tabs="@Tabs" ActiveKey="@activeTab" ActiveKeyChanged="@(k => activeTab = k)" AriaLabel="Timeline sections" />
@@ -84,8 +88,26 @@
                 @if (activeTab == "records")
                 {
                     <QTimeline GroupByDay="true" EmptyText="@EmptyText">
-                        @foreach (var r in timeline.Records.OrderByDescending(x => x.OccurredAt))
+                        @foreach (var entry in TimelineEntries)
                         {
+                            @if (entry.Event is { } ev)
+                            {
+                                @* The file's second layer (plan §11): what was done between the records, compact and muted. *@
+                                <QTimelineItem Class="st-activity-item" MarkerIcon="activity" MarkerColor="var(--qm-text-muted)" Date="@ev.OccurredAt.ToLocalTime()">
+                                    <TitleContent>
+                                        <span class="st-activity-text">@ev.Summary</span>
+                                    </TitleContent>
+                                    <ChildContent>
+                                        <div class="st-meta">
+                                            <span>@(ev.ActorName ?? "System")</span>
+                                            @if (!string.IsNullOrWhiteSpace(ev.IpAddress)) { <span>· @ev.IpAddress</span> }
+                                            @if (!string.IsNullOrWhiteSpace(ev.UserAgent)) { <span>· @ev.UserAgent</span> }
+                                        </div>
+                                    </ChildContent>
+                                </QTimelineItem>
+                                continue;
+                            }
+                            var r = entry.Record!;
                             <QTimelineItem MarkerColor="@(r.ParameterColor ?? StaffDisplay.KindColor(r.ParameterKind))"
                                            MarkerIcon="@StaffDisplay.KindIcon(r.ParameterKind)"
                                            Date="@r.OccurredAt.ToLocalTime()"
@@ -119,6 +141,10 @@
                                 </TitleContent>
                                 <ChildContent>
                                     <p class="st-desc">@r.Description</p>
+                                    @if (!string.IsNullOrWhiteSpace(r.ParameterPurpose))
+                                    {
+                                        <p class="st-purpose"><QIcon Name="info-circle" /> Why this is kept: @r.ParameterPurpose</p>
+                                    }
                                     <div class="st-meta">
                                         <span>Logged by @r.LoggedByName</span>
                                         <span>· @StaffDisplay.SourceLabel(r.Source)</span>
@@ -265,6 +291,10 @@
     </FooterContent>
 </QModal>
 
+<ConfirmDialog @bind-IsVisible="showLateFinalizeDialog" Title="Finalise a late entry?"
+               Message="@($"This draft is dated more than {lateDraftDays} days ago. Once final, the record will say it was logged late.")"
+               ConfirmText="Finalise as a late entry" OnClose="@ConfirmLateFinalize" />
+
 <ConfirmDialog @bind-IsVisible="showAnnulDialog" Title="Annul this record?"
                Message="@($"The row stays on the file marked Annulled, with your reason, and drops out of scoring. {(actingRecord?.ParameterName ?? "")} — {(actingRecord == null ? "" : QDateFormat.D(actingRecord.OccurredAt.ToLocalTime()))}")"
                ConfirmText="Annul" ConfirmButtonClass="btn-danger" RequireReason="true" ReasonLabel="Reason *"
@@ -283,6 +313,10 @@
     .st-main { flex: 1 1 520px; min-width: 0; }
     .st-side { flex: 0 1 320px; min-width: 260px; }
     .st-desc { margin: 6px 0; white-space: pre-wrap; color: var(--qm-text-primary); }
+    .st-purpose { margin: 0 0 6px; font-size: 12px; color: var(--qm-text-muted); display: flex; gap: 6px; align-items: flex-start; }
+    .st-activity-item .q-timeline__card { padding: 6px 12px; background: transparent; border-style: dashed; box-shadow: none; }
+    .st-activity-item .q-timeline__marker { transform: scale(.72); opacity: .7; }
+    .st-activity-text { font-size: 13px; font-weight: 400; color: var(--qm-text-secondary); }
     .st-meta { display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 12.5px; color: var(--qm-text-muted); }
     .st-late { color: var(--qm-warning); display: inline-flex; gap: 4px; align-items: center; }
     .st-notes { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -305,7 +339,7 @@
 @code {
     [Parameter] public Guid UserId { get; set; }
 
-    private static readonly IReadOnlyList<QTab> Tabs = new[] { new QTab("records", "Records", "journal-text"), new QTab("activity", "Activity", "activity") };
+    private static readonly IReadOnlyList<QTab> Tabs = new[] { new QTab("records", "Timeline", "journal-text"), new QTab("activity", "Activity table", "table") };
 
     private static readonly IReadOnlyList<DateRangePreset> TimelinePresets = new DateRangePreset[]
     {
@@ -322,6 +356,22 @@
     private StaffTimelineDto? timeline;
     private DateRange range = DateRange.AllTime();
     private string activeTab = "records";
+    private bool showActivityBetween;
+
+    private sealed record TimelineEntry(DateTime At, StaffPerformanceRecordDto? Record, ActivityEventDto? Event);
+
+    /// <summary>The records, newest first, with the file's activity interleaved by time when the toggle is on.</summary>
+    private IEnumerable<TimelineEntry> TimelineEntries
+    {
+        get
+        {
+            if (timeline == null) return Enumerable.Empty<TimelineEntry>();
+            var entries = timeline.Records.Select(r => new TimelineEntry(r.OccurredAt, r, null));
+            if (showActivityBetween)
+                entries = entries.Concat(timeline.Activity.Select(a => new TimelineEntry(a.OccurredAt, null, a)));
+            return entries.OrderByDescending(e => e.At);
+        }
+    }
     private Guid loadedFor;
 
     private bool showRecordDialog;
@@ -398,7 +448,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -463,18 +513,38 @@
 
     // ---------------- Record actions ----------------
 
-    private async Task Finalize(StaffPerformanceRecordDto r)
+    private async Task Finalize(StaffPerformanceRecordDto r) => await Finalize(r, acknowledgeLate: false);
+
+    private async Task Finalize(StaffPerformanceRecordDto r, bool acknowledgeLate)
     {
         try
         {
-            await StaffApi.FinalizeRecordAsync(branchId, r.Id);
+            await StaffApi.FinalizeRecordAsync(branchId, r.Id, acknowledgeLate);
             Toast.Notify(ToastSeverity.Success, "Record finalised", $"{r.ParameterName} is now on the file.");
             await LoadAsync();
+        }
+        catch (LateEntryConfirmationRequiredException late)
+        {
+            // The API's threshold, not a guess: confirm, then finalise again with the acknowledgement.
+            lateDraft = r;
+            lateDraftDays = late.ThresholdDays;
+            showLateFinalizeDialog = true;
         }
         catch (Exception ex)
         {
             Toast.Notify(ToastSeverity.Error, "Could not finalise", ex.Message);
         }
+    }
+
+    private StaffPerformanceRecordDto? lateDraft;
+    private int lateDraftDays;
+    private bool showLateFinalizeDialog;
+
+    private async Task ConfirmLateFinalize(bool confirmed)
+    {
+        var r = lateDraft;
+        lateDraft = null;
+        if (confirmed && r != null) await Finalize(r, acknowledgeLate: true);
     }
 
     private void OpenNote(StaffPerformanceRecordDto r)

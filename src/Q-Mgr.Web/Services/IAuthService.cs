@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Blazored.LocalStorage;
@@ -9,12 +10,20 @@ namespace QMgr.Web.Services;
 public interface IAuthService
 {
     Task<IdentifyUserResponse?> IdentifyUserAsync(string email);
-    Task<bool> LoginAsync(string email, string password, Guid? organizationId = null);
+    Task<SignInOutcome> LoginAsync(string email, string password, Guid? organizationId = null);
     Task LogoutAsync();
     Task<UserInfo?> GetCurrentUserAsync();
     Task<string?> GetAccessTokenAsync();
     Task<bool> IsAuthenticatedAsync();
     Task<string?> RefreshTokenAsync();
+
+    /// <summary>
+    /// Raised once the API has REFUSED this circuit's refresh token and the local session has been
+    /// cleared: the person is signed out, not short of a permission. <c>MainLayout</c> listens and
+    /// sends them to the sign-in page with a return address. Not raised for a network failure, a
+    /// 429 or a 5xx, which leave the session in place for the next attempt.
+    /// </summary>
+    event Action? SessionExpired;
 
     /// <summary>
     /// Re-fetches the signed-in user (incl. role and permissions) from GET api/v1/auth/me and
@@ -23,6 +32,13 @@ public interface IAuthService
     Task<UserInfo?> RefreshCurrentUserAsync();
 }
 
+/// <summary>
+/// What a sign-in attempt came to. <see cref="MustChangePassword"/>: signed in with a temporary password;
+/// the session can only set a new one (duty rota plan §12.3). <see cref="Message"/> is the API's own words
+/// when it refused — "waiting for approval", "temporary password expired" — or null for a plain wrong password.
+/// </summary>
+public record SignInOutcome(bool Success, bool MustChangePassword = false, string? Message = null, string? ErrorCode = null);
+
 public record IdentifyUserResponse
 {
     public string Email { get; init; } = string.Empty;
@@ -30,8 +46,6 @@ public record IdentifyUserResponse
     public string OrganizationName { get; init; } = string.Empty;
     public string OrganizationSlug { get; init; } = string.Empty;
     public bool HasPassword { get; init; }
-    public bool SsoEnabled { get; init; }
-    public string? SsoUrl { get; init; }
 }
 
 public class AuthService : IAuthService
@@ -46,6 +60,8 @@ public class AuthService : IAuthService
     private const string AccessTokenKey = "access_token";
     private const string RefreshTokenKey = "refresh_token";
     private const string UserInfoKey = "user_info";
+
+    public event Action? SessionExpired;
 
     public AuthService(
         IHttpClientFactory httpClientFactory,
@@ -69,6 +85,8 @@ public class AuthService : IAuthService
         var v = _viewer.Viewer;
         if (v == null) return;
         if (!string.IsNullOrWhiteSpace(v.IpAddress)) message.Headers.TryAddWithoutValidation("X-Viewer-Ip", v.IpAddress);
+        // The rate-limit key: sign-in attempts are limited per browser, not across everyone at once.
+        if (!string.IsNullOrWhiteSpace(v.IpAddress)) message.Headers.TryAddWithoutValidation("X-Real-IP", v.IpAddress);
         if (!string.IsNullOrWhiteSpace(v.UserAgent)) message.Headers.TryAddWithoutValidation("X-Viewer-Agent", v.UserAgent);
     }
 
@@ -99,7 +117,7 @@ public class AuthService : IAuthService
         }
     }
 
-    public async Task<bool> LoginAsync(string email, string password, Guid? organizationId = null)
+    public async Task<SignInOutcome> LoginAsync(string email, string password, Guid? organizationId = null)
     {
         try
         {
@@ -116,29 +134,41 @@ public class AuthService : IAuthService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Login failed for user {Email}", email);
-                return false;
+                string? message = null, code = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (doc.RootElement.TryGetProperty("error", out var e)) code = e.GetString();
+                    // Only the API's specific refusals are shown verbatim; a wrong password stays generic.
+                    if (code != null && doc.RootElement.TryGetProperty("message", out var m)) message = m.GetString();
+                    else if (doc.RootElement.TryGetProperty("message", out var lm) && (lm.GetString() ?? "").StartsWith("Account locked", StringComparison.Ordinal)) message = lm.GetString();
+                }
+                catch (JsonException) { }
+                return new SignInOutcome(false, Message: message, ErrorCode: code);
             }
 
             var result = await response.Content.ReadFromJsonAsync<LoginResponse>(_jsonOptions);
-            if (result == null) return false;
+            if (result == null) return new SignInOutcome(false);
 
-            // Save to localStorage for persistence
+            // Save to localStorage for persistence. A password-change-only sign-in has no refresh token:
+            // none is stored, so nothing can extend that session past its fifteen minutes.
             await _localStorage.SetItemAsync(AccessTokenKey, result.AccessToken);
-            await _localStorage.SetItemAsync(RefreshTokenKey, result.RefreshToken);
+            if (string.IsNullOrEmpty(result.RefreshToken)) await _localStorage.RemoveItemAsync(RefreshTokenKey);
+            else await _localStorage.SetItemAsync(RefreshTokenKey, result.RefreshToken);
             await _localStorage.SetItemAsync(UserInfoKey, result.User);
 
             // Save to in-memory storage for HTTP handler access
             _tokenStorage.AccessToken = result.AccessToken;
-            _tokenStorage.RefreshToken = result.RefreshToken;
+            _tokenStorage.RefreshToken = string.IsNullOrEmpty(result.RefreshToken) ? null : result.RefreshToken;
             _tokenStorage.UserInfo = result.User;
 
-            _logger.LogInformation("User {Email} logged in successfully", email);
-            return true;
+            _logger.LogInformation("User {Email} logged in successfully{Temporary}", email, result.MustChangePassword ? " with a temporary password" : "");
+            return new SignInOutcome(true, result.MustChangePassword);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Login error for user {Email}", email);
-            return false;
+            return new SignInOutcome(false, Message: "Unable to reach the server. Please try again.");
         }
     }
 
@@ -164,13 +194,31 @@ public class AuthService : IAuthService
             _logger.LogDebug(ex, "Server-side logout call failed; signing out locally regardless");
         }
 
-        await _localStorage.RemoveItemAsync(AccessTokenKey);
-        await _localStorage.RemoveItemAsync(RefreshTokenKey);
-        await _localStorage.RemoveItemAsync(UserInfoKey);
-
-        _tokenStorage.Clear();
+        await ClearLocalSessionAsync();
 
         _logger.LogInformation("User logged out");
+    }
+
+    /// <summary>
+    /// Forgets the session in this browser only. The in-memory store is cleared even when
+    /// localStorage cannot be reached, or a dead token would keep being sent for the rest of the circuit.
+    /// </summary>
+    private async Task ClearLocalSessionAsync()
+    {
+        try
+        {
+            await _localStorage.RemoveItemAsync(AccessTokenKey);
+            await _localStorage.RemoveItemAsync(RefreshTokenKey);
+            await _localStorage.RemoveItemAsync(UserInfoKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not clear the stored session from localStorage");
+        }
+        finally
+        {
+            _tokenStorage.Clear();
+        }
     }
 
     public async Task<UserInfo?> GetCurrentUserAsync()
@@ -278,12 +326,44 @@ public class AuthService : IAuthService
             if (string.IsNullOrEmpty(refreshToken))
                 return null;
 
-            var response = await _httpClient.PostAsJsonAsync("api/v1/auth/refresh", new { refreshToken });
+            using var refreshRequest = new HttpRequestMessage(HttpMethod.Post, "api/v1/auth/refresh")
+            {
+                Content = JsonContent.Create(new { refreshToken })
+            };
+            // Relayed like login and logout, or every refresh from this server shares one loopback
+            // rate-limit bucket — and a 429 here used to sign the person out.
+            AddViewerHeaders(refreshRequest);
+            var response = await _httpClient.SendAsync(refreshRequest);
 
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Token refresh failed with status {StatusCode}", response.StatusCode);
-                await LogoutAsync();
+
+                // Only a refusal ends the session. A rate limit, a server error or an API restart says
+                // nothing about the token, and wiping it turned a blip into a forced sign-in.
+                if (response.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.BadRequest or HttpStatusCode.Forbidden))
+                    return null;
+
+                // The API keeps one refresh token per user and rotates it on every use, so a second tab
+                // of the same browser that refreshed a moment earlier makes this one's token stale. That
+                // tab has already written the new pair to localStorage: adopt it rather than signing
+                // both tabs out (which is what wiping localStorage here did).
+                var stored = await _localStorage.GetItemAsync<string>(RefreshTokenKey);
+                var storedAccess = await _localStorage.GetItemAsync<string>(AccessTokenKey);
+                if (!string.IsNullOrEmpty(stored) && stored != refreshToken && !string.IsNullOrEmpty(storedAccess))
+                {
+                    _tokenStorage.AccessToken = storedAccess;
+                    _tokenStorage.RefreshToken = stored;
+                    _tokenStorage.UserInfo = await _localStorage.GetItemAsync<UserInfo>(UserInfoKey) ?? _tokenStorage.UserInfo;
+                    _logger.LogInformation("Refresh token was rotated by another tab; adopted its session");
+                    return storedAccess;
+                }
+
+                // Local only, never LogoutAsync: its server call revokes the user's one refresh token,
+                // which after a sign-in on another device is THAT device's live session.
+                await ClearLocalSessionAsync();
+                _logger.LogInformation("Session ended: the refresh token was refused");
+                SessionExpired?.Invoke();
                 return null;
             }
 
@@ -313,5 +393,6 @@ public class AuthService : IAuthService
         public string AccessToken { get; init; } = string.Empty;
         public string RefreshToken { get; init; } = string.Empty;
         public UserInfo? User { get; init; }
+        public bool MustChangePassword { get; init; }
     }
 }

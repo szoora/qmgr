@@ -20,6 +20,12 @@ public record ClassTeacherDto
     public Guid UserId { get; init; }
     public ClassTeacherRole Role { get; init; }
 
+    /// <summary>For a subject-teacher assignment: the subject and its planned periods a week.</summary>
+    public Guid? SubjectId { get; init; }
+    public string? SubjectName { get; init; }
+    public string? SubjectCode { get; init; }
+    public int? PeriodsPerWeek { get; init; }
+
     // --- The teacher's contact card. Read from the User row; never stored twice. ---
     public string FullName { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
@@ -61,6 +67,24 @@ public record ClassTeacherCoverageDto
     public ClassTeacherDto? ClassTeacher { get; init; }
 
     public List<ClassTeacherDto> Assistants { get; init; } = new();
+
+    /// <summary>The class's level ("S2" for S2A), from the class vocabulary. Groups streams.</summary>
+    public string? Level { get; init; }
+
+    /// <summary>Subject → teacher for this class (duty rota plan §5.2), subject order.</summary>
+    public List<ClassTeacherDto> SubjectTeachers { get; init; } = new();
+}
+
+/// <summary>
+/// A class missing subjects its level teaches (plan §5.2 coverage). There is no stored curriculum per class, so
+/// the curriculum of a class is what is taught in any stream of its level: S2B with no Physics teacher while S2A
+/// has one is the silent gap — the timetable would never place S2B Physics and nobody would notice.
+/// </summary>
+public record ClassSubjectGapDto
+{
+    public string ClassName { get; init; } = string.Empty;
+    public string Level { get; init; } = string.Empty;
+    public List<string> MissingSubjects { get; init; } = new();
 }
 
 /// <summary>
@@ -81,6 +105,22 @@ public record ClassTeacherCoverageReportDto
 
     /// <summary>Class names held by active students that match no entry in the branch's class vocabulary.</summary>
     public List<ClassTeacherUnknownClassDto> UnknownStudentClasses { get; init; } = new();
+
+    /// <summary>Classes with no subject teacher for a subject taught elsewhere in their level.</summary>
+    public List<ClassSubjectGapDto> SubjectGaps { get; init; } = new();
+
+    /// <summary>Subject-teacher assignments with no lesson in the published timetable (empty until a timetable is published).</summary>
+    public List<ClassTeacherDto> SubjectTeachersWithNoLessons { get; init; } = new();
+
+    /// <summary>Assignments whose planned periods a week differ from the periods the published timetable places.</summary>
+    public List<PlannedPeriodsMismatchDto> PlannedPeriodMismatches { get; init; } = new();
+}
+
+public record PlannedPeriodsMismatchDto
+{
+    public ClassTeacherDto Assignment { get; init; } = new();
+    public int Planned { get; init; }
+    public int Timetabled { get; init; }
 }
 
 public record ClassTeacherOrphanUserDto

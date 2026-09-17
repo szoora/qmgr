@@ -13,6 +13,8 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IJSRuntime JS
+@inject IAuthService AuthService
 
 <PageTitle>Departments &amp; Structure - Q-Mgr</PageTitle>
 
@@ -155,20 +157,44 @@
         {
             <QCard Title="Import a staff list" Icon="upload">
                 <p class="ss-lede">
-                    One row per person. Columns, in this order, with a header row:
-                    <code>FirstName, LastName, Email, Username, Phone, EmployeeNumber, JobTitle, RoleCode, DepartmentCodes, LineManagerEmail</code>.
+                    One row per person, from Excel (.xlsx) or CSV. Columns, in this order, with a header row:
+                    <code>FirstName, LastName, Email, Username, Phone, EmployeeNumber, JobTitle, RoleCode, DepartmentCodes, LineManagerEmail, DeliveryMode, ClassTeacherOf, Teaches</code>.
                     Department codes are separated by semicolons (<code>MATH;PHYS</code>). Role codes are
                     <code>teacher</code>, <code>support-staff</code>, <code>class-teacher</code>, <code>head-of-department</code>,
-                    <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom role's code. An email already on file is skipped, not changed.
+                    <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom role's code. <code>DeliveryMode</code> is
+                    optional (<code>slips</code>, <code>invitation</code> or <code>sms</code>) and overrides the choice below for that row.
+                    <code>ClassTeacherOf</code> names classes (<code>S2A;S2B</code>); <code>Teaches</code> names subjects and classes
+                    (<code>MATH:S2A,S2B; PHY:S3A</code>). An email already on file is skipped, not changed.
                 </p>
                 <div class="ss-import-input">
-                    <InputFile OnChange="OnCsvFileSelected" accept=".csv,text/csv" />
-                    <span class="ss-sub">or paste below</span>
+                    <InputFile id="ss-import-file" OnChange="OnFileSelected" accept=".csv,.xlsx,.xls,text/csv" />
+                    <span class="ss-sub">or paste CSV below</span>
+                    <QDataExport TItem="StaffImportRow" Title="Staff import template" FileStem="staff-import-template"
+                                 Columns="@TemplateColumns" RowProvider="@ProvideTemplateRowsAsync" Formats="@(ExportFormat.Excel | ExportFormat.Csv)" Text="Download template" />
                 </div>
                 <QInput TValue="string" Type="textarea" Rows="8" @bind-Value="@csvText" Placeholder="FirstName,LastName,Email,..." />
+
+                <fieldset class="ss-delivery">
+                    <legend>How people get in</legend>
+                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Slips)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Slips)" />
+                        <span><strong>Temporary password slips</strong> (recommended for schools) — each person gets their own temporary password, printed once on a slip you hand out. It expires in 72 hours and they choose their own at first sign-in.</span></label>
+                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Invitation)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Invitation)" />
+                        <span><strong>Invitation email</strong> — a link valid for 7 days to set their own password. For staff with working email.</span></label>
+                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Sms)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Sms)" />
+                        <span><strong>Temporary password by SMS</strong> — the same temporary password, sent to each person's own phone. Needs SMS switched on for your organization; anyone without a phone number gets a slip.</span></label>
+                    @if (deliveryMode != StaffImportDeliveryMode.Invitation)
+                    {
+                        <QCheckbox @bind-Value="@useBatchPassword" Label="Type one temporary password for this whole batch instead" />
+                        @if (useBatchPassword)
+                        {
+                            <p class="ss-sub ss-warn">Not recommended. A password everybody in the batch shares lets any of them sign in as any other until each has changed it. It must pass the password policy and the blocklist — so never "staff", the school's name or a username — and it still expires in 72 hours with a forced change.</p>
+                            <QInput TValue="string" Type="password" Label="Batch temporary password" @bind-Value="@batchPassword" />
+                        }
+                    }
+                </fieldset>
+
                 <div class="ss-actions ss-import-actions">
                     <QButton Text="Preview" Icon="eye" Variant="secondary" OnClick="@Preview" Disabled="@string.IsNullOrWhiteSpace(csvText)" />
-                    <QCheckbox @bind-Value="@sendInvites" Label="Email each person a link to set their own password" />
                 </div>
             </QCard>
 
@@ -178,7 +204,7 @@
                     <ChildContent>
                     <div class="table-wrap">
                         <table class="data-table q-stack">
-                            <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Departments</th><th>Line manager</th><th>Check</th></tr></thead>
+                            <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Departments</th><th>Line manager</th><th>Delivery</th><th>Teaching</th><th>Check</th></tr></thead>
                             <tbody>
                                 @foreach (var r in previewRows.Take(200))
                                 {
@@ -189,6 +215,8 @@
                                         <td>@r.Row.RoleCode</td>
                                         <td>@string.Join("; ", r.Row.DepartmentCodes)</td>
                                         <td>@(r.Row.LineManagerEmail ?? "—")</td>
+                                        <td>@DeliveryLabel(r.Row.DeliveryMode ?? deliveryMode)</td>
+                                        <td>@TeachingSummary(r.Row)</td>
                                         <td>@if (r.Error == null) { <QChip Text="Ready" Variant="success" Size="sm" /> } else { <QChip Text="@r.Error" Variant="danger" Size="sm" /> }</td>
                                     </tr>
                                 }
@@ -199,7 +227,7 @@
                     <FooterContent>
                         <div class="ss-actions">
                             <span class="ss-sub">Rows with a problem are left out. The import runs in the background; progress appears below.</span>
-                            <QButton Text="@($"Import {previewRows.Count(r => r.Error == null)} people")" Icon="cloud-upload" Variant="primary"
+                            <QButton Text="@(previewRows.Count(r => r.Error == null) is var ready && ready == 1 ? "Import 1 person" : $"Import {ready} people")" Icon="cloud-upload" Variant="primary"
                                      OnClick="@StartImport" Loading="@importing" Disabled="@(!previewRows.Any(r => r.Error == null))" />
                         </div>
                     </FooterContent>
@@ -216,6 +244,14 @@
                         <QStatTile Value="@currentJob.FailedCount.ToString()" Label="Failed" Variant="@(currentJob.FailedCount > 0 ? "danger" : "secondary")" />
                     </QStatRow>
                     <p class="ss-sub">@ImportStatusText(currentJob)</p>
+                    @if (pendingSlips.Count > 0 && IsFinished(currentJob.Status))
+                    {
+                        <div class="ss-slips-cta">
+                            <QIcon Name="exclamation-triangle-fill" />
+                            <span>@(PrintableSlips.Count == 1 ? "1 temporary password is" : $"{PrintableSlips.Count} temporary passwords are") ready. They cannot be shown again once you leave this page.</span>
+                            <QButton Text="Print slips" Icon="printer" Variant="primary" OnClick="@(() => showSlips = true)" Disabled="@(PrintableSlips.Count == 0)" />
+                        </div>
+                    }
                     @if (jobEntries.Count > 0)
                     {
                         <div class="table-wrap">
@@ -266,6 +302,11 @@
         }
     }
 </div>
+
+@if (showSlips)
+{
+    <TemporaryPasswordSlips Slips="@PrintableSlips" OrganizationName="@organizationName" SignInAddress="@($"{Navigation.BaseUri}login")" OnClose="@(() => showSlips = false)" />
+}
 
 <QModal @bind-Visible="showDepartmentModal" Title="@(editingDepartmentId == null ? "New department" : "Edit department")" Icon="diagram-3" Size="md">
     <ChildContent>
@@ -322,6 +363,12 @@
     .ss-row-error td { background: rgba(var(--qm-danger-rgb), .06); }
     .ss-form { display: flex; flex-direction: column; gap: 14px; }
     .ss-import-input { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .ss-delivery { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 14px; margin: 12px 0 0; display: grid; gap: 8px; }
+    .ss-delivery legend { font-size: 13px; font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
+    .ss-radio { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+    .ss-radio input { margin-top: 3px; }
+    .ss-warn { color: var(--qm-warning); }
+    .ss-slips-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
     .ss-coverage { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 14px; }
     .ss-cov { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-lg); padding: 12px 14px; background: var(--qm-bg-card); min-width: 0; }
     .ss-cov h4 { margin: 0 0 8px; font-size: 13px; font-family: var(--qm-font-display); }
@@ -335,7 +382,14 @@
     private const int PageSize = 25;
 
     private Guid branchId;
-    private bool isLoading = true, saving, canImport, importing, sendInvites = true, showRetired, onlyGaps;
+    private bool isLoading = true, saving, canImport, importing, showRetired, onlyGaps;
+
+    // Delivery (duty rota plan §12.2). Slips by default: the recommended mode for a school.
+    private StaffImportDeliveryMode deliveryMode = StaffImportDeliveryMode.Slips;
+    private bool useBatchPassword, showSlips;
+    private string? batchPassword;
+    private List<TemporaryPasswordSlipDto> pendingSlips = new();
+    private string organizationName = string.Empty;
     private string activeTab = "departments";
     private List<DepartmentDto> departments = new();
     private List<StaffMemberDto> staff = new();
@@ -393,13 +447,14 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
         }
 
         canImport = await PermissionService.HasPermissionAsync(Permissions.UsersCreate);
+        organizationName = (await AuthService.GetCurrentUserAsync())?.OrganizationName ?? string.Empty;
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
@@ -551,12 +606,13 @@
 
     // ---- Import ----
 
-    private async Task OnCsvFileSelected(InputFileChangeEventArgs e)
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
     {
         try
         {
-            using var reader = new StreamReader(e.File.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024));
-            csvText = await reader.ReadToEndAsync();
+            if (e.File.Size > 5 * 1024 * 1024) { Toast.Notify(ToastSeverity.Warning, "That file is too large", "A staff list over 5 MB is not a staff list — split it or remove other sheets."); return; }
+            // Excel and CSV alike are read in the browser by SheetJS (already loaded); only text comes back.
+            csvText = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", "ss-import-file");
             Preview();
         }
         catch (Exception ex)
@@ -580,6 +636,7 @@
         var iFirst = Col("firstname", 0); var iLast = Col("lastname", 1); var iEmail = Col("email", 2); var iUser = Col("username", 3);
         var iPhone = Col("phone", 4); var iEmp = Col("employeenumber", 5); var iJob = Col("jobtitle", 6); var iRole = Col("rolecode", 7);
         var iDept = Col("departmentcodes", 8); var iLm = Col("linemanageremail", 9);
+        var iDelivery = Col("deliverymode", 10); var iClassOf = Col("classteacherof", 11); var iTeaches = Col("teaches", 12);
 
         var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var number = 0;
@@ -600,11 +657,16 @@
                 JobTitle = Cell(iJob),
                 RoleCode = (Cell(iRole) ?? RoleCodes.Teacher).ToLowerInvariant(),
                 DepartmentCodes = (Cell(iDept) ?? "").Split(new[] { ';', '|' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(c => c.ToUpperInvariant()).ToList(),
-                LineManagerEmail = Cell(iLm)
+                LineManagerEmail = Cell(iLm),
+                DeliveryMode = ParseDelivery(Cell(iDelivery)),
+                ClassTeacherOf = Cell(iClassOf),
+                Teaches = Cell(iTeaches)
             };
 
             string? error = null;
-            if (string.IsNullOrWhiteSpace(row.FirstName) || string.IsNullOrWhiteSpace(row.LastName)) error = "Name missing";
+            if (Cell(iDelivery) is { } rawDelivery && row.DeliveryMode == null) error = $"DeliveryMode '{rawDelivery}' is not slips, invitation or sms";
+            if (error != null) { }
+            else if (string.IsNullOrWhiteSpace(row.FirstName) || string.IsNullOrWhiteSpace(row.LastName)) error = "Name missing";
             else if (string.IsNullOrWhiteSpace(row.Email) || !row.Email.Contains('@')) error = "Email missing or invalid";
             else if (!seenEmails.Add(row.Email)) error = "Email repeated in the file";
             else if (RoleCodes.IsSuperAdmin(row.RoleCode) || string.Equals(row.RoleCode, RoleCodes.Admin, StringComparison.OrdinalIgnoreCase)) error = "Administrator roles cannot be imported";
@@ -644,7 +706,22 @@
         importing = true;
         try
         {
-            currentJob = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest { Rows = rows, SendInvites = sendInvites });
+            if (useBatchPassword && string.IsNullOrWhiteSpace(batchPassword))
+            {
+                Toast.Notify(ToastSeverity.Warning, "Type the batch password, or untick the option to generate one per person");
+                return;
+            }
+            var started = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest
+            {
+                Rows = rows,
+                SendInvites = deliveryMode == StaffImportDeliveryMode.Invitation,
+                DeliveryMode = deliveryMode,
+                BatchTemporaryPassword = useBatchPassword && deliveryMode != StaffImportDeliveryMode.Invitation ? batchPassword : null
+            });
+            currentJob = started.Job;
+            // Held in memory only, for the slips; never stored, and gone when this page is left.
+            pendingSlips = started.TemporaryPasswords;
+            batchPassword = null;
             jobEntries = new();
             previewRows = new();
             csvText = null;
@@ -697,6 +774,60 @@
             }
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
+
+    /// <summary>The slips for rows that actually became accounts, with the username the job settled on (it may have added a number).</summary>
+    private List<TemporaryPasswordSlipDto> PrintableSlips => pendingSlips
+        .Select(s => (Slip: s, Entry: jobEntries.FirstOrDefault(e => e.RowNumber == s.RowNumber && e.Outcome == RosterImportRowOutcome.Created)))
+        .Where(x => x.Entry != null)
+        .Select(x => x.Slip with { Username = UsernameFromMessage(x.Entry!.Message) ?? x.Slip.Username })
+        .ToList();
+
+    private static string? UsernameFromMessage(string? message)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(message ?? string.Empty, @"^Created as .+? \(([^)]+)\)\.");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    private static StaffImportDeliveryMode? ParseDelivery(string? value) => (value ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "" => null,
+        "slip" or "slips" or "temporary" or "password" => StaffImportDeliveryMode.Slips,
+        "invitation" or "invite" or "email" => StaffImportDeliveryMode.Invitation,
+        "sms" or "text" => StaffImportDeliveryMode.Sms,
+        _ => null
+    };
+
+    private static string DeliveryLabel(StaffImportDeliveryMode mode) => mode switch
+    {
+        StaffImportDeliveryMode.Slips => "Slip",
+        StaffImportDeliveryMode.Invitation => "Invitation",
+        StaffImportDeliveryMode.Sms => "SMS",
+        _ => mode.ToString()
+    };
+
+    private static string TeachingSummary(StaffImportRow row)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(row.ClassTeacherOf)) parts.Add($"Class teacher: {row.ClassTeacherOf}");
+        if (!string.IsNullOrWhiteSpace(row.Teaches)) parts.Add($"Teaches: {row.Teaches}");
+        return parts.Count == 0 ? "—" : string.Join(" · ", parts);
+    }
+
+    private static readonly IReadOnlyList<ExportColumn<StaffImportRow>> TemplateColumns = new List<ExportColumn<StaffImportRow>>
+    {
+        new("FirstName", r => r.FirstName), new("LastName", r => r.LastName), new("Email", r => r.Email),
+        new("Username", r => r.Username), new("Phone", r => r.Phone), new("EmployeeNumber", r => r.EmployeeNumber),
+        new("JobTitle", r => r.JobTitle), new("RoleCode", r => r.RoleCode), new("DepartmentCodes", r => string.Join(";", r.DepartmentCodes)),
+        new("LineManagerEmail", r => r.LineManagerEmail), new("DeliveryMode", r => r.DeliveryMode?.ToString().ToLowerInvariant()),
+        new("ClassTeacherOf", r => r.ClassTeacherOf), new("Teaches", r => r.Teaches)
+    };
+
+    /// <summary>The template: the headers, with one example row a school overwrites.</summary>
+    private Task<ExportRows<StaffImportRow>> ProvideTemplateRowsAsync() => Task.FromResult(new ExportRows<StaffImportRow>(new List<StaffImportRow>
+    {
+        new() { FirstName = "Sarah", LastName = "Auma", Email = "sarah.auma@example.ac.ug", Phone = "0701234567", EmployeeNumber = "T-014", JobTitle = "Teacher",
+                RoleCode = "teacher", DepartmentCodes = new() { "MATH" }, ClassTeacherOf = "S2A", Teaches = "MATH:S2A,S2B" }
+    }, false));
 
     private static bool IsFinished(RosterImportStatus s) =>
         s is RosterImportStatus.Completed or RosterImportStatus.CompletedWithErrors or RosterImportStatus.Failed;

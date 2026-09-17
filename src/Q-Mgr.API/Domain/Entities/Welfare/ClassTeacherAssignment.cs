@@ -57,6 +57,12 @@ public class ClassTeacherAssignment : BaseAuditableEntity
     /// </summary>
     public ClassTeacherRole Role { get; set; } = ClassTeacherRole.ClassTeacher;
 
+    /// <summary>The subject taught, for a SubjectTeacher assignment (required then, null otherwise). Duty rota plan §5.2.</summary>
+    public Guid? SubjectId { get; set; }
+
+    /// <summary>Planned periods a week for this subject in this class — what the timetable's unplaced load and the teaching-load report compare against.</summary>
+    public int? PeriodsPerWeek { get; set; }
+
     public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
     public Guid AssignedByUserId { get; set; }
 
@@ -76,4 +82,5 @@ public class ClassTeacherAssignment : BaseAuditableEntity
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }
     public virtual Identity.User? User { get; set; }
+    public virtual Staff.Subject? Subject { get; set; }
 }

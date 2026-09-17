@@ -101,7 +101,8 @@ public sealed class ExportColumn<T>
 public record ExportRows<T>(IReadOnlyList<T> Rows, bool Truncated);
 
 /// <summary>The outcome, in the words the toast will use.</summary>
-public record ExportResult(bool Success, int RowCount, bool Truncated, string Message);
+/// <summary>What an export produced. <see cref="Format"/> is set on success so a page can say (and log) what the user took away.</summary>
+public record ExportResult(bool Success, int RowCount, bool Truncated, string Message, ExportFormat? Format = null);
 
 /// <summary>
 /// Turns declared columns and fetched rows into a file the browser saves.
@@ -202,7 +203,7 @@ public class DataExportService : IDataExportService
                 ? $"{count:N0} row{(count == 1 ? "" : "s")} sent to the print view. Choose \"Save as PDF\" there to keep a copy."
                 : $"{count:N0} row{(count == 1 ? "" : "s")} exported.";
 
-        return new ExportResult(true, count, rows.Truncated, message);
+        return new ExportResult(true, count, rows.Truncated, message, format);
     }
 
     // ---- writers ---------------------------------------------------------------------------

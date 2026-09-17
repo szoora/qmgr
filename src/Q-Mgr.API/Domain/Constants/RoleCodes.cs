@@ -147,4 +147,15 @@ public static class RoleCodes
     {
         return Rank(roleCode) <= Rank(Manager);
     }
+
+    /// <summary>
+    /// True when <paramref name="targetRoleCode"/> is at or below <paramref name="actorRoleCode"/> in
+    /// <see cref="All"/> — "an approver can assign only roles at or below their own rank" (duty rota plan
+    /// §12.4). A custom role ranks below Viewer, so it always passes this test; RoleAssignmentGuard then
+    /// requires its permissions to be a subset of the actor's, which is the check that matters for it.
+    /// </summary>
+    public static bool IsAtOrBelow(string? targetRoleCode, string? actorRoleCode)
+    {
+        return Rank(targetRoleCode) >= Rank(actorRoleCode);
+    }
 }

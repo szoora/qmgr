@@ -1995,6 +1995,15 @@
 .q-stat--info .q-stat__value { color: var(--qm-info); }
 .q-stat--info .q-stat__icon { background: rgba(var(--qm-info-rgb), 0.12); color: var(--qm-info); }
 
+/* On paper a tile is a ruled box with black figures: no card fill, no tinted icon badge, never split
+   across a page. A tint prints as an indistinguishable grey on an office mono printer. */
+@media print {
+    .q-stat { background: none !important; box-shadow: none !important; border: 1px solid #999; break-inside: avoid; page-break-inside: avoid; }
+    .q-stat__value, .q-stat__label { color: #000 !important; }
+    .q-stat__sub { background: none !important; color: #333 !important; padding-left: 0; }
+    .q-stat__icon { display: none; }
+}
+
 /* ==========================================================================
    Bar list — lifted from WelfareReports .bar-list
    ========================================================================== */
@@ -2577,3 +2586,10 @@
 .q-bars--stacked .q-bars__track { grid-row: 2; grid-column: 1 / -1; }
 .q-bars--stacked .q-bars__label { white-space: normal; }
 .q-bars--stacked .q-bars__row + .q-bars__row { margin-top: 6px; }
+
+/* ---- Date + time on one field ----------------------------------------------------------------------
+   QDatePicker is either a calendar (date) or a native time input (ShowTime), never both. A field that
+   needs a moment pairs the two, bound to the same DateTime? — each half keeps the other's part
+   (PickDay keeps the time, HandleTimeChanged keeps the date). Found 2026-09-17: five Staff Performance
+   fields used ShowTime alone, so a duty could only be scheduled today and a record never backdated. */
+.q-datetime-pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; align-items: end; min-width: 0; }

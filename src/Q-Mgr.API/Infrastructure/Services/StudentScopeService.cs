@@ -10,65 +10,102 @@ using QMgr.Infrastructure.Data;
 namespace QMgr.Infrastructure.Services;
 
 /// <summary>
-/// The single home for "which students may this caller see?".
+/// How much of a student's file this caller may see (duty rota plan §5.3). A <b>tier</b>, not a yes/no.
+/// </summary>
+public enum StudentAccessTier
+{
+    /// <summary>Out of scope: 404, never 403.</summary>
+    None = 0,
+    /// <summary>
+    /// A live SubjectTeacher assignment for the student's class and no pastoral one: name, photo, class,
+    /// the subjects this teacher teaches them, their own lesson registers, and learning-support notes when
+    /// the tenant shares them — no guardians, welfare, discipline or pastoral tier.
+    /// </summary>
+    Teaching = 1,
+    /// <summary>A live ClassTeacher or Assistant assignment for the student's class: everything the role's permissions allow.</summary>
+    Pastoral = 2,
+    /// <summary>A role whose DataScope is Organization (admin, DoS, deputy), or the platform administrator: today's behaviour.</summary>
+    Unscoped = 3
+}
+
+/// <summary>
+/// The single home for "which students may this caller see, and how much of them?".
 ///
 /// Q-Mgr's RBAC gates ACTIONS — <c>welfare.view</c> means "may read welfare records", full stop.
-/// It cannot express "may read welfare records FOR THESE STUDENTS", and every welfare and roster
-/// query filtered on BranchId and nothing narrower. This is the missing second axis: a role whose
-/// <see cref="RoleDataScope"/> is <see cref="RoleDataScope.AssignedClasses"/> sees only students
-/// whose ClassName matches one of its live <see cref="ClassTeacherAssignment"/> rows.
+/// It cannot express "may read welfare records FOR THESE STUDENTS". A role whose
+/// <see cref="RoleDataScope"/> is <see cref="RoleDataScope.AssignedClasses"/> sees only students whose
+/// ClassName matches one of its live <see cref="ClassTeacherAssignment"/> rows — and since the duty rota
+/// plan (2026-09-17) that sight has two TIERS:
+/// <list type="bullet">
+/// <item><b>Pastoral</b> — ClassTeacher and Assistant assignments. Every existing method below that does
+///   not name a tier (<see cref="ApplyAsync"/>, <see cref="GetVisibleStudentIdsAsync"/>,
+///   <see cref="CanSeeStudentAsync"/>, <see cref="VerifyStudentAccessAsync"/>) means PASTORAL, so every
+///   welfare, flag, guardian and picture path stays closed to a subject teacher without a line of change.</item>
+/// <item><b>Teaching</b> — SubjectTeacher assignments. Reached only through the methods that say so
+///   (<see cref="ApplyAnyTierAsync"/>, <see cref="GetTierAsync"/>, <see cref="GetTiersAsync"/>,
+///   <see cref="VerifyAnyTierAccessAsync"/>), used by the few roster reads that blank fields by tier.</item>
+/// </list>
+/// The old tier-blind <c>GetClassNamesAsync</c> was deleted, not renamed, so every caller became a compile
+/// error that had to choose <see cref="GetPastoralClassNamesAsync"/> or <see cref="GetTeachingClassNamesAsync"/>.
 ///
-/// ONE home, deliberately. This codebase's recurring failure is a second copy of a rule that then
-/// drifts from the first (the DTO duplications, the guardian-restriction copy). Do not write a
-/// second "which classes does this user teach" helper next to the code that needs one — call this.
+/// ONE home, deliberately. Do not write a second "which classes does this user teach" helper next to the
+/// code that needs one — call this.
 ///
-/// Registered SCOPED and memoised per request. It is deliberately NOT put in the five-minute
-/// IMemoryCache that PermissionAuthorizationHandler uses for permissions: a teacher removed from a
-/// class would keep reading that class for up to five minutes, and class membership changes far
-/// more often than a permission set does. Two indexed lookups per request is the right price.
+/// Registered SCOPED and memoised per request. It is deliberately NOT cached alongside permissions: a
+/// teacher removed from a class must lose access on the very next request (ASVS 8.3.2).
 /// </summary>
 public interface IStudentScopeService
 {
     /// <summary>
-    /// True when the caller sees every row their permissions and tenant already allow — SuperAdmin,
-    /// and any role whose DataScope is Organization (which is every role that existed before this
-    /// feature). The overwhelmingly common case, so it short-circuits first everywhere.
+    /// True when the caller sees every row their permissions and tenant already allow — SuperAdmin, and any
+    /// role whose DataScope is Organization. The common case, so it short-circuits first everywhere.
     /// </summary>
     Task<bool> IsUnscopedAsync();
 
     /// <summary>
-    /// The caller's live class names in this branch, as spelled in the branch vocabulary. Empty for
-    /// an unscoped caller — check <see cref="IsUnscopedAsync"/> first; an empty list from a SCOPED
-    /// caller means "sees nothing", which is not the same thing.
+    /// The caller's live PASTORAL class names (class teacher or assistant) in this branch, as spelled in the
+    /// vocabulary. Empty for an unscoped caller — check <see cref="IsUnscopedAsync"/> first; an empty list
+    /// from a SCOPED caller means "no pastoral classes", which is not the same thing.
     /// </summary>
-    Task<IReadOnlyList<string>> GetClassNamesAsync(Guid branchId);
+    Task<IReadOnlyList<string>> GetPastoralClassNamesAsync(Guid branchId);
+
+    /// <summary>The caller's live SUBJECT-TEACHER class names in this branch. Same empty-list caveat.</summary>
+    Task<IReadOnlyList<string>> GetTeachingClassNamesAsync(Guid branchId);
 
     /// <summary>
-    /// The only correct way to narrow a student query. FAILS CLOSED: a scoped caller with no
-    /// assignments gets an empty queryable, never an unfiltered one.
+    /// Narrows a student query to the caller's PASTORAL students. FAILS CLOSED: a scoped caller with no
+    /// pastoral assignment gets an empty queryable, never an unfiltered one.
     /// </summary>
     Task<IQueryable<Student>> ApplyAsync(IQueryable<Student> query, Guid branchId);
 
     /// <summary>
-    /// Narrows any query that can reach a Student — welfare records, flags, guardians — by
-    /// producing the set of student IDs the caller may see in this branch. Null means "unscoped,
-    /// do not filter"; an empty set means "sees nothing".
+    /// Narrows a student query to pastoral ∪ teaching students. Only for reads that then blank fields by
+    /// <see cref="GetTiersAsync"/> — a caller that forgets to blank has leaked the pastoral tier.
+    /// </summary>
+    Task<IQueryable<Student>> ApplyAnyTierAsync(IQueryable<Student> query, Guid branchId);
+
+    /// <summary>
+    /// The PASTORAL student ids the caller may see in this branch. Null means "unscoped, do not filter"; an
+    /// empty set means "sees nothing".
     /// </summary>
     Task<HashSet<Guid>?> GetVisibleStudentIdsAsync(Guid branchId);
 
-    /// <summary>
-    /// Guard for the by-ID paths. Returns null when access is allowed, otherwise a NotFound result
-    /// — never Forbid. An out-of-scope student must read identically to one that does not exist,
-    /// the same 404-not-403 shape this app already uses for confidential records and other
-    /// people's drafts; a 403 would confirm the student exists, which is itself a disclosure.
-    /// </summary>
-    Task<IActionResult?> VerifyStudentAccessAsync(Guid branchId, Guid studentId);
+    /// <summary>The tier this caller holds for one student.</summary>
+    Task<StudentAccessTier> GetTierAsync(Guid branchId, Guid studentId);
 
     /// <summary>
-    /// True when the caller may see this student. The predicate behind
-    /// <see cref="VerifyStudentAccessAsync"/>, exposed for call sites that need to make their own
-    /// decision (the alert fan-out, a bulk validation loop).
+    /// The tier for every student the caller can see at all in this branch. Null means unscoped (every
+    /// student at <see cref="StudentAccessTier.Unscoped"/>); a student missing from the map is None.
     /// </summary>
+    Task<Dictionary<Guid, StudentAccessTier>?> GetTiersAsync(Guid branchId);
+
+    /// <summary>PASTORAL guard for the by-ID paths. Null when allowed, otherwise 404 — never Forbid.</summary>
+    Task<IActionResult?> VerifyStudentAccessAsync(Guid branchId, Guid studentId);
+
+    /// <summary>Any-tier guard for the few by-ID reads that blank by tier. Null when allowed, otherwise 404.</summary>
+    Task<IActionResult?> VerifyAnyTierAccessAsync(Guid branchId, Guid studentId);
+
+    /// <summary>True when the caller has PASTORAL sight of this student (or is unscoped).</summary>
     Task<bool> CanSeeStudentAsync(Guid branchId, Guid studentId);
 }
 
@@ -79,13 +116,13 @@ public class StudentScopeService : IStudentScopeService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<StudentScopeService> _logger;
 
-    // Per-request memoisation. This service is scoped, so these live exactly as long as one HTTP
-    // request — long enough that a controller action calling ApplyAsync and then
-    // VerifyStudentAccessAsync twice does not pay for the lookup three times, and short enough that
-    // an assignment ended a second ago is honoured by the very next request.
+    // Per-request memoisation: long enough that one action calling several guards does not pay for the
+    // lookup repeatedly, short enough that an assignment ended a second ago is honoured next request.
     private bool? _isUnscoped;
-    private readonly Dictionary<Guid, IReadOnlyList<string>> _classNamesByBranch = new();
-    private readonly Dictionary<Guid, HashSet<Guid>> _visibleStudentIdsByBranch = new();
+    private readonly Dictionary<Guid, IReadOnlyList<string>> _pastoralNamesByBranch = new();
+    private readonly Dictionary<Guid, IReadOnlyList<string>> _teachingNamesByBranch = new();
+    private readonly Dictionary<Guid, HashSet<Guid>> _pastoralIdsByBranch = new();
+    private readonly Dictionary<Guid, Dictionary<Guid, StudentAccessTier>> _tiersByBranch = new();
 
     public StudentScopeService(
         QMgrDbContext context,
@@ -117,10 +154,8 @@ public class StudentScopeService : IStudentScopeService
         var userId = CurrentUserId();
         if (userId == Guid.Empty)
         {
-            // No user on the request. This is API-key authentication (auth_method=api_key), which
-            // has no user row and therefore no role to carry a scope — it is already constrained by
-            // its own scope claims. Treating it as scoped would break every integration; treating
-            // it as unscoped is what it has always been.
+            // No user on the request: API-key authentication (auth_method=api_key), which has no user row
+            // and therefore no role to carry a scope — it is constrained by its own scope claims.
             var isApiKey = _httpContextAccessor.HttpContext?.User?.FindFirst("auth_method")?.Value == "api_key";
             if (!isApiKey)
                 _logger.LogWarning("Student scope could not resolve a user ID on an authenticated request; treating the caller as scoped-to-nothing");
@@ -133,91 +168,118 @@ public class StudentScopeService : IStudentScopeService
             .Select(u => (RoleDataScope?)u.Role.DataScope)
             .FirstOrDefaultAsync();
 
-        // A user row that cannot be found or is inactive resolves to null. FAIL CLOSED: scoped, and
-        // with no assignments that means nothing at all.
+        // A user row that cannot be found or is inactive resolves to null. FAIL CLOSED.
         _isUnscoped = scope == RoleDataScope.Organization;
         return _isUnscoped.Value;
     }
 
-    public async Task<IReadOnlyList<string>> GetClassNamesAsync(Guid branchId)
-    {
-        if (_classNamesByBranch.TryGetValue(branchId, out var cached)) return cached;
+    public Task<IReadOnlyList<string>> GetPastoralClassNamesAsync(Guid branchId)
+        => ClassNamesAsync(branchId, pastoral: true);
 
-        if (await IsUnscopedAsync())
-            return _classNamesByBranch[branchId] = Array.Empty<string>();
+    public Task<IReadOnlyList<string>> GetTeachingClassNamesAsync(Guid branchId)
+        => ClassNamesAsync(branchId, pastoral: false);
+
+    private async Task<IReadOnlyList<string>> ClassNamesAsync(Guid branchId, bool pastoral)
+    {
+        var cache = pastoral ? _pastoralNamesByBranch : _teachingNamesByBranch;
+        if (cache.TryGetValue(branchId, out var cached)) return cached;
+
+        if (await IsUnscopedAsync()) return cache[branchId] = Array.Empty<string>();
 
         var userId = CurrentUserId();
-        if (userId == Guid.Empty)
-            return _classNamesByBranch[branchId] = Array.Empty<string>();
+        if (userId == Guid.Empty) return cache[branchId] = Array.Empty<string>();
 
-        var names = await _context.ClassTeacherAssignments
+        // The tier is the assignment's Role, and it is chosen HERE and nowhere else.
+        var query = _context.ClassTeacherAssignments
             .AsNoTracking()
-            .Where(a => a.UserId == userId && a.BranchId == branchId && a.EndedAt == null)
-            .Select(a => a.ClassName)
-            .Distinct()
-            .ToListAsync();
+            .Where(a => a.UserId == userId && a.BranchId == branchId && a.EndedAt == null);
+        query = pastoral
+            ? query.Where(a => a.Role == ClassTeacherRole.ClassTeacher || a.Role == ClassTeacherRole.Assistant)
+            : query.Where(a => a.Role == ClassTeacherRole.SubjectTeacher);
 
-        return _classNamesByBranch[branchId] = names;
+        var names = await query.Select(a => a.ClassName).Distinct().ToListAsync();
+        return cache[branchId] = names;
+    }
+
+    private static IQueryable<Student> FilterByClasses(IQueryable<Student> query, IReadOnlyCollection<string> names)
+    {
+        // FAIL CLOSED: an empty allow-list is an explicit empty result, never a no-op WHERE.
+        if (names.Count == 0) return query.Where(_ => false);
+        var normalized = names.Select(n => n.Trim().ToLower()).Distinct().ToList();
+        // Trim().ToLower() on both sides: Student.ClassName is free text, the vocabulary is admin-typed.
+        return query.Where(s => s.ClassName != null && normalized.Contains(s.ClassName.Trim().ToLower()));
     }
 
     public async Task<IQueryable<Student>> ApplyAsync(IQueryable<Student> query, Guid branchId)
     {
         if (await IsUnscopedAsync()) return query;
+        return FilterByClasses(query, await GetPastoralClassNamesAsync(branchId));
+    }
 
-        var names = await GetClassNamesAsync(branchId);
-
-        // FAIL CLOSED. The natural bug here is letting an empty allow-list collapse into a no-op
-        // WHERE — `names.Contains(x)` over an empty list does produce a false predicate in EF, but
-        // relying on that is relying on a translation detail. An explicit short-circuit means a
-        // brand-new class teacher with no assignment yet can never be handed the whole school roll.
-        if (names.Count == 0) return query.Where(_ => false);
-
-        var normalized = names.Select(n => n.Trim().ToLower()).ToList();
-
-        // Trim().ToLower() on both sides: Student.ClassName is free text typed by whoever built the
-        // roster, and the vocabulary is typed by an administrator. "S4B" and "s4b " are one class.
-        return query.Where(s => s.ClassName != null && normalized.Contains(s.ClassName.Trim().ToLower()));
+    public async Task<IQueryable<Student>> ApplyAnyTierAsync(IQueryable<Student> query, Guid branchId)
+    {
+        if (await IsUnscopedAsync()) return query;
+        var names = (await GetPastoralClassNamesAsync(branchId)).Concat(await GetTeachingClassNamesAsync(branchId)).ToList();
+        return FilterByClasses(query, names);
     }
 
     public async Task<HashSet<Guid>?> GetVisibleStudentIdsAsync(Guid branchId)
     {
         if (await IsUnscopedAsync()) return null;
+        if (_pastoralIdsByBranch.TryGetValue(branchId, out var cached)) return cached;
 
-        if (_visibleStudentIdsByBranch.TryGetValue(branchId, out var cached)) return cached;
+        var tiers = await GetTiersAsync(branchId);
+        var ids = tiers!.Where(t => t.Value == StudentAccessTier.Pastoral).Select(t => t.Key).ToHashSet();
+        return _pastoralIdsByBranch[branchId] = ids;
+    }
 
-        var names = await GetClassNamesAsync(branchId);
-        if (names.Count == 0)
-            return _visibleStudentIdsByBranch[branchId] = new HashSet<Guid>();
+    public async Task<Dictionary<Guid, StudentAccessTier>?> GetTiersAsync(Guid branchId)
+    {
+        if (await IsUnscopedAsync()) return null;
+        if (_tiersByBranch.TryGetValue(branchId, out var cached)) return cached;
 
-        var normalized = names.Select(n => n.Trim().ToLower()).ToList();
+        var pastoral = (await GetPastoralClassNamesAsync(branchId)).Select(n => n.Trim().ToLower()).ToHashSet();
+        var teaching = (await GetTeachingClassNamesAsync(branchId)).Select(n => n.Trim().ToLower()).ToHashSet();
+        var any = pastoral.Concat(teaching).ToList();
+        if (any.Count == 0) return _tiersByBranch[branchId] = new Dictionary<Guid, StudentAccessTier>();
 
-        // INACTIVE STUDENTS INCLUDED on purpose. A child who has left still has a ledger, and the
-        // welfare timeline deliberately serves records for retired roster rows — filtering to
-        // active here would make a class teacher's view of their own class silently differ from
-        // everyone else's for exactly the students most likely to matter.
-        var ids = await _context.Students
+        // INACTIVE STUDENTS INCLUDED on purpose: a child who has left still has a ledger.
+        var students = await _context.Students
             .AsNoTracking()
-            .Where(s => s.BranchId == branchId && s.ClassName != null && normalized.Contains(s.ClassName.Trim().ToLower()))
-            .Select(s => s.Id)
+            .Where(s => s.BranchId == branchId && s.ClassName != null && any.Contains(s.ClassName.Trim().ToLower()))
+            .Select(s => new { s.Id, s.ClassName })
             .ToListAsync();
 
-        return _visibleStudentIdsByBranch[branchId] = ids.ToHashSet();
+        // One user, both tiers: pastoral wins for the classes they are pastoral for (plan §5.3 — tiers are
+        // per assignment, never per role).
+        var map = students.ToDictionary(
+            s => s.Id,
+            s => pastoral.Contains(s.ClassName!.Trim().ToLower()) ? StudentAccessTier.Pastoral : StudentAccessTier.Teaching);
+        return _tiersByBranch[branchId] = map;
+    }
+
+    public async Task<StudentAccessTier> GetTierAsync(Guid branchId, Guid studentId)
+    {
+        var tiers = await GetTiersAsync(branchId);
+        if (tiers == null) return StudentAccessTier.Unscoped;
+        return tiers.TryGetValue(studentId, out var tier) ? tier : StudentAccessTier.None;
     }
 
     public async Task<bool> CanSeeStudentAsync(Guid branchId, Guid studentId)
     {
-        var visible = await GetVisibleStudentIdsAsync(branchId);
-        return visible == null || visible.Contains(studentId);
+        var tier = await GetTierAsync(branchId, studentId);
+        return tier is StudentAccessTier.Pastoral or StudentAccessTier.Unscoped;
     }
 
     public async Task<IActionResult?> VerifyStudentAccessAsync(Guid branchId, Guid studentId)
-    {
-        if (await CanSeeStudentAsync(branchId, studentId)) return null;
+        => await CanSeeStudentAsync(branchId, studentId) ? null : NotFoundStudent();
 
-        return new NotFoundObjectResult(new ProblemDetails
-        {
-            Title = "Student not found",
-            Status = StatusCodes.Status404NotFound
-        });
-    }
+    public async Task<IActionResult?> VerifyAnyTierAccessAsync(Guid branchId, Guid studentId)
+        => await GetTierAsync(branchId, studentId) != StudentAccessTier.None ? null : NotFoundStudent();
+
+    private static IActionResult NotFoundStudent() => new NotFoundObjectResult(new ProblemDetails
+    {
+        Title = "Student not found",
+        Status = StatusCodes.Status404NotFound
+    });
 }

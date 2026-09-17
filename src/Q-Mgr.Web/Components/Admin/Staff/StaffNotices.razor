@@ -159,9 +159,12 @@
 
         <div class="form-row">
             <div class="form-group">
-                <QDatePicker @bind-Value="@formPublishAt" ShowTime="true" Label="Publish at" Required="true"
-                             HelperText="Recipients are notified at this moment. Leave it as now to publish immediately."
-                             HasError="@formErrors.Contains("publish")" ErrorMessage="When should it go out?" />
+                <div class="q-datetime-pair">
+                    <QDatePicker @bind-Value="@formPublishAt" Label="Publish at" Required="true"
+                                 HelperText="Recipients are notified at this moment. Leave it as now to publish immediately."
+                                 HasError="@formErrors.Contains("publish")" ErrorMessage="When should it go out?" />
+                    <QDatePicker @bind-Value="@formPublishAt" ShowTime="true" Label="Time" Required="true" />
+                </div>
             </div>
             <div class="form-group">
                 <QDatePicker @bind-Value="@formExpiresAt" Label="Expires" Clearable="true" Min="@formPublishAt" Placeholder="Never"
@@ -217,7 +220,7 @@
                     <QDataExport TItem="NoticeAcknowledgementDto" Title="@($"Acknowledgements — {acksNotice.Title}")" FileStem="notice-acknowledgements"
                                  Subtitle="@($"Published {QDateFormat.LocalDT(acksNotice.PublishAt)} by {acksNotice.PublishedByName}")"
                                  Columns="@AckColumns" RowProvider="@(() => Task.FromResult(new ExportRows<NoticeAcknowledgementDto>(acks, false)))"
-                                 Formats="ExportFormat.Csv" Text="CSV" Disabled="@(!acks.Any())" DisabledReason="Nobody has received this notice yet." />
+                                 Formats="ExportFormat.Csv" Text="CSV" OnExported="@OnAcksExported" Disabled="@(!acks.Any())" DisabledReason="Nobody has received this notice yet." />
                 </span>
             </div>
             @if (!acks.Any())
@@ -292,6 +295,10 @@
 </style>
 
 @code {
+    private Task OnAcksExported(ExportResult export) => export.Success
+        ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.NoticeAcknowledgements, Format = export.Format?.ToString() ?? "CSV", RowCount = export.RowCount })
+        : Task.CompletedTask;
+
     private bool isLoading = true;
     private bool includeInactive;
     private Guid branchId;
@@ -359,7 +366,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

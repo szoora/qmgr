@@ -29,7 +29,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/staff/parameters")]
 [Produces("application/json")]
 [Authorize] // SECURITY: baseline safety net — every write also carries its own [RequirePermission]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffParametersController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
@@ -60,7 +60,8 @@ public class StaffParametersController : StaffPerformanceControllerBase
         var organizationId = CurrentOrganizationId();
         if (organizationId == null) return TenantNotResolved();
 
-        await SeedDefaultsIfEmptyAsync(organizationId.Value);
+        await StaffParameterDefaults.SeedIfEmptyAsync(Db, _policy, organizationId.Value, _logger);
+        await StaffParameterDefaults.EnsureSystemSourceAsync(Db, _policy, organizationId.Value, _logger);
 
         var query = Db.PerformanceParameters.AsNoTracking().Where(p => p.OrganizationId == organizationId.Value);
         if (!includeInactive) query = query.Where(p => p.IsActive);
@@ -144,6 +145,32 @@ public class StaffParametersController : StaffPerformanceControllerBase
         var parameter = await Db.PerformanceParameters.FirstOrDefaultAsync(p => p.Id == id && p.OrganizationId == organizationId.Value);
         if (parameter == null) return NotFoundProblem("Parameter not found");
 
+        if (!parameter.IsActive)
+        {
+            // Reinstating puts its weight back into the total: the cap applies exactly as on save.
+            var capProblem = await WeightCapProblemAsync(organizationId.Value, parameter.Weight, parameter.Id);
+            if (capProblem != null) return capProblem;
+        }
+        else
+        {
+            // Retiring shrinks the total, which raises every other parameter's share. Refuse a retirement
+            // that would push the heaviest remaining parameter over the cap, naming it.
+            var policy = await _policy.GetAsync(organizationId.Value);
+            var remaining = await Db.PerformanceParameters.AsNoTracking()
+                .Where(p => p.OrganizationId == organizationId.Value && p.IsActive && p.Id != parameter.Id && p.Weight > 0)
+                .Select(p => new { p.Name, p.Weight })
+                .ToListAsync();
+            var total = remaining.Sum(p => p.Weight);
+            if (remaining.Count > 1 && total > 0)
+            {
+                var heaviest = remaining.OrderByDescending(p => p.Weight).First();
+                var share = heaviest.Weight / total * 100m;
+                if (share > policy.MaxParameterWeightPercent)
+                    return BadRequestProblem($"Retiring '{parameter.Name}' would make '{heaviest.Name}' weigh too much",
+                        $"'{heaviest.Name}' would become {share:0}% of the total, above the policy's {policy.MaxParameterWeightPercent}% cap. Lower its weight first.");
+            }
+        }
+
         parameter.IsActive = !parameter.IsActive;
         parameter.UpdatedAt = DateTime.UtcNow;
         parameter.UpdatedBy = CurrentUserId();
@@ -156,35 +183,6 @@ public class StaffParametersController : StaffPerformanceControllerBase
     }
 
     // ---- Helpers ---------------------------------------------------------------------------------
-
-    /// <summary>
-    /// Inserts the MoES default set when the organization has no parameters at all. Idempotent on
-    /// that emptiness check; a tenant that has retired every parameter is NOT re-seeded, because
-    /// "no active parameters" is a choice and "no parameters" is a fresh install.
-    /// </summary>
-    private async Task SeedDefaultsIfEmptyAsync(Guid organizationId)
-    {
-        if (await Db.PerformanceParameters.IgnoreQueryFilters().AnyAsync(p => p.OrganizationId == organizationId)) return;
-
-        foreach (var request in _policy.DefaultParameters())
-        {
-            var parameter = new PerformanceParameter { OrganizationId = organizationId };
-            StaffPerformanceMapping.Apply(parameter, request);
-            Db.PerformanceParameters.Add(parameter);
-        }
-
-        try
-        {
-            await Db.SaveChangesAsync();
-            _logger.LogInformation("Seeded {Count} default performance parameters for organization {OrganizationId}", _policy.DefaultParameters().Count, organizationId);
-        }
-        catch (DbUpdateException ex)
-        {
-            // Two first reads racing: the other one won. The catalogue is there either way.
-            _logger.LogWarning(ex, "Default parameter seed for {OrganizationId} collided with a concurrent seed; continuing", organizationId);
-            Db.ChangeTracker.Clear();
-        }
-    }
 
     private async Task<IActionResult?> ValidateAsync(Guid organizationId, SavePerformanceParameterRequest request, Guid? excludeId)
     {
@@ -211,24 +209,45 @@ public class StaffParametersController : StaffPerformanceControllerBase
                 return BadRequestProblem("Conduct points must be zero or negative");
         }
 
-        // The MET ceiling. Wellbeing carries no weight and is exempt; a lone weighted parameter is
-        // necessarily 100% of the total and is allowed, or the first parameter could never be saved.
-        var weight = request.Kind == ParameterKind.Wellbeing ? 0 : request.Weight;
-        if (weight > 0)
+        // An offset points at an active Attendance or Duty parameter of the same organization, never
+        // at itself: "a record here is a recovered occasion there" means nothing for any other kind.
+        if (request.OffsetsParameterId is { } offsetsId)
         {
-            var policy = await _policy.GetAsync(organizationId);
-            var othersWeight = await Db.PerformanceParameters.IgnoreQueryFilters()
-                .Where(p => p.OrganizationId == organizationId && p.IsActive && p.Id != excludeId)
-                .SumAsync(p => p.Weight);
-            if (othersWeight > 0)
-            {
-                var share = weight / (othersWeight + weight) * 100m;
-                if (share > policy.MaxParameterWeightPercent)
-                    return BadRequestProblem("This parameter would weigh too much",
-                        $"A weight of {weight:0.##} would be {share:0}% of the total, and the scoring policy caps any one parameter at {policy.MaxParameterWeightPercent}%. Lower it, or raise the others.");
-            }
+            if (offsetsId == excludeId) return BadRequestProblem("A parameter cannot offset itself");
+            if (request.Kind is ParameterKind.Wellbeing or ParameterKind.Attendance or ParameterKind.Duty)
+                return BadRequestProblem("Only a Contribution, Recognition, Conduct or Observation parameter can offset another",
+                    "An attendance parameter records its own Recovered outcome; use that instead.");
+            var target = await Db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == offsetsId && p.OrganizationId == organizationId);
+            if (target == null) return BadRequestProblem("The parameter to offset was not found");
+            if (target.Kind is not (ParameterKind.Attendance or ParameterKind.Duty))
+                return BadRequestProblem($"'{target.Name}' is not an Attendance or Duty parameter", "A recovery can only offset a missed attendance or duty.");
         }
 
+        var weight = request.Kind == ParameterKind.Wellbeing ? 0 : request.Weight;
+        return await WeightCapProblemAsync(organizationId, weight, excludeId);
+    }
+
+    /// <summary>
+    /// The MET ceiling. Wellbeing carries no weight and is exempt; a lone weighted parameter is
+    /// necessarily 100% of the total and is allowed, or the first parameter could never be saved.
+    /// Checked on save AND on reinstating a retired parameter — before 2026-09-17 reinstating one (or
+    /// retiring the others) could leave a single parameter far above the cap with nothing refusing it.
+    /// </summary>
+    private async Task<IActionResult?> WeightCapProblemAsync(Guid organizationId, decimal weight, Guid? excludeId)
+    {
+        if (weight <= 0) return null;
+
+        var policy = await _policy.GetAsync(organizationId);
+        var othersWeight = await Db.PerformanceParameters.IgnoreQueryFilters()
+            .Where(p => p.OrganizationId == organizationId && p.IsActive && p.Id != excludeId)
+            .SumAsync(p => p.Weight);
+        if (othersWeight <= 0) return null;
+
+        var share = weight / (othersWeight + weight) * 100m;
+        if (share > policy.MaxParameterWeightPercent)
+            return BadRequestProblem("This parameter would weigh too much",
+                $"A weight of {weight:0.##} would be {share:0}% of the total, and the scoring policy caps any one parameter at {policy.MaxParameterWeightPercent}%. Lower it, or raise the others.");
         return null;
     }
 }

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Common;
+using QMgr.Domain.Enums;
 
 namespace QMgr.Domain.Entities.Staff;
 
@@ -26,6 +27,20 @@ public class StaffDuty : BaseAuditableEntity
     public Guid OrganizationId { get; set; }
     public Guid BranchId { get; set; }
     public Guid ParameterId { get; set; }
+
+    /// <summary>
+    /// Session (a meeting, an invigilation — every duty before the rota), Rota (on duty for a span) or Lesson (one
+    /// occurrence from the published timetable). Duty rota plan §3.1: one table, because all three are "a person
+    /// expected somewhere, with an outcome", and the register, reminders, portal, scoring and reports already work.
+    /// </summary>
+    public DutyKind Kind { get; set; } = DutyKind.Session;
+
+    /// <summary>
+    /// The highest pre-start reminder stage sent (plan §8.1). Written only by a conditional
+    /// <c>UPDATE … WHERE "ReminderStage" &lt; @stage</c>, so two sweeps can never send a stage twice; reset to 0 when
+    /// the duty is rescheduled into the future.
+    /// </summary>
+    public int ReminderStage { get; set; }
 
     [MaxLength(200)]
     public string Title { get; set; } = string.Empty;

@@ -205,7 +205,7 @@
                         <span class="results-student">@r.StudentName</span>
                         <span>@r.CategoryName</span>
                         <span class="tier-badge tier-badge--@r.Tier.ToString().ToLowerInvariant()">@r.Tier</span>
-                        <QChip Text="@r.Status.ToString()" Size="sm" Color="@WelfareStatusColor(r.Status)" Class="results-chip" />
+                        <QChip Text="@r.Status.ToString()" Size="sm" Color="@WelfareDisplay.StatusColor(r.Status)" Class="results-chip" />
                         <span>@QDateFormat.D(r.OccurredAt.ToLocalTime())</span>
                         <span>@r.ReportedByName</span>
                         <span class="results-actions">
@@ -746,19 +746,6 @@
     private IReadOnlyList<QBarItem> StaffBars => summary == null
         ? Array.Empty<QBarItem>()
         : summary.ByStaff.Select(s => new QBarItem(s.StaffName, s.Count, Color: "var(--qm-welfare-concern)")).ToList();
-
-    /// <summary>
-    /// The status chip's colour, the same four hues the timeline's status badges use so a record
-    /// reads the same on both pages. Tokens, so they follow the theme.
-    /// </summary>
-    private static string WelfareStatusColor(WelfareStatus status) => status switch
-    {
-        WelfareStatus.Open => "var(--qm-welfare-concern)",
-        WelfareStatus.UnderReview => "var(--qm-accent-orange)",
-        WelfareStatus.ActionTaken => "var(--qm-primary)",
-        WelfareStatus.Resolved => "var(--qm-accent-green)",
-        _ => "var(--qm-text-muted)"
-    };
 
     // ---------------- Search ----------------
     private bool isLoadingSearch;

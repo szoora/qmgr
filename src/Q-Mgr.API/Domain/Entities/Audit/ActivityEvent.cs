@@ -42,6 +42,15 @@ public class ActivityEvent : BaseEntity
 
     public string? DetailJson { get; set; }
 
+    /// <summary>
+    /// The rung of the thing the event is about (a staff record's visibility at the time, the higher
+    /// of the two on a visibility change; Confidential for anything about an appraisal). NOT a gate on
+    /// the administrator's log — a reader without the rung still sees the redacted Summary there, as
+    /// the plan requires — but it IS the gate on the subject's own trail: a person must never learn
+    /// from "Restricted record viewed" that a Restricted record about them exists (found 2026-09-17).
+    /// </summary>
+    public QMgr.Domain.Enums.WelfareVisibility Visibility { get; set; } = QMgr.Domain.Enums.WelfareVisibility.Standard;
+
     /// <summary>Truncated (IPv4 /24, IPv6 /48). Blanked after retention.</summary>
     [MaxLength(64)]
     public string? IpAddress { get; set; }

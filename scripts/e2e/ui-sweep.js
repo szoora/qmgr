@@ -1,9 +1,9 @@
 // =====================================================================================================
-// Staff Performance UI sweep — runs INSIDE a signed-in Q-Mgr tab (pasted or injected), so a person can
+// UI sweep (any admin page; written for Staff Performance) — runs INSIDE a signed-in Q-Mgr tab (pasted or injected), so a person can
 // watch it. Each route is loaded in a same-origin iframe at desktop width and at a real 390px phone
 // width (media queries apply to the iframe's own viewport, which is what resize_window cannot give),
 // then checked for: the Blazor error bar, an /unauthorized or /login bounce, a spinner that never
-// resolves, an error toast, sideways scrolling, and the elements responsible for it.
+// resolves, an error toast, sideways scrolling, content clipped past the edge, and the elements responsible.
 //
 //   window.__qmSweep.run(routes)   → results array; a report panel renders over the page as it runs.
 // =====================================================================================================
@@ -29,7 +29,7 @@
         #qm-sweep iframe{background:#fff;border:0;border-radius:18px;box-shadow:0 0 0 6px #333}
         #qm-sweep .tot{font-weight:700;font-size:15px;margin-top:10px}
       </style>
-      <div class="log"><h2>Staff Performance — UI sweep</h2><div class="sub" id="qm-sub">starting…</div><div id="qm-rows"></div><div class="tot" id="qm-tot"></div></div>
+      <div class="log"><h2>Q-Mgr — UI sweep</h2><div class="sub" id="qm-sub">starting…</div><div id="qm-rows"></div><div class="tot" id="qm-tot"></div></div>
       <div class="stage"><div class="cap" id="qm-cap">preview</div><iframe id="qm-frame" width="390" height="680"></iframe></div>`;
     document.body.appendChild(el);
     return el;
@@ -90,6 +90,31 @@
         .slice(0, 6)
         .map((e) => `${e.tagName.toLowerCase()}${e.id ? "#" + e.id : ""}.${[...e.classList].slice(0, 3).join(".")} right=${Math.round(e.getBoundingClientRect().right)}`);
       problems.push(`page scrolls sideways: scrollWidth ${sw} > viewport ${vw}` + (wide.length ? `\n  widest: ${wide.join("\n          ")}` : ""));
+    } else {
+      // Clipped past the edge: the page does NOT scroll (overflow-x:clip on .qm-main hides it), but an
+      // element still hangs past the viewport, so its end is simply cut off. This is how the 12px gutter
+      // and the page-header overhang presented on 2026-09-16 — "slightly off", never "broken" — and why a
+      // scrollWidth check alone passed them. Ignored: anything inside its own horizontal scroller (a table
+      // wrapper, a tab strip), anything fixed-position (a closed drawer parked off-screen), and the invisible.
+      const clipped = [...d.querySelectorAll(".qm-main *, .page-container *")]
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return false;
+          if (r.right <= vw + 1 && r.left >= -1) return false;
+          const cs = w.getComputedStyle(e);
+          if (cs.visibility === "hidden" || cs.position === "fixed") return false;
+          for (let p = e.parentElement; p && p !== d.body; p = p.parentElement) {
+            const pcs = w.getComputedStyle(p);
+            if (pcs.position === "fixed") return false;
+            if ((pcs.overflowX === "auto" || pcs.overflowX === "scroll") && p.getBoundingClientRect().right <= vw + 1) return false;
+          }
+          return true;
+        });
+      // Report the outermost offenders only: a clipped card reports once, not once per child.
+      const outer = clipped.filter((e) => !clipped.some((o) => o !== e && o.contains(e)))
+        .slice(0, 6)
+        .map((e) => { const r = e.getBoundingClientRect(); return `${e.tagName.toLowerCase()}${e.id ? "#" + e.id : ""}.${[...e.classList].slice(0, 3).join(".")} left=${Math.round(r.left)} right=${Math.round(r.right)}`; });
+      if (outer.length) problems.push(`clipped past the edge (viewport ${vw}px):\n  ${outer.join("\n  ")}`);
     }
     // Tap targets on phones: buttons under 32px tall are a warning, not a failure.
     if (vw <= 480) {

@@ -67,7 +67,7 @@
                         </div>
                         <div class="detail-item">
                             <QIcon Name="calendar-fill" />
-                            <span>Last checked: @systemHealth.Timestamp.ToString("HH:mm:ss")</span>
+                            <span>Last checked: @QDateFormat.TS(systemHealth.Timestamp)</span>
                         </div>
                     </div>
                 </div>
@@ -661,7 +661,7 @@
         if (timeSpan.TotalMinutes < 60)
             return $"{(int)timeSpan.TotalMinutes}m ago";
 
-        return timestamp.ToString("HH:mm:ss");
+        return QDateFormat.TS(timestamp);
     }
 
     private string FormatCpuTime(long seconds)

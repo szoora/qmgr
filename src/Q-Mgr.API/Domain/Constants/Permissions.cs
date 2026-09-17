@@ -21,6 +21,7 @@ public static class Permissions
     public const string UsersCreate = "users.create";
     public const string UsersEdit = "users.edit";
     public const string UsersDelete = "users.delete";
+    public const string UsersApprove = "users.approve";   // approve or reject staff join requests (duty rota plan §12.4)
 
     // Roles
     public const string RolesView = "roles.view";
@@ -128,6 +129,12 @@ public static class Permissions
     public const string StaffStructureManage = "staff.structure.manage";   // departments, heads, line managers, staff import
     public const string StaffRecognitionGive = "staff.recognition.give";   // peer recognition within the monthly budget
 
+    // Duty rota plan (2026-09-17). Added to all three catalogues together.
+    public const string StaffDutyReportsView = "staff.dutyreports.view";     // read duty reports within the staff scope
+    public const string StaffDutyReportsReview = "staff.dutyreports.review"; // comment, return, mark reviewed
+    public const string TimetableManage = "timetable.manage";               // the timetable master: build, check, publish
+    public const string TimetableLessonsFlag = "timetable.lessons.flag";    // confirm or override lesson flags within the staff scope
+
     // Marketing (contacts + broadcast campaigns)
     public const string MarketingView = "marketing.view";
     public const string MarketingManage = "marketing.manage"; // Manage contacts, create/edit broadcast drafts
@@ -181,6 +188,7 @@ public static class Permissions
         new("users.create", "Create Users", "Create new users", "User Management", 2),
         new("users.edit", "Edit Users", "Edit user details", "User Management", 3),
         new("users.delete", "Delete Users", "Delete users", "User Management", 4),
+        new("users.approve", "Approve Join Requests", "Approve or reject staff who registered through the join link, and assign their role", "User Management", 5),
 
         // Role Management
         new("roles.view", "View Roles", "View roles and permissions", "Role Management", 1),
@@ -275,6 +283,10 @@ public static class Permissions
         new("staff.notices.manage", "Publish Staff Notices", "Publish notices to a branch, departments, roles or a staff group", "Staff Performance", 11),
         new("staff.structure.manage", "Manage Staff Structure", "Departments, heads of department, line managers and the staff import", "Staff Performance", 12),
         new("staff.recognition.give", "Give Recognition", "Recognise a colleague, within the monthly budget", "Staff Performance", 13),
+        new("staff.dutyreports.view", "View Duty Reports", "Read the reports written by staff and administrators on duty, within the role's staff scope", "Staff Performance", 14),
+        new("staff.dutyreports.review", "Review Duty Reports", "Comment on duty reports, return them for changes and mark them reviewed", "Staff Performance", 15),
+        new("timetable.manage", "Manage the Timetable", "Build, check and publish the timetable, bell schedule and rooms — the timetable master", "Staff Performance", 16),
+        new("timetable.lessons.flag", "Flag Lessons", "Confirm or override lessons taught, missed and recovered for the staff in scope", "Staff Performance", 17),
 
         // Marketing
         new("marketing.view", "View Marketing", "View contacts and broadcast campaigns", "Marketing", 1),
@@ -354,7 +366,7 @@ public static class Permissions
             Permissions: new[]
             {
                 DashboardView,
-                UsersView, UsersCreate, UsersEdit,
+                UsersView, UsersCreate, UsersEdit, UsersApprove,
                 BranchesView, BranchesEdit,
                 CountersView, CountersCreate, CountersEdit, CountersDelete,
                 ServiceTypesView, ServiceTypesCreate, ServiceTypesEdit, ServiceTypesDelete,
@@ -441,6 +453,7 @@ public static class Permissions
                 StaffDutiesManage, StaffParametersManage,
                 StaffAppraisalsConduct, StaffAppraisalsApprove,
                 StaffReportsView, StaffNoticesManage, StaffStructureManage, StaffRecognitionGive,
+                StaffDutyReportsView, StaffDutyReportsReview, TimetableManage, TimetableLessonsFlag,
             },
             RoleDataScope.Organization,
             StaffDataScope.Organization
@@ -460,6 +473,7 @@ public static class Permissions
                 StaffRecordsView, StaffRecordsCreate,
                 StaffDutiesManage,
                 StaffReportsView, StaffNoticesManage, StaffRecognitionGive,
+                StaffDutyReportsView, TimetableManage, TimetableLessonsFlag,
             },
             RoleDataScope.Organization,
             StaffDataScope.Organization
@@ -479,6 +493,7 @@ public static class Permissions
                 StaffDutiesManage,
                 StaffAppraisalsConduct,
                 StaffReportsView, StaffRecognitionGive,
+                StaffDutyReportsView, TimetableLessonsFlag,
             },
             RoleDataScope.Organization,
             StaffDataScope.AssignedDepartments
@@ -487,7 +502,7 @@ public static class Permissions
         [RoleCodes.Teacher] = new RoleDefinition(
             "Teacher",
             RoleCodes.Teacher,
-            "The staff portal and recognition. Logs records only as the named recorder on a duty.",
+            "The staff portal and recognition. Sees the students of the classes they teach, at the teaching tier. Logs records only as the named recorder on a duty.",
             "#3F8A80",
             "person-workspace",
             4,
@@ -495,8 +510,9 @@ public static class Permissions
             {
                 DashboardView, NotificationsView,
                 StaffRecognitionGive,
+                StudentsView,
             },
-            RoleDataScope.Organization,
+            RoleDataScope.AssignedClasses,
             StaffDataScope.SelfOnly
         ),
 

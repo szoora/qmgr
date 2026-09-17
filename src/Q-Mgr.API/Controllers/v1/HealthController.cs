@@ -270,7 +270,7 @@ public class HealthController : ControllerBase
         // SignalR has no built-in centralized health signal to probe (it's
         // per-connection, not a pingable dependency like a DB or cache) —
         // reporting "Unknown" honestly rather than a hardcoded false
-        // "Healthy", same pattern already used below for Stripe.
+        // "Healthy".
         services.Add(new ServiceHealthDto
         {
             ServiceName = "SignalR Hubs",
@@ -282,11 +282,12 @@ public class HealthController : ControllerBase
         // Stripe API (if configured — Platform Settings row first, then configuration)
         if (await _stripeService.IsConfiguredAsync())
         {
+            var stripe = await _stripeService.CheckHealthAsync(HttpContext.RequestAborted);
             services.Add(new ServiceHealthDto
             {
                 ServiceName = "Stripe Payment Gateway",
-                Status = "Unknown", // TODO: Ping Stripe API
-                ResponseTimeMs = 0,
+                Status = stripe.Status,
+                ResponseTimeMs = stripe.ResponseTimeMs,
                 LastChecked = DateTime.UtcNow
             });
         }

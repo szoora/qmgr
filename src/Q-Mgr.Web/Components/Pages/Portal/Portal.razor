@@ -79,6 +79,11 @@
             </div>
         </div>
 
+        @if (!portal.Onboarding.IsComplete)
+        {
+            <OnboardingChecklistCard Checklist="@portal.Onboarding" OnChanged="@LoadAsync" />
+        }
+
         <QStatRow Class="portal-stats">
             <QStatTile Value="@score.Points.ToString("N0")" Label="Points this period" Icon="lightning-charge" Variant="primary" />
             <QStatTile Value="@($"{score.DutiesAttended} / {score.DutiesExpected}")" Label="Duties attended" Icon="calendar-check"
@@ -297,6 +302,46 @@
             </QCard>
         </div>
 
+        @* ---- How the school is doing (the tenant's leaderboard mode; plan §1.5, decision 2) ------- *@
+        @if (portal.LeaderboardMode != LeaderboardMode.Private && (portal.DepartmentBoard.Any() || portal.Leaderboard.Any()))
+        {
+            <QCard Title="@(portal.LeaderboardMode == LeaderboardMode.Public ? "Leaderboard" : "Departments this term")"
+                   Subtitle="@($"{score.Period.Name} · average composite by department")" Icon="trophy" Class="portal-card">
+                <div class="portal-boards">
+                    @if (portal.DepartmentBoard.Any())
+                    {
+                        <section>
+                            @if (portal.LeaderboardMode == LeaderboardMode.Public)
+                            {
+                                <h5>Departments</h5>
+                            }
+                            <QBarList Items="@DepartmentBars" Max="100" Stacked="true" />
+                            <p class="portal-muted portal-boards__foot">Teams of three or more only, so an average is never one person's score.</p>
+                        </section>
+                    }
+                    @if (portal.LeaderboardMode == LeaderboardMode.Public && portal.Leaderboard.Any())
+                    {
+                        <section>
+                            <h5>Top @portal.Leaderboard.Count</h5>
+                            <ol class="portal-leaders">
+                                @foreach (var row in portal.Leaderboard.OrderBy(r => r.Rank))
+                                {
+                                    <li class="portal-leader @(row.UserId == portal.Me.UserId ? "portal-leader--me" : "")">
+                                        <span class="portal-leader__rank">@row.Rank</span>
+                                        <div class="portal-leader__main">
+                                            <strong>@row.Name</strong>
+                                            @if (!string.IsNullOrEmpty(row.DepartmentName)) { <span class="portal-muted">@row.DepartmentName</span> }
+                                        </div>
+                                        <QChip Text="@($"{row.BandName} · {StaffDisplay.Composite(row.Composite)}")" Size="sm" Variant="@StaffDisplay.BandVariant(row.Band)" />
+                                    </li>
+                                }
+                            </ol>
+                        </section>
+                    }
+                </div>
+            </QCard>
+        }
+
         @* ---- My timeline -------------------------------------------------------------------- *@
         <QCard id="my-timeline" Title="My timeline" Subtitle="Records about you, newest first" Icon="journal-text" Class="portal-card">
             <HeaderActions>
@@ -346,6 +391,10 @@
                             </TitleContent>
                             <ChildContent>
                                 <p class="portal-record__desc">@record.Description</p>
+                                @if (!string.IsNullOrWhiteSpace(record.ParameterPurpose))
+                                {
+                                    <p class="portal-purpose"><QIcon Name="info-circle" Size="sm" /> Why this is kept: @record.ParameterPurpose</p>
+                                }
                                 @if (!string.IsNullOrEmpty(record.DutyTitle))
                                 {
                                     <p class="portal-muted"><QIcon Name="calendar-event" Size="sm" /> @record.DutyTitle</p>
@@ -414,6 +463,16 @@
                                  OnClick="@(() => Navigation.NavigateTo($"/portal/appraisals/{ap.Id}"))" />
                     </div>
                 </div>
+            }
+        </QCard>
+
+        @* ---- Activity on my file: the subject-access trail (who viewed, exported, changed it) ---- *@
+        <QCard Title="Activity on my file" Subtitle="Who has viewed, exported or changed your records" Icon="eye" Class="portal-card">
+            <QActivityLog Rows="@MyActivityRows" Loading="@(activityLoading && myActivity == null)" TableTitle="Recent actions"
+                          RetentionNote="@MyActivityRetention" EmptyText="Nobody has done anything to your file yet." />
+            @if (myActivity != null && myActivity.TotalCount > ActivityPageSize)
+            {
+                <QPager Count="@myActivity.TotalCount" PageSize="@ActivityPageSize" PageIndex="@activityPageIndex" PageIndexChanged="@OnActivityPageChanged" ItemLabel="actions" />
             }
         </QCard>
 
@@ -544,6 +603,18 @@
     .portal-recog > div { flex: 1; min-width: 0; font-size: 13px; }
     .portal-recog p { margin: 2px 0 0; color: var(--qm-text-secondary); }
 
+    .portal-purpose { margin: 0 0 6px; font-size: 12px; color: var(--qm-text-muted); display: flex; gap: 6px; align-items: flex-start; }
+    .portal-boards { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @@media (min-width: 760px) { .portal-boards { grid-template-columns: 1fr 1fr; } }
+    .portal-boards > section { min-width: 0; }
+    .portal-boards h5 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--qm-text-muted); }
+    .portal-boards__foot { margin-top: 8px; font-size: 12px; }
+    .portal-leaders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .portal-leader { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--qm-border); }
+    .portal-leader:last-child { border-bottom: 0; }
+    .portal-leader--me strong { color: var(--qm-primary); }
+    .portal-leader__rank { flex: 0 0 28px; font-family: var(--qm-font-display); font-weight: 700; color: var(--qm-text-secondary); text-align: center; }
+    .portal-leader__main { flex: 1 1 140px; min-width: 0; display: flex; flex-direction: column; font-size: 13px; }
     .portal-record-link { color: inherit; text-decoration: none; }
     .portal-record-link:hover strong { color: var(--qm-primary); }
     .portal-record__desc { margin: 0 0 6px; color: var(--qm-text-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -589,6 +660,11 @@
     private string respondBody = string.Empty;
     private StaffPerformanceRecordDto? respondTarget;
 
+    private const int ActivityPageSize = 10;
+    private ActivityLogPageDto? myActivity;
+    private bool activityLoading;
+    private int activityPageIndex;
+
     private Guid? busyRecordId;
     private Guid? busyNoticeId;
     private bool exporting;
@@ -599,7 +675,7 @@
         NotificationHub.OnStaffScoreUpdated += HandleScoreUpdated;
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -607,7 +683,56 @@
 
         me = await AuthService.GetCurrentUserAsync();
         await LoadAsync();
+        if (portal != null) await LoadMyActivityAsync();
     }
+
+    /// <summary>
+    /// The trail on the caller's own file. GetMyActivityAsync existed from the first build and nothing
+    /// called it, so the portal — the subject-access view — never showed who had looked at the file.
+    /// A failure here is quiet: the rest of the portal is still right.
+    /// </summary>
+    private async Task LoadMyActivityAsync()
+    {
+        activityLoading = true;
+        try
+        {
+            myActivity = await StaffApi.GetMyActivityAsync(activityPageIndex + 1, ActivityPageSize);
+        }
+        catch
+        {
+            myActivity ??= new ActivityLogPageDto();
+        }
+        finally
+        {
+            activityLoading = false;
+        }
+    }
+
+    private async Task OnActivityPageChanged(int index)
+    {
+        activityPageIndex = index;
+        await LoadMyActivityAsync();
+    }
+
+    private IReadOnlyList<QActivityRow> MyActivityRows => myActivity?.Items
+        .Select(a => new QActivityRow(Local(a.OccurredAt), a.ActorName ?? "System", a.Summary, null,
+            string.Join(" · ", new[] { a.IpAddress, a.UserAgent }.Where(x => !string.IsNullOrWhiteSpace(x)))))
+        .ToList() ?? new List<QActivityRow>();
+
+    private string? MyActivityRetention => myActivity == null || myActivity.AttributionRetentionDays <= 0
+        ? null
+        : $"The address and browser on each action are removed after {myActivity.AttributionRetentionDays} days; the action itself stays.";
+
+    private IReadOnlyList<QBarItem> DepartmentBars => portal == null
+        ? Array.Empty<QBarItem>()
+        : portal.DepartmentBoard
+            .Where(d => d.AverageComposite.HasValue)
+            .OrderByDescending(d => d.AverageComposite)
+            .Select(d => new QBarItem(
+                d.Name,
+                d.AverageComposite!.Value,
+                Count: $"{d.AverageComposite.Value:0.#} · {d.StaffCount} staff"))
+            .ToList();
 
     private async Task LoadAsync()
     {

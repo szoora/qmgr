@@ -201,7 +201,9 @@ public class UsageTrackingService : IUsageTrackingService
         var current = normalizedType switch
         {
             "branches" => await _dbContext.Branches.CountAsync(b => b.OrganizationId == organizationId),
-            "users" => await _dbContext.Users.CountAsync(u => u.OrganizationId == organizationId),
+            // A join request waiting for approval is not a seat (duty rota plan §12.4): counting it would let
+            // anyone holding the join link fill a school's user cap with applications nobody approved.
+            "users" => await _dbContext.Users.CountAsync(u => u.OrganizationId == organizationId && u.PendingApprovalAt == null),
             "displays" => await _dbContext.Displays.CountAsync(d => d.Branch != null && d.Branch.OrganizationId == organizationId),
             "tokens" => usage.TokensCreated,
             "api_calls" => usage.ApiCalls,
@@ -533,9 +535,15 @@ public class UsageTrackingService : IUsageTrackingService
 
         try
         {
-            // Try to increment in cache
+            // Try to increment in cache. An EMPTY cache entry is not zero: the entry expires after
+            // CacheExpirationMinutes and vanishes on every restart, and starting again from 0 then
+            // overwrote the stored month-to-date figure with a small one on the first flush below —
+            // metering undercounted every time (found by e2e 14.19 across an API restart, 2026-09-17).
+            // The stored figure is the floor.
             var cached = await _cache.GetStringAsync(cacheKey);
-            var currentValue = cached != null ? int.Parse(cached) : 0;
+            var currentValue = cached != null
+                ? int.Parse(cached)
+                : ReadCounter(await GetOrCreateCurrentRecordAsync(organizationId), counterName);
             var newValue = currentValue + count;
 
             await _cache.SetStringAsync(
@@ -559,6 +567,20 @@ public class UsageTrackingService : IUsageTrackingService
             await DirectIncrementAsync(organizationId, counterName, count);
         }
     }
+
+    private static int ReadCounter(UsageRecord record, string counterName) => counterName switch
+    {
+        "tokens_created" => record.TokensCreated,
+        "tokens_served" => record.TokensServed,
+        "api_calls" => record.ApiCalls,
+        "webhook_deliveries" => record.WebhookDeliveries,
+        "sms_sent" => record.SmsMessagesSent,
+        "emails_sent" => record.EmailsSent,
+        "push_notifications" => record.PushNotificationsSent,
+        "display_views" => record.DisplayViews,
+        "ad_impressions" => record.AdImpressions,
+        _ => 0
+    };
 
     private async Task FlushCounterToDbAsync(Guid organizationId, string counterName, int value)
     {

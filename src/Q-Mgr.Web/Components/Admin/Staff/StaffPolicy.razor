@@ -83,26 +83,27 @@
             </QCard>
 
             <QCard Title="Weights and points" Icon="sliders" Class="pol-card">
-                <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="100" Label="Weight cap (%)"
-                        HelperText="No single parameter may carry more than this share of the composite. 50 is the MET ceiling." />
+                <QInput TValue="int" @bind-Value="@policy.MaxParameterWeightPercent" Type="number" Min="10" Max="50" Label="Weight cap (%)"
+                        HelperText="No single parameter may carry more than this share of the composite. Between 10 and 50: the MET study found composites where no measure exceeds about half the weight were the most stable, so 50 is a ceiling you may tighten but not lift."
+                        HasError="@weightCapError" ErrorMessage="Between 10% and 50%." />
                 <QInput TValue="int" @bind-Value="@policy.RecognitionMonthlyBudget" Type="number" Min="0" Max="100" Label="Recognition budget per person per month"
                         HelperText="How many recognitions a member of staff may give a month. Self-recognition is always refused." />
                 <QCheckbox @bind-Value="@policy.SystemAwardsEnabled" Label="Credit system activity automatically" />
-                <small class="pol-help">Off by default. When on, finalising a welfare record, serving a queue ticket or hosting a visitor credits the matching system-source parameter — low points, capped per period, and labelled <em>Automatic</em> on the timeline so nobody mistakes it for a colleague's judgement.</small>
+                <small class="pol-help">Off by default. When on, finalising a welfare record, completing a queue ticket, hosting a visitor or receiving a 4- or 5-star customer rating credits the matching automatic parameter — low points, capped per period, and labelled <em>Automatic</em> on the timeline so nobody mistakes it for a colleague's judgement. Switching it on adds any of those parameters that are missing. Nothing is credited into a closed period.</small>
             </QCard>
 
             <QCard Title="Leaderboard" Icon="trophy" Class="pol-card">
                 <QSelect TValue="LeaderboardMode" TItem="LeaderboardMode" @bind-Value="@policy.LeaderboardMode" Items="@Modes"
-                         TextSelector="@(m => StaffDisplay.LeaderboardLabel(m))" ValueSelector="@(m => m)" Label="Who sees rankings" />
+                         TextSelector="@(m => LeaderboardText(m))" ValueSelector="@(m => m)" Label="Who sees rankings" />
                 @if (policy.LeaderboardMode == LeaderboardMode.Public)
                 {
                     <QInput TValue="int" @bind-Value="@policy.LeaderboardTopN" Type="number" Min="3" Max="50" Label="Top N shown" />
                 }
-                <small class="pol-help">Private is the default for a reason: public ranking of individuals is the pattern the research says undermines the intrinsic motivation this module is meant to support. Department comparison stays available to the reports permission under every setting.</small>
+                <small class="pol-help">Private is the default for a reason: public ranking of individuals is the pattern the research says undermines the intrinsic motivation this module is meant to support. Department averages only include departments of three or more, so no average is one person's score. Under every setting the reports page keeps its department comparison for holders of the reports permission.</small>
             </QCard>
 
             <QCard Title="Timing" Icon="clock" Class="pol-card">
-                <QInput TValue="int" @bind-Value="@policy.DutyReminderLeadHours" Type="number" Min="1" Max="168" Label="Duty reminder lead (hours)" HelperText="How long before a duty its expected attendees are reminded." />
+                <QInput TValue="int" @bind-Value="@policy.DutyReminderLeadHours" Type="number" Min="1" Max="336" Label="Duty reminder lead (hours)" HelperText="How long before a duty its expected attendees are reminded." />
                 <QInput TValue="int" @bind-Value="@policy.LateEntryThresholdDays" Type="number" Min="1" Max="90" Label="Late-entry threshold (days)" HelperText="A record dated further back than this is marked as a late entry on its face." />
                 <div class="form-row">
                     <QSelect TValue="DayOfWeek" TItem="DayOfWeek" @bind-Value="@policy.DigestWeekday" Items="@Weekdays" TextSelector="@(d => d.ToString())" ValueSelector="@(d => d)" Label="Digest weekday" />
@@ -110,6 +111,34 @@
                     <QInput TValue="int" @bind-Value="@policy.SummaryHour" Type="number" Min="0" Max="23" Label="Monthly summary hour (0–23)" />
                 </div>
                 @if (policy.LastSummarySentAt.HasValue) { <small class="pol-help">Last administrator summary sent @QDateFormat.LocalDT(policy.LastSummarySentAt).</small> }
+            </QCard>
+
+            <QCard Title="Closed periods" Icon="lock" Class="pol-card">
+                <p class="form-hint">A closed period takes no new scored records, registers, recognition, automatic credit or appraisal openings. Periods are closed and reopened on the <a href="/admin/staff/appraisals">Appraisals board</a>, by an approver; this list is read-only.</p>
+                @if (!(policy.ClosedPeriods?.Any() ?? false))
+                {
+                    <p class="pol-help">No period has been closed.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack pol-table">
+                            <thead><tr><th>Period</th><th>Closed</th><th>By</th><th class="pol-num">Unsigned at close</th><th>Override reason</th></tr></thead>
+                            <tbody>
+                                @foreach (var c in policy.ClosedPeriods.OrderByDescending(c => c.ClosedAt))
+                                {
+                                    <tr>
+                                        <td data-label="Period"><strong>@c.Key</strong></td>
+                                        <td data-label="Closed">@QDateFormat.LocalDT(DateTime.SpecifyKind(c.ClosedAt, DateTimeKind.Utc))</td>
+                                        <td data-label="By">@(c.ClosedByName ?? "an approver")</td>
+                                        <td data-label="Unsigned at close" class="pol-num">@c.UnsignedAppraisalsAtClose</td>
+                                        <td data-label="Override reason">@(string.IsNullOrWhiteSpace(c.OverrideReason) ? "—" : c.OverrideReason)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             </QCard>
 
             <QCard Title="Data protection" Icon="shield-lock" Class="pol-card">
@@ -161,7 +190,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
@@ -198,9 +227,23 @@
         if (policy!.Periods.Count > 0) policy.Periods.RemoveAt(policy.Periods.Count - 1);
     }
 
+    private bool weightCapError;
+
+    /// <summary>What each leaderboard mode shows, as the portal now renders it.</summary>
+    private static string LeaderboardText(LeaderboardMode m) => m switch
+    {
+        LeaderboardMode.Private => "Private — each person sees only their own position",
+        LeaderboardMode.Department => "Departments — department averages (teams of 3+) on everyone's portal",
+        LeaderboardMode.Public => "Public — department averages plus a top-N board of names on everyone's portal",
+        _ => m.ToString()
+    };
+
     private async Task Save()
     {
         if (policy == null) return;
+
+        weightCapError = policy.MaxParameterWeightPercent is < 10 or > 50;
+        if (weightCapError) return;
 
         // Bands: 5 rows, rating 1 always starts at 0, thresholds strictly increasing with the rating.
         bandError = null;

@@ -149,35 +149,17 @@
     {
         if (report == null) return;
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">@report.TotalVisits.ToString("N0")</div>
-                <div class="stat-label">Total Visits</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@report.UniqueVisitors.ToString("N0")</div>
-                <div class="stat-label">Unique Visitors</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@report.RosterCheckIns.ToString("N0")</div>
-                <div class="stat-label">Visiting-Day Check-Ins</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@(report.DwellDenominator > 0 ? $"{report.AvgDwellMinutes:0} min" : "—")</div>
-                @* The denominator is on the tile on purpose. "42 min" over three completed visits
-                   and over three thousand are different claims, and only one of them is worth
-                   acting on. *@
-                <div class="stat-label">Avg. Dwell · @report.DwellDenominator completed</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@(report.ConsentDenominator > 0 ? $"{report.ConsentCompliancePercent:0.#}%" : "—")</div>
-                <div class="stat-label">Consent Captured · of @report.ConsentDenominator</div>
-            </div>
-            <div class="stat-card @(report.WatchlistIncidents > 0 ? "warn" : "")">
-                <div class="stat-value">@report.WatchlistIncidents.ToString("N0")</div>
-                <div class="stat-label">Watchlist Incidents</div>
-            </div>
-        </div>
+        <QStatRow Class="stats-grid">
+            <QStatTile Value="@report.TotalVisits.ToString("N0")" Label="Total Visits" />
+            <QStatTile Value="@report.UniqueVisitors.ToString("N0")" Label="Unique Visitors" />
+            <QStatTile Value="@report.RosterCheckIns.ToString("N0")" Label="Visiting-Day Check-Ins" />
+            @* The denominator is on the tile on purpose. "42 min" over three completed visits
+               and over three thousand are different claims, and only one of them is worth
+               acting on. *@
+            <QStatTile Value="@(report.DwellDenominator > 0 ? $"{report.AvgDwellMinutes:0} min" : "—")" Label="@($"Avg. Dwell · {report.DwellDenominator} completed")" />
+            <QStatTile Value="@(report.ConsentDenominator > 0 ? $"{report.ConsentCompliancePercent:0.#}%" : "—")" Label="@($"Consent Captured · of {report.ConsentDenominator}")" />
+            <QStatTile Value="@report.WatchlistIncidents.ToString("N0")" Label="Watchlist Incidents" Class="@(report.WatchlistIncidents > 0 ? "stat-warn" : null)" />
+        </QStatRow>
 
         @if (report.Branches.Any())
         {
@@ -216,7 +198,7 @@
                         @{ var dayMax = Math.Max(1, report.VisitsByDay.Max(d => d.Count)); }
                         @foreach (var d in report.VisitsByDay)
                         {
-                            <div class="bar-col" title="@($"{d.Day:ddd d MMM}: {d.Count} visit(s)")">
+                            <div class="bar-col" title="@($"{QDateFormat.Dy(d.Day)} {QDateFormat.C(d.Day)}: {d.Count} visit(s)")">
                                 <div class="bar" style="height:@(Math.Round(100.0 * d.Count / dayMax))%"></div>
                                 <span class="bar-label">@d.Day.ToString("d/M")</span>
                             </div>
@@ -400,28 +382,17 @@
     {
         if (exceptions == null) return;
 
-        <div class="stats-grid">
-            <div class="stat-card @(exceptions.StillOnSite.Count > 0 ? "danger" : "")">
-                <div class="stat-value">@exceptions.StillOnSite.Count</div>
-                <div class="stat-label">Never Checked Out</div>
-            </div>
-            <div class="stat-card @(exceptions.Overstayed.Count > 0 ? "warn" : "")">
-                <div class="stat-value">@exceptions.Overstayed.Count</div>
-                <div class="stat-label">Overstayed (@exceptions.OverstayThresholdHours h)</div>
-            </div>
-            <div class="stat-card @(exceptions.NoHostRecorded.Count > 0 ? "warn" : "")">
-                <div class="stat-value">@exceptions.NoHostRecorded.Count</div>
-                <div class="stat-label">No Host Recorded</div>
-            </div>
-            <div class="stat-card @(exceptions.InductionLapsed.Count > 0 ? "danger" : "")">
-                <div class="stat-value">@exceptions.InductionLapsed.Count</div>
-                <div class="stat-label">Induction Lapsed</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@exceptions.FrequentVisitors.Count</div>
-                <div class="stat-label">Frequent (@exceptions.FrequentVisitorThreshold+)</div>
-            </div>
-        </div>
+        <QStatRow Class="stats-grid">
+            <QStatTile Value="@exceptions.StillOnSite.Count.ToString()" Label="Never Checked Out"
+                       Variant="@(exceptions.StillOnSite.Count > 0 ? "danger" : "default")" Class="@(exceptions.StillOnSite.Count > 0 ? "stat-danger" : null)" />
+            <QStatTile Value="@exceptions.Overstayed.Count.ToString()" Label="@($"Overstayed ({exceptions.OverstayThresholdHours} h)")"
+                       Class="@(exceptions.Overstayed.Count > 0 ? "stat-warn" : null)" />
+            <QStatTile Value="@exceptions.NoHostRecorded.Count.ToString()" Label="No Host Recorded"
+                       Class="@(exceptions.NoHostRecorded.Count > 0 ? "stat-warn" : null)" />
+            <QStatTile Value="@exceptions.InductionLapsed.Count.ToString()" Label="Induction Lapsed"
+                       Variant="@(exceptions.InductionLapsed.Count > 0 ? "danger" : "default")" Class="@(exceptions.InductionLapsed.Count > 0 ? "stat-danger" : null)" />
+            <QStatTile Value="@exceptions.FrequentVisitors.Count.ToString()" Label="@($"Frequent ({exceptions.FrequentVisitorThreshold}+)")" />
+        </QStatRow>
 
         @if (exceptions.TotalCount == 0)
         {
@@ -500,24 +471,16 @@
     {
         if (compliance == null) return;
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">@compliance.ContractorVisits</div>
-                <div class="stat-label">Contractor Visits</div>
-            </div>
-            <div class="stat-card @(compliance.ContractorVisits > 0 && compliance.InductionCompliancePercent < 100 ? "danger" : "")">
-                <div class="stat-value">@compliance.InductionCompliancePercent.ToString("0.#")%</div>
-                <div class="stat-label">Induction Valid On The Day</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">@(compliance.ConsentRequired ? $"{compliance.ConsentCompliancePercent:0.#}%" : "n/a")</div>
-                <div class="stat-label">@(compliance.ConsentRequired ? $"Consent Captured · of {compliance.ConsentRequiredVisits}" : "Consent Not Required Here")</div>
-            </div>
-            <div class="stat-card @(compliance.WatchlistActivity.Any(w => w.OverrideReason != null) ? "warn" : "")">
-                <div class="stat-value">@compliance.WatchlistActivity.Count(w => w.OverrideReason != null)</div>
-                <div class="stat-label">Manager Overrides</div>
-            </div>
-        </div>
+        var inductionShort = compliance.ContractorVisits > 0 && compliance.InductionCompliancePercent < 100;
+        var overrides = compliance.WatchlistActivity.Count(w => w.OverrideReason != null);
+        <QStatRow Class="stats-grid">
+            <QStatTile Value="@compliance.ContractorVisits.ToString()" Label="Contractor Visits" />
+            <QStatTile Value="@($"{compliance.InductionCompliancePercent:0.#}%")" Label="Induction Valid On The Day"
+                       Variant="@(inductionShort ? "danger" : "default")" Class="@(inductionShort ? "stat-danger" : null)" />
+            <QStatTile Value="@(compliance.ConsentRequired ? $"{compliance.ConsentCompliancePercent:0.#}%" : "n/a")"
+                       Label="@(compliance.ConsentRequired ? $"Consent Captured · of {compliance.ConsentRequiredVisits}" : "Consent Not Required Here")" />
+            <QStatTile Value="@overrides.ToString()" Label="Manager Overrides" Class="@(overrides > 0 ? "stat-warn" : null)" />
+        </QStatRow>
 
         <QCard Title="Contractor induction register" Class="report-block">
             @if (!compliance.InductionRegister.Any())
@@ -641,16 +604,11 @@
 
     /* The tab strip is QTabs (q-components.css); the exceptions count is its danger badge. */
 
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); }
-    .stat-card {
-        padding: var(--qm-statcard-pad); text-align: left; background: var(--qm-bg-card);
-        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
-    }
-    .stat-card.warn { border-color: var(--qm-warning); }
-    .stat-card.danger { border-color: var(--qm-danger); }
-    .stat-value { font-size: var(--qm-statcard-value); font-weight: 700; line-height: 1.1; color: var(--qm-text-primary); }
-    .stat-card.danger .stat-value { color: var(--qm-danger); }
-    .stat-label { font-size: var(--qm-statcard-label); color: var(--qm-text-muted); margin-top: 2px; }
+    /* Tiles are QStatTile/QStatRow. A figure that needs attention is carried by its border (and, for
+       danger, the figure's colour) — the border survives a mono printer, a tint would not. */
+    .stats-grid { margin-bottom: 0; }
+    .q-stat.stat-warn { border-color: var(--qm-warning); }
+    .q-stat.stat-danger { border-color: var(--qm-danger); }
 
     .report-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
     .report-block { padding: 4px 0; }
@@ -716,9 +674,11 @@
         .report-block { break-inside: avoid; page-break-inside: avoid; margin-bottom: 10px; }
 
         .stats-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-        .stat-card { border: 1px solid #999 !important; padding: 6px 9px; min-width: 110px; }
-        .stat-value { font-size: 14pt; }
-        .stat-label { font-size: 7.5pt; }
+        .stats-grid .q-stat { padding: 6px 9px; min-width: 110px; }
+        .stats-grid .q-stat.stat-warn,
+        .stats-grid .q-stat.stat-danger { border-width: 2px; border-color: #000; }
+        .stats-grid .q-stat__value { font-size: 14pt; }
+        .stats-grid .q-stat__label { font-size: 7.5pt; }
 
         .report-table { font-size: 8.5pt; }
         .report-table thead { display: table-header-group; }

@@ -104,7 +104,7 @@ public interface INotificationApiService
     /// further page exists. THROWS on failure with the server's message — the centre is a page
     /// of its own and must say why it is empty, unlike the bell preview above.
     /// </summary>
-    Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit);
+    Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit, bool unreadOnly = false);
 
     /// <summary>
     /// Mark every notification of one event key as read (<c>POST api/v1/notifications/read-all?eventKey=</c>);

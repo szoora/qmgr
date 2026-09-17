@@ -159,6 +159,46 @@
                     </div>
                 }
             </QCard>
+
+            <QCard Title="Observer pairs" Icon="people" Class="rp-card">
+                <p class="form-hint">Two or more observers rating the same lesson, side by side, widest disagreement first. A spread of two levels or more on a four-level rubric is a calibration conversation — a second observer adds more reliability than a second lesson.</p>
+                @if (!reports.ObservationPairs.Any())
+                {
+                    <p class="chart-empty">No paired observations in this period. A pair appears when two observers rate the same lesson — by linking the same duty, or by rating the same person on the same parameter on the same day. Pairs name the person observed, so they are shown only to holders of the confidential staff-records permission.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack rp-table">
+                            <thead><tr><th>Observed</th><th>Parameter</th><th>Date</th><th>Observers and ratings</th><th class="rp-num">Spread</th></tr></thead>
+                            <tbody>
+                                @foreach (var pair in reports.ObservationPairs)
+                                {
+                                    <tr class="@(pair.Spread >= 2 ? "rp-pair--wide" : "")">
+                                        <td data-label="Observed"><div class="rp-person"><QAvatar Name="@pair.SubjectName" Size="sm" /><a href="@($"/admin/staff/{pair.SubjectUserId}/timeline")">@pair.SubjectName</a></div></td>
+                                        <td data-label="Parameter">@pair.ParameterName</td>
+                                        <td data-label="Date">
+                                            @QDateFormat.D(pair.ObservedOn)
+                                            @if (!string.IsNullOrWhiteSpace(pair.DutyTitle)) { <div class="rp-muted">@pair.DutyTitle</div> }
+                                        </td>
+                                        <td data-label="Observers and ratings">
+                                            <div class="rp-pair">
+                                                @foreach (var r in pair.Ratings)
+                                                {
+                                                    <QChip Text="@($"{r.ObserverName} · {r.Rating}{(pair.RatingScale.HasValue ? $"/{pair.RatingScale}" : "")}")" Size="sm" Variant="muted" />
+                                                }
+                                            </div>
+                                        </td>
+                                        <td data-label="Spread" class="rp-num">
+                                            <QChip Text="@pair.Spread.ToString()" Size="sm" Variant="@(pair.Spread >= 2 ? "warning" : "muted")" Icon="@(pair.Spread >= 2 ? "exclamation-triangle" : null)" />
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </QCard>
         }
         else if (activeTab == "loggers")
         {
@@ -282,6 +322,8 @@
     .rp-list a { color: var(--qm-text-primary); font-weight: 500; }
     .rp-list a:hover { color: var(--qm-primary); }
     .rp-link { display: inline-block; margin-top: 10px; font-size: 13px; color: var(--qm-primary); }
+    .rp-pair { display: flex; flex-wrap: wrap; gap: 6px; }
+    .rp-pair--wide td { background: var(--qm-bg-secondary); }
 </style>
 
 @code {
@@ -336,7 +378,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;

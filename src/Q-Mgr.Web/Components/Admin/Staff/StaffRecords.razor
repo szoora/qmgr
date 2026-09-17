@@ -5,6 +5,7 @@
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Admin.Staff
+@using QMgr.Web.Components.Shared
 @inject IStaffPerformanceApiService StaffApi
 @inject IToastService Toast
 @inject IBranchStateService BranchState
@@ -27,7 +28,7 @@
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory.Count == 0)" />
             }
             <QDataExport TItem="StaffPerformanceRecordDto" Title="Staff records" FileStem="staff-records" Subtitle="@ExportSubtitle"
-                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync"
+                         Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
                          Disabled="@(result == null || result.Items.Count == 0)" DisabledReason="Nothing matches the current filters." />
         </div>
     </div>
@@ -69,6 +70,10 @@
                             <th>Visibility</th>
                             <th>Status</th>
                             <th>Logged by</th>
+                            @if (canEdit)
+                            {
+                                <th><span class="visually-hidden">Actions</span></th>
+                            }
                         </tr>
                     </thead>
                     <tbody>
@@ -105,6 +110,16 @@
                                     @if (r.Source == RecordSource.System) { <span class="sr-muted"> · automatic</span> }
                                 </td>
                                 <td>@r.LoggedByName</td>
+                                @if (canEdit)
+                                {
+                                    @* Its own cell that swallows the click, so annulling does not also open the timeline. *@
+                                    <td class="sr-actions" @onclick:stopPropagation="true">
+                                        @if (r.Status != StaffRecordStatus.Annulled)
+                                        {
+                                            <QButton Text="Annul" Icon="x-octagon" Size="sm" Variant="ghost" OnClick="@(() => OpenAnnul(r))" />
+                                        }
+                                    </td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -116,6 +131,11 @@
 </div>
 
 <StaffRecordDialog BranchId="@branchId" Subjects="@directory" @bind-Visible="showRecordDialog" OnCreated="@(_ => Search(resetPage: true))" />
+
+<ConfirmDialog @bind-IsVisible="showAnnulDialog" Title="Annul this record?"
+               Message="@($"The row stays on the file marked Annulled, with your reason, and drops out of scoring. {(annulTarget?.ParameterName ?? "")} for {(annulTarget?.SubjectName ?? "")} — {(annulTarget == null ? "" : QDateFormat.D(annulTarget.OccurredAt.ToLocalTime()))}")"
+               ConfirmText="Annul" ConfirmButtonClass="btn-danger" RequireReason="true" ReasonLabel="Reason * (at least 5 characters)"
+               @bind-Reason="annulReason" OnClose="@ConfirmAnnul" />
 
 <style>
     .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -132,6 +152,8 @@
     .sr-pos { color: var(--qm-success); font-weight: 600; margin-left: 4px; }
     .sr-neg { color: var(--qm-danger); font-weight: 600; margin-left: 4px; }
     .sr-muted { color: var(--qm-text-muted); font-size: 12.5px; margin-left: 4px; }
+    .sr-actions { white-space: nowrap; text-align: right; cursor: default; }
+    .sr-row--annulled .sr-actions { text-decoration: none; }
 </style>
 
 @code {
@@ -153,7 +175,10 @@
 
     private Guid branchId;
     private bool isLoading = true;
-    private bool canCreate;
+    private bool canCreate, canEdit;
+    private bool showAnnulDialog;
+    private StaffPerformanceRecordDto? annulTarget;
+    private string annulReason = string.Empty;
     private List<StaffMemberDto> directory = new();
     private List<PerformanceParameterDto> parameters = new();
     private StaffRecordSearchResultDto? result;
@@ -199,13 +224,14 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StaffPerformance))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules");
             return;
         }
 
         canCreate = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsCreate);
+        canEdit = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsEdit);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
@@ -249,6 +275,40 @@
             isLoading = false;
         }
     }
+
+    private void OpenAnnul(StaffPerformanceRecordDto r)
+    {
+        annulTarget = r;
+        annulReason = string.Empty;
+        showAnnulDialog = true;
+    }
+
+    private async Task ConfirmAnnul(bool confirmed)
+    {
+        var target = annulTarget;
+        annulTarget = null;
+        if (!confirmed || target == null) return;
+        if (annulReason.Trim().Length < 5)
+        {
+            Toast.Notify(ToastSeverity.Warning, "Say why the record is being annulled", "The reason needs at least 5 characters.");
+            return;
+        }
+        try
+        {
+            await StaffApi.AnnulAsync(branchId, target.Id, new AnnulStaffRecordRequest { Reason = annulReason.Trim() });
+            Toast.Notify(ToastSeverity.Success, "Record annulled", $"{target.ParameterName} for {target.SubjectName}.");
+            await Search(resetPage: false);
+        }
+        catch (Exception ex)
+        {
+            // Includes a closed period's refusal ("Term 2 2026 is closed"), which names the way out.
+            Toast.Notify(ToastSeverity.Error, "Could not annul the record", ex.Message);
+        }
+    }
+
+    private Task OnExported(ExportResult export) => export.Success
+        ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Records, Format = export.Format?.ToString(), RowCount = export.RowCount })
+        : Task.CompletedTask;
 
     private async Task OnPageChanged(int index)
     {

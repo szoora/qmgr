@@ -214,6 +214,22 @@ public abstract class StaffPerformanceControllerBase : ControllerBase
                              && r.CreatedAt >= monthStart);
     }
 
+    // ---- Closed periods ------------------------------------------------------------------------
+
+    /// <summary>
+    /// A 409 when <paramref name="whenUtc"/> falls in a closed period, or null. One wording for every write
+    /// a closure stops, naming the period and the way out, so a register, a recognition and a correction
+    /// all say the same thing.
+    /// </summary>
+    protected IActionResult? ClosedPeriodProblem(IStaffPerformancePolicyService policyService, StaffPerformancePolicyDto policy, DateTime whenUtc, string what)
+    {
+        var closure = policyService.ClosureFor(policy, whenUtc);
+        if (closure == null) return null;
+        var period = policyService.FindPeriod(policy, closure.Key);
+        return ConflictProblem($"{period?.Name ?? closure.Key} is closed",
+            $"{what} dated in a closed period would change figures that have been signed off. An approver can reopen the period first.");
+    }
+
     // ---- Problem shapes ------------------------------------------------------------------------
 
     protected IActionResult BadRequestProblem(string title, string? detail = null)

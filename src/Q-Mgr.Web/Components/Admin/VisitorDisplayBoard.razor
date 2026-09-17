@@ -63,7 +63,7 @@
                             <span class="onsite-meta">
                                 @if (!string.IsNullOrEmpty(v.Purpose)) { <text>@v.Purpose · </text> }
                                 @if (!string.IsNullOrEmpty(v.HostName)) { <text>Visiting @v.HostName · </text> }
-                                in @v.CheckedInAt?.ToString("HH:mm")
+                                in @QDateFormat.T(v.CheckedInAt)
                             </span>
                         </div>
                     }
@@ -92,7 +92,7 @@
                                     <WatchlistFlagIcon Name="@entry.Visitor.FullName" Reason="@entry.Visitor.WatchlistReason" FlaggedAt="@entry.Visitor.WatchlistAddedAt" />
                                 }
                             </span>
-                            <span class="feed-time">@entry.OccurredAt.ToLocalTime().ToString("HH:mm:ss")</span>
+                            <span class="feed-time">@QDateFormat.TS(entry.OccurredAt.ToLocalTime())</span>
                         </div>
                     }
                 </div>

@@ -48,7 +48,7 @@
                     <div class="action-row-body">
                         <div class="action-row-title">
                             <strong>@record.StudentName</strong>
-                            <QChip Text="@record.Status.ToString()" Size="sm" Color="@WelfareStatusColor(record.Status)" />
+                            <QChip Text="@record.Status.ToString()" Size="sm" Color="@WelfareDisplay.StatusColor(record.Status)" />
                             @if (isOverdue)
                             {
                                 <span class="overdue-tag">Overdue</span>
@@ -147,16 +147,6 @@
             isLoading = false;
         }
     }
-
-    /// <summary>Status chip colour — the same hues WelfareReports uses, so a record reads the same on both pages.</summary>
-    private static string WelfareStatusColor(WelfareStatus status) => status switch
-    {
-        WelfareStatus.Open => "var(--qm-welfare-concern)",
-        WelfareStatus.UnderReview => "var(--qm-accent-orange)",
-        WelfareStatus.ActionTaken => "var(--qm-primary)",
-        WelfareStatus.Resolved => "var(--qm-accent-green)",
-        _ => "var(--qm-text-muted)"
-    };
 
     private static string CaseTypeIcon(WelfareCaseType caseType) => caseType switch
     {

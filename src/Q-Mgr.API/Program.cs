@@ -282,6 +282,10 @@ app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
 
 app.UseAuthentication();
 
+// A token issued against a temporary password may only change the password or sign out (duty rota
+// plan §12.3). Straight after authentication, so nothing below ever acts on one.
+app.UseMiddleware<QMgr.Middleware.PasswordChangeOnlyMiddleware>();
+
 // Tenant resolution - must be after authentication to access JWT claims
 app.UseTenantResolution();
 
@@ -400,5 +404,7 @@ WelfareReminderJobRegistration.RegisterRecurringJobs();
 AppointmentJobsRegistration.RegisterRecurringJobs();
 DocumentShareJobsRegistration.RegisterRecurringJobs();
 StaffPerformanceJobsRegistration.RegisterRecurringJobs();
+ReminderLadderJobRegistration.RegisterRecurringJobs();
+StaffOnboardingJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

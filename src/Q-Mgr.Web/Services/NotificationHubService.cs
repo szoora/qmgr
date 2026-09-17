@@ -347,10 +347,11 @@ public class NotificationApiService : INotificationApiService
         }
     }
 
-    public async Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit)
+    public async Task<NotificationPageResult> GetNotificationsAsync(string? eventKey, int offset, int limit, bool unreadOnly = false)
     {
         limit = Math.Clamp(limit, 1, 199);
         var url = $"api/v1/notifications?offset={Math.Max(0, offset)}&limit={limit + 1}";
+        if (unreadOnly) url += "&unreadOnly=true";
         if (!string.IsNullOrWhiteSpace(eventKey))
             url += $"&eventKey={Uri.EscapeDataString(eventKey)}";
 

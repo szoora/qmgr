@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using Hangfire;
+using Microsoft.AspNetCore.DataProtection;
+using QMgr.API.Application.Services;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Controllers.v1;
 using QMgr.Application.DTOs;
@@ -55,18 +57,24 @@ public class RosterImportProcessorJob
     // two are what AuthController.SendPasswordResetEmailAsync uses, resolved here the same way.
     private readonly IEmailSender _emailSender;
     private readonly IPlatformSettingsService _platformSettings;
+    private readonly IDataProtectionProvider _dataProtection;
+    private readonly INotificationService _notifications;
 
     public RosterImportProcessorJob(
         QMgrDbContext context,
         IRosterImportBroadcaster broadcaster,
         IEmailSender emailSender,
         IPlatformSettingsService platformSettings,
+        IDataProtectionProvider dataProtection,
+        INotificationService notifications,
         ILogger<RosterImportProcessorJob> logger)
     {
         _context = context;
         _broadcaster = broadcaster;
         _emailSender = emailSender;
         _platformSettings = platformSettings;
+        _dataProtection = dataProtection;
+        _notifications = notifications;
         _logger = logger;
     }
 
@@ -563,8 +571,8 @@ public class RosterImportProcessorJob
             return;
         }
 
-        StartStaffImportRequest? request;
-        try { request = JsonSerializer.Deserialize<StartStaffImportRequest>(job.RowsJson); }
+        StaffImportJobPayload? request;
+        try { request = JsonSerializer.Deserialize<StaffImportJobPayload>(job.RowsJson); }
         catch (JsonException ex)
         {
             _logger.LogError(ex, "RosterImportJob {JobId}: failed to deserialize RowsJson as StartStaffImportRequest", job.Id);
@@ -574,10 +582,45 @@ public class RosterImportProcessorJob
 
         var context = await StaffImportContext.LoadAsync(_context, job.OrganizationId, job.BranchId);
         var created = new List<(Guid UserId, string? LineManagerEmail)>();
+        var protector = _dataProtection.CreateProtector(TemporaryPasswords.ImportProtectorPurpose).ToTimeLimitedDataProtector();
 
-        await RunRowsAsync(job, request.Rows,
-            (row, rowNumber) => ProcessStaffRowAsync(job, row, rowNumber, request.SendInvites, context, created),
-            row => new RosterImportJobEntry { StudentName = $"{row.FirstName} {row.LastName}".Trim(), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
+        try
+        {
+            await RunRowsAsync(job, request.Rows,
+                (row, rowNumber) =>
+                {
+                    var index = rowNumber - 1;
+                    // A payload written before per-row delivery existed has no ResolvedDelivery: fall back to SendInvites.
+                    var mode = request.ResolvedDelivery.TryGetValue(index, out var m) ? m : (request.SendInvites ? StaffImportDeliveryMode.Invitation : null);
+                    string? temporary = null;
+                    if (request.ProtectedTemporaryPasswords.TryGetValue(index, out var sealedPassword))
+                    {
+                        try { temporary = protector.Unprotect(sealedPassword); }
+                        catch (Exception ex) { _logger.LogWarning(ex, "RosterImportJob {JobId}: a temporary password could not be unsealed (key expired?)", job.Id); }
+                    }
+                    return ProcessStaffRowAsync(job, row, rowNumber, mode, temporary, context, created);
+                },
+                row => new RosterImportJobEntry { StudentName = $"{row.FirstName} {row.LastName}".Trim(), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
+        }
+        finally
+        {
+            // The sealed temporary passwords have done their work: rewrite the payload without them, so the
+            // job row never keeps even an encrypted copy (plan §12.2).
+            if (request.ProtectedTemporaryPasswords.Count > 0)
+            {
+                try
+                {
+                    request.ProtectedTemporaryPasswords.Clear();
+                    var sealedJob = await _context.RosterImportJobs.FirstOrDefaultAsync(j => j.Id == job.Id);
+                    if (sealedJob != null)
+                    {
+                        sealedJob.RowsJson = JsonSerializer.Serialize(request);
+                        await _context.SaveChangesAsync();
+                    }
+                }
+                catch (Exception ex) { _logger.LogError(ex, "RosterImportJob {JobId}: could not strip the sealed temporary passwords from the payload", job.Id); }
+            }
+        }
 
         // Second pass: line managers, now that every row's account exists. Matched by normalized
         // email against the organization's users (existing or just created).
@@ -643,8 +686,9 @@ public class RosterImportProcessorJob
         }
     }
 
-    private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, bool sendInvites, StaffImportContext ctx, List<(Guid, string?)> created)
+    private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, StaffImportDeliveryMode? delivery, string? temporaryPassword, StaffImportContext ctx, List<(Guid, string?)> created)
     {
+        var sendInvites = delivery == StaffImportDeliveryMode.Invitation;
         var firstName = (row.FirstName ?? "").Trim();
         var lastName = (row.LastName ?? "").Trim();
         var email = (row.Email ?? "").Trim();
@@ -680,6 +724,16 @@ public class RosterImportProcessorJob
             Fail(RoleCodes.IsSuperAdmin(roleCode) || RoleCodes.IsAdmin(roleCode)
                 ? $"Role '{roleCode}' cannot be assigned by import — add administrators one at a time."
                 : $"Unrecognized role code '{roleCode}' — use a system role such as teacher, support-staff or head-of-department, or one of this organization's own roles.");
+            return;
+        }
+
+        // The import refuses a role above the importer's (plan §13.17) — the same guard the join approval uses.
+        var roleRefusal = await RoleAssignmentGuard.RefusalAsync(_context, job.CreatedByUserId!.Value, role);
+        if (roleRefusal != null) { Fail(roleRefusal); return; }
+
+        if (delivery is StaffImportDeliveryMode.Slips or StaffImportDeliveryMode.Sms && string.IsNullOrEmpty(temporaryPassword))
+        {
+            Fail("This row's temporary password could not be read back (the import waited too long in the queue). Re-issue access for this person from the Onboarding page.");
             return;
         }
 
@@ -740,7 +794,14 @@ public class RosterImportProcessorJob
         };
 
         string? inviteNote = null;
-        if (sendInvites)
+        if (!string.IsNullOrEmpty(temporaryPassword))
+        {
+            // A temporary password (plan §12.2–12.3): hashed only, forced change at first sign-in, 72 hours.
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
+            user.MustChangePassword = true;
+            user.TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(TemporaryPasswords.Lifetime);
+        }
+        else if (sendInvites)
         {
             // Exactly AuthController.ForgotPassword's token, with a 7-day expiry rather than 1 hour:
             // an invitation waits for someone who may not open their mail today.
@@ -751,11 +812,40 @@ public class RosterImportProcessorJob
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
-        if (sendInvites)
+        if (sendInvites && string.IsNullOrEmpty(temporaryPassword))
         {
             var delivered = await SendStaffInviteAsync(user, ctx);
             inviteNote = delivered ? " Invitation sent." : " Invitation could not be sent — they can use Forgot password.";
         }
+        else if (delivery == StaffImportDeliveryMode.Slips)
+        {
+            inviteNote = " Temporary password on the printed slip.";
+        }
+        else if (delivery == StaffImportDeliveryMode.Sms)
+        {
+            if (string.IsNullOrWhiteSpace(user.Phone)) inviteNote = " No phone number, so no SMS — print this person's slip.";
+            else
+            {
+                if (ctx.BaseUrl == "https://qmgr.app")
+                {
+                    var saas = await _platformSettings.GetSettingsAsync<Domain.Entities.Platform.SaasSettings>("SaaS");
+                    ctx.BaseUrl = (saas?.BaseUrl ?? "https://qmgr.app").TrimEnd('/');
+                }
+                var sms = await _notifications.SendSmsAsync(job.OrganizationId, user.Phone,
+                    StaffOnboardingController.TemporaryPasswordSms(user.Username, temporaryPassword!, ctx.BaseUrl));
+                inviteNote = sms.IsSent ? " Temporary password sent by SMS." : $" The SMS was not sent ({sms.Reason ?? sms.Outcome.ToString()}) — print this person's slip.";
+            }
+        }
+
+        // Class-teacher and subject assignments from the row (plan §12.5), with the rules the class-teachers page applies.
+        var assignmentNotes = new List<string>();
+        if (job.BranchId != Guid.Empty)
+        {
+            assignmentNotes.AddRange(await TeachingAssignments.ApplyClassTeacherOfAsync(_context, job.OrganizationId, job.BranchId, user.Id,
+                TeachingAssignments.SplitClasses(row.ClassTeacherOf), job.CreatedByUserId!.Value));
+            assignmentNotes.AddRange(await TeachingAssignments.ApplyTeachesAsync(_context, job.OrganizationId, job.BranchId, user.Id, row.Teaches, job.CreatedByUserId!.Value));
+        }
+        if (assignmentNotes.Count > 0) inviteNote = (inviteNote ?? "") + " " + string.Join(" ", assignmentNotes);
 
         created.Add((user.Id, string.IsNullOrWhiteSpace(row.LineManagerEmail) ? null : row.LineManagerEmail.Trim()));
 

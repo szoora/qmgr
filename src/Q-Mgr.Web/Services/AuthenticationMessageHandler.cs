@@ -34,6 +34,11 @@ public class AuthenticationMessageHandler : DelegatingHandler
     /// Every call this app makes reaches the API from the Web server, so the API would otherwise
     /// see the loopback and no browser. The activity log prefers these two headers (and the API
     /// truncates and coarsens them before storing). Never overwrites a header a caller set itself.
+    ///
+    /// X-Real-IP is the API's rate-limit key (IpRateLimiting.RealIpHeader). Without it every signed-in
+    /// person shared ONE loopback bucket of 100 requests a minute — found by the load test on
+    /// 2026-09-17, where 50 users saw 97% 429s. With it each viewer is limited on their own, which is
+    /// what the rule always meant.
     /// </summary>
     private void RelayViewer(HttpRequestMessage request)
     {
@@ -41,6 +46,8 @@ public class AuthenticationMessageHandler : DelegatingHandler
         if (v == null) return;
         if (!request.Headers.Contains("X-Viewer-Ip") && !string.IsNullOrWhiteSpace(v.IpAddress))
             request.Headers.TryAddWithoutValidation("X-Viewer-Ip", v.IpAddress);
+        if (!request.Headers.Contains("X-Real-IP") && !string.IsNullOrWhiteSpace(v.IpAddress))
+            request.Headers.TryAddWithoutValidation("X-Real-IP", v.IpAddress);
         if (!request.Headers.Contains("X-Viewer-Agent") && !string.IsNullOrWhiteSpace(v.UserAgent))
             request.Headers.TryAddWithoutValidation("X-Viewer-Agent", v.UserAgent);
     }

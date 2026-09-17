@@ -101,7 +101,7 @@ public class CountersController : ControllerBase
         // Staff Performance system award for the serving user — after the command has committed,
         // policy-gated (off by default) and never throwing, the same post-commit side-effect rule
         // the visitor badge token follows.
-        await _systemAwards.CreditTokenServedAsync(request.TokenId);
+        await _systemAwards.CreditTokenServedAsync(request.TokenId, userId == Guid.Empty ? null : userId);
 
         return Ok(result);
     }

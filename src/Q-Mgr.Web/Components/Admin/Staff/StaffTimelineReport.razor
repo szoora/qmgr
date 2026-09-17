@@ -394,6 +394,17 @@ else if (loadError != null)
                 publishedFrom: $"Staff timeline — {SubjectName} ({timeline?.Subject.EmployeeNumber ?? "no employee number"}), {PeriodCaption}, generated {stamp}",
                 shareable: true);
 
+            // The activity log carries the publish (plan §11); the server never saw the PDF itself.
+            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+            {
+                Kind = StaffExportKinds.Timeline,
+                SubjectUserId = UserId,
+                Published = true,
+                MediaContentId = doc.Id,
+                DocumentName = name,
+                Format = "PDF"
+            });
+
             Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
                 "The report is a snapshot as of now. Create a share link from the Library when you are ready.");
             Navigation.NavigateTo($"/content/documents?document={doc.Id}");

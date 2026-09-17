@@ -147,6 +147,7 @@ public class DocumentShareApiService : IDocumentShareApiService
     {
         var message = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body, options: _json) };
         if (!string.IsNullOrWhiteSpace(viewer?.IpAddress)) message.Headers.TryAddWithoutValidation("X-Viewer-Ip", viewer.IpAddress);
+        if (!string.IsNullOrWhiteSpace(viewer?.IpAddress)) message.Headers.TryAddWithoutValidation("X-Real-IP", viewer.IpAddress);
         if (!string.IsNullOrWhiteSpace(viewer?.UserAgent)) message.Headers.TryAddWithoutValidation("X-Viewer-Agent", viewer.UserAgent);
         return _http.SendAsync(message);
     }

@@ -42,6 +42,7 @@ public static class StaffCoverageBuilder
             .ToListAsync(ct);
         var departmentNames = await StaffLookups.LoadDepartmentNamesAsync(db, organizationId, ct);
 
+        var coveragePolicy = await policy.GetAsync(organizationId, ct);
         var parameters = await db.PerformanceParameters.IgnoreQueryFilters().AsNoTracking()
             .Where(p => p.OrganizationId == organizationId && p.IsActive)
             .OrderBy(p => p.SortOrder)
@@ -92,7 +93,11 @@ public static class StaffCoverageBuilder
             StaffWithoutAppraiserThisPeriod = staff.Where(u => !appraisedSet.Contains(u.Id)).Select(Member).ToList(),
             // Observation is a teaching-staff parameter; a bursar with no lesson observation is not a gap.
             StaffWithoutObservationThisPeriod = teaching.Where(u => !observed.Contains(u.Id)).Select(Member).ToList(),
-            ParametersWithNoRecordsThisPeriod = parameters.Where(p => p.Kind != ParameterKind.Wellbeing && !parametersUsed.Contains(p.Id))
+            // Not gaps: Wellbeing (nothing to log is good news), a recovery parameter (no recovered lessons
+            // means none were missed), and an automatic-credit parameter while automatic credit is off.
+            ParametersWithNoRecordsThisPeriod = parameters.Where(p => p.Kind != ParameterKind.Wellbeing && !parametersUsed.Contains(p.Id)
+                                                                      && p.OffsetsParameterId == null
+                                                                      && (!p.IsSystemSource || coveragePolicy.SystemAwardsEnabled))
                 .Select(StaffPerformanceMapping.ToDto).ToList()
         };
     }

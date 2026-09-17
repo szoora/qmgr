@@ -30,7 +30,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1/staff/portal")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffPortalController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
@@ -43,11 +43,47 @@ public class StaffPortalController : StaffPerformanceControllerBase
         IStaffScopeService staffScope,
         IActivityLogger activity,
         IStaffPerformancePolicyService policy,
-        IStaffScoringService scoring)
+        IStaffScoringService scoring,
+        IStaffOnboardingPolicyService onboarding)
         : base(db, tenantAccessor, staffScope, activity)
     {
         _policy = policy;
         _scoring = scoring;
+        _onboarding = onboarding;
+    }
+
+    private readonly IStaffOnboardingPolicyService _onboarding;
+
+    /// <summary>
+    /// The first-sign-in checklist (plan §12.3), derived from the account itself: a confirmed phone, a
+    /// preferences blob (null until the person has saved their choices once), a photo, and an
+    /// acknowledgement of the tenant's acceptable-use notice when one is set. Nothing is ticked by hand.
+    /// </summary>
+    private async Task<OnboardingChecklistDto> BuildOnboardingChecklistAsync(QMgr.Domain.Entities.Identity.User me, Guid organizationId)
+    {
+        var onboarding = await _onboarding.GetAsync(organizationId);
+        Guid? noticeId = null;
+        var acknowledged = false;
+        if (onboarding.AcceptableUseNoticeId is { } id)
+        {
+            var acks = await Db.StaffNotices.IgnoreQueryFilters().AsNoTracking()
+                .Where(n => n.Id == id && n.OrganizationId == organizationId && n.IsActive)
+                .Select(n => n.Acknowledgements).FirstOrDefaultAsync();
+            if (acks != null)
+            {
+                noticeId = id;
+                try { acknowledged = (System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(acks) ?? new()).ContainsKey(me.Id.ToString()); }
+                catch (System.Text.Json.JsonException) { }
+            }
+        }
+        return new OnboardingChecklistDto
+        {
+            PhoneConfirmed = me.PhoneVerifiedAt != null,
+            NotificationPreferencesReviewed = !string.IsNullOrWhiteSpace(me.NotificationPreferences),
+            ProfilePhotoAdded = !string.IsNullOrWhiteSpace(me.PhotoUrl),
+            AcceptableUseNoticeId = noticeId,
+            AcceptableUseAcknowledged = acknowledged
+        };
     }
 
     // ---------------------------------------------------------------------
@@ -89,11 +125,23 @@ public class StaffPortalController : StaffPerformanceControllerBase
             .OrderBy(d => d.EndsAt)
             .Take(10)
             .ToListAsync();
+        // Saving a register records its marks at once and leaves it open, so "not closed" can mean
+        // "nothing marked" or "half marked"; the line says which.
+        var dueIds = registersDue.Select(d => d.Id).ToList();
+        var markedByDuty = dueIds.Count == 0
+            ? new Dictionary<Guid, int>()
+            : await Db.StaffPerformanceRecords.AsNoTracking()
+                .Where(r => r.DutyId != null && dueIds.Contains(r.DutyId.Value) && r.Status == StaffRecordStatus.Final)
+                .GroupBy(r => r.DutyId!.Value)
+                .Select(g => new { g.Key, Count = g.Select(r => r.SubjectUserId).Distinct().Count() })
+                .ToDictionaryAsync(x => x.Key, x => x.Count);
         openItems.AddRange(registersDue.Select(d => new PortalItemDto
         {
             Kind = "register-due",
             Title = d.Title,
-            Detail = "You are the recorder and the register has not been taken.",
+            Detail = markedByDuty.GetValueOrDefault(d.Id) is var marked && marked > 0
+                ? $"You are the recorder. {marked} marked and recorded; close the register when everyone is marked."
+                : "You are the recorder and the register has not been taken.",
             DueAt = d.EndsAt,
             IsOverdue = true,
             Url = $"/admin/staff/duties/{d.Id}/register"
@@ -213,6 +261,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
             .Append(me.LineManagerUserId)
             .Append(appraisal?.AppraiserUserId).Append(appraisal?.ModeratorUserId).Append(appraisal?.SignedByUserId));
         var departmentNames = await DepartmentNamesAsync(organizationId);
+        var (departmentBoard, leaderboard) = await StaffReportBuilder.BuildPortalBoardsAsync(Db, _scoring, organizationId, branchId, period, policy);
 
         StaffAppraisalDto? appraisalDto = null;
         if (appraisal != null)
@@ -239,7 +288,10 @@ public class StaffPortalController : StaffPerformanceControllerBase
             Appraisal = appraisalDto,
             RecognitionBudget = await BuildRecognitionBudgetAsync(_policy, organizationId, me.Id),
             UnacknowledgedRecords = unacknowledged,
-            LeaderboardMode = policy.LeaderboardMode
+            LeaderboardMode = policy.LeaderboardMode,
+            DepartmentBoard = departmentBoard,
+            Leaderboard = leaderboard,
+            Onboarding = await BuildOnboardingChecklistAsync(me, organizationId)
         });
     }
 
@@ -284,7 +336,8 @@ public class StaffPortalController : StaffPerformanceControllerBase
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
         var policy = await _policy.GetAsync(self.OrganizationId);
 
-        var query = Db.ActivityEvents.AsNoTracking().Where(e => e.OrganizationId == self.OrganizationId && e.SubjectUserId == self.User!.Id);
+        // Never Restricted on the subject's own trail: "Restricted record viewed" would tell them one exists.
+        var query = Db.ActivityEvents.AsNoTracking().Where(e => e.OrganizationId == self.OrganizationId && e.SubjectUserId == self.User!.Id && e.Visibility != WelfareVisibility.Restricted);
         var total = await query.CountAsync();
         var counts = await query.GroupBy(e => e.Action).Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
         var events = await query.OrderByDescending(e => e.OccurredAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
@@ -352,7 +405,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
             .OrderByDescending(a => a.PeriodStart)
             .ToListAsync();
         var events = await Db.ActivityEvents.AsNoTracking()
-            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == me.Id)
+            .Where(e => e.OrganizationId == organizationId && e.SubjectUserId == me.Id && e.Visibility != WelfareVisibility.Restricted)
             .OrderByDescending(e => e.OccurredAt)
             .ToListAsync();
         // Acknowledgements live in a jsonb map; the key is the user id as a string, and Npgsql's

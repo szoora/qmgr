@@ -19,6 +19,9 @@ public interface IStaffPerformanceApiService
     Task<PerformanceParameterDto> ToggleParameterAsync(Guid id);
     Task<StaffPerformancePolicyDto> GetPolicyAsync();
     Task<StaffPerformancePolicyDto> UpdatePolicyAsync(StaffPerformancePolicyDto policy);
+    Task<PeriodStatusDto> GetPeriodStatusAsync(string periodKey);
+    Task<PeriodStatusDto> ClosePeriodAsync(string periodKey, ClosePeriodRequest request);
+    Task<PeriodStatusDto> ReopenPeriodAsync(string periodKey, ReopenPeriodRequest request);
 
     // Structure
     Task<List<DepartmentDto>> GetDepartmentsAsync(Guid branchId, bool includeInactive = false);
@@ -31,9 +34,10 @@ public interface IStaffPerformanceApiService
 
     // Records
     Task<StaffRecordSearchResultDto> SearchRecordsAsync(Guid branchId, Guid? subjectUserId = null, Guid? parameterId = null, DateTime? from = null, DateTime? to = null, string? status = null, string? q = null, int page = 1, int pageSize = 25);
-    Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request);
+    /// <summary>Throws <see cref="LateEntryConfirmationRequiredException"/> when the date is past the policy's late-entry threshold and <paramref name="acknowledgeLateEntry"/> is false.</summary>
+    Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request, bool acknowledgeLateEntry = false);
     Task<StaffPerformanceRecordDto> GetRecordAsync(Guid branchId, Guid id);
-    Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id);
+    Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id, bool acknowledgeLateEntry = false);
     Task<StaffPerformanceRecordDto> AddNoteAsync(Guid branchId, Guid id, AddStaffNoteRequest request);
     Task<StaffPerformanceRecordDto> RespondAsync(Guid branchId, Guid id, AddStaffNoteRequest request);
     Task<StaffPerformanceRecordDto> AcknowledgeAsync(Guid branchId, Guid id);
@@ -77,7 +81,9 @@ public interface IStaffPerformanceApiService
     Task<StaffAppraisalDto> AppealAppraisalAsync(Guid branchId, Guid id, AppealAppraisalRequest request);
     Task<StaffAppraisalDto> AttachAppraisalReportAsync(Guid branchId, Guid id, AttachAppraisalReportRequest request);
     Task<ActivityLogPageDto> GetActivityAsync(Guid branchId, int page = 1, int pageSize = 50, Guid? userId = null, string? action = null);
-    Task<RosterImportJobDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request);
+    /// <summary>Tells the API an export or Publish to Library just happened in the browser, so the activity log carries it. Never throws: a log line that failed must not undo a download the user already has.</summary>
+    Task RecordExportAsync(Guid branchId, RecordStaffExportRequest request);
+    Task<StaffImportStartedDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request);
     Task<List<RosterImportJobDto>> GetStaffImportJobsAsync(Guid branchId, int limit = 50);
     Task<RosterImportJobDto> GetStaffImportJobAsync(Guid branchId, Guid jobId);
     Task<List<RosterImportJobEntryDto>> GetStaffImportJobEntriesAsync(Guid branchId, Guid jobId, int limit = 500);
@@ -90,6 +96,14 @@ public interface IStaffPerformanceApiService
     Task<StaffFileExportDto> ExportMyFileAsync();
     /// <summary>Marks every record about me as seen; returns how many.</summary>
     Task<int> AcknowledgeAllMyRecordsAsync();
+}
+
+/// <summary>The API refused a record dated more than the policy's late-entry threshold ago until the caller confirms.</summary>
+public class LateEntryConfirmationRequiredException : InvalidOperationException
+{
+    public int ThresholdDays { get; }
+    public LateEntryConfirmationRequiredException(int thresholdDays)
+        : base($"This record is dated more than {thresholdDays} days ago.") => ThresholdDays = thresholdDays;
 }
 
 public class StaffPerformanceApiService : IStaffPerformanceApiService
@@ -129,6 +143,32 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
     }
 
+    /// <summary>A record write that the API may answer with 409 LATE_ENTRY: surfaced as its own exception so the dialog can ask and resubmit.</summary>
+    private async Task<StaffPerformanceRecordDto> SendLateEntryAwareAsync(HttpMethod method, string url, object? body)
+    {
+        using var message = new HttpRequestMessage(method, url);
+        if (body != null) message.Content = JsonContent.Create(body, options: _json);
+        var response = await _http.SendAsync(message);
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            if (text.Contains("LATE_ENTRY", StringComparison.Ordinal))
+            {
+                var days = 14;
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("thresholdDays", out var t) && t.TryGetInt32(out var d)) days = d;
+                }
+                catch (JsonException) { }
+                throw new LateEntryConfirmationRequiredException(days);
+            }
+            throw new InvalidOperationException(ApiErrorService.GetErrorMessageFromBody(text, "This change conflicts with the current state."));
+        }
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<StaffPerformanceRecordDto>(_json))!;
+    }
+
     private static string Q(params (string Key, string? Value)[] parts)
     {
         var items = parts.Where(p => !string.IsNullOrWhiteSpace(p.Value)).Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value!)}").ToList();
@@ -144,6 +184,9 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<PerformanceParameterDto> ToggleParameterAsync(Guid id) => SendAsync<PerformanceParameterDto>(HttpMethod.Patch, $"api/v1/staff/parameters/{id}/toggle");
     public Task<StaffPerformancePolicyDto> GetPolicyAsync() => GetAsync<StaffPerformancePolicyDto>("api/v1/staff/policy");
     public Task<StaffPerformancePolicyDto> UpdatePolicyAsync(StaffPerformancePolicyDto policy) => SendAsync<StaffPerformancePolicyDto>(HttpMethod.Put, "api/v1/staff/policy", policy);
+    public Task<PeriodStatusDto> GetPeriodStatusAsync(string periodKey) => GetAsync<PeriodStatusDto>($"api/v1/staff/policy/periods/{Uri.EscapeDataString(periodKey)}");
+    public Task<PeriodStatusDto> ClosePeriodAsync(string periodKey, ClosePeriodRequest request) => SendAsync<PeriodStatusDto>(HttpMethod.Post, $"api/v1/staff/policy/periods/{Uri.EscapeDataString(periodKey)}/close", request);
+    public Task<PeriodStatusDto> ReopenPeriodAsync(string periodKey, ReopenPeriodRequest request) => SendAsync<PeriodStatusDto>(HttpMethod.Post, $"api/v1/staff/policy/periods/{Uri.EscapeDataString(periodKey)}/reopen", request);
 
     // ---- Structure ----
     public Task<List<DepartmentDto>> GetDepartmentsAsync(Guid branchId, bool includeInactive = false) => GetAsync<List<DepartmentDto>>($"{B(branchId)}/structure/departments{Q(("includeInactive", includeInactive ? "true" : null))}");
@@ -157,9 +200,11 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     // ---- Records ----
     public Task<StaffRecordSearchResultDto> SearchRecordsAsync(Guid branchId, Guid? subjectUserId = null, Guid? parameterId = null, DateTime? from = null, DateTime? to = null, string? status = null, string? q = null, int page = 1, int pageSize = 25)
         => GetAsync<StaffRecordSearchResultDto>($"{B(branchId)}/records{Q(("subjectUserId", subjectUserId?.ToString()), ("parameterId", parameterId?.ToString()), ("from", D(from)), ("to", D(to)), ("status", status), ("q", q), ("page", page.ToString()), ("pageSize", pageSize.ToString()))}");
-    public Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request) => SendAsync<StaffPerformanceRecordDto>(HttpMethod.Post, $"{B(branchId)}/records", request);
+    public Task<StaffPerformanceRecordDto> CreateRecordAsync(Guid branchId, CreateStaffRecordRequest request, bool acknowledgeLateEntry = false)
+        => SendLateEntryAwareAsync(HttpMethod.Post, $"{B(branchId)}/records{Q(("acknowledgeLateEntry", acknowledgeLateEntry ? "true" : null))}", request);
     public Task<StaffPerformanceRecordDto> GetRecordAsync(Guid branchId, Guid id) => GetAsync<StaffPerformanceRecordDto>($"{B(branchId)}/records/{id}");
-    public Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id) => SendAsync<StaffPerformanceRecordDto>(HttpMethod.Post, $"{B(branchId)}/records/{id}/finalize");
+    public Task<StaffPerformanceRecordDto> FinalizeRecordAsync(Guid branchId, Guid id, bool acknowledgeLateEntry = false)
+        => SendLateEntryAwareAsync(HttpMethod.Post, $"{B(branchId)}/records/{id}/finalize{Q(("acknowledgeLateEntry", acknowledgeLateEntry ? "true" : null))}", null);
     public Task<StaffPerformanceRecordDto> AddNoteAsync(Guid branchId, Guid id, AddStaffNoteRequest request) => SendAsync<StaffPerformanceRecordDto>(HttpMethod.Post, $"{B(branchId)}/records/{id}/notes", request);
     public Task<StaffPerformanceRecordDto> RespondAsync(Guid branchId, Guid id, AddStaffNoteRequest request) => SendAsync<StaffPerformanceRecordDto>(HttpMethod.Post, $"{B(branchId)}/records/{id}/respond", request);
     public Task<StaffPerformanceRecordDto> AcknowledgeAsync(Guid branchId, Guid id) => SendAsync<StaffPerformanceRecordDto>(HttpMethod.Post, $"{B(branchId)}/records/{id}/acknowledge");
@@ -202,9 +247,15 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<StaffAppraisalDto> SignAppraisalAsync(Guid branchId, Guid id) => SendAsync<StaffAppraisalDto>(HttpMethod.Post, $"{B(branchId)}/appraisals/{id}/sign");
     public Task<StaffAppraisalDto> AppealAppraisalAsync(Guid branchId, Guid id, AppealAppraisalRequest request) => SendAsync<StaffAppraisalDto>(HttpMethod.Post, $"{B(branchId)}/appraisals/{id}/appeal", request);
     public Task<StaffAppraisalDto> AttachAppraisalReportAsync(Guid branchId, Guid id, AttachAppraisalReportRequest request) => SendAsync<StaffAppraisalDto>(HttpMethod.Put, $"{B(branchId)}/appraisals/{id}/report", request);
+    public async Task RecordExportAsync(Guid branchId, RecordStaffExportRequest request)
+    {
+        try { await SendAsync(HttpMethod.Post, $"{B(branchId)}/activity/exports", request); }
+        catch { /* the file is already with the user; a missing log line is not their problem */ }
+    }
+
     public Task<ActivityLogPageDto> GetActivityAsync(Guid branchId, int page = 1, int pageSize = 50, Guid? userId = null, string? action = null)
         => GetAsync<ActivityLogPageDto>($"{B(branchId)}/activity{Q(("page", page.ToString()), ("pageSize", pageSize.ToString()), ("userId", userId?.ToString()), ("action", action))}");
-    public Task<RosterImportJobDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request) => SendAsync<RosterImportJobDto>(HttpMethod.Post, $"{B(branchId)}/import-jobs", request);
+    public Task<StaffImportStartedDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request) => SendAsync<StaffImportStartedDto>(HttpMethod.Post, $"{B(branchId)}/import-jobs", request);
     public Task<List<RosterImportJobDto>> GetStaffImportJobsAsync(Guid branchId, int limit = 50) => GetAsync<List<RosterImportJobDto>>($"{B(branchId)}/import-jobs?limit={limit}");
     public Task<RosterImportJobDto> GetStaffImportJobAsync(Guid branchId, Guid jobId) => GetAsync<RosterImportJobDto>($"{B(branchId)}/import-jobs/{jobId}");
     public Task<List<RosterImportJobEntryDto>> GetStaffImportJobEntriesAsync(Guid branchId, Guid jobId, int limit = 500) => GetAsync<List<RosterImportJobEntryDto>>($"{B(branchId)}/import-jobs/{jobId}/entries?limit={limit}");

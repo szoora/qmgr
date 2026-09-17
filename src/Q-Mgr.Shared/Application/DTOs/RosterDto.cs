@@ -21,6 +21,16 @@ public record PrintLetterheadDto
 
 public record StudentDto
 {
+    /// <summary>
+    /// How much of this file the caller holds (duty rota plan §5.3): "Unscoped", "Pastoral" or "Teaching". A
+    /// Teaching-tier row has already been blanked server-side — guardians, flags, the pastoral tier and consent
+    /// are empty — so the UI uses this only to explain why, never to hide anything itself.
+    /// </summary>
+    public string AccessTier { get; init; } = "Unscoped";
+
+    /// <summary>For a Teaching-tier row: the subjects the caller teaches this student's class.</summary>
+    public List<string> TaughtSubjects { get; init; } = new();
+
     public Guid Id { get; init; }
     public Guid BranchId { get; init; }
     public string FullName { get; init; } = string.Empty;
@@ -530,6 +540,20 @@ public record VocabularyItemDto
 
     /// <summary>Retired entries stop being offered on new records but stay readable on old ones.</summary>
     public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// The year level a class stream belongs to ("S2" for "S2A"), grouping streams for reports, timetable
+    /// views and bulk assignment (duty rota plan §5.1). Classes only; the editor round-trips it.
+    /// </summary>
+    [MaxLength(20)]
+    public string? Level { get; set; }
+
+    /// <summary>For a room: how many it seats. Rooms only.</summary>
+    public int? Capacity { get; set; }
+
+    /// <summary>For a room: "lab", "general", "hall" — free text the timetable can filter on. Rooms only.</summary>
+    [MaxLength(40)]
+    public string? RoomType { get; set; }
 }
 
 /// <summary>
@@ -542,6 +566,9 @@ public record BranchVocabulariesDto
     public List<VocabularyItemDto> Classes { get; set; } = new();
     public List<VocabularyItemDto> Houses { get; set; } = new();
     public List<VocabularyItemDto> Dormitories { get; set; } = new();
+
+    /// <summary>Rooms lessons are held in (duty rota plan §3.1, §6.1), name-matched like classes for clash checking.</summary>
+    public List<VocabularyItemDto> Rooms { get; set; } = new();
 
     public List<string> HomeLanguages { get; set; } = new();
     public List<string> Religions { get; set; } = new();

@@ -28,7 +28,7 @@ namespace QMgr.API.Controllers.v1;
 [Route("api/v1")]
 [Produces("application/json")]
 [Authorize]
-[RequireModule(ModuleCodes.StaffPerformance)]
+[RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffReportsController : ControllerBase
 {
     private readonly QMgrDbContext _context;
@@ -67,6 +67,16 @@ public class StaffReportsController : ControllerBase
         return branchExists ? null : NotFound(new ProblemDetails { Title = "Branch not found", Status = StatusCodes.Status404NotFound });
     }
 
+    private async Task<bool> HoldsConfidentialRungAsync()
+    {
+        if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
+        var raw = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(raw, out var userId)) return false;
+        return await _context.Users.Where(u => u.Id == userId && u.IsActive)
+            .SelectMany(u => u.Role.RolePermissions)
+            .AnyAsync(rp => rp.Permission.Code == Permissions.StaffConfidentialView);
+    }
+
     private async Task<Guid> ResolveOrganizationIdAsync(Guid branchId)
     {
         var tenantContext = _tenantAccessor.TenantContext!;
@@ -88,7 +98,8 @@ public class StaffReportsController : ControllerBase
         var p = _policy.FindPeriod(policy, period) ?? _policy.PeriodFor(policy, DateOnly.FromDateTime(DateTime.UtcNow));
 
         var visible = await _scope.GetVisibleUserIdsAsync(branchId);
-        var dto = await StaffReportBuilder.BuildAsync(_context, _scoring, _policy, organizationId, branchId, p, policy, visible);
+        var dto = await StaffReportBuilder.BuildAsync(_context, _scoring, _policy, organizationId, branchId, p, policy, visible,
+            includeConfidentialDetail: await HoldsConfidentialRungAsync());
 
         return Ok(dto with { ScopedToDepartments = (await _scope.GetScopedDepartmentNamesAsync()).ToList() });
     }
