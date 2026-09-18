@@ -5,36 +5,47 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (rewritten 2026-09-18, evening)
+## ▶ NEXT SESSION — start here (rewritten 2026-09-18, late evening)
 
-**State: everything through Phase 93 is BUILT, VERIFIED, COMMITTED and PUSHED.** Sections 0–14 are
-**512 / 0**, section 15 **254 / 0** (263 when 15.9 does not skip), and a new browser suite **25 / 0**.
+**State: everything through Phase 94 is BUILT, VERIFIED, COMMITTED and PUSHED.** Sections 0–14 are
+**517 / 0**, section 15 **206 / 0** (one honest SKIP: 15.9 needs a teaching period still to come
+today, and the run was at 23:34), the hub suite **42 / 0** and the roles/branch suite **25 / 0**.
 
-**Branch: `master`, and it is now the ONLY branch** (user instruction, 2026-09-18: *"we need to
-maintain single branch please"*). `phase-85-staff-performance` fast-forwarded into `master` at
-`57eb5a6` — `phase-82-…` was already fully contained in it — and both feature branches were deleted
-locally and on `origin`. **Work on `master` directly; do not open a feature branch without asking.**
-**Dev database:** migrations applied through `20260918161245_AddActivityEventStudentSubject`.
+**Branch: `master`, and it is the ONLY branch** (user instruction, 2026-09-18: *"we need to maintain
+single branch please"*). **Work on `master` directly; do not open a feature branch without asking.**
+**Dev database:** migrations applied through `20260918203611_RenameEngagementModuleToCommunication`.
 
 ### 1. The one thing that is genuinely urgent
 
 **A tenant-to-platform privilege escalation is fixed here and STILL OPEN ON PRODUCTION.**
 `UsersController.CreateUser`/`UpdateUser` assigned any `RoleId` with no rank check, so a tenant Admin
 holding `users.create`/`users.edit` could mint or promote themselves into `super-admin` — full access
-across every organization. Both now call `RoleAssignmentGuard`. Production runs `master`, which does
-not have this fix. **Committing and deploying is the user's decision and is not a task here** — but
-say it plainly when the subject of deployment next comes up, because three other production-only
-fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0)) ride along with it.
+across every organization. Both now call `RoleAssignmentGuard`. Production is behind `master`, so it
+does not have this fix. **Committing and deploying is the user's decision and is not a task here** —
+but say it plainly when the subject of deployment next comes up, because several other production-only
+fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0), the API-docs gate)
+ride along with it.
 
-### 2. What the user's own call is
+### 2. What was done on 2026-09-18, late
 
-1. `[x]` **Committed, pushed and merged** — six commits, fast-forwarded into `master`, feature
-   branches deleted. **The branch question is settled: one branch from here.**
-2. `[!]` **Deployment** is never a task here. The user decides when to deploy.
+`[x]` **The navigation is six hubs, not sixteen entries** — Phase 94, and the rules it left are in
+CLAUDE.md under *"A hub owns the route; its sections own nothing"*. Read that before adding a Staff
+Performance page: a section carries no `@page`, the hub owns `?tab=`, and `StaffHubTabs` decides
+which tabs a caller sees. Retiring a route means finding its callers in the **API and Shared**
+projects too — four notification `ActionUrl`s and two Dashboard tiles pointed at deleted routes.
+
+`[x]` **Three renames a person reads**: My Portal → **My Workspace**, My Day → **My School Day**,
+Engagement & Communications → **Communication**. Routes, module codes and event keys are wire formats
+and did not move. A seeded catalog name needs a MIGRATION (`ModuleCatalogDefaults` is
+insert-if-missing only), renaming only where the row still holds its shipped value.
 
 ### 3. Genuinely open, and small
 
-1. `[!]` **`MediaLibrary`'s page guard — do NOT sweep on the carried note.** It says the page shares
+1. `[ ]` **The Communication group is ten nav entries** and has the same length problem Staff
+   Performance just had fixed. Nothing has been done to it. It is its own piece of work — the hub
+   pattern and its five traps are written down now, so it is mechanical, but it is not a tidy-up and
+   it needs the user's word first.
+2. `[!]` **`MediaLibrary`'s page guard — do NOT sweep on the carried note.** It says the page shares
    the Document Library's cold-navigation race. The guard is where the note says
    (`MediaLibrary.razor:1269-1281`), but **the stated mechanism does not survive a code read**:
    `MainLayout` renders `@Body` only inside `@if (!authChecked)`'s else branch and `authChecked` is set
@@ -43,50 +54,122 @@ fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0))
    mechanism would be a 75-page outage rather than a latent edge case. Something genuinely bounced the
    Document Library on 2026-09-18 (`f9d65bf`) and the recorded cause does not explain it.
    **Reproduce it first.**
-2. `[ ]` **Two person-facing `yyyy-MM-dd` strings** (`RosterImportProcessorJob:498`,
+3. `[ ]` **The welfare history import** on `WelfareReports.razor` is the third import still on the old
+   JS `parseFile` path; staff and students both moved to `QImportPanel`.
+4. `[ ]` **Two person-facing `yyyy-MM-dd` strings** (`RosterImportProcessorJob:498`,
    `BatchController:217`) — deliberate; ISO cannot show the Sept/Sep ambiguity the rule exists to fix.
-3. `[ ]` **Two reminder-ladder observations**, deliberately unchanged (see `674a1aa`).
-4. `[ ]` **`S3MediaStorageService` is unexercised** — at parity with the upload-type fix but never run
+5. `[ ]` **Two reminder-ladder observations**, deliberately unchanged (see `674a1aa`).
+6. `[ ]` **`S3MediaStorageService` is unexercised** — at parity with the upload-type fix but never run
    against a bucket, and **serving still reads local disk** (`UploadsController:126` returns
    `PhysicalFile`), so the gate needs teaching to stream from S3 first. User said leave it.
-5. `[ ]` **`AdvancedAnalytics` / `WebhookIntegration` feature codes** appear only in doc comments —
+7. `[ ]` **`AdvancedAnalytics` / `WebhookIntegration` feature codes** appear only in doc comments —
    a missing-feature gap, not a wiring gap.
+8. `[!]` **Deployment** is never a task here. The user decides when to deploy.
 
 ### 4. Running and watching it
 
-    dotnet build Q-Mgr.slnx          # stop both apps first, or the DLL lock fails the build
+    dotnet build                     # stop both apps first, or the DLL lock fails the build
     Cors__AllowedOrigins__4=http://127.0.0.1:5003 dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
     ApiBaseUrl=http://127.0.0.1:5001 ApiPublicUrl=http://127.0.0.1:5001 dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build
     node scripts/e2e/browser/viewer.mjs      # the user WATCHES runs: http://127.0.0.1:5010
     API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin \
       bash scripts/e2e/class-teacher-e2e.sh | node scripts/e2e/browser/tee-to-viewer.mjs api
-    API=… node scripts/e2e/duty-rota-e2e.mjs | node scripts/e2e/browser/tee-to-viewer.mjs rota
-    node scripts/e2e/browser/roles-and-branch-ui.mjs        # needs headless Chrome on 9333
+    API=… BRANCH=… node scripts/e2e/duty-rota-e2e.mjs | node scripts/e2e/browser/tee-to-viewer.mjs rota
+    node scripts/e2e/browser/staff-nav-hubs.mjs      # the six hubs; needs Chrome on 9333
+    node scripts/e2e/browser/roles-and-branch-ui.mjs
 
-**Three traps that cost time on 2026-09-18 and will again:**
+**`Cors__AllowedOrigins__4` is not optional.** Without it the API refuses the share-link origin and
+**section 12 cascade-fails 34 checks** that read exactly like product bugs. That happened again on
+2026-09-18; it is correct behaviour for a misconfigured origin.
+
+**The user WATCHES the browser suites, so run Chrome HEADED** — `chrome.exe --remote-debugging-port=9333`
+with a temp `--user-data-dir` and **no** `--headless`. Being asked three times why the tests were
+invisible is what put this line here.
+
+**Traps that cost time on 2026-09-18 and will again:**
 
 - **Do not pipe a suite through `tail`** — it buffers until exit, so nothing can be watched live.
 - **`#blazor-error-ui` exists on every Blazor page and is hidden by a STYLESHEET.** Read it with
   `getComputedStyle(el).display`; matching `:not([style*="display: none"])` reports an error bar
   everywhere and produced six false failures.
+- **Verify a dropdown or a tab with CDP `Input.dispatchMouseEvent`, never `element.click()`** — a
+  scripted click fires no mousedown and passed over a real bug for weeks.
 - **Verifying a branch switch needs TWO branches whose data differs.** The dev tenant has one, and
   welfare categories are ORGANIZATION-scoped so they are identical on both. Create a branch and use
   **students**, which are branch-scoped. Delete it afterwards.
-
-Also still true: the dev tenant does **not** hold `core-queue`, `visitor-management` or
-`integrations-api` (so a counter cannot be created there — grant and revoke as SuperAdmin if a test
-needs one), and `SELECT statename, count(*) FROM hangfire.job GROUP BY 1;` before believing any sweep
-failure.
+- **`BRANCH` is `a805ba99-ef62-4685-a1ad-b11b2ea7747f`** — the full guid. A wrong one gets
+  `Branch not found` (404) from every call and the suite stops at "resolved S4_STUDENT: empty",
+  which reads like missing tenant data rather than a typo.
 
 ### 5. Test data
 
-**None left from this session.** The probe branch was deleted, e2e 13c3 revokes and restores
-`student-welfare` within the run, and module statuses were confirmed normal afterwards. Everything from
-Phase 89 and earlier still stands, including the welfare ledger's undeletable dummy rows.
+**None left from this session.** The nav and rename work created no rows; the hub suite only reads.
+Earlier in the day the probe branch was deleted, e2e 13c3 revokes and restores `student-welfare`
+within the run, and module statuses were confirmed normal afterwards. Everything from Phase 89 and
+earlier still stands, including the welfare ledger's undeletable dummy rows.
 
-**Do not re-plan:** everything in the 2026-09-17 list still stands, and add to it **the shared
-`BranchAwareComponentBase`** and **`ActivityEvent.SubjectStudentId` for welfare exports** — both were
-put to the user on 2026-09-18 and both are built.
+**Do not re-plan:** everything in the 2026-09-17 list still stands, plus the shared
+`BranchAwareComponentBase` and `ActivityEvent.SubjectStudentId` for welfare exports — both were put
+to the user on 2026-09-18 and both are built.
+
+### Phase 94 (2026-09-18, late evening) — sixteen nav entries became six hubs, and every link that pointed at what they replaced
+
+The user's direction, in three steps: *"the left navigation is long yet related components can be
+grouped together, same way student welfare combines the links in some hub kind of thing"*; then, on
+seeing the first cut keep the old routes alive beside the new ones, *"why are we having old links? we
+need ssot for the links. otherwise we get more confusion"*; then *"remove the duplication from the
+left navigation of the menu items in the hubs"*.
+
+**Six entries: Staff Directory, Records, Duties, Timetable, Appraisals, Setup.** Eleven routes were
+deleted outright rather than kept as aliases. The rules this left are in CLAUDE.md under *"A hub owns
+the route; its sections own nothing"* — read that, not this entry, before adding a page.
+
+**What was not obvious going in, and is the reason this is a phase and not a tidy-up:**
+
+- **A permission gate that was right per-page is wrong per-tab.** Every folded page redirected to
+  `/unauthorized` when its own permission was missing — correct while it had its own route, because
+  the nav entry was simply absent for anyone who could not open it. Inside a hub that breaks twice:
+  a tab whose section refuses the caller throws them out of a page they were allowed to be on, and
+  gating the hub on one section's permission takes the others away. Gating Records on
+  `staff.records.view` alone silently removed Reports from a `staff.reports.view` holder who had had
+  it the day before — a permission lost to a layout change, which nothing would have reported.
+  `StaffHubTabs` is the one home for both halves.
+- **Retiring a route means finding its callers outside the Web project.** Four notification
+  `ActionUrl`s (`StaffPortalController`, `StaffRotaController`, `ReminderLadderJob`,
+  `StaffPerformanceJobs`), two Dashboard tiles and a print page's Back button still pointed at routes
+  this work had just deleted. A person tapping the notification would have got a 404 with nothing to
+  say why. `ModuleRouteMap` also carried `/admin/subjects`, a route that no longer exists.
+- **Two hubs ignored `?tab=` entirely** for a day, so a deep link landed on the default tab in
+  silence — including the ones the repointed notifications now use. Both read it now.
+- **`TeachingReports` bound `?tab=` for its own sub-views** and now uses `?view=`: two components
+  binding one query key is the same duplication one level down.
+
+**Three renames the user asked for while the nav was the subject**: My Portal → **My Workspace**
+(`/portal` is the person's own hub — file, score, to-dos, timeline — which is what the word means),
+My Day → **My School Day** (date-scoped; a name without the day loses what the page is organised
+around, and "My Workspace" was considered for it and rejected because it would collide with the
+portal), Engagement & Communications → **Communication** (signage, broadcasts, feedback and the
+Library are all communication either way; "Engagement" described only the feedback half and is the
+marketing word for it — the same objection that retired "Tenant Admin" that morning).
+
+**The module rename needed a migration, not a seeder edit.** `ModuleCatalogDefaults` is
+insert-if-missing only — deliberately, since prices and names of an existing row belong to the Module
+Catalog editor — so an existing install would never have picked the new name up.
+`20260918203611_RenameEngagementModuleToCommunication` renames only where the row still holds the
+value it shipped with, following `FoldStaffPerformanceIntoWelfareModule`. The code
+`engagement-communications` did not move: it is a wire format read by every `[RequireModule]`, every
+`ModuleRouteMap` entry and every organization's hold. Same for `/portal`, `/my-day`,
+`NotificationEventKeys.StaffMyDay` and `MyDayLocalTime`.
+
+**Verified live.** `scripts/e2e/browser/staff-nav-hubs.mjs`, **42 / 0** in a headed Chrome: six
+entries, eleven absences, five hubs with the right tab counts, eleven retired routes 404ing rather
+than serving a second copy, every deep link opening its own section, and all three renames. The full
+suites were re-run after the route changes: sections 0–14 **517 / 0**, section 15 **206 / 0**. The
+catalog row was read back from the API as `engagement-communications => Communication`.
+
+**Left open deliberately: the Communication group is still ten entries**, the same length problem.
+It is mechanical now that the pattern and its traps are written down, but it is its own work and
+needs the user's word first.
 
 ### Phase 93 (2026-09-18, evening) — the handover's two items built, and a privilege escalation found under a cosmetic report
 

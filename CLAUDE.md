@@ -1145,6 +1145,75 @@ test of this path needs `http://127.0.0.1:5003` in the API's CORS origins (for e
 `Cors__AllowedOrigins__4`), because locally Web and API are different origins. The dummy record it
 created, "Dummy record - evidence upload test. Safe to delete.", is on Test Student One.
 
+## A hub owns the route; its sections own nothing (2026-09-18)
+
+Sixteen Staff Performance entries in the left navigation became six. The user's direction was
+"related components can be grouped together, same way student welfare combines the links in some hub
+kind of thing", then, when the first cut kept the old routes working alongside the new ones, **"why
+are we having old links? we need ssot for the links. otherwise we get more confusion"** — and then
+"remove the duplication from the left navigation of the menu items in the hubs".
+
+The six: **Staff Directory** (`/admin/staff` — People, Departments, Coverage, Import), **Records**
+(`/admin/staff/records` — Records, Reports), **Duties** (`/admin/staff/duties` — Registers, Rota,
+Reports), **Timetable** (`/admin/timetable` — Timetable, Lessons, Subjects, School Day, Teaching
+Reports), **Appraisals**, and **Setup** (`/admin/staff/parameters` — Parameters, Scoring Policy,
+Notices, Activity Log).
+
+- **A section has no `@page`.** Eleven routes were deleted outright, not left as aliases. A hub that
+  works while its sections keep their own routes is two sources of truth for one screen, which is
+  exactly what the user objected to. A section carries `[Parameter] public bool Embedded` instead;
+  the host then owns the page title, the header band and the tab strip.
+- **The hub owns `?tab=`, and nothing else may bind that key.** `TeachingReports` had its own
+  `?tab=` for its four sub-views and moved to `?view=` — two components binding one query key is the
+  same duplication one level down. Records and Setup did not read `?tab=` at all for a day, so every
+  deep link landed on the default tab in silence.
+- **Retiring a route means finding its callers, and they are not all in the Web project.** Four
+  notification `ActionUrl`s (`StaffPortalController`, `StaffRotaController`, `ReminderLadderJob`,
+  `StaffPerformanceJobs`), two Dashboard tiles and a print page's Back button still pointed at
+  deleted routes — a person tapping the notification would have got a 404 with nothing to say why.
+  Grep the API and Shared projects too, and check `ModuleRouteMap` for an entry that no longer
+  exists.
+- **`StaffHubTabs` decides which tabs a caller sees, and it is the one home for it.** Each folded
+  page carried its own permission gate and redirected to `/unauthorized` when it was not met. That
+  was right while each had its own route — the nav entry was simply absent for someone who could not
+  open it. Inside a hub it breaks twice: **a tab whose section would refuse the caller must not be
+  rendered** (otherwise clicking it throws them out of a page they were allowed to be on — the same
+  rule as Welfare Reports' Import History button), and **the hub's own gate is the OR of its
+  sections, never the first section's permission**. Gating Records on `staff.records.view` alone
+  silently took Reports away from a `staff.reports.view` holder who had it the day before. An empty
+  visible list is the only thing that redirects.
+- **A section's data load is guarded on its own tab being visible**, so a structure-only caller does
+  not fetch a staff list they may not read.
+
+Verified by `scripts/e2e/browser/staff-nav-hubs.mjs`, **42 checks in a headed Chrome**: six entries,
+eleven absences, five hubs with the right tab counts, all eleven retired routes 404ing rather than
+serving a second copy, and every deep link opening its own section.
+
+**The Communication group is still ten entries** and has the same shape of problem; nothing has been
+done to it, and doing so is its own piece of work, not a tidy-up.
+
+### Names a person reads (user decisions, 2026-09-18)
+
+`My Portal` → **My Workspace**, because `/portal` is the person's own hub — their file, score, to-dos
+and timeline — which is what the word means. `My Day` → **My School Day**: that page is date-scoped,
+and a name without the day in it loses what the page is organised around ("My Workspace" was
+considered for it and rejected for the same reason — it would have collided with the portal).
+`Engagement & Communications` → **Communication**: the module holds signage, broadcasts, feedback and
+the Library, all of it communication either way, while "Engagement" described only the feedback half
+and is the marketing word for it.
+
+**The routes, the module codes and the stored event keys did not move** — `/portal`, `/my-day`,
+`engagement-communications`, `NotificationEventKeys.StaffMyDay` and `MyDayLocalTime` are wire
+formats. Only labels changed.
+
+**A display name in a seeded catalog needs a migration, not a seeder edit.** `ModuleCatalogDefaults`
+is insert-if-missing only (deliberately — prices and names of an existing row belong to the Module
+Catalog editor), so an existing install never picks up a new name from the seeder. The migration
+renames **only where the row still holds the value it shipped with**, as
+`FoldStaffPerformanceIntoWelfareModule` established: once an administrator has edited a row, it is
+theirs and a deploy must not silently undo it. The same trap caught the Administrator role rename the
+same morning, where `RbacSeeder` was insert-only for names.
+
 ## A page that reads the branch once never reads it again — `OnBranchChanged` is the only signal
 
 The old "a SuperAdmin sees an empty Category list until the page is reloaded" note was one instance of
