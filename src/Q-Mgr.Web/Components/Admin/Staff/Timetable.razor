@@ -40,7 +40,7 @@
             }
             @if (canManage)
             {
-                <QButton Text="Bell schedule" Icon="bell" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/settings"))" />
+                <QButton Text="School day" Icon="calendar-range" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/settings"))" />
                 <QButton Text="New draft" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenNewDraft(null))" Disabled="@(branchId == Guid.Empty)" />
             }
         </div>

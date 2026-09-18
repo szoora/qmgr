@@ -383,7 +383,12 @@ timetable counts as in-use for the "cannot be removed — retire it" check.
 
 ### 6.1 Setting up
 
-- **Bell schedule** (per branch, `/admin/timetable/settings`): day types (e.g. Monday–Friday, Saturday
+- **School Day** — called "Bell schedule" in this plan and until 2026-09-18, when the user asked why:
+  "bell schedule" names the mechanism rather than the thing, and is American timetabling vocabulary
+  rather than how a Ugandan school speaks. "Day Schedule" was considered and set aside because the
+  portal already has **My Day**, and the two side by side invite the wrong guess about which is the
+  school's and which is your own — the possessive is what separates them (per branch,
+  `/admin/timetable/settings`): day types (e.g. Monday–Friday, Saturday
   morning), periods per day type with start and end (default 40 minutes, the Ugandan norm, editable),
   breaks and assembly as non-teaching periods, and the cycle (5-day week or 10-day A/B).
 - **Rooms** (vocabulary): name, optional capacity and type (lab, general); name-matched like classes.

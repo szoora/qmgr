@@ -11,10 +11,10 @@
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 
-<PageTitle>Bell Schedule - Q-Mgr</PageTitle>
+<PageTitle>School Day - Q-Mgr</PageTitle>
 
 @*
-    The bell schedule, the cycle and declared unavailability (duty rota plan §6.1) — Branch.Settings["Timetable"],
+    The school day (the periods, breaks and cycle — "bell schedule" until 2026-09-18), the cycle and declared unavailability (duty rota plan §6.1) — Branch.Settings["Timetable"],
     written by the API under the branch-settings lock. Rooms are edited here too (PUT …/timetable/rooms, the only writer of
     BranchVocabulariesDto.Rooms; a rename moves the lessons that name the room); load norms
     live in the scoring policy. A period's KEY is what lessons store, so renaming a key strands the lessons on it:
@@ -24,7 +24,7 @@
 <div class="admin-page tts-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Bell Schedule</h1>
+            <h1>School Day</h1>
             <p class="subtitle">Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled.</p>
         </div>
         <div class="header-actions">
@@ -38,11 +38,11 @@
 
     @if (isLoading)
     {
-        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the bell schedule...</span></div>
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the school day...</span></div>
     }
     else if (settings == null)
     {
-        <QEmptyState Icon="building" Title="Choose a branch" Text="The bell schedule belongs to a branch." />
+        <QEmptyState Icon="building" Title="Choose a branch" Text="The school day belongs to a branch." />
     }
     else
     {
@@ -52,7 +52,7 @@
         }
         @if (!canManage)
         {
-            <p class="tts-note"><QIcon Name="lock" Size="sm" /> Read only: the bell schedule is kept by a timetable master.</p>
+            <p class="tts-note"><QIcon Name="lock" Size="sm" /> Read only: the school day is kept by a timetable master.</p>
         }
 
         <QCard Title="Cycle" Icon="arrow-repeat">
@@ -127,7 +127,7 @@
         {
             <div class="tts-actions tts-actions--page">
                 <QButton Text="Add a day type" Icon="plus-lg" Variant="secondary" OnClick="@AddDayType" Disabled="@(!WeekOrder.Any(d => !settings.DayTypes.Any(t => t.Days.Contains(d))))"
-                         Title="For days with a different bell, such as a Saturday morning" />
+                         Title="For days that run differently, such as a Saturday morning" />
             </div>
         }
 
@@ -385,7 +385,7 @@
                 saveError = $"The bell schedule was saved; the rooms were not: {ex.Message}";
                 return;
             }
-            Toast.Notify(ToastSeverity.Success, "Bell schedule saved", $"{CycleDayCount}-day cycle, {rooms.Count(r => r.IsActive)} room{(rooms.Count(r => r.IsActive) == 1 ? "" : "s")} in use.");
+            Toast.Notify(ToastSeverity.Success, "School day saved", $"{CycleDayCount}-day cycle, {rooms.Count(r => r.IsActive)} room{(rooms.Count(r => r.IsActive) == 1 ? "" : "s")} in use.");
         }
         catch (Exception ex)
         {
