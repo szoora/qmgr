@@ -5,225 +5,189 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (written 2026-09-18)
+## ▶ NEXT SESSION — start here (rewritten 2026-09-18, evening)
 
-**State: everything through Phase 92 is built, verified and PUSHED. The working tree is clean.**
-2026-09-18 closed the whole carried list (Phase 90), audited document sharing (Phase 91) and implemented
-every recommendation from that audit (Phase 92). Sections 0–14 are **494 / 0** and section 15 **263 / 0**
-(254 when 15.9 skips after ~16:00 branch-local — see §4).
+**State: everything through Phase 93 is BUILT and VERIFIED. Nothing is committed.** The working tree
+carries 83 changed files. Sections 0–14 are **512 / 0**, section 15 **254 / 0** (263 when 15.9 does not
+skip), and a new browser suite **25 / 0**.
 
-**Branch:** `phase-85-staff-performance`, pushed to `origin` at `bbfc45e`.
-**Dev database:** migrations applied through `20260918111104_AddDocumentClassificationAndShareReason`.
+**Branch:** `phase-85-staff-performance`, `origin` at `3b0544d` — everything since is uncommitted.
+**Dev database:** migrations applied through `20260918161245_AddActivityEventStudentSubject`.
 
-### 1. START HERE — two pieces of work, in this order
+### 1. The one thing that is genuinely urgent
 
-The user asked for the next session to begin with these two. Both are known, scoped and blocked only on
-a decision that is stated below; neither needs rediscovery.
+**A tenant-to-platform privilege escalation is fixed here and STILL OPEN ON PRODUCTION.**
+`UsersController.CreateUser`/`UpdateUser` assigned any `RoleId` with no rank check, so a tenant Admin
+holding `users.create`/`users.edit` could mint or promote themselves into `super-admin` — full access
+across every organization. Both now call `RoleAssignmentGuard`. Production runs `master`, which does
+not have this fix. **Committing and deploying is the user's decision and is not a task here** — but
+say it plainly when the subject of deployment next comes up, because three other production-only
+fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0)) ride along with it.
 
-#### 1a. `BranchAwareComponentBase` — a rule with 33 copies and no home
+### 2. What the user's own call is, unchanged
 
-**The problem.** `BranchStateService.OnBranchChanged` (raised by `SetBranchAsync`) is the app's **only**
-cross-page change signal — there is no `OrganizationState` service and no organization-changed event, and
-picking an organization as a SuperAdmin raises nothing. A page that reads `BranchState.CurrentBranchId`
-once and never re-reads it therefore keeps `Guid.Empty` for the life of the circuit, fires requests at
-`…/branches/00000000-…/…` (the API answers **404**), and renders an empty list with no explanation. A
-reload appears to "fix" it only because `SetBranchAsync` has by then written the branch to localStorage.
+1. `[!]` **Commit** the 83 files. The user commits when they ask.
+2. `[!]` **Merge** `phase-82-…` and `phase-85-…` into `master` — declined twice; do not merge without
+   asking again.
+3. `[!]` **Deployment** is never a task here.
 
-**Today: 72 components read the branch, 28 subscribe, 46 do not.** Of those 46:
-- **6 are correct as they are** and must be left alone: `Layout/MainLayout` (it is the *raiser*), and the
-  public routes whose branch comes from the URL rather than the switcher — `Display/CustomerDisplay`,
-  `Display/SignageDisplay`, `Kiosk/KioskMode`, `Layout/DisplayLayout`, `Layout/KioskLayout`.
-- **7 are one-shot printed documents** where a mid-print branch switch is not a real flow, so they are
-  lowest priority: `Staff/DutyReportsPrint`, `Staff/StaffAppraisalReport`, `Staff/StaffReportsPrint`,
-  `Staff/StaffTimelineReport`, `Staff/TeachingReportsPrint`, `Staff/TimetablePrint`,
-  `Admin/WelfareTimelineReport`.
-- **33 are genuine candidates**: `Appointments`, `BrandingSettings`, `ClassTeachers`, `CountersSetup`,
-  `EvacuationReport`, `ExpectedVisitors`, `FeedbackManagement`, `KioskSettings`, `PrinterSettings`,
-  `ServiceTypesSetup`, `Staff/StaffRegister`, `SystemSettings`, `UsersSetup`, `VisitorAuditLog`,
-  `VisitorDisplayBoard`, `VisitorManagement`, `VisitorScanner`, `WelfareCategoriesSetup`,
-  `WelfareOpenActions`, `WelfareReports`, `Content/Campaigns`, `Content/DisplayZones`,
-  `Content/MediaLibrary`, `Content/Playlists`, `Content/Schedules`, `Portal/PortalAppraisal`,
-  `Portal/PortalNotice`, `Portal/PortalRecord`, `Reports/CounterPerformance`, `Reports/CustomerFeedback`,
-  `Reports/QueueAnalytics`, `Reports/ReportsOverview`, `Reports/VisitorReport`.
+### 3. Genuinely open, and small
 
-Regenerate that list with:
+1. `[!]` **`MediaLibrary`'s page guard — do NOT sweep on the carried note.** It says the page shares
+   the Document Library's cold-navigation race. The guard is where the note says
+   (`MediaLibrary.razor:1269-1281`), but **the stated mechanism does not survive a code read**:
+   `MainLayout` renders `@Body` only inside `@if (!authChecked)`'s else branch and `authChecked` is set
+   only after `AppInit.InitializeAsync()`, so a page under it cannot run against an uninitialised token
+   store; and **76 pages redirect to `/unauthorized` while exactly one calls `AppInit`**, so a real
+   mechanism would be a 75-page outage rather than a latent edge case. Something genuinely bounced the
+   Document Library on 2026-09-18 (`f9d65bf`) and the recorded cause does not explain it.
+   **Reproduce it first.**
+2. `[ ]` **Two person-facing `yyyy-MM-dd` strings** (`RosterImportProcessorJob:498`,
+   `BatchController:217`) — deliberate; ISO cannot show the Sept/Sep ambiguity the rule exists to fix.
+3. `[ ]` **Two reminder-ladder observations**, deliberately unchanged (see `674a1aa`).
+4. `[ ]` **`S3MediaStorageService` is unexercised** — at parity with the upload-type fix but never run
+   against a bucket, and **serving still reads local disk** (`UploadsController:126` returns
+   `PhysicalFile`), so the gate needs teaching to stream from S3 first. User said leave it.
+5. `[ ]` **`AdvancedAnalytics` / `WebhookIntegration` feature codes** appear only in doc comments —
+   a missing-feature gap, not a wiring gap.
 
-    cd src/Q-Mgr.Web/Components
-    comm -23 <(grep -rl "CurrentBranchId" --include=*.razor . | sort) \
-             <(grep -rl "OnBranchChanged" --include=*.razor . | sort)
+### 4. Running and watching it
 
-**The reference pattern is `Admin/StudentWelfareTimeline.razor`** (fixed in `fe5053b`, ~lines 910–990):
-subscribe next to the branch read, a handler that returns early if the id is unchanged or empty, **clears
-the branch-scoped caches**, re-runs the load and calls `StateHasChanged`, and `Dispose` unsubscribes.
-`Pages/Dashboard.razor` is the same shape.
-
-**Four traps, every one of which has already bitten this codebase:**
-1. **Clearing matters as much as reloading.** `StudentRoster`'s quick-log dialog guarded its category
-   fetch with `if (!list.Any())`, so after a switch it offered the *previous* organization's categories
-   and the API refused the post.
-2. **Decide in `OnAfterRenderAsync`, behind `AppInit.InitializeAsync()`, never `OnInitializedAsync`** —
-   auth state is read from localStorage over JS interop and races an uninitialised store on a cold
-   navigation. This cost a round trip on 2026-09-18: the Document Library's new guard sent a signed-in
-   administrator holding `content.view` straight to `/unauthorized`. See `f9d65bf`.
-3. **`OnAfterRenderAsync` schedules no render of its own** — call `StateHasChanged()` after setting state.
-4. **A `Guid.Empty` guard is still needed**, in the shape `WelfareCategoriesSetup` already uses: a Warning
-   toast reading *"No Branch Selected — Please select a branch from the header first."* The subscription
-   removes the reload; the guard is what the page shows while nothing is chosen.
-
-**The decision to put to the user before starting:** a shared
-`BranchAwareComponentBase : ComponentBase, IDisposable` (subscribe in `OnAfterRenderAsync(firstRender)`,
-expose `protected Guid BranchId` and an overridable `OnBranchChangedAsync()`) versus hand-rolling the
-same triple in 33 more files. The base class is the codebase's own convention — one home, as with
-`IStudentScopeService`, `ISmtpProfileResolver` and `PublicDisplayRoute` — but it touches ~70 files
-including the 28 that already subscribe, so it is a refactor, not a bug fix. **It was deliberately not
-started on 2026-09-18 for exactly that reason.**
-
-#### 1b. Welfare exports and publishes are logged nowhere at all
-
-**The problem.** `WelfareController` has **no `IActivityLogger` at all** (grep returns zero). So:
-- **Publishing a welfare report to the Library writes no activity row.** `WelfareTimelineReport.razor`
-  publishes a named child's full welfare chronology as a shareable PDF and records nothing on the welfare
-  side. (The `MediaContent` row does carry `PublishedAt` / `PublishedByUserId` / `PublishedFrom`, so the
-  document itself is traceable — but nothing in the welfare feature says it happened.)
-- **The CSV/XLSX exports on `WelfareReports.razor` are unlogged** for the same reason.
-
-This was found by the 2026-09-18 audit (plan §13 item 3). The print-routes agent correctly **refused to
-invent an endpoint**: routing a child's welfare report through
-`POST …/staff/activity/exports` would be wrong on both counts — that endpoint resolves every `Kind` to a
-`staff.*` permission and writes an `ActivityEvent` *about a member of staff*.
-
-**The shape of the work, and the decision.** `ActivityEvent`
-(`Domain/Entities/Audit/ActivityEvent.cs`) is nearly generic already — `OrganizationId`, `BranchId`,
-`ActorUserId`, `Action`, `EntityType`, `EntityId`, `Summary`, `DetailJson`, `Visibility`, `IpAddress`,
-`UserAgent`, `OccurredAt`. The one mismatch is **`SubjectUserId` is a USER**, and a welfare subject is a
-**student**. So the decision is:
-
-- **(a) Reuse `ActivityEvent`** and either leave `SubjectUserId` null with the student in
-  `EntityId`/`DetailJson`, or add a nullable `SubjectStudentId` beside it. Cheapest, and keeps one audit
-  table — but it makes a staff-shaped table carry student subjects.
-- **(b) A welfare-specific log.** Cleaner separation; a second table, a second reader, a second retention
-  rule. Against the standing "enhance before you add" constraint.
-
-Whichever is chosen, it needs its **own read gate** — the staff log is gated on `staff.records.view` and
-the staff scope; a welfare log must use `welfare.reports.view` (or `welfare.view`) **and
-`IStudentScopeService`**, or a class teacher reads the whole school's export history. And
-`ActivityEvent.Visibility` already exists and must be set at the record's rung, per the rule in CLAUDE.md
-("any new event about a record passes its rung").
-
-**Do not start (b) without asking** — it is a new table and a new logging surface.
-
-### 2. Verification, and how to reproduce it
-
-| Check | Result |
-|---|---|
-| `class-teacher-e2e.sh` sections 0–14 | **494 / 0** on the final build (six document-sharing assertions added in Phase 92) |
-| `duty-rota-e2e.mjs` section 15 | **263 / 0**; **254 / 0** when 15.9 skips after ~16:00 branch-local (§4) |
-| Weekly lesson analysis, first ever end-to-end exercise | 11 / 0, now e2e section 15.9 |
-| Share-link expiry warning, first ever firing | live: one notification, invariant date, second run silent |
-| Classification UI driven in the user's Chrome | badge, dialog, reason only when lowering, refused without one, accepted with one |
-| Publish control absent without the module | confirmed by revoking `engagement-communications` and re-granting |
-| Onboarding (Phase 0A) driven in the user's Chrome | slip → temporary sign-in → blocklist refusal → change → portal |
-| Refresh token rotated by another tab, adopted not refused | reproduced live; `adopted its session` in the Web log |
-
-    # both apps, then the suites
+    dotnet build Q-Mgr.slnx          # stop both apps first, or the DLL lock fails the build
     Cors__AllowedOrigins__4=http://127.0.0.1:5003 dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
     ApiBaseUrl=http://127.0.0.1:5001 ApiPublicUrl=http://127.0.0.1:5001 dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build
-    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin bash scripts/e2e/class-teacher-e2e.sh
-    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin node scripts/e2e/duty-rota-e2e.mjs
+    node scripts/e2e/browser/viewer.mjs      # the user WATCHES runs: http://127.0.0.1:5010
+    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin \
+      bash scripts/e2e/class-teacher-e2e.sh | node scripts/e2e/browser/tee-to-viewer.mjs api
+    API=… node scripts/e2e/duty-rota-e2e.mjs | node scripts/e2e/browser/tee-to-viewer.mjs rota
+    node scripts/e2e/browser/roles-and-branch-ui.mjs        # needs headless Chrome on 9333
 
-**The user watches runs.** `node scripts/e2e/browser/viewer.mjs` serves a live results page on
-http://127.0.0.1:5010; pipe any suite through `node scripts/e2e/browser/tee-to-viewer.mjs <tag>` and it
-streams there. Both are new this session and are test harness only — nothing in the app touches them.
+**Three traps that cost time on 2026-09-18 and will again:**
 
-### 3. Open — the standing decisions
+- **Do not pipe a suite through `tail`** — it buffers until exit, so nothing can be watched live.
+- **`#blazor-error-ui` exists on every Blazor page and is hidden by a STYLESHEET.** Read it with
+  `getComputedStyle(el).display`; matching `:not([style*="display: none"])` reports an error bar
+  everywhere and produced six false failures.
+- **Verifying a branch switch needs TWO branches whose data differs.** The dev tenant has one, and
+  welfare categories are ORGANIZATION-scoped so they are identical on both. Create a branch and use
+  **students**, which are branch-scoped. Delete it afterwards.
 
-**All six items the document-sharing audit opened (Phase 91) were implemented the same day — see
-Phase 92. They are struck through below rather than deleted, because the reasoning is the record.**
-Sections 0–14 are **494 / 0** and section 15 **263 / 0** with the new assertions in place.
+Also still true: the dev tenant does **not** hold `core-queue`, `visitor-management` or
+`integrations-api` (so a counter cannot be created there — grant and revoke as SuperAdmin if a test
+needs one), and `SELECT statename, count(*) FROM hangfire.job GROUP BY 1;` before believing any sweep
+failure.
 
-~~Added 2026-09-18 by the document-sharing audit (Phase 91). These are real and were not open
-before, because nobody had asked the question:~~
+### 5. Test data
 
-1. `[x]` **D5 (done, Phase 92) — a shareable document on a playlist is served anonymously.** Gate it (the corrected
-   invariant in the plan's §1) or refuse the combination. One rule, one place, plus the assertion §12
-   never had.
-2. `[x]` **D6 (done, Phase 92) — `DELETE media/{id}` cascades away the share audit trail**, on `content.delete`, which
-   Manager holds. Restrict the delete, soft-delete the document, or re-parent the events.
-3. `[x]` **`ActiveShareCount` (done, Phase 92) should come from `EvaluateState`**, not its own SQL predicate — the
-   Library card currently over-counts live links on a document whose sharing is off.
-4. `[x]` **D7 (done, Phase 92) — should a document carry a classification that constrains sharing?** The biggest gap
-   against Purview/Drive, and the prerequisite for differentiated retention. If yes, lock it against
-   downgrade in the same change.
-5. `[x]` **`S3MediaStorageService` (done, Phase 92) never got the 2026-09-15 upload-type fix** — no allow-list, no PDF
-   magic check, and a `FilePath` shape the classifier cannot match. Dormant behind one config key.
-6. `[x]` **`Organization.Settings` (done, Phase 92) has six read-modify-write paths, four unlocked** — the sharing
-   policy among them. `Branch.Settings` already solved this with `BranchSettingsLock`.
+**None left from this session.** The probe branch was deleted, e2e 13c3 revokes and restores
+`student-welfare` within the run, and module statuses were confirmed normal afterwards. Everything from
+Phase 89 and earlier still stands, including the welfare ledger's undeletable dummy rows.
 
-Then the standing decisions that are the user's alone, unchanged:
+**Do not re-plan:** everything in the 2026-09-17 list still stands, and add to it **the shared
+`BranchAwareComponentBase`** and **`ActivityEvent.SubjectStudentId` for welfare exports** — both were
+put to the user on 2026-09-18 and both are built.
 
-1. `[!]` **Merge** `phase-82-…` and `phase-85-…` into `master` — the user declined this session
-   (they chose commit and push, not merge). Do not merge without asking again.
-2. `[!]` **Deployment** is never a task here. The user decides when to deploy.
+### Phase 93 (2026-09-18, evening) — the handover's two items built, and a privilege escalation found under a cosmetic report
 
-3. `[ ]` **`BranchAwareComponentBase`** and **4.** `[ ]` **welfare export logging** — both moved up to
-   **§1, START HERE**, at the user's request (2026-09-18: *"handover to next session to start from
-   BranchAwareComponentBase and welfare"*). The detail, the classified file list, the four traps and the
-   decision each one needs are all there; do not re-derive them.
+User: *"read handover and also perform a comprehensive audit of the pending tasks and unimplemented
+recommendations"*, then *"implement all code changes, update the e2e tests list so that we run a full
+comprehensive e2e when all code is implemented"*. Mid-session they reported six UI problems from
+production, and scanning for "similar leakages" as they asked turned up something much worse.
 
-Smaller carry-overs, still true:
+**The audit first, because a third of the carried list was stale.** Everything below was checked in
+code rather than read off the page, per [[feedback-verify-stale-notes]].
 
-5. `[ ]` **Two person-facing `yyyy-MM-dd` strings left unpinned** on purpose —
-   `RosterImportProcessorJob:498` and `BatchController:217`. ISO cannot show the Sept/Sep ambiguity the
-   culture rule exists to fix, so they were judged not worth changing. Wrap them if you want literal
-   consistency with the rule as written.
-6. `[ ]` **`MediaLibrary.razor` decides its page guard in `OnInitializedAsync`** and carries the same
-   cold-navigation race the Document Library had, masked because it is normally reached after MainLayout
-   has initialised. Noted in a comment on `DocumentLibrary.razor` rather than changed blind.
-7. `[ ]` **Two reminder-ladder observations recorded and deliberately not changed** (see `674a1aa`): the
-   "two bells for a short-notice rota slot" case, which is narrower than first reported because
-   `DueStage` already collapses to the highest due stage and changing it would be inventing reminder
-   policy the e2e also asserts; and `TimetableIntegrityJob`'s claim against a SQL NULL array, which is
-   unreachable today because the property is non-nullable.
-8. `[ ]` **`S3MediaStorageService` is unexercised** — brought to parity with the 2026-09-15 upload-type
-   fix but never run against a bucket, and serving still reads the local disk, so the gate would need
-   teaching to stream from S3 before `MediaStorage:Provider` is flipped. The user said to leave it for
-   now (2026-09-18).
+- [x] **Seven carried items were already closed and are struck below**: the class-teacher Welfare
+      Reports decision (`welfare.reports.own` exists in all three catalogues), the notification
+      preferences UI, the hardcoded display branch id, `TransferTokenCommand`, the integration
+      adapters (they live in `Q-Mgr.IntegrationSdk` now), the `ExportReports` feature code, and the
+      bare `{x:dd MMM}` API dates.
+- [x] **Contract checks, all clean**: the three permission catalogues at **91 / 91 / 91** with zero
+      drift; no `@oninput=` under `Components/`; no native `<select>`; every raw-SQL table reference
+      `qmgr.`-qualified; no `IQueueApiService` return ignored; no `RZ10012`; no TODO/FIXME.
+- [!] **One carried note does not survive a code read and was NOT acted on.** Carry-over 6 says
+      `MediaLibrary` shares the Document Library's cold-navigation race. The guard is where the note
+      says, but `MainLayout` renders `@Body` only inside `@if (!authChecked)`'s else branch and
+      `authChecked` is set only after `AppInit.InitializeAsync()`, so a page under it cannot run
+      against an uninitialised store — and 76 pages redirect to `/unauthorized` while exactly one
+      calls `AppInit`, so a real mechanism would be a 75-page outage, not a latent edge case.
+      **Reproduce the original bounce before sweeping anything**; its actual cause is unexplained.
 
-### 4. Two environment traps, both of which present as product bugs (2026-09-18)
+**H8 — a tenant-to-platform privilege escalation, found by the "scan for similar leakages" ask.**
+`UsersController.CreateUser` and `UpdateUser` took any `RoleId`, resolved it with a bare `FindAsync`
+and assigned it with **no rank check at all**, so a tenant Admin holding `users.create`/`users.edit`
+could mint or promote themselves into `super-admin` — a role that bypasses every permission check and
+reaches every organization. `RoleAssignmentGuard` already existed, refuses it outright, and was
+already called by the join-request and staff-import paths; these two never called it. Both now do.
+**Section 13 passed throughout because it tested the guarded join-request path and never posted a
+role id to `POST /users`** — a suite asserting one door is locked says nothing about the door beside
+it. Rule written into CLAUDE.md.
 
-- **Hangfire starves, and the symptom is a wall of failed sweep assertions.** Every e2e run emails the
-  unroutable `@qmgr.local` accounts; each send fails with "Mailbox unavailable" — correct, those domains
-  do not exist — and is retried. After a day of runs the dev database held **4,604 dead email jobs**, the
-  worker pool was busy retrying them, and section 14.16 plus the staff import failed with 12–14 assertions
-  that read exactly like product faults: an import stuck `Pending`, chases, reminders and the weekly digest
-  all sending nothing. Clearing the Failed and Scheduled Hangfire jobs restored **494 / 0** immediately.
-  **Run `SELECT statename, count(*) FROM hangfire.job GROUP BY 1;` before believing a sweep failure.**
-- **The dev tenant's trial expires and suspends the whole organization.** `BillingJobs` flips
-  `Organizations.Status` to Suspended once `TrialEndsAt` passes, and every call then returns
-  `ACCOUNT_SUSPENDED` — which looks like an auth or code fault. `POST admin/tenants/{id}/reactivate` does
-  **not** hold: it sets Trialing and the job re-suspends on its next run. Push `Organizations.TrialEndsAt`
-  out instead. Done 2026-09-18 (+90 days), so expect this again around **17 December 2026**.
-- **Section 15.9 is time-of-day dependent and skips honestly.** It needs a teaching period still ahead on
-  the branch's day that one of the two Mathematics teachers is free for; after about 16:00 branch-local
-  there is none, and it prints a SKIP naming the reason rather than failing. 263 assertions with it, 254
-  without.
+**H1 / H3 — role visibility.** `RolesController` admitted every `OrganizationId == null` row and every
+seeded role has that, so a school saw Platform Admin and a bank would see Class Teacher and the five
+school staff roles. New one-home rule `RoleCodes.IsVisibleToTenant` (+ `PlatformOnly`, `ModuleFor`),
+applied in `GetRoles` **and** `GetRole` — the by-id route leaked the same role's full permission list
+and now answers 404, never 403. Visibility only: cancelling a module never unassigns anyone.
 
-### 5. Test data left on the dev tenant
+**H4 / H5 / H6 — production-only, already fixed on this branch, verified by diffing `master`.** The
+stretched SYSTEM badge is `master` rendering it as a direct child of `.role-header`, a flex row with no
+`align-items`, so `margin-left:auto` stretched it to full header height; `.role-header` now pins
+`align-items: flex-start` so it cannot return. "Edit Permissions" erroring and PERMISSIONS (0) are the
+three Roles-tab bugs Phase 85 fixed.
 
-Everything from Phase 89, plus from this session: the onboarded account **`e2e.sp.import.mu4gb109`**
-(Irene Importmu4gb109) now has a real password rather than a temporary one — it was driven through the
-onboarding flow in the browser; a handful of archived `E2E … WeeklyAnalysis` / `TrendCheck` timetables
-(a published version is never deleted, and the drafts were discarded); and the subject-teacher
-assignments those runs created were ended. Section 14's seeded Session duties for Martin Kato
-("E2E … Staff meeting", "S3/S4 maths lesson") **cannot be deleted** — the API refuses, they carry
-registers — which is why e2e 15.9 must pick a period that does not overlap them.
+**The handover's two §1 items, both decided by the user and built:**
 
-**Do not re-plan:** everything in the 2026-09-17 "do not re-plan" list still stands (a test project,
-per-display theme, PPTX rendering, pg extensions, the ten Staff Performance decisions, the Confidential
-question, registers recording on every save, API metering, Staff Performance inside the Student Welfare
-module, push and SSO, the duty rota plan's fourteen §15 decisions, rooms on Bell Schedule, the one size
-scale), and add to it: **the flat radius family** and **the four scale gaps**, both decided 2026-09-18.
+- [x] **`BranchAwareComponentBase`** (user chose the shared base class). **59 pages** inherit it;
+      **zero** still reference `BranchState.OnBranchChanged`. Not only tidying: the 26 hand-rolled
+      copies used `_ = InvokeAsync(...)` — fire-and-forget with no guard on an unchanged or empty
+      branch and no disposed check. Per-page care a script could not give: `VisitorDisplayBoard`,
+      `QueueBoard` and `CounterTerminal` move a SignalR group/connection with the branch; seven pages
+      clear lookup caches whose `.Any()` guards would otherwise offer the previous organization's data.
+      Two pages were wrongly on the candidate list — `CustomerLinks` and `JoinRequests` have their own
+      *dropdown* `OnBranchChanged`, unrelated to the branch service.
+- [x] **Welfare export logging** (user chose reuse `ActivityEvent` + nullable `SubjectStudentId`).
+      Migration `20260918161245_AddActivityEventStudentSubject`, one column, additive. Two endpoints on
+      `WelfareController`, gated on `welfare.reports.view`/`.own` **and** `IStudentScopeService`.
 
+**Tier 1, self-contained:** the `EvacuationReport` raw `4px` radius (the only genuine token drift
+outside the excluded print/public set — `999px` pills are geometry); two dead CQRS messages, the second
+of which only became visible once the first stopped warning; `Dashboard.branchStateInitialized`;
+a fire-and-forget click handler in `Tenants`; and four `CS0108` shadowing warnings resolved on their
+merits — `StudentFlag.IsActive` is a **correct** computed hide (explicitly `Ignore`d, every query
+filters `EndedAt == null` in SQL) and got `new`, while `StaffLessonsController.Truncate` was a silent
+hard cut hiding a base that appends an ellipsis and was deleted.
+
+**Verified, with the user watching the live viewer on :5010:**
+
+| Suite | Result |
+|---|---|
+| `class-teacher-e2e.sh` sections 0–14 | **512 / 0** (was 494; +18 = exactly the new assertions) |
+| `duty-rota-e2e.mjs` section 15 | **254 / 0** (15.9 skipped at 20:03 — the documented time-of-day behaviour) |
+| `browser/roles-and-branch-ui.mjs` **(new, 25 checks)** | **25 / 0** |
+
+Directly against the live API, not inferred: `GET /roles` shows ten tenant roles and no `super-admin`;
+`GET /roles/{super-admin id}` → 404; `POST /users` with that role → 400 *"The platform administrator
+role cannot be assigned here."*
+
+**The reload was proven, not assumed.** Rendering without throwing is not reloading, and the dev tenant
+has ONE branch so a switch could not be exercised at all. Created a second; Student Roster went
+**7 rows → 0 → 7** across two switches, in place, no error bar, no console errors. Probe branch deleted;
+module statuses confirmed back to normal afterwards.
+
+**Two of the first browser run's seven "failures" were the TEST's bugs**, recorded so nobody re-chases
+them: `#blazor-error-ui` is hidden by a stylesheet, so it must be read with `getComputedStyle`, not
+`:not([style*="display: none"])` — that alone produced six false failures; and Queue Analytics is
+`/reports/queue`, not `/reports/queue-analytics`.
+
+**Test data:** none left. The probe branch was deleted, `13c3` revokes and restores `student-welfare`
+within the run, and the tenant's modules were checked afterwards (`student-welfare` and
+`engagement-communications` Active; `core-queue`, `visitor-management`, `integrations-api` Cancelled,
+which is this tenant's normal state).
+
+**Session working log with every item, including what was deliberately not done:** `docs/SESSION_CHECKLIST.md`.
+
+**NOT committed and NOT deployed — both the user's call.** The privilege escalation above is fixed on
+this branch and therefore **still open on production** until a deploy.
 
 ### Phase 92 (2026-09-18) — Document sharing: every audit recommendation implemented
 

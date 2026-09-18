@@ -197,6 +197,46 @@ three, always. Likewise **`RoleCodes.All` is ordered most-privileged-first and `
 it** — `IsManagerOrAbove` is array position, not a stored level, so where a new role is inserted is
 a security decision. `class-teacher` sits between `staff` and `viewer`.
 
+
+## A role has TWO gates: who may SEE it, and who may ASSIGN it (both found 2026-09-18)
+
+Reported as cosmetic — *"I am not expecting platform admin role to appear in the tenant management
+panel"* — and scanning for the same shape found a privilege escalation underneath it. Keep both
+halves in mind; they are separate rules with separate homes.
+
+**Visibility: `RoleCodes.IsVisibleToTenant` is the one home. Do not re-derive it per endpoint.**
+`RolesController` filtered on `r.OrganizationId == null || r.OrganizationId == callerOrgId`, and
+**every seeded role has a null organization**, so a school's Users & Roles page listed Platform
+Admin and a bank's listed Class Teacher and the five school staff roles.
+
+- **`RoleCodes.PlatformOnly`** (`super-admin`) is never shown to a tenant, at all.
+- **`RoleCodes.ModuleFor`** maps a seeded role to the module it belongs to — `class-teacher` and the
+  five Staff Performance roles all map to `ModuleCodes.StudentWelfare`, because Staff Performance is
+  PART of that module ("Welfare & Performance"), not a module of its own. A tenant without the module
+  does not see them. A custom role's code is arbitrary and maps to null, so a tenant's own roles are
+  never hidden by this.
+- **Applied in BOTH `GetRoles` and `GetRole`** — the by-id route leaked the same role's FULL
+  permission list, and now answers **404, never 403**, the same rule as `VerifyStudentAccess`.
+- **It is a VISIBILITY rule only.** A tenant that cancels a module keeps anyone already holding its
+  roles: the role row and the assignment both survive. Revoking a module must not silently strip
+  somebody's access on the way past. It stops being offered; it is not retrospectively unassigned.
+
+**Assignment: every write that sets a `RoleId` calls `RoleAssignmentGuard.RefusalAsync`. No
+exceptions.** It refuses `super-admin` outright, requires `roles.edit` for Tenant Admin, enforces
+rank through `IsAtOrBelow`, and refuses a custom role carrying permissions the caller lacks.
+
+**`UsersController.CreateUser` and `UpdateUser` took any `RoleId`, resolved it with a bare
+`FindAsync`, and assigned it with NO rank check of any kind** — so a tenant Admin holding
+`users.create` or `users.edit` could mint, or promote themselves into, a **Platform Administrator**:
+a role that bypasses every permission check and reaches every organization. The guard already existed
+and the join-request and staff-import paths already called it; these two simply never did. **A new
+endpoint that assigns a role and does not call the guard is this bug again.**
+
+**Why the e2e did not catch it, which is the more useful lesson:** section 13 covers privilege
+escalation and passed throughout, because it tested the *join-request* path — which was guarded — and
+never posted a role id to `POST /users`. A suite that asserts the guarded door is locked says nothing
+about the door beside it. Section 13c2 now posts to both.
+
 ## Welfare visibility is a three-rung enum, and a class teacher never sees above the first
 
 `WelfareVisibility { Standard, Confidential, Restricted }` replaced `WelfareRecord.Confidential`
@@ -225,6 +265,37 @@ scaffolded the `Confidential → Visibility` change as DropColumn-then-AddColumn
 silently reclassified every existing safeguarding record as Standard, readable by everyone with
 `welfare.view`, with nothing anywhere to say it had happened. See
 `20260909165244_AddClassTeachersAndWelfareVisibility`.
+
+
+## A welfare export is logged on the WELFARE side, never the staff side (built 2026-09-18)
+
+`WelfareController` had **no `IActivityLogger` at all**, so publishing a named child's full welfare
+chronology to the Document Library as a shareable PDF, and every CSV/XLSX export of the records
+search, happened with nothing anywhere recording that it had. The `MediaContent` row carries
+`PublishedAt`/`PublishedByUserId`, so the *document* was traceable — but nothing on the welfare side
+said a child's file had left the ledger.
+
+- **`ActivityEvent.SubjectStudentId` is the student counterpart to `SubjectUserId`** — nullable,
+  additive (`20260918161245_AddActivityEventStudentSubject`). Exactly one of the two is set on a
+  subject-bearing event. The table was built for Staff Performance, where every subject is a *user*;
+  a welfare subject is a *student*, which is the only reason it could not be reused as it stood.
+- **Do NOT route a welfare export through `POST …/staff/activity/exports`.** That endpoint resolves
+  every `Kind` to a `staff.*` permission and writes an event *about a member of staff*. Using it for a
+  child would gate the write on the wrong permission and file the row in the wrong place.
+  `POST …/welfare/activity/exports` and `GET …/welfare/activity` are the welfare pair.
+- **The read gate is `welfare.reports.view` OR `welfare.reports.own`, AND `IStudentScopeService`.**
+  A scoped caller sees events about their own students plus their own subject-less exports — a class
+  teacher must not read the whole school's export history. The staff log's gate
+  (`staff.records.view` + the staff scope) would be the wrong one entirely.
+- **The write checks the student with `VerifyStudentAccess`** — 404, never 403 — so nobody can record
+  a line about a child they could not have exported.
+- **Visibility is set at the rung of what the event is about**, per the standing rule: a student who
+  carries restricted notes makes the event Confidential, so a reader of the log does not learn from it
+  what the export contained.
+- **`Web/Services/WelfareActivityReporting.cs` is the one home on the client**, and it **never throws
+  and never toasts**. The file is produced in the browser and the reader already has it; failing a
+  completed export because its audit row did not write is the worst available trade. Same reasoning as
+  `VisitorsController.TryIssueVisitToken` — a degraded success, not a failure.
 
 ## Classes are not a table, and that constrains anything attached to them
 
@@ -539,7 +610,7 @@ between the dump and the count. The drill database was dropped. The production d
 test coverage" as a standing gap in this repo; the user closed that question on 2026-09-05 —
 there is not going to be one, and it should stop being carried forward as outstanding work.
 
-**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **470 assertions as of 2026-09-17**, 297 of them section 14, the Staff Performance Monitor, which the script runs through Node (`staff-performance-e2e.mjs`) and skips with a notice where Node is absent (374 / 201 on 2026-09-16, before the plan audit). Before that, 165 (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
+**There IS now one e2e script**, `scripts/e2e/class-teacher-e2e.sh` — **512 assertions as of 2026-09-18** (470 on 2026-09-17), 297 of them section 14, the Staff Performance Monitor, which the script runs through Node (`staff-performance-e2e.mjs`) and skips with a notice where Node is absent (374 / 201 on 2026-09-16, before the plan audit). Before that, 165 (one more on a tenant that still needs the module granted; section 13, privilege escalation and cross-tenant isolation, added the same evening; 94 until
 2026-09-15, 72 until 2026-09-13) over the class-teacher scope, the visibility tiers, the alert, the
 reports gate, the notification preferences, the delivery log, the three leak shapes above, real
 email delivery, and — since 2026-09-15, section 12 — gated uploads and secure document sharing
@@ -548,6 +619,17 @@ policy cap, and platform-secret masking). Section 12 sends one more real email (
 It is not a test project and is not run by a build; it is a curl script against a live API and a
 real tenant, which is exactly what the rule below asks for, written down so it can be re-run.
 Extend it rather than starting a new one.
+
+**And one browser suite, `scripts/e2e/browser/roles-and-branch-ui.mjs` (25 checks, added 2026-09-18).**
+It exists because four of the six things reported from production that day were invisible to a curl
+suite by construction: a page's own filtering, a CSS rule, a client-side exception, and whether a
+branch switch actually reloads. It drives a local headless Chrome over CDP (recipe below) and streams
+PASS/FAIL to the viewer on 5010 like the others. **Two rules it cost real time to learn:**
+`#blazor-error-ui` exists on every Blazor page and is hidden by a **stylesheet**, so it must be read
+with `getComputedStyle(el).display` — matching on `:not([style*="display: none"])` reports an error bar
+on every page. And **verifying a branch switch needs TWO branches whose data differs**: the dev tenant
+has one, welfare categories are organization-scoped and identical on both, so create a branch and use
+**students**, which are branch-scoped. The suite skips that check honestly when only one branch exists.
 
 **Sections 10 and 11 send REAL email** to `info@sacc.ug` (two messages per run) and clear the
 tenant's own SMTP host so the platform fallback is what is under test. Set `E2E_MAILBOX` to send
@@ -1079,10 +1161,33 @@ and a fetch with no `else` renders an empty list with no explanation. A reload f
 - **A lookup fetch with no `else` is the bug underneath the bug.** Three welfare forms swallowed a failed
   category fetch silently. Any future cause — a revoked module, a 500, an org mismatch — reproduces the
   original report exactly, and no amount of subscribing helps.
-- **24 components subscribe; 47 read the branch once and do not.** `StudentPicture`, `StudentRoster` and
-  `StudentWelfareTimeline` were fixed 2026-09-18. The rest are listed in `docs/TASK_TRACKER.md` under that
-  date. A `BranchAwareComponentBase` would give this the one home the codebase gives every other repeated
-  rule, but it touches ~70 files and is its own phase — not a bug fix. Ask before starting it.
+- **`BranchAwareComponentBase` is that one home, and every page uses it (built 2026-09-18).**
+  `Components/Shared/BranchAwareComponentBase.cs`. A page writes `@inherits BranchAwareComponentBase`,
+  drops its own `@inject IBranchStateService` (the base injects it), calls **`TrackBranch()`** once from
+  `OnAfterRenderAsync(firstRender)` next to the first branch read, and overrides
+  **`OnBranchChangedAsync(Guid)`** to clear branch-scoped caches and re-run its load. **The base owns the
+  guard on an unchanged or empty branch, the `InvokeAsync` marshalling, the disposed check, the
+  `StateHasChanged` afterwards, and the unsubscribe.** Never subscribe to `OnBranchChanged` by hand
+  again: a grep for `BranchState.OnBranchChanged` under `Components/` should return **nothing**.
+  59 pages inherit it.
+- **Converting the 26 hand-rolled copies was a FIX, not tidying.** The common shape was
+  `_ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });` — fire-and-forget, with no
+  guard on an unchanged or empty branch and no disposed check, so a switch reloaded twice, reloaded
+  against `Guid.Empty`, or ran against a disposed component. The base fixes all three at once.
+- **Thirteen components deliberately do NOT react and must stay that way**: `MainLayout` (it is the
+  *raiser*), the five public routes whose branch comes from the URL rather than the switcher
+  (`CustomerDisplay`, `SignageDisplay`, `KioskMode`, `DisplayLayout`, `KioskLayout`), and the seven
+  one-shot print routes, where a mid-print branch switch is not a real flow.
+- **A page that moves a SignalR group or connection must move it in the override.**
+  `VisitorDisplayBoard` leaves the old branch group and joins the new; `QueueBoard` and
+  `CounterTerminal` reconnect. Without that the board keeps receiving the previous branch's activity
+  and none of the new one's — which looks like "live updates stopped", not like a branch bug.
+- **Verifying this needs TWO branches whose data differs, and the dev tenant has ONE.** Rendering
+  without throwing is not reloading. Create a second branch, use **students** (branch-scoped) rather
+  than welfare categories (**organization**-scoped, identical on every branch, so useless here), switch,
+  and assert the row count follows. Proven 2026-09-18: Student Roster went 7 rows → 0 → 7 across two
+  switches, in place, no error bar. `scripts/e2e/browser/roles-and-branch-ui.mjs` does this and skips
+  honestly when only one branch exists.
 
 **CLOSED 2026-09-15 — uploads are served by a controller with a per-file decision; see the
 "Uploads are gated per file" section below.** Until then they lived under the API's own `wwwroot`
