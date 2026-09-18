@@ -462,7 +462,7 @@
 
     private void Back()
     {
-        Navigation.NavigateTo(report?.CanEdit == true || report?.CanRespond == true ? "/portal" : "/admin/staff/duty-reports");
+        Navigation.NavigateTo(report?.CanEdit == true || report?.CanRespond == true ? "/portal" : "/admin/staff/duties?tab=reports");
     }
 
     private RenderFragment Attachments(DutyReportDto r) => __builder =>

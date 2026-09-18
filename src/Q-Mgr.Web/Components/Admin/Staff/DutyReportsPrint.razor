@@ -26,7 +26,7 @@
 <PageTitle>Duty Report Pack - Q-Mgr</PageTitle>
 
 <QPrintSheet SheetId="drp-sheet" Title="@($"Duty reports — {RangeText}")" Class="drp-sheet"
-             Ready="@(!isLoading && loadError == null)" BackText="Back to duty reports" OnBack="@(() => Navigation.NavigateTo("/admin/staff/duty-reports"))"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to duty reports" OnBack="@(() => Navigation.NavigateTo("/admin/staff/duties?tab=reports"))"
              CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
     @if (!isLoading && loadError == null)
     {

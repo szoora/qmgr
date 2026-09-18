@@ -1,4 +1,5 @@
-@page "/admin/staff/rota"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/duties, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
@@ -14,7 +15,10 @@
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
 
-<PageTitle>Duty Rota - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Duty Rota - Q-Mgr</PageTitle>
+}
 
 @*
     The duty rota (plan §4.1, §10). A displayed school record, so everyone in the branch may read it (names and dates);
@@ -23,6 +27,8 @@
 *@
 
 <div class="admin-page rota-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Duty Rota</h1>
@@ -37,6 +43,7 @@
             }
         </div>
     </div>
+}
 
     <QFilterBar Wrap="true">
         <QTabs Tabs="@ViewTabs" ActiveKey="@view" ActiveKeyChanged="@OnViewChanged" AriaLabel="Rota view" />
@@ -452,6 +459,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true, canManage, canViewRecords, busy, onlyMine;
     private Guid branchId, me;
     private string view = "week";

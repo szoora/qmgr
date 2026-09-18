@@ -271,9 +271,7 @@ else
                             }
                             @if (canManageStaffDuties || canViewStaffRecords)
                             {
-                                <li><a href="admin/staff/duties" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duties") ? "active" : "")"><i class="bi bi-calendar-check"></i>Duties & Registers</a></li>
-                                <li><a href="admin/staff/rota" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/rota") ? "active" : "")"><i class="bi bi-calendar-week"></i>Duty Rota</a></li>
-                                <li><a href="admin/staff/duty-reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duty-reports") ? "active" : "")"><i class="bi bi-journal-text"></i>Duty Reports</a></li>
+                                <li><a href="admin/staff/duties" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duties") ? "active" : "")"><i class="bi bi-calendar-check"></i>Duties</a></li>
                             }
                             @if (canManageTimetable || canManageStaffDuties || canViewStaffRecords)
                             {

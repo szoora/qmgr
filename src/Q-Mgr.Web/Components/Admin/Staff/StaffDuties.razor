@@ -1,5 +1,6 @@
 @page "/admin/staff/duties"
 @implements IDisposable
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -29,13 +30,29 @@
             <p class="subtitle">@(canManage ? "Plan the week's duties, name who records each register, and see which registers are still open." : "The duties you are expected at this week, and the registers you take.")</p>
         </div>
         <div class="header-actions">
-            @if (canManage)
+            @if (canManage && hubTab == "registers")
             {
                 <QButton Text="New duty" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
             }
         </div>
     </div>
 
+
+    @* The Duties hub (2026-09-18). Registers, Rota and Duty Reports were three sidebar entries and
+       three routes for one subject — the week's duties, who is on them, and what they wrote. One
+       page, three tabs, one route; the sections carry no @page of their own. *@
+    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="du" />
+
+    @if (hubTab == "rota")
+    {
+        <StaffRota Embedded="true" />
+    }
+    else if (hubTab == "reports")
+    {
+        <DutyReportsQueue Embedded="true" />
+    }
+    else
+    {
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Presets="@WeekPresets" Max="null" CaptionPrefix="Week of" />
     </QFilterBar>
@@ -136,6 +153,7 @@
                 </div>
             </section>
         }
+    }
     }
 </div>
 
@@ -239,6 +257,19 @@
 </style>
 
 @code {
+    /// <summary>
+    /// The Duties hub's tabs. Registers is this page's own week view; Rota and Reports are the two
+    /// pages that used to be separate sidebar entries and separate routes.
+    /// </summary>
+    private static readonly IReadOnlyList<QTab> HubTabs = new List<QTab>
+    {
+        new("registers", "Registers", "calendar-check"),
+        new("rota", "Rota", "calendar-week"),
+        new("reports", "Reports", "journal-text"),
+    };
+
+    private string hubTab = "registers";
+
     private bool isLoading = true;
     private bool canManage;
     private bool canViewRecords;
@@ -305,6 +336,14 @@
 
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
+
+        // The hub owns the URL: /admin/staff/duties?tab=rota is the one link to the rota, and the
+        // sections carry no routes of their own.
+        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
+        {
+            var t = wantedTab.ToString().Trim().ToLowerInvariant();
+            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
+        }
         await LoadAsync();
     }
 

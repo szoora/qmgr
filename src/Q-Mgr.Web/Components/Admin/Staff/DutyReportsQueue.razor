@@ -1,4 +1,5 @@
-@page "/admin/staff/duty-reports"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/duties, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
@@ -11,7 +12,10 @@
 @inject IModuleStateService ModuleState
 @inherits BranchAwareComponentBase
 
-<PageTitle>Duty Reports - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Duty Reports - Q-Mgr</PageTitle>
+}
 
 @*
     The review queue (plan §4.3). The API lists only reports the caller may read — a head sees their scope, an
@@ -19,17 +23,19 @@
 *@
 
 <div class="admin-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Duty Reports</h1>
             <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
         </div>
         <div class="header-actions">
-            <QButton Text="Duty Rota" Icon="calendar-week" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/rota"))" />
             <QButton Text="Print pack" Icon="printer" Variant="secondary" Disabled="@(queue == null || !queue.Items.Any())"
                      OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/print?from={range.From:yyyy-MM-dd}&to={range.To:yyyy-MM-dd}"))" />
         </div>
     </div>
+}
 
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" CaptionPrefix="Due" />
@@ -113,6 +119,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true, forbidden;
     private Guid branchId;
     private DutyReportQueueDto? queue;

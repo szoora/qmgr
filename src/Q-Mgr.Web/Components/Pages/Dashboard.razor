@@ -389,7 +389,7 @@ else if (hasCoreQueue && queueStatus != null)
             <QStatTile Value="@teachingTiles.NotRecovered.ToString()" Label="Not recovered" Icon="exclamation-octagon"
                        Variant="@(teachingTiles.NotRecovered > 0 ? "danger" : "success")" Href="/admin/timetable/lessons" />
             <QStatTile Value="@teachingTiles.DutyReportsOverdue.ToString()" Label="Duty reports overdue" Icon="journal-x"
-                       Variant="@(teachingTiles.DutyReportsOverdue > 0 ? "danger" : "success")" Href="/admin/staff/duty-reports" />
+                       Variant="@(teachingTiles.DutyReportsOverdue > 0 ? "danger" : "success")" Href="/admin/staff/duties?tab=reports" />
             @if (teachingTiles.HardClashes is { } clashes)
             {
                 <QStatTile Value="@clashes.ToString()" Label="Timetable hard clashes" Icon="x-octagon" Variant="@(clashes > 0 ? "danger" : "success")" Href="/admin/timetable" />
