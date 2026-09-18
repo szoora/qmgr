@@ -74,6 +74,25 @@ One thing was deliberately NOT done and needs the user's word before anyone star
    this the one home the codebase gives every other repeated rule, but it touches ~70 files and is a
    refactor, not a bug fix. The full list is in Phase 90 below.
 
+### 2b. Two environment traps, both of which present as product bugs (2026-09-18)
+
+- **Hangfire starves, and the symptom is a wall of failed sweep assertions.** Every e2e run emails the
+  unroutable `@qmgr.local` accounts; each send fails with "Mailbox unavailable" — correct, those domains
+  do not exist — and is retried. After a day of runs the dev database held **4,604 dead email jobs**, the
+  worker pool was busy retrying them, and section 14.16 plus the staff import failed with 12–14 assertions
+  that read exactly like product faults: an import stuck `Pending`, chases, reminders and the weekly digest
+  all sending nothing. Clearing the Failed and Scheduled Hangfire jobs restored **494 / 0** immediately.
+  **Run `SELECT statename, count(*) FROM hangfire.job GROUP BY 1;` before believing a sweep failure.**
+- **The dev tenant's trial expires and suspends the whole organization.** `BillingJobs` flips
+  `Organizations.Status` to Suspended once `TrialEndsAt` passes, and every call then returns
+  `ACCOUNT_SUSPENDED` — which looks like an auth or code fault. `POST admin/tenants/{id}/reactivate` does
+  **not** hold: it sets Trialing and the job re-suspends on its next run. Push `Organizations.TrialEndsAt`
+  out instead. Done 2026-09-18 (+90 days), so expect this again around **17 December 2026**.
+- **Section 15.9 is time-of-day dependent and skips honestly.** It needs a teaching period still ahead on
+  the branch's day that one of the two Mathematics teachers is free for; after about 16:00 branch-local
+  there is none, and it prints a SKIP naming the reason rather than failing. 263 assertions with it, 254
+  without.
+
 ### 3. Test data left on the dev tenant
 
 Everything from Phase 89, plus from this session: the onboarded account **`e2e.sp.import.mu4gb109`**
