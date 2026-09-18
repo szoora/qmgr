@@ -768,9 +768,11 @@ html, body {
    ================================ */
 
 /* Page Header */
+/* Density (2026-09-18): was 24px margin + 20px padding. app.css loads LAST, so this file — not
+   layout.css — is where the page header band is actually decided. */
 .page-header {
-    margin-bottom: 24px;
-    padding-bottom: 20px;
+    margin-bottom: var(--qm-block-gap, 16px);
+    padding-bottom: var(--qm-page-header-gap, 12px);
     border-bottom: 1px solid var(--qm-border);
 }
 
@@ -788,9 +790,8 @@ html, body {
 }
 
 .page-header h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin: 0 0 8px;
+    /* Size comes from .qm-main h1 — one home for the title scale. */
+    margin: 0 0 2px;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -802,7 +803,8 @@ html, body {
 
 .page-header .subtitle {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
+    line-height: 1.45;
     color: var(--qm-text-muted);
 }
 

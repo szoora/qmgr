@@ -1797,6 +1797,40 @@ Fonts were already right (Poppins, with Montserrat titles). The scale now lives 
   `display:none` only until something overrides it) — found on the portal, 2026-09-18, by driving the app in a
   browser. A CSS audit that measures fonts and control heights cannot see this; **only opening the page can.**
 
+
+## Vertical density: a data-driven page spends its height on data (user direction 2026-09-18)
+
+*"this project is data driven, and therefore all forms and pages have to be compacted so user does
+not have to scroll infinitely."* Reported against the School Day page, but every shape named was in
+the shared stylesheets and therefore on every page, so it is part of the size scale above rather
+than a patch to one screen.
+
+- **`.form-row` IS a responsive grid, and the missing base rule was the single biggest cause.** It
+  is used **59 times across 23 admin pages** and had no rule anywhere outside
+  `.login-container .form-row` — so on every admin page it was an unstyled `<div>` whose children
+  stacked full-width, one control per row. The give-away that this was a loss rather than a design:
+  the mobile block in `layout.css` has always collapsed `.form-row` to `grid-template-columns: 1fr`,
+  overriding a property nothing ever set. It is now
+  `repeat(auto-fit, minmax(240px, 1fr))`, so two controls share a line on a desktop, a single
+  control still fills the width, and a phone still gets one column with no new breakpoint.
+  **Put related fields in a `.form-row`; use `.form-group--wide` for one that genuinely needs the
+  full width.**
+- **The page header band is decided in `app.css`, not `layout.css`.** `app.css` is loaded LAST
+  (`App.razor`), so `.page-header h1` there beats `.qm-main h1` at equal specificity. A density rule
+  written in `layout.css` silently loses. The title's SIZE lives in `.qm-main h1` (24px, 20px on a
+  phone) and `.page-header h1` sets layout only — one home for the scale.
+- **A card header is a label, not a section.** `.q-card__header` and `__footer` are `0.7rem`
+  vertical against the body's `--q-card-padding`; the body keeps its breathing room. A header spent
+  64px to say one word before this.
+- **Measure it, do not eyeball it.** `scripts/e2e/browser/density-check.mjs` reports the "furniture"
+  of a page — the header band plus every card header, i.e. the height spent before any data — as a
+  live **A/B in one page load**: it injects the previous values, measures, removes them, measures
+  again. That is better evidence than two runs of two builds, which a caching difference can fake.
+  The change above: furniture across five pages **1132px → 944px (17%)**, and School Day's document
+  **2487px → 2323px**.
+- **A `wwwroot` change needs a REBUILD, not a restart** (`@Assets[]` fingerprints at build time).
+  This cost a wrong measurement once in this very session: the first run reported h1 still at 28px,
+  which read as "the rule did not apply" when the rule was in the losing stylesheet.
 ## Duty rota build: the rules Phase 0 left (2026-09-17)
 
 The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.

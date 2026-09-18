@@ -2806,3 +2806,30 @@ textarea.q-input { font-size: var(--q-control-font); padding: 8px var(--q-contro
 
 /* Date-range preset chips are small controls. */
 .q-daterange__preset { min-height: var(--q-control-h-sm); padding: 0 11px; font-size: var(--q-control-font-sm); }
+
+/* ---- Card density (user direction 2026-09-18) ------------------------------------------------
+   A card header spent 64px to say one word: 20px of padding above and below a 24px row, the same
+   generous padding as the card's BODY. A header is a label, not a section — it does not need the
+   body's breathing room, and on a page of four cards that difference is a screenful.
+
+   The body keeps its padding; only the header and footer tighten. --q-card-padding stays the token
+   a page must not override. */
+.q-card__header {
+    padding: 0.7rem var(--q-card-padding);
+    gap: 0.6rem;
+}
+
+.q-card__footer {
+    padding: 0.7rem var(--q-card-padding);
+}
+
+/* The icon is a marker beside the title, not a tile above it. */
+.q-card__icon {
+    font-size: 1.05rem;
+    line-height: 1;
+}
+
+.q-card__title {
+    font-size: 0.95rem;
+    line-height: 1.3;
+}

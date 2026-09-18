@@ -1779,13 +1779,15 @@
 
 .qm-main h1 {
     font-family: var(--qm-font-display);
-    font-size: 28px;
+    /* 28px until 2026-09-18: a title is the loudest thing on a page, it need not also be the
+       tallest, and on a data-driven screen those pixels are a row of data. */
+    font-size: 24px;
     font-weight: 700;
     line-height: 1.25;
 }
 
 @media (max-width: 640px) {
-    .qm-main h1 { font-size: 22px; }
+    .qm-main h1 { font-size: 20px; }
 }
 
 
@@ -1849,3 +1851,57 @@
         grid-template-columns: 1fr !important;
     }
 }
+
+/* ---- Vertical density (user direction 2026-09-18) --------------------------------------------
+   "this project is data driven, and therefore all forms and pages have to be compacted so user
+   does not have to scroll infinitely."
+
+   Reported against the School Day page, but the shapes named — an oversized page-header block, card
+   headers with a large icon tile, one control per row — are in these shared stylesheets and are
+   therefore on EVERY page. So this is one scale change, not a patch to one screen, which is the
+   same reasoning the 2026-09-17 size scale followed.
+
+   What a page cost before, measured from the CSS rather than guessed: the page header alone spent
+   109px (h1 35 + its 8px margin + a 21px subtitle + 20px padding + 24px margin + a border) before
+   any content, and each card header spent 64px (20px padding top and bottom around a 24px row) to
+   say one word. A screen with two cards and six fields spent roughly 690px before showing data.
+
+   These are TOKENS and shared rules on purpose. A page must still not set its own title size,
+   control height or row gap — that rule is what stopped the drift these numbers came from. */
+
+:root {
+    /* The vertical rhythm every page block is built from. */
+    --qm-page-header-gap: 12px;     /* was an effective 44px of padding + margin */
+    --qm-block-gap: 16px;           /* between cards and sections; was 24px */
+    --qm-field-gap: 14px;           /* between form fields; was 20px */
+}
+
+.form-group {
+    margin-bottom: var(--qm-field-gap);
+}
+
+/* THE MISSING RULE, added 2026-09-18, and the single biggest cause of the report that started this:
+   "all forms and pages have to be compacted so user does not have to scroll infinitely".
+
+   .form-row is used 59 times across 23 admin pages and had NO base rule anywhere — only
+   `.login-container .form-row`, scoped to the login page. So on every admin page it was an
+   unstyled div and its children stacked full-width, one control per row, which is exactly what the
+   School Day screenshot showed. The mobile block above has been collapsing `.form-row` to
+   `grid-template-columns: 1fr` this whole time, overriding a property nothing ever set: proof the
+   grid was intended and simply lost.
+
+   auto-fit with a 240px floor means two controls sit side by side on a desktop and stack on a
+   phone without needing a breakpoint of their own, and a row holding one control still fills the
+   width as it did before. */
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--qm-field-gap) 16px;
+    align-items: start;
+}
+
+.form-row .form-group { margin-bottom: 0; }
+
+/* A field that genuinely needs the whole width inside a row says so. */
+.form-row .form-group--wide,
+.form-row .form-row__wide { grid-column: 1 / -1; }
