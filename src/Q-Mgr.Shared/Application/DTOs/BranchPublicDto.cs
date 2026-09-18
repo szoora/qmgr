@@ -21,7 +21,7 @@ public record BranchPublicDto
     public bool IsActive { get; init; }
 
     /// <summary>
-    /// Whether this organization holds Engagement &amp; Communications, so an unauthenticated
+    /// Whether this organization holds Communication, so an unauthenticated
     /// display knows to render the advertising zone and the banner at all.
     /// </summary>
     /// <remarks>

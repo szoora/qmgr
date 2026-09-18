@@ -5,7 +5,7 @@ namespace QMgr.Domain.Entities.Billing;
 
 /// <summary>
 /// One organization's subscription to one purchasable functional module (Core Queue Management,
-/// Engagement &amp; Communications, Visitor &amp; Safeguarding, Integrations &amp; API Access).
+/// Communication, Visitor &amp; Safeguarding, Integrations &amp; API Access).
 /// An organization can hold many of these at once — this is what replaces the old single
 /// <c>Subscription.PlanId</c> "one tier per org" model. <see cref="ModuleId"/> points at a
 /// <see cref="SubscriptionPlan"/> row that now represents a module's pricing/limits definition

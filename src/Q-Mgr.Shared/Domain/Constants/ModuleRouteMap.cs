@@ -53,7 +53,7 @@ public static class ModuleRouteMap
         ("/reports/queue", ModuleCodes.CoreQueue),
         ("/reports/counters", ModuleCodes.CoreQueue),
 
-        // ---- Engagement & Communications ----
+        // ---- Communication ----
         ("/content", ModuleCodes.EngagementCommunications),
         ("/admin/marketing", ModuleCodes.EngagementCommunications),
         ("/admin/feedback", ModuleCodes.EngagementCommunications),
@@ -156,7 +156,7 @@ public static class ModuleRouteMap
         ("api/v1/counters", ModuleCodes.CoreQueue),
         ("api/v1/printers", ModuleCodes.CoreQueue),
 
-        // ---- Engagement & Communications ----
+        // ---- Communication ----
         ("api/v1/branches/{branchId}/playlists", ModuleCodes.EngagementCommunications),
         ("api/v1/branches/{branchId}/displays", ModuleCodes.EngagementCommunications),
         ("api/v1/branches/{branchId}/campaigns", ModuleCodes.EngagementCommunications),

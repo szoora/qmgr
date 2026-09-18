@@ -497,7 +497,7 @@ rawauth() { curl -s -o /dev/null -w '%{http_code}' "$2" -H "Authorization: Beare
 strip_token() { echo "$1" | sed 's/[?&]t=[^&"]*//'; }
 jget()    { echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
 
-# The Library lives in the Engagement & Communications module. A dev tenant that has not bought it
+# The Library lives in the Communication module. A dev tenant that has not bought it
 # gets a MODULE_NOT_PURCHASED 403 on every media endpoint (found on the first run of this section:
 # 55 failures that read like product bugs and were one missing module). Activate it the way the
 # Billing page does — simulated in Development, where no Mobile Money gateway is configured.

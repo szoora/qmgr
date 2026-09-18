@@ -52,7 +52,7 @@ public class ModuleCatalogDefaults
             Description: "Live queue board, counter terminal, self-service kiosk, customer display, counters, service types, and tokens.",
             Badge: null, SortOrder: 0),
         new ModuleDefaults(
-            Name: "Engagement & Communications", Code: ModuleCodes.EngagementCommunications, ShowAds: false, DedicatedSchema: false,
+            Name: "Communication", Code: ModuleCodes.EngagementCommunications, ShowAds: false, DedicatedSchema: false,
             MaxBranches: 5, MaxDisplays: 10, MaxUsersPerBranch: 10, MaxCountersPerBranch: 2,
             MaxTokensPerMonth: 1_000, MaxApiCallsPerMonth: 5_000, MaxStorageMb: 5_000,
             MonthlyPriceUsd: 29m, AnnualPriceUsd: 290m, MonthlyPriceUgx: 120_000m, AnnualPriceUgx: 1_200_000m,

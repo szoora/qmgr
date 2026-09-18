@@ -104,7 +104,7 @@ else
                 }
             </div>
 
-            @* Advertising and signage content belong to Engagement & Communications. A queue-only
+            @* Advertising and signage content belong to Communication. A queue-only
                organization has none, and rendering this anyway meant three refused requests on
                every screen load. *@
             @if (hasEngagementContent)
@@ -589,7 +589,7 @@ else
     private Guid branchId;
     private BranchPublicDto? branchInfo;
 
-    /// <summary>Whether this organization holds Engagement & Communications. A display screen is not
+    /// <summary>Whether this organization holds Communication. A display screen is not
     /// signed in, so it learns this from the public branch record rather than from modules/mine.</summary>
     private bool hasEngagementContent;
     private System.Threading.Timer? clockTimer;
