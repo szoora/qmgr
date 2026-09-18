@@ -1,7 +1,7 @@
 @page "/admin/visitors/evacuation"
 @inject IVisitorApiService VisitorApi
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -209,7 +209,7 @@
     .evac-type { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px;
                  background: var(--qm-primary-light); color: var(--qm-primary); }
     .evac-sub { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 15px; color: var(--qm-text-muted); }
-    .evac-badge { font-family: monospace; background: var(--qm-bg-secondary); padding: 1px 7px; border-radius: 4px; }
+    .evac-badge { font-family: monospace; background: var(--qm-bg-secondary); padding: 1px 7px; border-radius: var(--qm-radius-md); }
 
     @@media (max-width: 640px) {
         .evac-total-value { font-size: 54px; }
@@ -433,5 +433,28 @@
         {
             isEmailing = false;
         }
+    }
+
+    /// <summary>
+    /// Subscribe to branch changes. In OnAfterRenderAsync and not OnInitializedAsync on purpose:
+    /// branch and auth state are read from localStorage over JS interop, which does not exist
+    /// during prerendering and races an uninitialised store on a cold navigation.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await BranchState.InitializeAsync();
+        TrackBranch();
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        await LoadAsync();
     }
 }

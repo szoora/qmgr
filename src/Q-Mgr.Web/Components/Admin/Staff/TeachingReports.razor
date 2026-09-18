@@ -6,7 +6,7 @@
 @using QMgr.Web.Services
 @inject IStaffPerformanceApiService StaffApi
 @inject IToastService Toast
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -289,17 +289,17 @@
         if (TabQuery is "load" or "lessons" or "rota" or "health") tab = TabQuery;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
         await LoadAsync();
     }
 
-    private void HandleBranchChanged()
+    /// <summary>The branch changed under the page: reload against the new one.</summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
-        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+        this.branchId = branchId;
+        await LoadAsync();
     }
 
-    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
 
     private async Task LoadAsync()
     {

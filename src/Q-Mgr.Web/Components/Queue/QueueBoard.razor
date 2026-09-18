@@ -6,7 +6,7 @@
 @using QMgr.Web.Components.Shared.UI
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IConfiguration Configuration
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
@@ -469,7 +469,7 @@
 
         // Initialize branch state
         await BranchState.InitializeAsync();
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         // Start clock timer
         timer = new System.Threading.Timer(async _ =>
@@ -502,11 +502,16 @@
         }
     }
 
-    private async void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        // Reconnect SignalR to new branch
+        // The SignalR connection is per branch: reconnect before reloading, or the board keeps
+        // receiving the previous branch's tokens.
         await ConnectSignalR();
-        // Reload data for new branch
         await LoadData();
     }
 
@@ -607,7 +612,6 @@
     public void Dispose()
     {
         timer?.Dispose();
-        BranchState.OnBranchChanged -= HandleBranchChanged;
         SignalR.OnTokenCreated -= HandleTokenCreated;
         SignalR.OnTokenCalled -= HandleTokenCalled;
         SignalR.OnTokenCompleted -= HandleTokenCompleted;

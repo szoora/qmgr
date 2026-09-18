@@ -4,7 +4,7 @@
 @implements IDisposable
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject IModuleStateService ModuleState
 @inject IModuleApiService ModuleApi
@@ -1071,7 +1071,6 @@ else if (hasCoreQueue && queueStatus != null)
     private bool isLoading = true;
     private DateTime lastUpdated;
     private bool noBranchSelected = false;
-    private bool branchStateInitialized = false;
 
     private Guid BranchId => BranchState.CurrentBranchId;
 
@@ -1085,7 +1084,7 @@ else if (hasCoreQueue && queueStatus != null)
         }
 
         // Subscribe to branch changes
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         // LoadAsync is idempotent, so this is a no-op when MainLayout already populated it; it
         // matters when the dashboard is the first page rendered on a fresh circuit.
@@ -1246,7 +1245,6 @@ else if (hasCoreQueue && queueStatus != null)
         {
             // Wait for BranchState to be initialized (requires localStorage)
             await BranchState.InitializeAsync();
-            branchStateInitialized = true;
 
             // Check if branches exist and one is selected
             if (!BranchState.HasBranches)
@@ -1306,39 +1304,32 @@ else if (hasCoreQueue && queueStatus != null)
         }
     }
 
-    private async void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        await InvokeAsync(async () =>
+        // The base returns before calling this for Guid.Empty, so the no-branch-selected state is
+        // set by the first-load path only — switching TO no branch is not a flow the switcher offers.
+        if (!BranchState.HasBranches)
         {
-            // Check if branches exist and one is selected
-            if (!BranchState.HasBranches)
-            {
-                isLoading = false;
-                StateHasChanged();
-                return;
-            }
-
-            if (BranchId == Guid.Empty)
-            {
-                noBranchSelected = true;
-                isLoading = false;
-                StateHasChanged();
-                return;
-            }
-
-            noBranchSelected = false;
-            await LoadQueueStatus();
-            await LoadWelfareSummaryAsync();
-            await LoadStaffCoverageAsync();
-            await LoadTeachingTilesAsync();
-            await LoadVisitorSummaryAsync();
-            await LoadEngagementSummaryAsync();
-            try
-            {
-                if (hasCoreQueue) await SignalR.ConnectAsync(BranchId);
-            }
-            catch { }
-        });
+            isLoading = false;
+            return;
+        }
+        noBranchSelected = false;
+        await LoadQueueStatus();
+        await LoadWelfareSummaryAsync();
+        await LoadStaffCoverageAsync();
+        await LoadTeachingTilesAsync();
+        await LoadVisitorSummaryAsync();
+        await LoadEngagementSummaryAsync();
+        try
+        {
+            if (hasCoreQueue) await SignalR.ConnectAsync(BranchId);
+        }
+        catch { }
     }
 
 
@@ -1581,7 +1572,6 @@ else if (hasCoreQueue && queueStatus != null)
 
     public void Dispose()
     {
-        BranchState.OnBranchChanged -= HandleBranchChanged;
         SignalR.OnQueueUpdated -= HandleQueueUpdated;
     }
 }

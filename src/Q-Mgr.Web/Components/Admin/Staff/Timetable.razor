@@ -10,7 +10,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
 @inject IJSRuntime JS
@@ -534,19 +534,23 @@
         key = QueryKey;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
         await LoadAsync(QueryTimetable);
     }
 
-    private void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
+        this.branchId = branchId;
         detail = null;
         key = null;
-        _ = InvokeAsync(async () => { await LoadAsync(null); StateHasChanged(); });
+        await LoadAsync(null);
     }
 
-    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
 
     private async Task LoadAsync(Guid? preferred)
     {

@@ -10,7 +10,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject IAuthService AuthService
 
@@ -511,18 +511,20 @@
         me = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
         await LoadAsync();
     }
 
-    private void HandleBranchChanged()
+    /// <summary>The branch changed under the page: reload against the new one.</summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
+        this.branchId = branchId;
+        // The lookups are branch-scoped and are guarded by this flag, so without clearing it the
+        // page would keep offering the previous branch/organization list.
         lookupsLoaded = false;
-        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+        await LoadAsync();
     }
 
-    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
 
     // ---- Loading ----------------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 
@@ -434,6 +434,10 @@
             canEdit = await PermissionService.HasPermissionAsync(Permissions.CountersEdit);
             canDelete = await PermissionService.HasPermissionAsync(Permissions.CountersDelete);
 
+            await BranchState.InitializeAsync();
+            TrackBranch();
+
+
             await LoadData();
             StateHasChanged();
         }
@@ -626,5 +630,15 @@
         public string? DisplayName { get; set; }
         public IEnumerable<Guid> ServiceTypeIds { get; set; } = Enumerable.Empty<Guid>();
         public bool IsEnabled { get; set; } = true;
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        await LoadData();
     }
 }

@@ -267,7 +267,7 @@
                     <h4>Actions</h4>
                     <div class="action-buttons-vertical">
                         <QButton Text="Manage Modules" Icon="grid-3x3-gap-fill" Variant="secondary"
-                                 OnClick="@(() => { showDetailsModal = false; ShowModulesDialog(MapToSummary(tenantDetails)); })" />
+                                 OnClick="@(async () => { showDetailsModal = false; await ShowModulesDialog(MapToSummary(tenantDetails)); })" />
                         @if (tenantDetails.TrialEndsAt.HasValue)
                         {
                             <QButton Text="Extend Trial" Icon="calendar-plus-fill" Variant="secondary"

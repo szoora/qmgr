@@ -4,7 +4,7 @@
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -121,6 +121,7 @@
                          Subtitle="@ExportSubtitle"
                          Columns="@WelfareExportColumns"
                          RowProvider="@ProvideExportRowsAsync"
+                         OnExported="@OnExported"
                          Disabled="@(!VisibleSearchResults.Any())"
                          DisabledReason="Nothing matches the current filters." />
         </QFilterBar>
@@ -818,6 +819,7 @@
 
             await BranchState.InitializeAsync();
             branchId = BranchState.CurrentBranchId;
+            TrackBranch();
 
             // Live import progress arrives on the branch group of the same hub the roster page
             // listens to — one event ("RosterImportProgress") for both import kinds; the JobId
@@ -1190,6 +1192,20 @@
         new("Review by", r => r.ActionDueDate?.ToLocalTime(), ExportType.Date, 14),
         new("Description", r => r.Description, ExportType.Text, 50)
     };
+    /// <summary>
+    /// The export is produced in the browser, so the server cannot log it — the page reports it.
+    /// No student subject: this is the whole search, not one child's file, so the welfare activity
+    /// log records it against the actor and a scoped caller sees only their own such rows.
+    /// </summary>
+    private Task OnExported(ExportResult export) => export.Success
+        ? WelfareActivityReporting.ReportAsync(Http, branchId, new RecordWelfareExportRequest
+          {
+              Kind = WelfareExportKinds.Records,
+              Format = export.Format?.ToString(),
+              RowCount = export.RowCount,
+              PeriodCaption = ExportSubtitle
+          })
+        : Task.CompletedTask;
 
     /// <summary>The rows the filters produced, not the ones scrolled into view.</summary>
     private Task<ExportRows<WelfareRecordDto>> ProvideExportRowsAsync() =>
@@ -1244,5 +1260,18 @@
 
         await JS.InvokeVoidAsync("QMgrPrint.init", "browser");
         await JS.InvokeAsync<object>("QMgrPrint.print", new { htmlContent = html, autoPrint = false });
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        cohorts = null;
+        await LoadSummary();
+if (activeTab == "search") await LoadSearch();
     }
 }

@@ -8,7 +8,7 @@
 @inject IStaffPerformanceApiService StaffApi
 @inject IDataExportService DataExport
 @inject IToastService Toast
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -123,7 +123,7 @@
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         try { directory = (await StaffApi.GetDirectoryAsync(branchId)).Items.OrderBy(m => m.FullName).ToList(); }
         catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the directory", ex.Message); }
@@ -156,10 +156,15 @@
         await LoadAsync(resetPage: false);
     }
 
-    private void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
-        _ = InvokeAsync(async () => { await LoadAsync(resetPage: true); StateHasChanged(); });
+        this.branchId = branchId;
+        await LoadAsync(resetPage: true);
     }
 
     private static readonly List<ExportColumn<QActivityRow>> ExportColumns = new()
@@ -194,5 +199,4 @@
         }
     }
 
-    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
 }

@@ -8,7 +8,7 @@
 @inject IBatchApiService BatchApi
 @inject INotificationClientService NotificationClient
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
@@ -2700,7 +2700,7 @@
         // branch-scoped read on this page 404s. Picking an organization and a branch raises
         // OnBranchChanged; without this subscription nothing re-read it, so the quick-log dialog
         // kept offering the previous organization's categories (or none at all) until a reload.
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         await LoadBranchDataAsync();
     }
@@ -2729,30 +2729,25 @@
         await LoadStudents();
     }
 
-    private async void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        await InvokeAsync(async () =>
-        {
-            var next = BranchState.CurrentBranchId;
-            if (next == branchId) return;
-
-            branchId = next;
-            if (branchId == Guid.Empty) return;
-
-            // Every cache below is fetched once and then guarded against refetching, so each one
-            // would otherwise keep the previous organization's data. quickLogCategories is the one
-            // that bites: its `.Any()` guard left the dialog offering categories the API refuses.
-            quickLogCategories.Clear();
-            classColors = new();
-            printLetterhead = null;
-            vocabularies = new();
-            classTeachers = new();
-            classTeachersLoaded = false;
-            subjectTeachersMayLogConcerns = null;
-
-            await LoadBranchDataAsync();
-            StateHasChanged();
-        });
+        this.branchId = branchId;
+        // Every cache below is fetched once and then guarded against refetching, so each one would
+        // otherwise keep the previous organization's data. quickLogCategories is the one that bites:
+        // its `.Any()` guard left the dialog offering categories the API refuses.
+        quickLogCategories.Clear();
+        classColors = new();
+        printLetterhead = null;
+        vocabularies = new();
+        classTeachers = new();
+        classTeachersLoaded = false;
+        subjectTeachersMayLogConcerns = null;
+        await LoadBranchDataAsync();
     }
 
     private async Task LoadStudents()
@@ -3137,7 +3132,6 @@
     public async ValueTask DisposeAsync()
     {
         NotificationClient.OnRosterImportProgressReceived -= HandleImportProgress;
-        BranchState.OnBranchChanged -= HandleBranchChanged;
     }
 
     // ---------------- Quick-Log Welfare Record ----------------

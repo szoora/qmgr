@@ -496,21 +496,33 @@ else if (loadError != null)
         {
             var stamp = QDateFormat.D(DateTime.UtcNow);
 
-            // No Audit callback, and that is a gap rather than a decision: the only export-log
-            // endpoint in this app is the STAFF one (branches/{b}/staff/activity/exports), whose
-            // kinds and per-kind permission gate are all about a member of staff, and WelfareController
-            // has no activity logger of any kind. So a published welfare report is in the Library and
-            // in no log. Closing it needs a welfare-side endpoint, not a staff export row about a
-            // child — see SECURE_DOCUMENT_SHARING.md §13 "Already drifted" item 3.
+            // Closed 2026-09-18. Until then this carried a comment saying a published welfare report
+            // ended up in the Library and in NO log, because the only export-log endpoint in the app
+            // was the STAFF one, whose kinds and permission gates are all about a member of staff.
+            // WelfareController now has its own, whose subject is a STUDENT and which checks that
+            // student against the class scope.
+            var documentName = $"Welfare report — {SubjectName} ({PeriodCaption})";
             await ReportPublishing.PublishAsync(new ReportPublishRequest
             {
                 SheetElementId = "wr-sheet",
                 OrganizationId = organizationId,
                 FileName = $"welfare-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
-                DocumentName = $"Welfare report — {SubjectName} ({PeriodCaption})",
+                DocumentName = documentName,
                 Summary = $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
                 PublishedFrom = $"Welfare timeline — {SubjectName} ({context?.StudentCode ?? "no code"}), {PeriodCaption}, generated {stamp}"
             }, JS, DocShareApi, Toast, Navigation);
+
+            // Reported after the publish, never instead of it: the reporting call cannot fail the
+            // publish the reader has already seen succeed.
+            await WelfareActivityReporting.ReportAsync(Http, branchId, new RecordWelfareExportRequest
+            {
+                Kind = WelfareExportKinds.Timeline,
+                SubjectStudentId = StudentId,
+                Format = "PDF",
+                Published = true,
+                DocumentName = documentName,
+                PeriodCaption = PeriodCaption
+            });
         }
         finally
         {

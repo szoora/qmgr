@@ -3,7 +3,7 @@
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @using QMgr.Application.DTOs
@@ -389,6 +389,10 @@
             canEdit = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesEdit);
             canDelete = await PermissionService.HasPermissionAsync(Permissions.ServiceTypesDelete);
 
+            await BranchState.InitializeAsync();
+            TrackBranch();
+
+
             await LoadData();
             StateHasChanged();
         }
@@ -545,5 +549,15 @@
         public string Color { get; set; } = "#8c2f52";
         public int EstimatedServiceTime { get; set; } = 10;
         public bool IsActive { get; set; } = true;
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        await LoadData();
     }
 }

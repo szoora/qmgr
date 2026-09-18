@@ -4,7 +4,7 @@
 @inject IAuthService AuthService
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
 @using System.Text.Json
 @using QMgr.Application.DTOs
@@ -707,5 +707,28 @@
         {
             isSavingBanner = false;
         }
+    }
+
+    /// <summary>
+    /// Subscribe to branch changes. In OnAfterRenderAsync and not OnInitializedAsync on purpose:
+    /// branch and auth state are read from localStorage over JS interop, which does not exist
+    /// during prerendering and races an uninitialised store on a cold navigation.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        await BranchState.InitializeAsync();
+        TrackBranch();
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        this.branchId = branchId;
+        await LoadSettings();
     }
 }

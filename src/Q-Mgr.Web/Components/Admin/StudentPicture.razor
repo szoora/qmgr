@@ -10,7 +10,7 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IStudentApiService StudentApi
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -717,36 +717,31 @@
         // Raise Flag form with an empty dropdown. Picking an organization and a branch raises
         // OnBranchChanged; without this subscription nothing re-read it and only a full page reload
         // recovered the form.
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         await LoadAsync();
         StateHasChanged();
     }
 
-    private async void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        await InvokeAsync(async () =>
-        {
-            var next = BranchState.CurrentBranchId;
-            if (next == branchId) return;
-
-            branchId = next;
-            if (branchId == Guid.Empty) return;
-
-            // categories is only fetched when it is needed and is never refetched otherwise, so it
-            // would keep the previous organization's list on the flag form -- and the API refuses a
-            // category id belonging to another branch.
-            categories.Clear();
-            classTeacher = null;
-            classTeachersLoaded = false;
-            await LoadAsync();
-            StateHasChanged();
-        });
+        this.branchId = branchId;
+        // categories is only fetched when it is needed and is never refetched otherwise, so it would
+        // keep the previous organization's list on the flag form — and the API refuses a category id
+        // belonging to another branch.
+        categories.Clear();
+        classTeacher = null;
+        classTeachersLoaded = false;
+        await LoadAsync();
     }
 
     public void Dispose()
     {
-        BranchState.OnBranchChanged -= HandleBranchChanged;
     }
 
     private async Task LoadAsync()

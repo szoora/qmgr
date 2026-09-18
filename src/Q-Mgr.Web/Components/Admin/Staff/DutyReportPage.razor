@@ -9,7 +9,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 
 <PageTitle>Duty report - Q-Mgr</PageTitle>
 
@@ -296,7 +296,7 @@
         }
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
         await LoadAsync();
     }
 
@@ -305,13 +305,13 @@
         if (report != null && report.Id != Id) await LoadAsync();
     }
 
-    private void HandleBranchChanged()
+    /// <summary>The branch changed under the page: reload against the new one.</summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
-        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+        this.branchId = branchId;
+        await LoadAsync();
     }
 
-    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
 
     private async Task LoadAsync()
     {

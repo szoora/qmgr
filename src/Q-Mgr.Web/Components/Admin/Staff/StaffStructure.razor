@@ -8,7 +8,7 @@
 @using QMgr.Web.Components.Admin.Staff
 @inject IStaffPerformanceApiService StaffApi
 @inject IToastService Toast
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -458,7 +458,7 @@
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         await LoadAllAsync();
     }
@@ -827,15 +827,15 @@
         _ => "info"
     };
 
-    private void HandleBranchChanged()
+    /// <summary>The branch changed under the page: reload against the new one.</summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        branchId = BranchState.CurrentBranchId;
-        _ = InvokeAsync(async () => { await LoadAllAsync(); StateHasChanged(); });
+        this.branchId = branchId;
+        await LoadAllAsync();
     }
 
     public void Dispose()
     {
-        BranchState.OnBranchChanged -= HandleBranchChanged;
         pollTimer?.Dispose();
     }
 }

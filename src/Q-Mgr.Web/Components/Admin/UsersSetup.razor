@@ -4,7 +4,7 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IPermissionService PermissionSvc
 @inject NavigationManager Navigation
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IStudentApiService StudentApi
 @inject IClassTeacherApiService ClassTeacherApi
 @using System.Text.Json
@@ -578,6 +578,10 @@
 
     .role-header {
         display: flex;
+        /* Without this the row stretches its children: the System badge, which carries its own
+           margin-left:auto, grew to the full header height and rendered as a tall block behind
+           its text. Reported from production 2026-09-18. */
+        align-items: flex-start;
         gap: 14px;
         margin-bottom: 16px;
     }
@@ -995,6 +999,10 @@
             // classes.teachers.manage from implying account administration, so this form must too.
             canManageClassTeachers = await PermissionSvc.HasPermissionAsync(Permissions.ClassTeachersManage);
             isSuperAdmin = await PermissionSvc.IsSuperAdminAsync();
+
+            await BranchState.InitializeAsync();
+            TrackBranch();
+
             if (isSuperAdmin)
             {
                 await LoadOrganizations();
@@ -2173,5 +2181,15 @@
     private record PagedResultDto<T>
     {
         public List<T> Items { get; init; } = new();
+    }
+
+    /// <summary>
+    /// The branch changed under the page. Without this the page keeps whatever branch it first
+    /// read — for a SuperAdmin that is Guid.Empty, which the API answers 404, so the page renders
+    /// an empty list with no explanation until the reader reloads by hand.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        await LoadData();
     }
 }

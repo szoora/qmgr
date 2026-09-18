@@ -3,7 +3,7 @@
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
@@ -413,9 +413,25 @@
             canCreate = await PermissionService.HasPermissionAsync(Permissions.WelfareCategoriesManage);
             canManage = canCreate;
 
+            // Subscribe next to the first branch read: without this the page keeps whatever branch
+            // it started with and a switch silently shows the previous organization's taxonomy.
+            await BranchState.InitializeAsync();
+            TrackBranch();
+
             await LoadData();
             StateHasChanged();
         }
+    }
+
+
+    /// <summary>
+    /// The branch changed under the page. `categories` is branch-scoped — before this, switching
+    /// branch left the previous organization's taxonomy on screen until a manual reload.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
+    {
+        categories.Clear();
+        await LoadData();
     }
 
     private async Task LoadData()

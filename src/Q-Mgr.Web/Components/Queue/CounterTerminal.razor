@@ -6,7 +6,7 @@
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
 @inject IToastService NotificationService
-@inject IBranchStateService BranchState
+@inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 @inject IConnectionMonitorService ConnectionMonitor
@@ -871,7 +871,7 @@
         }
 
         // Subscribe to branch changes
-        BranchState.OnBranchChanged += HandleBranchChanged;
+        TrackBranch();
 
         await LoadCounters();
         await SignalR.ConnectAsync(BranchId);
@@ -958,13 +958,16 @@
         StateHasChanged();
     }
 
-    private async void HandleBranchChanged()
+    /// <summary>
+    /// The branch changed under the page. The guard on an unchanged or empty branch, the
+    /// marshalling onto the renderer and the StateHasChanged afterwards all live in
+    /// BranchAwareComponentBase now, so only the page-specific reset and reload remain.
+    /// </summary>
+    protected override async Task OnBranchChangedAsync(Guid branchId)
     {
-        await InvokeAsync(async () =>
-        {
-            await LoadCounters();
-            await SignalR.ConnectAsync(BranchId);
-        });
+        await LoadCounters();
+        // Per-branch hub connection: reconnect so the terminal stops receiving the old branch's calls.
+        await SignalR.ConnectAsync(BranchId);
     }
 
     private async Task OnCounterSelected(Guid counterId)
@@ -1229,7 +1232,6 @@
 
     public void Dispose()
     {
-        BranchState.OnBranchChanged -= HandleBranchChanged;
         SignalR.OnTokenCalled -= HandleTokenCalled;
         SignalR.OnTokenCompleted -= HandleTokenCompleted;
         SignalR.OnReconnected -= HandleReconnected;
