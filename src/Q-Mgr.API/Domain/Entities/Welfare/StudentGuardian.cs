@@ -23,7 +23,6 @@ public class StudentGuardian : BaseEntity
     // "Auntie", "Sponsor") and forcing a fixed list would just push real answers into "Other".
     public string Relationship { get; set; } = string.Empty;
 
-    public bool IsActive { get; set; } = true;
 
     /// <summary>
     /// The per-child restriction the organization-wide watchlist cannot express.

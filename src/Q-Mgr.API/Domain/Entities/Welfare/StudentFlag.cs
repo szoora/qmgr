@@ -85,7 +85,7 @@ public class StudentFlag : BaseAuditableEntity
     public string? EndReason { get; set; }
 
     /// <summary>Convenience for queries and UI; equivalent to <c>EndedAt == null</c>.</summary>
-    public bool IsActive => EndedAt == null;
+    public new bool IsActive => EndedAt == null;
 
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }

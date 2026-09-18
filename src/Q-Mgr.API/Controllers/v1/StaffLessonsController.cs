@@ -488,5 +488,4 @@ public class StaffLessonsController : StaffPerformanceControllerBase
     private static string? NoteFrom(string description, string title)
         => description.StartsWith(title + " — ", StringComparison.Ordinal) ? description[(title.Length + 3)..] : null;
 
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
 }

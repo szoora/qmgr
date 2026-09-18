@@ -34,10 +34,3 @@ public record GetWaitingTokensQuery : IRequest<List<TokenDto>>
     public Guid? ServiceTypeId { get; init; }
     public int? Limit { get; init; }
 }
-
-public record GetCounterTokensQuery : IRequest<List<TokenDto>>
-{
-    public Guid CounterId { get; init; }
-    public DateTime? FromDate { get; init; }
-    public DateTime? ToDate { get; init; }
-}

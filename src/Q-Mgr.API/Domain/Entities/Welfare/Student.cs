@@ -25,7 +25,6 @@ public class Student : BaseEntity
 
     public string? ClassName { get; set; }
 
-    public bool IsActive { get; set; } = true;
 
     // ---------------------------------------------------------------------------------------
     // Welfare background. Every one of these is nullable on purpose: the roster was built for

@@ -18,9 +18,3 @@ public record CreateTokenCommand : IRequest<TokenDto>
     public Dictionary<string, object>? Metadata { get; init; }
     public DateTime? EstimatedArrival { get; init; }
 }
-
-public record CreateTokenBulkCommand : IRequest<List<TokenDto>>
-{
-    public Guid BranchId { get; init; }
-    public List<CreateTokenCommand> Tokens { get; init; } = new();
-}
