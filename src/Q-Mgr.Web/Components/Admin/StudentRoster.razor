@@ -504,9 +504,9 @@
                     <QDatePicker @bind-Value="dateOfBirthValue" Label="Date of birth"
                                  HasError="@fieldErrors.ContainsKey(nameof(studentModel.DateOfBirth))"
                                  ErrorMessage="@fieldErrors.GetValueOrDefault(nameof(studentModel.DateOfBirth))" />
-                    <QSelect TValue="StudentSex?" TItem="EnumOption<StudentSex>" @bind-Value="studentModel.Sex"
+                    <QSelect TValue="PersonSex?" TItem="EnumOption<PersonSex>" @bind-Value="studentModel.Sex"
                              Label="Sex" Placeholder="Not recorded" AllowClear="true"
-                             Items="@SexOptions" ValueSelector="@(o => (StudentSex?)o.Value)" TextSelector="@(o => o.Label)" />
+                             Items="@SexOptions" ValueSelector="@(o => (PersonSex?)o.Value)" TextSelector="@(o => o.Label)" />
 
                     <QDatePicker @bind-Value="admissionDateValue" Label="Admission date"
                                  HasError="@fieldErrors.ContainsKey(nameof(studentModel.AdmissionDate))"
@@ -2614,9 +2614,9 @@
     // Written out rather than reflected off the enum: "SchoolBus" and "InArrears" are not what a
     // person should read on a form, and a humanising regex over enum names is a worse version of
     // just saying what you mean.
-    private static readonly EnumOption<StudentSex>[] SexOptions =
+    private static readonly EnumOption<PersonSex>[] SexOptions =
     {
-        new(StudentSex.Female, "Female"), new(StudentSex.Male, "Male"), new(StudentSex.Other, "Other")
+        new(PersonSex.Female, "Female"), new(PersonSex.Male, "Male"), new(PersonSex.Other, "Other")
     };
 
     private static readonly EnumOption<StudentResidency>[] ResidencyOptions =

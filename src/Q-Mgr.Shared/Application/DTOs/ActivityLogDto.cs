@@ -235,3 +235,22 @@ public record RecordWelfareExportRequest
     /// <summary>The period the export covered, as the page captioned it.</summary>
     public string? PeriodCaption { get; set; }
 }
+
+/// <summary>
+/// Bulk-import activity. Persisted on <c>ActivityEvent.Action</c>, so a wire format: never rename one.
+///
+/// Added 2026-09-18: until then a bulk import — which can create hundreds of LOGIN ACCOUNTS in one
+/// go, or backfill a school's whole welfare history — wrote no audit row at all. The job's live
+/// SignalR progress told you what was happening WHILE it ran and nothing afterwards said it had.
+/// </summary>
+public static class ImportActivityActions
+{
+    /// <summary>A bulk import was accepted and queued. Carries the row count and the file name.</summary>
+    public const string Started = "import.started";
+
+    /// <summary>It finished. Carries the full tally: created, updated, duplicates, failed.</summary>
+    public const string Completed = "import.completed";
+
+    /// <summary>It could not run at all — a malformed payload, or a row set that would not deserialize.</summary>
+    public const string Failed = "import.failed";
+}

@@ -44,7 +44,7 @@ public record StudentDto
     // returns exactly what it always did. ---
 
     public DateOnly? DateOfBirth { get; init; }
-    public StudentSex? Sex { get; init; }
+    public PersonSex? Sex { get; init; }
     public DateOnly? AdmissionDate { get; init; }
     public StudentResidency? Residency { get; init; }
     public string? House { get; init; }
@@ -160,7 +160,7 @@ public abstract record StudentProfileFields
     public string? PhotoUrl { get; set; }
 
     public DateOnly? DateOfBirth { get; set; }
-    public StudentSex? Sex { get; set; }
+    public PersonSex? Sex { get; set; }
     public DateOnly? AdmissionDate { get; set; }
     public StudentResidency? Residency { get; set; }
 

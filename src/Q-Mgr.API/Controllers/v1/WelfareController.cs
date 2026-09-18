@@ -88,7 +88,7 @@ public class WelfareController : ControllerBase
     {
         var tenantContext = _tenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
-            return Unauthorized(new ProblemDetails { Title = "Tenant not resolved", Status = StatusCodes.Status401Unauthorized });
+            return Unauthorized(new ProblemDetails { Title = "Organization not resolved", Status = StatusCodes.Status401Unauthorized });
 
         if (RoleCodes.IsSuperAdmin(tenantContext.UserRole))
         {
@@ -1853,7 +1853,7 @@ public class WelfareController : ControllerBase
             TotalRecords = rows.Count,
             ByHouse = Slice(rows, r => (string?)r.House, k => string.IsNullOrWhiteSpace(k) ? "No house set" : k!),
             ByResidency = Slice(rows, r => (StudentResidency?)r.Residency, k => k?.ToString() ?? "Not recorded"),
-            BySex = Slice(rows, r => (StudentSex?)r.Sex, k => k?.ToString() ?? "Not recorded"),
+            BySex = Slice(rows, r => (PersonSex?)r.Sex, k => k?.ToString() ?? "Not recorded"),
             ByFeesStatus = Slice(rows, r => (StudentFeesStatus?)r.FeesStatus, k => k?.ToString() ?? "Not recorded")
         };
 

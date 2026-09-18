@@ -41,13 +41,24 @@ public static class StaffLookups
     /// to no branch, never the platform SuperAdmin. Role included, because the staff group and the
     /// notice audience both read it. The same definition StaffScoringService.ComputeBranchAsync
     /// uses, so a report's denominator and a register's "everyone" agree.
+    ///
+    /// <para><b>Excludes people whose employment has ended or not yet begun (2026-09-18).</b> This is
+    /// the forward-looking set — registers, scoring denominators, notice audiences, rota generation
+    /// — and somebody who left in June has no business in September's. Their RECORDS are untouched:
+    /// see StaffEmployment for why a leaver is dated rather than deactivated. Pass
+    /// <paramref name="includeFormer"/> to get everyone, which the directory does so it can show a
+    /// Left badge rather than silently losing the person.</para>
     /// </summary>
-    public static IQueryable<User> BranchStaff(QMgrDbContext db, Guid organizationId, Guid branchId)
-        => db.Users.IgnoreQueryFilters().AsNoTracking()
+    public static IQueryable<User> BranchStaff(QMgrDbContext db, Guid organizationId, Guid branchId, bool includeFormer = false)
+    {
+        var q = db.Users.IgnoreQueryFilters().AsNoTracking()
             .Include(u => u.Role)
             .Where(u => u.OrganizationId == organizationId && u.IsActive
                         && (u.AssignedBranchId == branchId || u.AssignedBranchId == null)
                         && u.Role.Code != RoleCodes.SuperAdmin);
+
+        return includeFormer ? q : q.Where(StaffEmployment.CurrentOn(DateOnly.FromDateTime(DateTime.UtcNow)));
+    }
 
     /// <summary>Active users of the organization whose role holds <paramref name="permissionCode"/>. Used for "the Approve holders" and "everyone with reports.view".</summary>
     public static async Task<List<Guid>> UsersWithPermissionAsync(QMgrDbContext db, Guid organizationId, string permissionCode, CancellationToken ct = default)

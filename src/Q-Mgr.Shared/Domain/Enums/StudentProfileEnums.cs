@@ -1,11 +1,15 @@
 namespace QMgr.Domain.Enums;
 
 /// <summary>
-/// Recorded for safeguarding practice, dormitory placement and the disproportionality reporting
-/// that checks whether punitive responses land unevenly. Nullable on the student — a school that
-/// does not collect it simply leaves it unset rather than being forced to guess.
+/// A person's sex, used for STUDENTS (safeguarding practice, dormitory placement and the
+/// disproportionality reporting that checks whether punitive responses land unevenly) and for
+/// STAFF (the MoES staff return counts men and women separately). Nullable on both — a tenant that
+/// does not collect it leaves it unset rather than being forced to guess.
+///
+/// Renamed from StudentSex 2026-09-18 when staff gained it: one concept, one enum, rather than a
+/// second identical one. Only the int is persisted, so the rename moved no data.
 /// </summary>
-public enum StudentSex
+public enum PersonSex
 {
     Female = 0,
     Male = 1,

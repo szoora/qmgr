@@ -514,7 +514,7 @@ public class DocumentSharesController : ControllerBase
         if (RoleCodes.IsSuperAdmin(tenant?.UserRole)) { error = null; return requested; }
         if (tenant == null || !tenant.IsResolved)
         {
-            error = Unauthorized(new ProblemDetails { Title = "Tenant not resolved", Status = StatusCodes.Status401Unauthorized });
+            error = Unauthorized(new ProblemDetails { Title = "Organization not resolved", Status = StatusCodes.Status401Unauthorized });
             return Guid.Empty;
         }
         error = null;

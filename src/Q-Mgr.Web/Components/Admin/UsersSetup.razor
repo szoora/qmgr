@@ -259,7 +259,7 @@
             <div class="form-group">
                 <QSelect TValue="Guid?" TItem="OrgOption" Value="@formData.OrganizationId" ValueChanged="@OnOrganizationSelected" Items="@orgOptions"
                          ValueSelector="@(o => (Guid?)o.Id)" TextSelector="@(o => o.Name)" Label="Organization *"
-                         HelperText="Platform Admin accounts have no branches of their own - pick the tenant this user belongs to." />
+                         HelperText="Platform Admin accounts have no branches of their own - pick the organization this user belongs to." />
             </div>
         }
         <div class="form-row">
@@ -589,12 +589,26 @@
     .role-icon {
         width: 48px;
         height: 48px;
+        /* Both load-bearing. .role-header is a flex row, so without flex-shrink the icon is the
+           thing that gives when a long title wraps — "Head of Department" and "Director of
+           Studies" squashed theirs to an oval while short names kept a square. min-width/height
+           hold the box even if a future rule sets flex-basis. Reported 2026-09-18. */
+        flex-shrink: 0;
+        min-width: 48px;
+        min-height: 48px;
+        /* One glyph size for every card, rather than whatever each icon's intrinsic size is. */
+        font-size: 20px;
+        line-height: 1;
         border-radius: var(--qm-radius-xl);
         display: flex;
         align-items: center;
         justify-content: center;
         color: var(--qm-text-on-primary);
     }
+
+    /* Lets a long role name wrap instead of pushing against the icon (a flex child defaults to
+       min-width:auto and refuses to shrink below its content). */
+    .role-title { min-width: 0; }
 
     .role-title h4 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .role-title span { font-size: 13px; color: var(--qm-text-muted); }

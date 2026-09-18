@@ -1,0 +1,510 @@
+@typeparam TRow
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IJSRuntime JS
+@inject IToastService Toast
+@inject INotificationClientService NotificationClient
+@implements IDisposable
+
+@*
+    One home for a bulk import's whole client-side journey: choose a sheet, read it, validate it
+    hard, show what will happen, send it, watch it run, and read what it did.
+
+    Q-Mgr had two of these — the student roster and the staff list — built months apart. They shared
+    only rosterImport.sheetToCsv (SheetJS in the browser, so the server needs no Excel library) and
+    CsvText. Everything above that was copied, and the copies had already drifted in the way copies
+    do: the student page watched progress over SignalR while the staff page polled on a
+    System.Threading.Timer, for the same job, broadcasting the same events. There was never a reason
+    for two mechanisms — the staff import simply landed later and hand-rolled one. Uniformity here is
+    structural rather than promised: both callers run this component, so neither can drift again.
+
+    LIVE PROGRESS IS SIGNALR, WITH A SLOW RECONCILING POLL BEHIND IT. The push is what makes it feel
+    live; the poll exists only because a dropped frame or a reconnect would otherwise leave the bar
+    frozen at 40% on a job that finished. It ticks every 10s, only while a job is running, and stops
+    the moment the job is terminal — it is a safety net, not the mechanism.
+*@
+
+<div class="q-import">
+
+    @* ---------- 1. Choose a file ---------- *@
+    @if (job == null)
+    {
+        <div class="q-import__pick">
+            <label class="q-import__drop" for="@InputId">
+                <QIcon Name="file-earmark-spreadsheet" />
+                <span class="q-import__drop-main">@(preview == null ? "Choose an Excel or CSV file" : FileName)</span>
+                <span class="q-import__drop-sub">.xlsx, .xls or .csv — read in your browser, nothing is uploaded until you press Import</span>
+            </label>
+            <InputFile id="@InputId" OnChange="OnFileSelected" accept=".csv,.xlsx,.xls,text/csv" class="q-import__file" />
+
+            @if (TemplateRows.Count > 0 || Columns.Count > 0)
+            {
+                <QDataExport TItem="ImportTemplateRow" Title="@($"{Noun} import template")" FileStem="@TemplateFileStem"
+                             Columns="@BuildTemplateColumns()" RowProvider="@TemplateRowsAsync"
+                             Formats="ExportFormat.Csv | ExportFormat.Excel" Text="Download template" Variant="ghost" />
+            }
+        </div>
+
+        @if (Options is not null)
+        {
+            <div class="q-import__options">@Options</div>
+        }
+    }
+
+    @* ---------- 2. What is wrong with the FILE ---------- *@
+    @if (preview is not null && preview.FileProblems.Count > 0)
+    {
+        <div class="q-import__banner q-import__banner--error">
+            <strong><QIcon Name="exclamation-octagon" /> This file cannot be imported</strong>
+            <ul class="q-import__problems">
+                @foreach (var p in preview.FileProblems)
+                {
+                    <li>@p</li>
+                }
+            </ul>
+        </div>
+    }
+
+    @* ---------- 3. The preview and its tally ---------- *@
+    @if (preview is not null && preview.Rows.Count > 0 && job == null)
+    {
+        <div class="q-import__tally">
+            <div class="q-import__tile q-import__tile--ok">
+                <span class="value">@preview.Importable</span><span class="label">Ready to import</span>
+            </div>
+            @if (preview.Warned > 0)
+            {
+                <div class="q-import__tile q-import__tile--warn">
+                    <span class="value">@preview.Warned</span><span class="label">With a warning</span>
+                </div>
+            }
+            @if (preview.Rejected > 0)
+            {
+                <div class="q-import__tile q-import__tile--bad">
+                    <span class="value">@preview.Rejected</span><span class="label">Will be skipped</span>
+                </div>
+            }
+        </div>
+
+        @if (preview.Headers.Count > 0)
+        {
+            <p class="q-import__headers">Columns read: @string.Join(", ", preview.Headers)</p>
+        }
+        else
+        {
+            <p class="q-import__headers">No header row found — columns were read in the template's order.</p>
+        }
+
+        <div class="q-import__table-wrap">
+            <table class="q-table q-stack q-import__table">
+                <thead>
+                    <tr>
+                        <th>Row</th>
+                        <th>@Noun</th>
+                        <th>Outcome</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in preview.Rows.Take(MaxPreviewRows))
+                    {
+                        <tr class="@(r.Error != null ? "q-import__row--bad" : r.Warnings.Count > 0 ? "q-import__row--warn" : "")">
+                            <td>@r.RowNumber</td>
+                            <td>
+                                @if (RowSummary is not null && r.Row is not null)
+                                {
+                                    @RowSummary(r.Row)
+                                }
+                                else
+                                {
+                                    <span class="q-import__cells">@string.Join(" · ", r.Cells.Take(4))</span>
+                                }
+                            </td>
+                            <td>
+                                @if (r.Error != null)
+                                {
+                                    <span class="q-import__bad"><QIcon Name="x-circle" /> @r.Error</span>
+                                }
+                                else if (r.Warnings.Count > 0)
+                                {
+                                    <span class="q-import__warn"><QIcon Name="exclamation-triangle" /> @string.Join("; ", r.Warnings)</span>
+                                }
+                                else
+                                {
+                                    <span class="q-import__ok"><QIcon Name="check-circle" /> Ready</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (preview.Rows.Count > MaxPreviewRows)
+            {
+                <p class="q-import__more">Showing the first @MaxPreviewRows of @preview.Rows.Count rows. Every row is validated, not just these.</p>
+            }
+        </div>
+
+        <div class="q-import__actions">
+            <QButton Text="Choose a different file" Icon="arrow-counterclockwise" Variant="ghost" OnClick="Reset" Disabled="@starting" />
+            <QButton Text="@ImportButtonText" Icon="cloud-upload" Variant="primary"
+                     OnClick="Start" Loading="@starting" Disabled="@(!preview.CanImport || starting)" />
+        </div>
+        @if (preview.Rejected > 0)
+        {
+            <p class="q-import__note">Rows with a problem are left out of the import. Fix them in the file and import it again — the ones that succeeded are not re-created.</p>
+        }
+    }
+
+    @* ---------- 4. Running, then the summary ---------- *@
+    @if (job is not null)
+    {
+        <div class="q-import__progress">
+            <div class="q-import__progress-head">
+                <span class="q-import__status q-import__status--@job.Status.ToString().ToLowerInvariant()">@StatusLabel(job.Status)</span>
+                <span>@job.ProcessedRows / @job.TotalRows rows</span>
+                @if (!IsTerminal(job.Status))
+                {
+                    <span class="q-import__live">@(liveSince == null ? "" : "live")</span>
+                }
+            </div>
+            <div class="q-import__bar" role="progressbar" aria-valuenow="@Percent" aria-valuemin="0" aria-valuemax="100">
+                <div class="q-import__bar-fill @(IsTerminal(job.Status) ? "done" : "")" style="width:@(Percent)%"></div>
+            </div>
+
+            <div class="q-import__tally">
+                <div class="q-import__tile q-import__tile--ok"><span class="value">@job.CreatedCount</span><span class="label">Created</span></div>
+                <div class="q-import__tile"><span class="value">@job.UpdatedCount</span><span class="label">Updated</span></div>
+                <div class="q-import__tile q-import__tile--warn"><span class="value">@job.DuplicateCount</span><span class="label">Duplicates</span></div>
+                <div class="q-import__tile q-import__tile--bad"><span class="value">@job.FailedCount</span><span class="label">Failed</span></div>
+            </div>
+
+            @if (job.Status == RosterImportStatus.Failed && !string.IsNullOrWhiteSpace(job.FailureReason))
+            {
+                <div class="q-import__banner q-import__banner--error"><strong><QIcon Name="exclamation-octagon" /> The import could not run</strong><p>@job.FailureReason</p></div>
+            }
+
+            @if (IsTerminal(job.Status))
+            {
+                <p class="q-import__summary">@SummarySentence()</p>
+                <div class="q-import__actions">
+                    <QButton Text="@(showEntries ? "Hide the row-by-row result" : "Show the row-by-row result")"
+                             Icon="list-check" Variant="secondary" OnClick="ToggleEntries" Loading="@loadingEntries" />
+                    <QButton Text="Import another file" Icon="plus-lg" Variant="ghost" OnClick="Reset" />
+                </div>
+            }
+
+            @if (showEntries && entries.Count > 0)
+            {
+                <div class="q-import__table-wrap">
+                    <table class="q-table q-stack q-import__table">
+                        <thead><tr><th>Row</th><th>@Noun</th><th>Outcome</th><th>Detail</th></tr></thead>
+                        <tbody>
+                            @foreach (var e in entries)
+                            {
+                                <tr class="@(e.Outcome == RosterImportRowOutcome.Failed ? "q-import__row--bad" : e.Outcome == RosterImportRowOutcome.DuplicateInFile ? "q-import__row--warn" : "")">
+                                    <td>@e.RowNumber</td>
+                                    <td>@(string.IsNullOrWhiteSpace(e.StudentName) ? "—" : e.StudentName)</td>
+                                    <td><span class="q-import__outcome q-import__outcome--@e.Outcome.ToString().ToLowerInvariant()">@e.Outcome</span></td>
+                                    <td>@e.Message</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The branch whose SignalR group carries this job's progress.</summary>
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>DOM id for the file input — unique per page.</summary>
+    [Parameter, EditorRequired] public string InputId { get; set; } = "q-import-file";
+
+    /// <summary>"student", "person" — used in every sentence this panel writes.</summary>
+    [Parameter] public string Noun { get; set; } = "row";
+
+    /// <summary>Declared columns, with the aliases real spreadsheets use.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<ImportColumn> Columns { get; set; } = Array.Empty<ImportColumn>();
+
+    /// <summary>Turns one mapped row into TRow, or explains why it cannot.</summary>
+    [Parameter, EditorRequired]
+    public Func<IReadOnlyList<string>, Dictionary<string, int>, int, (TRow? Row, string? Error, List<string> Warnings)> BuildRow { get; set; } = default!;
+
+    /// <summary>The value that must not repeat within one file (an email, a student code).</summary>
+    [Parameter] public Func<TRow, string?>? DuplicateKey { get; set; }
+
+    /// <summary>What that key is called in the refusal — "email address", "student code".</summary>
+    [Parameter] public string DuplicateNoun { get; set; } = "value";
+
+    /// <summary>Sends the importable rows and returns the job id.</summary>
+    [Parameter, EditorRequired] public Func<List<TRow>, Task<Guid>> StartAsync { get; set; } = default!;
+
+    /// <summary>Re-reads the job — used by the reconciling poll and once when it lands.</summary>
+    [Parameter, EditorRequired] public Func<Guid, Task<RosterImportJobDto?>> LoadJobAsync { get; set; } = default!;
+
+    /// <summary>The per-row outcomes, fetched only when the reader asks to see them.</summary>
+    [Parameter] public Func<Guid, Task<List<RosterImportJobEntryDto>>>? LoadEntriesAsync { get; set; }
+
+    /// <summary>Extra controls shown beside the file picker (delivery mode, "update existing", …).</summary>
+    [Parameter] public RenderFragment? Options { get; set; }
+
+    /// <summary>How a parsed row is described in the preview. Falls back to the first few cells.</summary>
+    [Parameter] public RenderFragment<TRow>? RowSummary { get; set; }
+
+    /// <summary>
+    /// Example rows the downloadable template ships with, each aligned to <see cref="Columns"/>.
+    /// The declared columns ARE the template, so there is no second list to keep in step.
+    /// </summary>
+    [Parameter] public IReadOnlyList<IReadOnlyList<string>> TemplateRows { get; set; } = Array.Empty<IReadOnlyList<string>>();
+
+    [Parameter] public string TemplateFileStem { get; set; } = "import-template";
+
+    /// <summary>A sheet bigger than this is refused before it is read.</summary>
+    [Parameter] public long MaxFileBytes { get; set; } = 5 * 1024 * 1024;
+
+    [Parameter] public int MaxPreviewRows { get; set; } = 200;
+
+    /// <summary>Raised when the job reaches a terminal state, so the page can refresh its own list.</summary>
+    [Parameter] public EventCallback OnCompleted { get; set; }
+
+    private ImportPreview<TRow>? preview;
+    private RosterImportJobDto? job;
+    private List<RosterImportJobEntryDto> entries = new();
+    private string? FileName;
+    private bool starting, showEntries, loadingEntries, subscribed, disposed;
+    private DateTime? liveSince;
+    private System.Threading.Timer? reconcileTimer;
+    private bool completedRaised;
+
+    private int Percent => job is { TotalRows: > 0 } j ? Math.Clamp(j.ProcessedRows * 100 / j.TotalRows, 0, 100) : 0;
+
+    private string ImportButtonText => preview is null
+        ? "Import"
+        : preview.Importable == 1 ? $"Import 1 {Noun}" : $"Import {preview.Importable} {Noun}s";
+
+    protected override void OnInitialized()
+    {
+        NotificationClient.OnRosterImportProgressReceived += HandleProgress;
+        subscribed = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // The group membership is what makes the push arrive; NotificationClientService replays it
+        // on every reconnect, so joining once here is enough.
+        if (firstRender && BranchId != Guid.Empty)
+        {
+            try { await NotificationClient.JoinBranchAsync(BranchId); } catch { /* the poll still covers us */ }
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            if (e.File.Size > MaxFileBytes)
+            {
+                Toast.Notify(ToastSeverity.Warning, "That file is too large",
+                    $"Keep the sheet under {MaxFileBytes / (1024 * 1024)} MB — split it, or delete the other sheets in the workbook.");
+                return;
+            }
+
+            FileName = e.File.Name;
+            // Excel and CSV alike are read in the BROWSER by SheetJS; only text comes back, which is
+            // why this product needs no server-side Excel library (a standing constraint).
+            var csv = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId);
+            Build(csv);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not read that file", ex.Message);
+        }
+    }
+
+    private void Build(string csv)
+    {
+        var (rows, map, headers, hasHeader) = ImportParsing.Split(csv, Columns);
+        var p = new ImportPreview<TRow> { Headers = hasHeader ? headers : new() };
+
+        if (rows.Count == 0)
+        {
+            p.FileProblems.Add("The sheet has no rows.");
+            preview = p;
+            return;
+        }
+
+        // A required column the file simply does not have is a FILE problem, reported once, rather
+        // than the same error repeated against every row.
+        foreach (var c in Columns.Where(c => c.Required))
+        {
+            if (!map.ContainsKey(c.Name))
+                p.FileProblems.Add($"The column \"{c.Name}\" is required and was not found. Expected a header called {c.Name}"
+                    + (c.Aliases.Count > 0 ? $" (or {string.Join(", ", c.Aliases)})" : "") + ".");
+        }
+
+        if (p.FileProblems.Count == 0)
+        {
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var number = hasHeader ? i + 2 : i + 1; // the line number in the reader's own file
+                var (row, error, warnings) = BuildRow(rows[i], map, number);
+                var pr = new ImportPreviewRow<TRow> { RowNumber = number, Row = row, Error = error, Cells = rows[i] };
+                foreach (var w in warnings) pr.Warnings.Add(w);
+                p.Rows.Add(pr);
+            }
+
+            if (DuplicateKey is not null)
+                ImportParsing.FlagDuplicatesWithinFile(p, DuplicateKey, DuplicateNoun);
+        }
+
+        preview = p;
+    }
+
+    private async Task Start()
+    {
+        if (preview is null || !preview.CanImport || starting) return;
+        starting = true;
+        try
+        {
+            var rows = preview.Rows.Where(r => r.Importable).Select(r => r.Row!).ToList();
+            var jobId = await StartAsync(rows);
+            completedRaised = false;
+            job = await LoadJobAsync(jobId) ?? new RosterImportJobDto { Id = jobId, BranchId = BranchId, TotalRows = rows.Count };
+            preview = null;
+            StartReconciling(jobId);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "The import could not be started", ex.Message);
+        }
+        finally
+        {
+            starting = false;
+        }
+    }
+
+    /// <summary>
+    /// The push is the mechanism; this is the safety net. A dropped frame or a reconnect would
+    /// otherwise leave the bar frozen on a job that has actually finished, which reads as a hang.
+    /// Ten seconds is slow enough not to matter and fast enough that nobody waits on a stale bar.
+    /// </summary>
+    private void StartReconciling(Guid jobId)
+    {
+        reconcileTimer?.Dispose();
+        reconcileTimer = new System.Threading.Timer(async _ =>
+        {
+            if (disposed) return;
+            try
+            {
+                var latest = await LoadJobAsync(jobId);
+                if (latest is null) return;
+                await InvokeAsync(() => Apply(latest));
+            }
+            catch { /* a missed reconcile is retried on the next tick; the job runs regardless */ }
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task HandleProgress(RosterImportProgressEvent e)
+    {
+        if (job is null || e.JobId != job.Id) return;
+        liveSince = DateTime.UtcNow;
+        await InvokeAsync(() => Apply(job with
+        {
+            Status = e.Status,
+            TotalRows = e.TotalRows,
+            ProcessedRows = e.ProcessedRows,
+            CreatedCount = e.CreatedCount,
+            UpdatedCount = e.UpdatedCount,
+            DuplicateCount = e.DuplicateCount,
+            FailedCount = e.FailedCount
+        }));
+    }
+
+    private void Apply(RosterImportJobDto latest)
+    {
+        if (disposed) return;
+        job = latest;
+        if (IsTerminal(latest.Status))
+        {
+            reconcileTimer?.Dispose();
+            reconcileTimer = null;
+            if (!completedRaised)
+            {
+                completedRaised = true;
+                _ = OnCompleted.InvokeAsync();
+            }
+        }
+        StateHasChanged();
+    }
+
+    private async Task ToggleEntries()
+    {
+        if (showEntries) { showEntries = false; return; }
+        if (LoadEntriesAsync is null || job is null) return;
+        loadingEntries = true;
+        try { entries = await LoadEntriesAsync(job.Id); showEntries = true; }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not load the rows", ex.Message); }
+        finally { loadingEntries = false; }
+    }
+
+    private void Reset()
+    {
+        reconcileTimer?.Dispose();
+        reconcileTimer = null;
+        job = null; preview = null; entries = new();
+        showEntries = false; FileName = null; liveSince = null; completedRaised = false;
+    }
+
+    private static bool IsTerminal(RosterImportStatus s)
+        => s is RosterImportStatus.Completed or RosterImportStatus.CompletedWithErrors or RosterImportStatus.Failed;
+
+    private static string StatusLabel(RosterImportStatus s) => s switch
+    {
+        RosterImportStatus.Pending => "Queued",
+        RosterImportStatus.Processing => "Importing",
+        RosterImportStatus.Completed => "Done",
+        RosterImportStatus.CompletedWithErrors => "Done, with problems",
+        RosterImportStatus.Failed => "Could not run",
+        _ => s.ToString()
+    };
+
+    /// <summary>One sentence a person can act on, rather than four numbers they have to add up.</summary>
+    private string SummarySentence()
+    {
+        if (job is null) return string.Empty;
+        var parts = new List<string>();
+        if (job.CreatedCount > 0) parts.Add($"{job.CreatedCount} created");
+        if (job.UpdatedCount > 0) parts.Add($"{job.UpdatedCount} updated");
+        if (job.DuplicateCount > 0) parts.Add($"{job.DuplicateCount} already existed and {(job.DuplicateCount == 1 ? "was" : "were")} left alone");
+        if (job.FailedCount > 0) parts.Add($"{job.FailedCount} could not be imported");
+
+        if (parts.Count == 0) return $"Nothing changed — all {job.TotalRows} row(s) were already up to date.";
+        var body = parts.Count == 1 ? parts[0] : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
+        var tail = job.FailedCount > 0 ? " Open the row-by-row result to see which rows and why." : "";
+        return $"Of {job.TotalRows} row(s): {body}.{tail}";
+    }
+
+    /// <summary>
+    /// The template's columns come straight from <see cref="Columns"/>, so the file a reader
+    /// downloads and the file this panel can read are the same thing by construction — the pair
+    /// cannot drift the way two hand-maintained lists would.
+    /// </summary>
+    private IReadOnlyList<ExportColumn<ImportTemplateRow>> BuildTemplateColumns()
+        => Columns.Select((c, i) => new ExportColumn<ImportTemplateRow>(
+               c.Required ? c.Name + " *" : c.Name,
+               r => r.At(i))).ToList();
+
+    private Task<ExportRows<ImportTemplateRow>> TemplateRowsAsync()
+        => Task.FromResult(new ExportRows<ImportTemplateRow>(
+               TemplateRows.Select(r => new ImportTemplateRow(r)).ToList(), false));
+
+    public void Dispose()
+    {
+        disposed = true;
+        if (subscribed) NotificationClient.OnRosterImportProgressReceived -= HandleProgress;
+        reconcileTimer?.Dispose();
+    }
+}

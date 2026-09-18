@@ -188,7 +188,7 @@ public class ContentController : ControllerBase
         if (tenantContext == null || !tenantContext.IsResolved)
             return Unauthorized(new ProblemDetails
             {
-                Title = "Tenant not resolved",
+                Title = "Organization not resolved",
                 Detail = "Unable to determine your organization context.",
                 Status = StatusCodes.Status401Unauthorized
             });
@@ -228,7 +228,7 @@ public class ContentController : ControllerBase
         {
             error = Unauthorized(new ProblemDetails
             {
-                Title = "Tenant not resolved",
+                Title = "Organization not resolved",
                 Detail = "Unable to determine your organization context.",
                 Status = StatusCodes.Status401Unauthorized
             });

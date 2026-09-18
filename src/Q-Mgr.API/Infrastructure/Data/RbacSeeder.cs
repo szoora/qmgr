@@ -270,7 +270,7 @@ public class RbacSeeder
         // For organization owners/administrators
         // ============================================
         [RoleCodes.Admin] = new RoleDefinition(
-            Name: "Tenant Admin",
+            Name: "Administrator",
             Code: RoleCodes.Admin,
             Description: "Full administrative access within the organization. For business owners and IT administrators.",
             Color: "#9C27B0",
@@ -661,12 +661,32 @@ public class RbacSeeder
                 role.StaffScope = roleDef.StaffScope;
                 repaired++;
             }
+            // The DISPLAY NAME and description are repaired too, since 2026-09-18. They were
+            // deliberately left alone before, on the reasoning that a tenant might have customised
+            // them — but a SYSTEM role cannot be customised: RolesController.UpdateRole refuses one
+            // outright ("System roles cannot be modified"), and the UI offers View Permissions
+            // rather than Edit. So the only thing a stale name can be is a seeder value nobody
+            // reconciled, and without this a rename here reaches a FRESH install only and silently
+            // leaves every existing one — including production — reading the old label.
+            // This is what made "Tenant Admin" -> "Administrator" land everywhere rather than
+            // nowhere (user: "using the word Tenant... does not make much sense to an ordinary
+            // user").
+            if (role.Name != roleDef.Name)
+            {
+                role.Name = roleDef.Name;
+                repaired++;
+            }
+            if (role.Description != roleDef.Description)
+            {
+                role.Description = roleDef.Description;
+                repaired++;
+            }
         }
 
         if (repaired > 0)
         {
             await _context.SaveChangesAsync();
-            _logger.LogWarning("Repaired DataScope/StaffScope on {Count} system role field(s)", repaired);
+            _logger.LogWarning("Repaired {Count} system role field(s) (scope, name, description)", repaired);
         }
     }
 

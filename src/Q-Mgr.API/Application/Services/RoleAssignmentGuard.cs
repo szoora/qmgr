@@ -35,7 +35,7 @@ public static class RoleAssignmentGuard
             return null;
 
         if (RoleCodes.IsAdmin(target.Code) && !actor.Permissions.Contains(Permissions.RolesEdit))
-            return "Assigning the Tenant Admin role needs the role-assignment permission, which your role does not hold.";
+            return "Assigning the Administrator role needs the role-assignment permission, which your role does not hold.";
 
         if (!RoleCodes.IsAtOrBelow(target.Code, actor.RoleCode))
             return $"You can assign only roles at or below your own. {target.Name} ranks above your role.";

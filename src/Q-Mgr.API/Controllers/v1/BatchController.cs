@@ -390,7 +390,7 @@ public class BatchController : ControllerBase
     {
         var tenantContext = _tenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
-            return Unauthorized(new ProblemDetails { Title = "Tenant not resolved", Status = StatusCodes.Status401Unauthorized });
+            return Unauthorized(new ProblemDetails { Title = "Organization not resolved", Status = StatusCodes.Status401Unauthorized });
 
         var isSuperAdmin = RoleCodes.IsSuperAdmin(tenantContext.UserRole);
 

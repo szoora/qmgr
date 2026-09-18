@@ -37,7 +37,7 @@ public class Student : BaseEntity
     /// <summary>Age-appropriate response, and the difference between a 13- and a 17-year-old in the same incident. Also the clock the safeguarding retention job runs against — without it there is nothing to measure "until the subject's 25th birthday" from.</summary>
     public DateOnly? DateOfBirth { get; set; }
 
-    public StudentSex? Sex { get; set; }
+    public PersonSex? Sex { get; set; }
 
     /// <summary>A child three weeks into a new school is a different risk profile from one in their fourth year.</summary>
     public DateOnly? AdmissionDate { get; set; }

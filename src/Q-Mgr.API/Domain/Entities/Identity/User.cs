@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+using QMgr.Domain.Enums;
 using QMgr.Domain.Common;
 
 namespace QMgr.Domain.Entities.Identity;
@@ -65,6 +67,63 @@ public class User : BaseAuditableEntity
 
     /// <summary>Who appraises and is told about this person. Drives StaffDataScope.DirectReports.</summary>
     public Guid? LineManagerUserId { get; set; }
+
+    // ---- Staff record (2026-09-18) --------------------------------------------------------------
+    // A staff member IS a user in this product — StaffLookups.BranchStaff is the only definition,
+    // and there is no separate staff table. So the staff record widens this row rather than adding
+    // one, per the standing "enhance an existing table before adding a new one" constraint. Every
+    // field is NULLABLE: a bank running the queue module alone fills none of them, and a school
+    // fills as many as its MoES return needs.
+    //
+    // DELIBERATELY NOT HERE, and it should stay that way: salary, bank or mobile-money details,
+    // NSSF contributions, marital status, religion, tribe, and anything medical. This is a
+    // front-office platform, not a payroll or HR system; collecting those would widen the blast
+    // radius of a breach for data no feature reads. The same data-minimisation stance the welfare
+    // plan takes when it declines to store HIV status or pregnancy.
+
+    /// <summary>Date of appointment. Null means "not recorded", never "started today".</summary>
+    public DateOnly? EmploymentStartDate { get; set; }
+
+    /// <summary>
+    /// Date the person left. A leaver is RECORDED, not erased: clearing IsActive would drop them
+    /// out of the directory and out of every historical register, appraisal and duty report they
+    /// legitimately appear on. StaffEmployment.StatusOf reads this with the start date.
+    /// </summary>
+    public DateOnly? EmploymentEndDate { get; set; }
+
+    /// <summary>Permanent, Contract, Probation, PartTime, Volunteer, Seconded — see the enum.</summary>
+    public StaffEmploymentType? EmploymentType { get; set; }
+
+    /// <summary>Highest qualification as the school records it, e.g. "Dip.Ed", "BSc Ed", "MEd".</summary>
+    [MaxLength(120)]
+    public string? Qualification { get; set; }
+
+    /// <summary>
+    /// MoES teacher registration / licence number. Free text because the format has changed over
+    /// the years and an old certificate must still be recordable.
+    /// </summary>
+    [MaxLength(60)]
+    public string? TeachingRegistrationNumber { get; set; }
+
+    /// <summary>Used for the MoES staff return and for retirement-age planning. Not shown on the portal.</summary>
+    public DateOnly? DateOfBirth { get; set; }
+
+    /// <summary>The MoES staff return counts men and women separately. Nullable — see PersonSex.</summary>
+    public PersonSex? Sex { get; set; }
+
+    /// <summary>
+    /// National Identification Number. Stored because a school's own staff file carries it and an
+    /// inspection asks for it; never used as a login identifier or a lookup key.
+    /// </summary>
+    [MaxLength(40)]
+    public string? NationalId { get; set; }
+
+    /// <summary>Who to call about this member of staff, not about a student.</summary>
+    [MaxLength(120)]
+    public string? EmergencyContactName { get; set; }
+
+    [MaxLength(40)]
+    public string? EmergencyContactPhone { get; set; }
 
     /// <summary>
     /// Per-user notification channel overrides, as JSON. Null means "follow the organization

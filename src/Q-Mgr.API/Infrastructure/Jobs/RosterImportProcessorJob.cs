@@ -1,3 +1,4 @@
+using QMgr.Infrastructure.Services;
 using System.Globalization;
 using System.Text.Json;
 using Hangfire;
@@ -35,6 +36,7 @@ public class RosterImportProcessorJob
 {
     private readonly QMgrDbContext _context;
     private readonly IRosterImportBroadcaster _broadcaster;
+    private readonly IActivityLogger _activity;
     private readonly ILogger<RosterImportProcessorJob> _logger;
 
     // Broadcasting every single row over SignalR would mean ~2000 messages in a few seconds for
@@ -68,10 +70,12 @@ public class RosterImportProcessorJob
         IPlatformSettingsService platformSettings,
         IDataProtectionProvider dataProtection,
         INotificationService notifications,
+        IActivityLogger activity,
         ILogger<RosterImportProcessorJob> logger)
     {
         _context = context;
         _broadcaster = broadcaster;
+        _activity = activity;
         _emailSender = emailSender;
         _platformSettings = platformSettings;
         _dataProtection = dataProtection;
@@ -155,6 +159,8 @@ public class RosterImportProcessorJob
         job.CompletedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         await Broadcast(job);
+        await RecordImportActivityAsync(job, ImportActivityActions.Failed,
+            $"{job.Kind} import could not run: {reason}", new { job.Kind, Reason = reason, job.SourceFileName });
     }
 
     /// <summary>
@@ -169,6 +175,11 @@ public class RosterImportProcessorJob
         job.TotalRows = rows.Count;
         await _context.SaveChangesAsync();
         await Broadcast(job);
+
+        await RecordImportActivityAsync(job, ImportActivityActions.Started,
+            $"Started a {job.Kind} import of {rows.Count} row(s)"
+                + (string.IsNullOrWhiteSpace(job.SourceFileName) ? "" : $" from \"{job.SourceFileName}\""),
+            new { job.Kind, Rows = rows.Count, job.SourceFileName, job.Source });
 
         for (var i = 0; i < rows.Count; i++)
         {
@@ -205,6 +216,11 @@ public class RosterImportProcessorJob
         _logger.LogInformation(
             "RosterImportJob {JobId} ({Kind}) complete: {Created} created, {Updated} updated, {Duplicate} duplicate, {Failed} failed of {Total}",
             job.Id, job.Kind, job.CreatedCount, job.UpdatedCount, job.DuplicateCount, job.FailedCount, job.TotalRows);
+
+        await RecordImportActivityAsync(job, ImportActivityActions.Completed,
+            $"{job.Kind} import finished: {job.CreatedCount} created, {job.UpdatedCount} updated, "
+                + $"{job.DuplicateCount} duplicate, {job.FailedCount} failed of {job.TotalRows} row(s)",
+            new { job.Kind, job.TotalRows, job.CreatedCount, job.UpdatedCount, job.DuplicateCount, job.FailedCount, job.SourceFileName });
     }
 
     // ---------------------------------------------------------------------
@@ -1047,6 +1063,34 @@ public class RosterImportProcessorJob
             _logger.LogError(ex, "Staff import: invitation to {Email} could not be sent", user.Email);
             return false;
         }
+    }
+
+
+    /// <summary>
+    /// The audit row a bulk import leaves behind. Written from the SHARED row loop, so every kind
+    /// — roster, welfare, staff, timetable, batch — gets one without each remembering to.
+    ///
+    /// <para>The live SignalR progress says what is happening WHILE the job runs; this says that it
+    /// happened, afterwards, to somebody reading the log next week. An import can create hundreds of
+    /// login accounts in one go or backfill a school's entire welfare history, and until 2026-09-18
+    /// it wrote nothing at all.</para>
+    ///
+    /// <para>The actor is the person who STARTED the import, passed explicitly: this runs in a
+    /// Hangfire worker where there is no HttpContext and no claims to read one from. Never throws —
+    /// IActivityLogger swallows and logs, and an audit row must not fail the import it describes.</para>
+    /// </summary>
+    private async Task RecordImportActivityAsync(RosterImportJob job, string action, string summary, object? detail)
+    {
+        await _activity.RecordAsync(
+            action,
+            entityType: $"import:{job.Kind}",
+            entityId: job.Id,
+            subjectUserId: null,
+            summary: summary,
+            detail: detail,
+            branchId: job.BranchId,
+            organizationId: job.OrganizationId,
+            actorUserId: job.CreatedByUserId);
     }
 
     private Task Broadcast(RosterImportJob job) => _broadcaster.BroadcastAsync(new RosterImportProgressEvent

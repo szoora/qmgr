@@ -64,7 +64,7 @@ public abstract class StaffPerformanceControllerBase : ControllerBase
     {
         var tenantContext = TenantAccessor.TenantContext;
         if (tenantContext == null || !tenantContext.IsResolved)
-            return Unauthorized(new ProblemDetails { Title = "Tenant not resolved", Status = StatusCodes.Status401Unauthorized });
+            return Unauthorized(new ProblemDetails { Title = "Organization not resolved", Status = StatusCodes.Status401Unauthorized });
 
         if (RoleCodes.IsSuperAdmin(tenantContext.UserRole))
         {
@@ -98,7 +98,7 @@ public abstract class StaffPerformanceControllerBase : ControllerBase
     }
 
     protected IActionResult TenantNotResolved()
-        => Unauthorized(new ProblemDetails { Title = "Tenant not resolved", Status = StatusCodes.Status401Unauthorized });
+        => Unauthorized(new ProblemDetails { Title = "Organization not resolved", Status = StatusCodes.Status401Unauthorized });
 
     // ---- Permissions and visibility ------------------------------------------------------------
 
