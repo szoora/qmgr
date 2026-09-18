@@ -146,6 +146,7 @@ public interface IStaffPerformanceApiService
     /// <summary>Tells the API an export or Publish to Library just happened in the browser, so the activity log carries it. Never throws: a log line that failed must not undo a download the user already has.</summary>
     Task RecordExportAsync(Guid branchId, RecordStaffExportRequest request);
     Task<StaffImportStartedDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request);
+    Task<StaffImportPrecheckDto> PrecheckStaffImportAsync(Guid branchId, StaffImportPrecheckRequest request);
     Task<List<RosterImportJobDto>> GetStaffImportJobsAsync(Guid branchId, int limit = 50);
     Task<RosterImportJobDto> GetStaffImportJobAsync(Guid branchId, Guid jobId);
     Task<List<RosterImportJobEntryDto>> GetStaffImportJobEntriesAsync(Guid branchId, Guid jobId, int limit = 500);
@@ -412,6 +413,9 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<ActivityLogPageDto> GetActivityAsync(Guid branchId, int page = 1, int pageSize = 50, Guid? userId = null, string? action = null)
         => GetAsync<ActivityLogPageDto>($"{B(branchId)}/activity{Q(("page", page.ToString()), ("pageSize", pageSize.ToString()), ("userId", userId?.ToString()), ("action", action))}");
     public Task<StaffImportStartedDto> StartStaffImportAsync(Guid branchId, StartStaffImportRequest request) => SendAsync<StaffImportStartedDto>(HttpMethod.Post, $"{B(branchId)}/import-jobs", request);
+
+    /// <summary>Read-only: which of these emails the organization already has, asked before an import commits.</summary>
+    public Task<StaffImportPrecheckDto> PrecheckStaffImportAsync(Guid branchId, StaffImportPrecheckRequest request) => SendAsync<StaffImportPrecheckDto>(HttpMethod.Post, $"{B(branchId)}/import-jobs/precheck", request);
     public Task<List<RosterImportJobDto>> GetStaffImportJobsAsync(Guid branchId, int limit = 50) => GetAsync<List<RosterImportJobDto>>($"{B(branchId)}/import-jobs?limit={limit}");
     public Task<RosterImportJobDto> GetStaffImportJobAsync(Guid branchId, Guid jobId) => GetAsync<RosterImportJobDto>($"{B(branchId)}/import-jobs/{jobId}");
     public Task<List<RosterImportJobEntryDto>> GetStaffImportJobEntriesAsync(Guid branchId, Guid jobId, int limit = 500) => GetAsync<List<RosterImportJobEntryDto>>($"{B(branchId)}/import-jobs/{jobId}/entries?limit={limit}");

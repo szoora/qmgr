@@ -969,6 +969,38 @@ public record StaffImportRow
     public string? ClassTeacherOf { get; set; }
     /// <summary>Subjects taught, e.g. "MATH:S2A,S2B; PHY:S3A". Validated against the subject catalogue and the classes.</summary>
     public string? Teaches { get; set; }
+
+    // ---- The staff record (2026-09-18) ---------------------------------------------------------
+    // Every one optional: a bank importing counter staff fills none of them, a school filling its
+    // MoES return fills most. The importer parses each with the shared validators in
+    // ImportParsing, so "03/04/2026" means 3 April here exactly as it does in the welfare import.
+
+    /// <summary>Date of appointment, day-first (03/04/2026 is 3 April).</summary>
+    public string? StartDate { get; set; }
+
+    /// <summary>Date they left, for importing a historical staff list that includes leavers.</summary>
+    public string? EndDate { get; set; }
+
+    /// <summary>Permanent, Contract, Probation, PartTime, Volunteer, Seconded — matched case-insensitively.</summary>
+    public string? EmploymentType { get; set; }
+
+    /// <summary>Highest qualification as the school records it, e.g. "Dip.Ed", "BSc Ed".</summary>
+    public string? Qualification { get; set; }
+
+    /// <summary>MoES teacher registration / licence number.</summary>
+    public string? TeachingRegistrationNumber { get; set; }
+
+    /// <summary>Day-first, as above.</summary>
+    public string? DateOfBirth { get; set; }
+
+    /// <summary>"F"/"Female", "M"/"Male", or "Other". Anything else is a row warning, not a refusal.</summary>
+    public string? Sex { get; set; }
+
+    /// <summary>National Identification Number.</summary>
+    public string? NationalId { get; set; }
+
+    public string? EmergencyContactName { get; set; }
+    public string? EmergencyContactPhone { get; set; }
 }
 
 public record StartStaffImportRequest
@@ -984,4 +1016,31 @@ public record StartStaffImportRequest
     /// never "staff", the school's name or a username); it still expires in 72 hours with a forced change.
     /// </summary>
     public string? BatchTemporaryPassword { get; set; }
+}
+
+/// <summary>Asks which of these email addresses the organization already has. Read-only.</summary>
+public record StaffImportPrecheckRequest
+{
+    public List<string> Emails { get; set; } = new();
+}
+
+/// <summary>One person the import would land on rather than create.</summary>
+public record StaffImportExistingDto
+{
+    public string NormalizedEmail { get; init; } = string.Empty;
+    public string FullName { get; init; } = string.Empty;
+    public string RoleName { get; init; } = string.Empty;
+    public bool IsActive { get; init; }
+    /// <summary>A join request nobody has approved. Importing over one would quietly approve it.</summary>
+    public bool PendingApproval { get; init; }
+}
+
+/// <summary>
+/// The answer to "who of these already exists". The preview turns each into a per-row warning, so a
+/// reader learns before committing that 11 of their 42 rows are people the system already has —
+/// rather than reading it in the summary afterwards.
+/// </summary>
+public record StaffImportPrecheckDto
+{
+    public List<StaffImportExistingDto> Existing { get; init; } = new();
 }

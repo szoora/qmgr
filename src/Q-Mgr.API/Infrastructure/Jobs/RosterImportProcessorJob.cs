@@ -1,3 +1,4 @@
+using QMgr.Application.Import;
 using QMgr.Infrastructure.Services;
 using System.Globalization;
 using System.Text.Json;
@@ -956,6 +957,18 @@ public class RosterImportProcessorJob
             Phone = string.IsNullOrWhiteSpace(row.Phone) ? null : row.Phone.Trim(),
             EmployeeNumber = entry.StudentCode,
             JobTitle = string.IsNullOrWhiteSpace(row.JobTitle) ? null : row.JobTitle.Trim(),
+            // The staff record, parsed by the SAME code the browser previewed with
+            // (StaffFieldParsing in Q-Mgr.Shared) so the two answers cannot disagree.
+            EmploymentStartDate = StaffFieldParsing.Date(row.StartDate),
+            EmploymentEndDate = StaffFieldParsing.Date(row.EndDate),
+            EmploymentType = StaffFieldParsing.EmploymentType(row.EmploymentType),
+            Qualification = StaffFieldParsing.Text(row.Qualification, 120),
+            TeachingRegistrationNumber = StaffFieldParsing.Text(row.TeachingRegistrationNumber, 60),
+            DateOfBirth = StaffFieldParsing.Date(row.DateOfBirth),
+            Sex = StaffFieldParsing.Sex(row.Sex),
+            NationalId = StaffFieldParsing.Text(row.NationalId, 40),
+            EmergencyContactName = StaffFieldParsing.Text(row.EmergencyContactName, 120),
+            EmergencyContactPhone = StaffFieldParsing.Text(row.EmergencyContactPhone, 40),
             RoleId = role.Id,
             AssignedBranchId = job.BranchId,
             DepartmentIds = departmentIds.Count > 0 ? departmentIds.ToArray() : null,

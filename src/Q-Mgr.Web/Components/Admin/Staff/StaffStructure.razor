@@ -1,5 +1,7 @@
 @page "/admin/staff/structure"
 @implements IDisposable
+@using Microsoft.AspNetCore.WebUtilities
+@using QMgr.Application.Import
 @using Microsoft.AspNetCore.Components.Forms
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
@@ -157,122 +159,61 @@
         {
             <QCard Title="Import a staff list" Icon="upload">
                 <p class="ss-lede">
-                    One row per person, from Excel (.xlsx) or CSV. Columns, in this order, with a header row:
-                    <code>FirstName, LastName, Email, Username, Phone, EmployeeNumber, JobTitle, RoleCode, DepartmentCodes, LineManagerEmail, DeliveryMode, ClassTeacherOf, Teaches</code>.
-                    Department codes are separated by semicolons (<code>MATH;PHYS</code>). Role codes are
-                    <code>teacher</code>, <code>support-staff</code>, <code>class-teacher</code>, <code>head-of-department</code>,
-                    <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom role's code. <code>DeliveryMode</code> is
-                    optional (<code>slips</code>, <code>invitation</code> or <code>sms</code>) and overrides the choice below for that row.
-                    <code>ClassTeacherOf</code> names classes (<code>S2A;S2B</code>); <code>Teaches</code> names subjects and classes
-                    (<code>MATH:S2A,S2B; PHY:S3A</code>). An email already on file is skipped, not changed.
+                    One row per person, from Excel (.xlsx) or CSV. Download the template below — it carries every
+                    column, with the required ones marked. Department codes are separated by semicolons
+                    (<code>MATH;PHYS</code>); role codes are <code>teacher</code>, <code>support-staff</code>,
+                    <code>class-teacher</code>, <code>head-of-department</code>, <code>academic-assistant</code>,
+                    <code>director-of-studies</code>, or a custom role's code. <code>ClassTeacherOf</code> names classes
+                    (<code>S2A;S2B</code>) and <code>Teaches</code> names subjects with their classes
+                    (<code>MATH:S2A,S2B; PHY:S3A</code>). Dates are day-first, so <code>03/04/2026</code> is 3 April.
+                    An email already on file is left alone, not overwritten — the preview says so before you commit.
                 </p>
-                <div class="ss-import-input">
-                    <InputFile id="ss-import-file" OnChange="OnFileSelected" accept=".csv,.xlsx,.xls,text/csv" />
-                    <span class="ss-sub">or paste CSV below</span>
-                    <QDataExport TItem="StaffImportRow" Title="Staff import template" FileStem="staff-import-template"
-                                 Columns="@TemplateColumns" RowProvider="@ProvideTemplateRowsAsync" Formats="@(ExportFormat.Excel | ExportFormat.Csv)" Text="Download template" />
-                </div>
-                <QInput TValue="string" Type="textarea" Rows="8" @bind-Value="@csvText" Placeholder="FirstName,LastName,Email,..." />
 
-                <fieldset class="ss-delivery">
-                    <legend>How people get in</legend>
-                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Slips)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Slips)" />
-                        <span><strong>Temporary password slips</strong> (recommended for schools) — each person gets their own temporary password, printed once on a slip you hand out. It expires in 72 hours and they choose their own at first sign-in.</span></label>
-                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Invitation)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Invitation)" />
-                        <span><strong>Invitation email</strong> — a link valid for 7 days to set their own password. For staff with working email.</span></label>
-                    <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Sms)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Sms)" />
-                        <span><strong>Temporary password by SMS</strong> — the same temporary password, sent to each person's own phone. Needs SMS switched on for your organization; anyone without a phone number gets a slip.</span></label>
-                    @if (deliveryMode != StaffImportDeliveryMode.Invitation)
-                    {
-                        <QCheckbox @bind-Value="@useBatchPassword" Label="Type one temporary password for this whole batch instead" />
-                        @if (useBatchPassword)
-                        {
-                            <p class="ss-sub ss-warn">Not recommended. A password everybody in the batch shares lets any of them sign in as any other until each has changed it. It must pass the password policy and the blocklist — so never "staff", the school's name or a username — and it still expires in 72 hours with a forced change.</p>
-                            <QInput TValue="string" Type="password" Label="Batch temporary password" @bind-Value="@batchPassword" />
-                        }
-                    }
-                </fieldset>
-
-                <div class="ss-actions ss-import-actions">
-                    <QButton Text="Preview" Icon="eye" Variant="secondary" OnClick="@Preview" Disabled="@string.IsNullOrWhiteSpace(csvText)" />
-                </div>
+                <QImportPanel TRow="StaffImportRow"
+                              BranchId="@branchId"
+                              InputId="ss-import-file"
+                              Noun="person"
+                              Columns="@StaffImportColumns"
+                              BuildRow="@BuildStaffRow"
+                              DuplicateKey="@(r => r.Email?.Trim().ToLowerInvariant())"
+                              DuplicateNoun="email address"
+                              TemplateRows="@StaffTemplateRows"
+                              TemplateFileStem="staff-import-template"
+                              StartAsync="@StartStaffImport"
+                              LoadJobAsync="@LoadStaffJob"
+                              LoadEntriesAsync="@LoadStaffEntries"
+                              OnCompleted="@OnImportCompleted"
+                              RowSummary="@StaffRowSummary">
+                    <Options>
+                        <fieldset class="ss-delivery">
+                            <legend>How people get in</legend>
+                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Slips)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Slips)" />
+                                <span><strong>Temporary password slips</strong> (recommended for schools) — each person gets their own temporary password, printed once on a slip you hand out. It expires in 72 hours and they choose their own at first sign-in.</span></label>
+                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Invitation)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Invitation)" />
+                                <span><strong>Invitation email</strong> — a link valid for 7 days to set their own password. For staff with working email.</span></label>
+                            <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Sms)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Sms)" />
+                                <span><strong>Temporary password by SMS</strong> — the same temporary password, sent to each person's own phone. Needs SMS switched on for your organization; anyone without a phone number gets a slip.</span></label>
+                            @if (deliveryMode != StaffImportDeliveryMode.Invitation)
+                            {
+                                <QCheckbox @bind-Value="@useBatchPassword" Label="Type one temporary password for this whole batch instead" />
+                                @if (useBatchPassword)
+                                {
+                                    <p class="ss-sub ss-warn">Not recommended. A password everybody in the batch shares lets any of them sign in as any other until each has changed it. It must pass the password policy and the blocklist — so never "staff", the school's name or a username — and it still expires in 72 hours with a forced change.</p>
+                                    <QInput TValue="string" Type="password" Label="Batch temporary password" @bind-Value="@batchPassword" />
+                                }
+                            }
+                        </fieldset>
+                    </Options>
+                </QImportPanel>
             </QCard>
 
-            @if (previewRows.Count > 0)
+            @if (pendingSlips.Count > 0 && importFinished)
             {
-                <QCard Title="@($"Preview — {previewRows.Count} row(s), {previewRows.Count(r => r.Error == null)} ready")" Icon="table" NoPadding="true">
-                    <ChildContent>
-                    <div class="table-wrap">
-                        <table class="data-table q-stack">
-                            <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Departments</th><th>Line manager</th><th>Delivery</th><th>Teaching</th><th>Check</th></tr></thead>
-                            <tbody>
-                                @foreach (var r in previewRows.Take(200))
-                                {
-                                    <tr class="@(r.Error == null ? "" : "ss-row-error")">
-                                        <td>@r.Number</td>
-                                        <td>@($"{r.Row.FirstName} {r.Row.LastName}".Trim())</td>
-                                        <td>@r.Row.Email</td>
-                                        <td>@r.Row.RoleCode</td>
-                                        <td>@string.Join("; ", r.Row.DepartmentCodes)</td>
-                                        <td>@(r.Row.LineManagerEmail ?? "—")</td>
-                                        <td>@DeliveryLabel(r.Row.DeliveryMode ?? deliveryMode)</td>
-                                        <td>@TeachingSummary(r.Row)</td>
-                                        <td>@if (r.Error == null) { <QChip Text="Ready" Variant="success" Size="sm" /> } else { <QChip Text="@r.Error" Variant="danger" Size="sm" /> }</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                    </ChildContent>
-                    <FooterContent>
-                        <div class="ss-actions">
-                            <span class="ss-sub">Rows with a problem are left out. The import runs in the background; progress appears below.</span>
-                            <QButton Text="@(previewRows.Count(r => r.Error == null) is var ready && ready == 1 ? "Import 1 person" : $"Import {ready} people")" Icon="cloud-upload" Variant="primary"
-                                     OnClick="@StartImport" Loading="@importing" Disabled="@(!previewRows.Any(r => r.Error == null))" />
-                        </div>
-                    </FooterContent>
-                </QCard>
-            }
-
-            @if (currentJob != null)
-            {
-                <QCard Title="Import progress" Icon="hourglass-split">
-                    <QStatRow>
-                        <QStatTile Value="@($"{currentJob.ProcessedRows} / {currentJob.TotalRows}")" Label="Processed" Variant="info" />
-                        <QStatTile Value="@currentJob.CreatedCount.ToString()" Label="Accounts created" Variant="success" />
-                        <QStatTile Value="@currentJob.DuplicateCount.ToString()" Label="Already on file" Variant="secondary" />
-                        <QStatTile Value="@currentJob.FailedCount.ToString()" Label="Failed" Variant="@(currentJob.FailedCount > 0 ? "danger" : "secondary")" />
-                    </QStatRow>
-                    <p class="ss-sub">@ImportStatusText(currentJob)</p>
-                    @if (pendingSlips.Count > 0 && IsFinished(currentJob.Status))
-                    {
-                        <div class="ss-slips-cta">
-                            <QIcon Name="exclamation-triangle-fill" />
-                            <span>@(PrintableSlips.Count == 1 ? "1 temporary password is" : $"{PrintableSlips.Count} temporary passwords are") ready. They cannot be shown again once you leave this page.</span>
-                            <QButton Text="Print slips" Icon="printer" Variant="primary" OnClick="@(() => showSlips = true)" Disabled="@(PrintableSlips.Count == 0)" />
-                        </div>
-                    }
-                    @if (jobEntries.Count > 0)
-                    {
-                        <div class="table-wrap">
-                            <table class="data-table q-stack">
-                                <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Outcome</th><th>Message</th></tr></thead>
-                                <tbody>
-                                    @foreach (var e in jobEntries)
-                                    {
-                                        <tr>
-                                            <td>@e.RowNumber</td>
-                                            <td>@e.StudentName</td>
-                                            <td>@e.GuardianName</td>
-                                            <td><QChip Text="@e.Outcome.ToString()" Variant="@OutcomeVariant(e.Outcome)" Size="sm" /></td>
-                                            <td>@e.Message</td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    }
-                </QCard>
+                <div class="ss-slips-cta">
+                    <QIcon Name="exclamation-triangle-fill" />
+                    <span>@(PrintableSlips.Count == 1 ? "1 temporary password is" : $"{PrintableSlips.Count} temporary passwords are") ready. They cannot be shown again once you leave this page.</span>
+                    <QButton Text="Print slips" Icon="printer" Variant="primary" OnClick="@(() => showSlips = true)" Disabled="@(PrintableSlips.Count == 0)" />
+                </div>
             }
 
             @if (recentJobs.Count > 0)
@@ -422,7 +363,6 @@
     private RosterImportJobDto? currentJob;
     private List<RosterImportJobEntryDto> jobEntries = new();
     private List<RosterImportJobDto> recentJobs = new();
-    private System.Threading.Timer? pollTimer;
 
     private sealed record PreviewRow(int Number, StaffImportRow Row, string? Error);
 
@@ -459,6 +399,14 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
+
+        // Arriving from Staff Directory's "Import a list" button, which links straight to the tab
+        // rather than dropping the reader on Departments and leaving them to find it.
+        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wanted))
+        {
+            var t = wanted.ToString().Trim().ToLowerInvariant();
+            if (t is "departments" or "staff" or "coverage" or "import") activeTab = t;
+        }
 
         await LoadAllAsync();
     }
@@ -606,110 +554,213 @@
 
     // ---- Import ----
 
-    private async Task OnFileSelected(InputFileChangeEventArgs e)
+
+    // ---- The staff import, on the shared panel (2026-09-18) ------------------------------------
+    // What used to live here — a file input, a CSV textarea, a hand-rolled header map, a preview
+    // table, a progress card and a System.Threading.Timer polling every second — is now QImportPanel.
+    // The polling in particular had no reason to exist: the server has always broadcast this job's
+    // progress over SignalR, and the student roster page has always listened to it. This page simply
+    // landed later and hand-rolled a second mechanism for the same events.
+
+    /// <summary>
+    /// The columns, with the spellings a real school's spreadsheet uses. This list is also the
+    /// downloadable template, so the file somebody gets and the file this page can read are the
+    /// same thing by construction.
+    /// </summary>
+    private static readonly IReadOnlyList<ImportColumn> StaffImportColumns = new[]
+    {
+        new ImportColumn("FirstName", true, "First Name", "First", "Given Name", "Forename"),
+        new ImportColumn("LastName", true, "Last Name", "Last", "Surname", "Family Name"),
+        new ImportColumn("Email", true, "E-mail", "Email Address", "Mail"),
+        new ImportColumn("Username", false, "User Name", "Login"),
+        new ImportColumn("Phone", false, "Telephone", "Mobile", "Phone Number", "Tel"),
+        new ImportColumn("EmployeeNumber", false, "Employee No", "Staff Number", "Staff No", "Payroll Number"),
+        new ImportColumn("JobTitle", false, "Job Title", "Title", "Position", "Designation"),
+        new ImportColumn("RoleCode", false, "Role", "Role Code"),
+        new ImportColumn("DepartmentCodes", false, "Departments", "Department", "Department Codes"),
+        new ImportColumn("LineManagerEmail", false, "Line Manager", "Manager", "Reports To"),
+        new ImportColumn("DeliveryMode", false, "Delivery"),
+        new ImportColumn("ClassTeacherOf", false, "Class Teacher Of", "Class Teacher", "Classes"),
+        new ImportColumn("Teaches", false, "Subjects", "Teaching"),
+        new ImportColumn("StartDate", false, "Start Date", "Date of Appointment", "Appointed", "Joined"),
+        new ImportColumn("EndDate", false, "End Date", "Left", "Date Left"),
+        new ImportColumn("EmploymentType", false, "Employment Type", "Contract Type", "Terms"),
+        new ImportColumn("Qualification", false, "Qualifications", "Highest Qualification"),
+        new ImportColumn("TeachingRegistrationNumber", false, "Registration Number", "Licence Number", "TRN"),
+        new ImportColumn("DateOfBirth", false, "Date of Birth", "DOB", "Birth Date"),
+        new ImportColumn("Sex", false, "Gender"),
+        new ImportColumn("NationalId", false, "National ID", "NIN"),
+        new ImportColumn("EmergencyContactName", false, "Emergency Contact", "Next of Kin"),
+        new ImportColumn("EmergencyContactPhone", false, "Emergency Phone", "Next of Kin Phone")
+    };
+
+    /// <summary>Two example rows, so the template shows the shape rather than only naming it.</summary>
+    private static readonly IReadOnlyList<IReadOnlyList<string>> StaffTemplateRows = new[]
+    {
+        new[] { "Grace", "Nakato", "g.nakato@school.ug", "", "0770123456", "EMP-014", "Teacher of Mathematics",
+                "teacher", "MATH", "d.okello@school.ug", "", "S2A", "MATH:S2A,S2B", "15/01/2020", "",
+                "Permanent", "BSc Ed", "TRN-88213", "04/06/1988", "F", "CM00012345ABCD", "John Nakato", "0770987654" },
+        new[] { "Daniel", "Okello", "d.okello@school.ug", "", "0782555111", "EMP-002", "Head of Mathematics",
+                "head-of-department", "MATH", "", "", "", "MATH:S4A", "03/09/2015", "",
+                "Permanent", "MEd", "TRN-44120", "22/11/1980", "M", "", "Sarah Okello", "0782555112" }
+    };
+
+    /// <summary>
+    /// One row, validated hard enough that a person can fix the file rather than guess. A blocking
+    /// ERROR keeps the row out of the import; a WARNING lets it through and says what will happen.
+    /// The distinction matters: a mistyped employment type is not worth losing a person over, but a
+    /// missing email is, because the email is the identity.
+    /// </summary>
+    private (StaffImportRow? Row, string? Error, List<string> Warnings) BuildStaffRow(
+        IReadOnlyList<string> cells, Dictionary<string, int> map, int rowNumber)
+    {
+        var warnings = new List<string>();
+        string C(string name) => ImportParsing.Cell(cells, map, name);
+
+        var first = C("FirstName");
+        var last = C("LastName");
+        var email = C("Email");
+
+        if (string.IsNullOrWhiteSpace(first) && string.IsNullOrWhiteSpace(last) && string.IsNullOrWhiteSpace(email))
+            return (null, "The row is empty.", warnings);
+        if (string.IsNullOrWhiteSpace(first)) return (null, "First name is missing.", warnings);
+        if (string.IsNullOrWhiteSpace(last)) return (null, "Last name is missing.", warnings);
+        if (string.IsNullOrWhiteSpace(email)) return (null, "Email is missing — it is how this person signs in.", warnings);
+        if (!ImportParsing.LooksLikeEmail(email)) return (null, $"\"{email}\" is not an email address.", warnings);
+
+        var row = new StaffImportRow
+        {
+            FirstName = first,
+            LastName = last,
+            Email = email.Trim(),
+            Username = C("Username") is { Length: > 0 } u ? u : null,
+            EmployeeNumber = C("EmployeeNumber") is { Length: > 0 } en ? en : null,
+            JobTitle = C("JobTitle") is { Length: > 0 } jt ? jt : null,
+            RoleCode = C("RoleCode") is { Length: > 0 } rc ? rc.Trim().ToLowerInvariant() : "teacher",
+            LineManagerEmail = C("LineManagerEmail") is { Length: > 0 } lm ? lm : null,
+            ClassTeacherOf = C("ClassTeacherOf") is { Length: > 0 } ct ? ct : null,
+            Teaches = C("Teaches") is { Length: > 0 } t ? t : null,
+            StartDate = C("StartDate") is { Length: > 0 } sd ? sd : null,
+            EndDate = C("EndDate") is { Length: > 0 } ed ? ed : null,
+            EmploymentType = C("EmploymentType") is { Length: > 0 } et ? et : null,
+            Qualification = C("Qualification") is { Length: > 0 } q ? q : null,
+            TeachingRegistrationNumber = C("TeachingRegistrationNumber") is { Length: > 0 } tr ? tr : null,
+            DateOfBirth = C("DateOfBirth") is { Length: > 0 } dob ? dob : null,
+            Sex = C("Sex") is { Length: > 0 } sx ? sx : null,
+            NationalId = C("NationalId") is { Length: > 0 } nid ? nid : null,
+            EmergencyContactName = C("EmergencyContactName") is { Length: > 0 } ecn ? ecn : null,
+            EmergencyContactPhone = C("EmergencyContactPhone") is { Length: > 0 } ecp ? ecp : null
+        };
+
+        var departments = C("DepartmentCodes");
+        if (!string.IsNullOrWhiteSpace(departments))
+            row.DepartmentCodes = departments.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(d => d.Trim()).Where(d => d.Length > 0).ToList();
+
+        // Phone: normalised rather than refused, because a school writes the same number six ways.
+        var phone = C("Phone");
+        if (!string.IsNullOrWhiteSpace(phone))
+        {
+            var normalized = ImportParsing.NormalizePhone(phone);
+            if (normalized == null) warnings.Add($"\"{phone}\" is not a usable phone number — it will be left blank.");
+            else row.Phone = normalized;
+        }
+        else if (deliveryMode == StaffImportDeliveryMode.Sms)
+        {
+            warnings.Add("No phone number, so this person gets a printed slip instead of an SMS.");
+        }
+
+        // The staff record: every one of these is a warning, never a refusal.
+        if (StaffFieldParsing.Unreadable(row.StartDate)) warnings.Add($"Start date \"{row.StartDate}\" could not be read (day-first, e.g. 03/04/2026).");
+        if (StaffFieldParsing.Unreadable(row.EndDate)) warnings.Add($"End date \"{row.EndDate}\" could not be read.");
+        if (StaffFieldParsing.Unreadable(row.DateOfBirth)) warnings.Add($"Date of birth \"{row.DateOfBirth}\" could not be read.");
+
+        var start = StaffFieldParsing.Date(row.StartDate);
+        var end = StaffFieldParsing.Date(row.EndDate);
+        if (StaffFieldParsing.DateRangeProblem(start, end) is { } rangeProblem) warnings.Add(rangeProblem);
+        if (StaffFieldParsing.DateOfBirthProblem(StaffFieldParsing.Date(row.DateOfBirth)) is { } dobProblem) warnings.Add(dobProblem);
+
+        if (end is { } e2 && e2 < DateOnly.FromDateTime(DateTime.UtcNow))
+            warnings.Add("This person has already left — they will be imported, but kept out of registers and rotas.");
+
+        if (!string.IsNullOrWhiteSpace(row.EmploymentType) && StaffFieldParsing.EmploymentType(row.EmploymentType) == null)
+            warnings.Add($"\"{row.EmploymentType}\" is not an employment type — it will be left blank.");
+        if (!string.IsNullOrWhiteSpace(row.Sex) && StaffFieldParsing.Sex(row.Sex) == null)
+            warnings.Add($"\"{row.Sex}\" is not F, M or Other — it will be left blank.");
+
+        // Already on file? The panel asks the server once per file and fills this in.
+        if (existingEmails.TryGetValue(row.Email.Trim().ToLowerInvariant(), out var who))
+            warnings.Add($"{who} already uses this email — this row will be skipped, not overwritten.");
+
+        return (row, null, warnings);
+    }
+
+    /// <summary>What the preview shows for a row, rather than the first four raw cells.</summary>
+    private RenderFragment<StaffImportRow> StaffRowSummary => row => __builder =>
+    {
+        <span class="ss-preview-name">@($"{row.FirstName} {row.LastName}".Trim())</span>
+        <span class="ss-preview-sub">@row.Email · @row.RoleCode@(row.DepartmentCodes.Count > 0 ? " · " + string.Join("/", row.DepartmentCodes) : "")</span>
+    };
+
+    /// <summary>Emails the organization already has, keyed lower-case, filled by the precheck.</summary>
+    private Dictionary<string, string> existingEmails = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The slips are offered only once the job has landed — before that the usernames are not settled.</summary>
+    private bool importFinished;
+
+    private async Task<Guid> StartStaffImport(List<StaffImportRow> rows)
+    {
+        // Ask the server who already exists BEFORE sending, so the summary afterwards cannot be the
+        // first time anybody learns that a third of the file was already on file. The answer is
+        // advisory — the import re-checks under its own transaction — so a failure here never blocks.
+        try
+        {
+            var precheck = await StaffApi.PrecheckStaffImportAsync(branchId,
+                new StaffImportPrecheckRequest { Emails = rows.Select(r => r.Email).ToList() });
+            existingEmails = precheck.Existing.ToDictionary(
+                e => e.NormalizedEmail,
+                e => string.IsNullOrWhiteSpace(e.FullName) ? "Somebody" : e.FullName,
+                StringComparer.OrdinalIgnoreCase);
+        }
+        catch { existingEmails = new(StringComparer.OrdinalIgnoreCase); }
+
+        var started = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest
+        {
+            Rows = rows,
+            DeliveryMode = deliveryMode,
+            SendInvites = deliveryMode == StaffImportDeliveryMode.Invitation,
+            BatchTemporaryPassword = useBatchPassword && !string.IsNullOrWhiteSpace(batchPassword) ? batchPassword : null
+        });
+
+        importFinished = false;
+        jobEntries = new();
+        pendingSlips = started.TemporaryPasswords ?? new();
+        return started.Job.Id;
+    }
+
+    private async Task<RosterImportJobDto?> LoadStaffJob(Guid jobId)
+    {
+        try { return await StaffApi.GetStaffImportJobAsync(branchId, jobId); }
+        catch { return null; }
+    }
+
+    private async Task<List<RosterImportJobEntryDto>> LoadStaffEntries(Guid jobId)
+        => await StaffApi.GetStaffImportJobEntriesAsync(branchId, jobId, 500);
+
+    /// <summary>The job landed: refresh the history and the staff list behind it.</summary>
+    private async Task OnImportCompleted()
     {
         try
         {
-            if (e.File.Size > 5 * 1024 * 1024) { Toast.Notify(ToastSeverity.Warning, "That file is too large", "A staff list over 5 MB is not a staff list — split it or remove other sheets."); return; }
-            // Excel and CSV alike are read in the browser by SheetJS (already loaded); only text comes back.
-            csvText = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", "ss-import-file");
-            Preview();
+            recentJobs = await StaffApi.GetStaffImportJobsAsync(branchId, 10);
+            // The slips need the per-row outcomes: a slip is only printable for a row that actually
+            // became an account, and the job may have settled on a different username than asked.
+            if (recentJobs.Count > 0) jobEntries = await StaffApi.GetStaffImportJobEntriesAsync(branchId, recentJobs[0].Id, 500);
+            importFinished = true;
+            await LoadAllAsync();
         }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not read the file", ex.Message);
-        }
-    }
-
-    private void Preview()
-    {
-        previewRows = new();
-        if (string.IsNullOrWhiteSpace(csvText)) return;
-
-        var lines = csvText.Replace("\r\n", "\n").Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
-        if (lines.Count == 0) return;
-
-        var header = CsvText.ParseLine(lines[0]).Select(h => h.Trim().ToLowerInvariant()).ToList();
-        var hasHeader = header.Contains("email");
-        int Col(string name, int fallback) { var i = header.IndexOf(name.ToLowerInvariant()); return hasHeader ? i : fallback; }
-
-        var iFirst = Col("firstname", 0); var iLast = Col("lastname", 1); var iEmail = Col("email", 2); var iUser = Col("username", 3);
-        var iPhone = Col("phone", 4); var iEmp = Col("employeenumber", 5); var iJob = Col("jobtitle", 6); var iRole = Col("rolecode", 7);
-        var iDept = Col("departmentcodes", 8); var iLm = Col("linemanageremail", 9);
-        var iDelivery = Col("deliverymode", 10); var iClassOf = Col("classteacherof", 11); var iTeaches = Col("teaches", 12);
-
-        var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var number = 0;
-        foreach (var line in lines.Skip(hasHeader ? 1 : 0))
-        {
-            number++;
-            var cells = CsvText.ParseLine(line);
-            string? Cell(int i) => i >= 0 && i < cells.Count && !string.IsNullOrWhiteSpace(cells[i]) ? cells[i].Trim() : null;
-
-            var row = new StaffImportRow
-            {
-                FirstName = Cell(iFirst) ?? "",
-                LastName = Cell(iLast) ?? "",
-                Email = Cell(iEmail) ?? "",
-                Username = Cell(iUser),
-                Phone = Cell(iPhone),
-                EmployeeNumber = Cell(iEmp),
-                JobTitle = Cell(iJob),
-                RoleCode = (Cell(iRole) ?? RoleCodes.Teacher).ToLowerInvariant(),
-                DepartmentCodes = (Cell(iDept) ?? "").Split(new[] { ';', '|' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(c => c.ToUpperInvariant()).ToList(),
-                LineManagerEmail = Cell(iLm),
-                DeliveryMode = ParseDelivery(Cell(iDelivery)),
-                ClassTeacherOf = Cell(iClassOf),
-                Teaches = Cell(iTeaches)
-            };
-
-            string? error = null;
-            if (Cell(iDelivery) is { } rawDelivery && row.DeliveryMode == null) error = $"DeliveryMode '{rawDelivery}' is not slips, invitation or sms";
-            if (error != null) { }
-            else if (string.IsNullOrWhiteSpace(row.FirstName) || string.IsNullOrWhiteSpace(row.LastName)) error = "Name missing";
-            else if (string.IsNullOrWhiteSpace(row.Email) || !row.Email.Contains('@')) error = "Email missing or invalid";
-            else if (!seenEmails.Add(row.Email)) error = "Email repeated in the file";
-            else if (RoleCodes.IsSuperAdmin(row.RoleCode) || string.Equals(row.RoleCode, RoleCodes.Admin, StringComparison.OrdinalIgnoreCase)) error = "Administrator roles cannot be imported";
-
-            previewRows.Add(new PreviewRow(number, row, error));
-        }
-    }
-
-    private async Task StartImport()
-    {
-        var rows = previewRows.Where(r => r.Error == null).Select(r => r.Row).ToList();
-        if (rows.Count == 0) return;
-
-        importing = true;
-        try
-        {
-            if (useBatchPassword && string.IsNullOrWhiteSpace(batchPassword))
-            {
-                Toast.Notify(ToastSeverity.Warning, "Type the batch password, or untick the option to generate one per person");
-                return;
-            }
-            var started = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest
-            {
-                Rows = rows,
-                SendInvites = deliveryMode == StaffImportDeliveryMode.Invitation,
-                DeliveryMode = deliveryMode,
-                BatchTemporaryPassword = useBatchPassword && deliveryMode != StaffImportDeliveryMode.Invitation ? batchPassword : null
-            });
-            currentJob = started.Job;
-            // Held in memory only, for the slips; never stored, and gone when this page is left.
-            pendingSlips = started.TemporaryPasswords;
-            batchPassword = null;
-            jobEntries = new();
-            previewRows = new();
-            csvText = null;
-            Toast.Notify(ToastSeverity.Success, "Import started", $"{rows.Count} row(s) queued.");
-            StartPolling(currentJob.Id);
-        }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not start the import", ex.Message);
-        }
-        finally { importing = false; }
+        catch { /* the panel already shows the outcome; this is only the surrounding page */ }
+        StateHasChanged();
     }
 
     private async Task ShowJob(Guid jobId)
@@ -718,38 +769,11 @@
         {
             currentJob = await StaffApi.GetStaffImportJobAsync(branchId, jobId);
             jobEntries = await StaffApi.GetStaffImportJobEntriesAsync(branchId, jobId);
-            if (!IsFinished(currentJob.Status)) StartPolling(jobId);
         }
         catch (Exception ex)
         {
             Toast.Notify(ToastSeverity.Error, "Could not load the import", ex.Message);
         }
-    }
-
-    private void StartPolling(Guid jobId)
-    {
-        pollTimer?.Dispose();
-        pollTimer = new System.Threading.Timer(async _ =>
-        {
-            try
-            {
-                var job = await StaffApi.GetStaffImportJobAsync(branchId, jobId);
-                currentJob = job;
-                if (IsFinished(job.Status))
-                {
-                    pollTimer?.Dispose();
-                    pollTimer = null;
-                    jobEntries = await StaffApi.GetStaffImportJobEntriesAsync(branchId, jobId);
-                    staff = (await StaffApi.GetDirectoryAsync(branchId)).Items;
-                    recentJobs = await StaffApi.GetStaffImportJobsAsync(branchId, 10);
-                }
-                await InvokeAsync(StateHasChanged);
-            }
-            catch
-            {
-                // A missed poll is retried on the next tick; the job keeps running regardless.
-            }
-        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
 
     /// <summary>The slips for rows that actually became accounts, with the username the job settled on (it may have added a number).</summary>
@@ -836,6 +860,5 @@
 
     public void Dispose()
     {
-        pollTimer?.Dispose();
     }
 }

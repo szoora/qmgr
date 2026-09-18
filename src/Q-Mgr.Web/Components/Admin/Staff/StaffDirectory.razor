@@ -26,6 +26,20 @@
             {
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory == null)" />
             }
+            @* The page somebody opens to look for staff is the page that should let them add some.
+               Before this, adding one lived under Administration > Users & Roles and importing a
+               list lived on Departments & Structure — neither reachable from here, which is exactly
+               the report: "I see Staff Directory but no way to add or import staff." *@
+            @if (canAddStaff)
+            {
+                <QButton Text="Add staff" Icon="person-plus" Variant="secondary"
+                         OnClick="@(() => Navigation.NavigateTo("/admin/users"))" />
+            }
+            @if (canImportStaff)
+            {
+                <QButton Text="Import a list" Icon="upload" Variant="secondary"
+                         OnClick="@(() => Navigation.NavigateTo("/admin/staff/structure?tab=import"))" />
+            }
             <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
                          Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
                          Disabled="@(!Visible.Any())" DisabledReason="Nothing matches the current filters." />
@@ -153,6 +167,8 @@
     private Guid branchId;
     private bool isLoading = true;
     private bool canCreate;
+    private bool canAddStaff;
+    private bool canImportStaff;
     private StaffDirectoryDto? directory;
     private string period = StaffPeriods.CurrentKey();
     private IReadOnlyList<StaffPeriods.Option> PeriodOptions = StaffPeriods.Options();
@@ -234,6 +250,11 @@
         }
 
         canCreate = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsCreate);
+        // Adding one account needs users.create; importing a list needs that AND the structure
+        // permission, which is the same pair StaffImportController enforces — so a button that
+        // appears is a button that works.
+        canAddStaff = await PermissionService.HasPermissionAsync(Permissions.UsersCreate);
+        canImportStaff = canAddStaff && await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;

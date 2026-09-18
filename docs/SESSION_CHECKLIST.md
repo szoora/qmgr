@@ -239,3 +239,20 @@ nobody re-chases them:
   branch switch. Students can.
 - [x] **I1.** Migration applied (`20260918161245_AddActivityEventStudentSubject`).
 - [x] **I2 / I3 / I4 / I5.** All run and green, as above.
+
+## J. Vertical density — reported 2026-09-18, queued behind the import work
+
+User, with a screenshot of `/admin/timetable/settings` (Bell Schedule): *"why this too much
+vertical redundancy? this project is data driven, and therefore all forms and pages have to be
+compacted so user does not have to scroll infinitely. like this one the size of the panel header is
+already too much, the filters on multiple lines"*.
+
+Named on that page specifically: the page header block (title + subtitle + action row each on its
+own line), card headers with a large icon tile, one form control per row at full width, and filter
+rows that wrap when they could sit inline.
+
+**This is a SCALE question, not a one-page fix** — the same shapes are in `layout.css` and
+`q-components.css` and therefore on every page, so it belongs with the "one size scale" rules
+already in CLAUDE.md rather than as a patch to Bell Schedule. Measure before and after the way the
+2026-09-17 audit did, and remember its lesson: a CSS audit that measures fonts and control heights
+cannot see a layout regression — only opening the page can.

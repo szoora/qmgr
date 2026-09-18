@@ -10,6 +10,7 @@ using QMgr.Application.DTOs;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Welfare;
+using QMgr.Domain.Identity;
 using QMgr.Domain.Enums;
 using QMgr.Filters;
 using QMgr.Infrastructure.Data;
@@ -38,6 +39,9 @@ namespace QMgr.API.Controllers.v1;
 [RequireModule(ModuleCodes.StudentWelfare)]
 public class StaffImportController : ControllerBase
 {
+    /// <summary>A precheck is read-only, but it is still a bulk question — cap it at the import's own row ceiling.</summary>
+    private const int MaxPrecheckEmails = 10000;
+
     private readonly QMgrDbContext _context;
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly IStaffScopeService _scope;
@@ -111,6 +115,67 @@ public class StaffImportController : ControllerBase
             Detail = "Your role's staff scope is limited to your departments or reports. The import creates accounts across the whole branch in a background job that cannot apply that limit, so it is refused here rather than allowed to bypass it.",
             Status = StatusCodes.Status403Forbidden
         });
+    }
+
+
+    /// <summary>
+    /// Says which of these people the system ALREADY has, before anything is imported.
+    ///
+    /// <para>Within-file duplicates are caught in the browser — the same value twice in one sheet
+    /// needs no server. This is the other half: "this email already belongs to somebody", which
+    /// only the database knows. Without it the preview can only promise "42 rows ready" and the
+    /// summary afterwards is the first time anyone learns that 11 of them already existed.</para>
+    ///
+    /// <para>Read-only and side-effect free, so it is safe to call on every file a reader opens.
+    /// It answers for the CALLER'S organization only — the query is org-scoped like every other —
+    /// so it cannot be used to discover whether an address exists on another tenant. It is gated on
+    /// the same two permissions as the import itself rather than a weaker read permission: being
+    /// able to ask "is this person here?" in bulk is exactly the capability the import has.</para>
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/staff/import-jobs/precheck")]
+    [RequirePermission(Permissions.UsersCreate)]
+    [RequirePermission(Permissions.StaffStructureManage)]
+    [ProducesResponseType(typeof(StaffImportPrecheckDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Precheck(Guid branchId, [FromBody] StaffImportPrecheckRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var refusal = await ScopedCallerRefusalAsync();
+        if (refusal != null) return refusal;
+
+        if (request.Emails == null || request.Emails.Count == 0)
+            return Ok(new StaffImportPrecheckDto());
+
+        // The same normalization the duplicate-detection guard and the unique index use, so
+        // "A.Okello@School.UG " and "a.okello@school.ug" are one person here exactly as they are
+        // at sign-up. RegistrationIdentity is the one home for that rule.
+        var wanted = request.Emails
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => RegistrationIdentity.NormalizeEmail(e))
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct()
+            .Take(MaxPrecheckEmails)
+            .ToList();
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        var existing = await _context.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.OrganizationId == organizationId && wanted.Contains(u.NormalizedEmail))
+            .Select(u => new StaffImportExistingDto
+            {
+                NormalizedEmail = u.NormalizedEmail,
+                FullName = ((u.FirstName ?? "") + " " + (u.LastName ?? "")).Trim(),
+                RoleName = u.Role.Name,
+                IsActive = u.IsActive,
+                // A pending join request is NOT an account somebody can use yet, and importing over
+                // one would quietly approve it. Worth saying so in the preview.
+                PendingApproval = u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null
+            })
+            .ToListAsync();
+
+        return Ok(new StaffImportPrecheckDto { Existing = existing });
     }
 
     /// <summary>
