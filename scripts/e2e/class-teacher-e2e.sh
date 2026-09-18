@@ -760,6 +760,109 @@ else
 fi
 eq "a share cannot be issued against a document id of another tenant (404)" "$(code "$AD" POST "/api/v1/media/00000000-0000-0000-0000-000000000001/shares" '{"label":"x","expiresAt":"'"$EXP"'"}')" "404"
 
+
+# --- 13c. Role VISIBILITY and role ASSIGNMENT (2026-09-18) -------------------------------
+# Reported from production: "I am not expecting platform admin role to appear in the tenant
+# management panel." Scanning for the same shape found something worse, which 13c2 covers.
+ROLES_AD=$(body "$AD" GET "/api/v1/roles")
+if echo "$ROLES_AD" | grep -q '"super-admin"'; then
+  bad "platform admin role is hidden from a tenant" "no super-admin in GET /roles" "super-admin listed"
+else
+  ok "platform admin role is hidden from a tenant's own role list"
+fi
+echo "$ROLES_AD" | grep -q '"admin"' && ok "the tenant's own system roles are still listed" \
+  || bad "tenant roles listed" "admin present" "admin missing"
+
+# The by-id route leaked the same role's FULL permission list, so it is asserted separately.
+# A SuperAdmin resolves the id; the tenant admin must get 404 (never 403 — a 403 confirms it exists).
+SA_ROLES=$(body "$SA" GET "/api/v1/roles")
+SUPER_ROLE_ID=$(echo "$SA_ROLES" | tr '{' '\n' | grep '"super-admin"' | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+if [ -n "$SUPER_ROLE_ID" ]; then
+  eq "a tenant admin cannot read the platform role by id (404, not 403)" \
+     "$(code "$AD" GET "/api/v1/roles/$SUPER_ROLE_ID")" "404"
+
+  # --- 13c2. The escalation the visibility report uncovered -----------------------------
+  # CreateUser and UpdateUser took any RoleId and assigned it with NO rank check, so a tenant
+  # admin holding users.create could mint a Platform Administrator — a role that bypasses every
+  # permission check and reaches every organization. RoleAssignmentGuard refuses super-admin
+  # outright; it existed and these two endpoints simply never called it.
+  eq "a tenant admin cannot CREATE a user as platform admin (400)" \
+     "$(code "$AD" POST "/api/v1/users" '{"email":"e2e.esc.create@qmgr.local","username":"e2e.esc.create","password":"Escalate!2026x","firstName":"No","lastName":"Escalation","roleId":"'"$SUPER_ROLE_ID"'"}')" "400"
+
+  AD_ME=$(body "$AD" GET "/api/v1/auth/me")
+  AD_ID=$(echo "$AD_ME" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ -n "$AD_ID" ]; then
+    eq "a tenant admin cannot PROMOTE themselves to platform admin (400)" \
+       "$(code "$AD" PUT "/api/v1/users/$AD_ID" '{"roleId":"'"$SUPER_ROLE_ID"'"}')" "400"
+  else
+    bad "resolve the tenant admin's own id" "an id from /auth/me" "none"
+  fi
+else
+  bad "resolve the super-admin role id as SuperAdmin" "an id" "none"
+fi
+
+# --- 13c3. A module's roles are hidden from a tenant that has not enabled it --------------
+# "it makes no sense showing a business the default roles of a school." class-teacher and the five
+# Staff Performance roles belong to student-welfare (display name "Welfare & Performance").
+# The dev tenant HAS that module, so they must be present here; the negative is asserted by
+# revoking it and putting it back.
+echo "$ROLES_AD" | grep -q '"class-teacher"' \
+  && ok "a module's roles are listed while the tenant has the module" \
+  || bad "module roles listed" "class-teacher present" "class-teacher missing"
+
+if [ -n "${ORG_ID:-}" ]; then
+  code "$SA" DELETE "/api/v1/admin/tenants/$ORG_ID/modules/student-welfare" > /dev/null
+  ROLES_NOMOD=$(body "$AD" GET "/api/v1/roles")
+  if echo "$ROLES_NOMOD" | grep -q '"class-teacher"'; then
+    bad "a module's roles are hidden without the module" "no class-teacher" "class-teacher still listed"
+  else
+    ok "a module's roles are hidden from a tenant without that module"
+  fi
+  echo "$ROLES_NOMOD" | grep -q '"admin"' \
+    && ok "the core roles survive a module being off" \
+    || bad "core roles survive" "admin present" "admin missing"
+  code "$SA" PUT "/api/v1/admin/tenants/$ORG_ID/modules/student-welfare" '{"note":"e2e restore"}' > /dev/null
+  ROLES_BACK=$(body "$AD" GET "/api/v1/roles")
+  echo "$ROLES_BACK" | grep -q '"class-teacher"' \
+    && ok "restoring the module restores its roles" \
+    || bad "module restored" "class-teacher present again" "still missing"
+fi
+
+# --- 13d. Welfare exports and publishes are logged, and the log is scoped ------------------
+# Until 2026-09-18 WelfareController had no activity logger at all: a named child's full welfare
+# chronology could be published to the Library as a shareable PDF with nothing recording it.
+eq "an unrecognised welfare export kind is refused (400)" \
+   "$(code "$AD" POST "/api/v1/branches/$BRANCH/welfare/activity/exports" '{"kind":"not-a-kind"}')" "400"
+eq "a welfare list export is recorded (204)" \
+   "$(code "$AD" POST "/api/v1/branches/$BRANCH/welfare/activity/exports" '{"kind":"records","format":"CSV","rowCount":7}')" "204"
+eq "a student welfare report publish is recorded (204)" \
+   "$(code "$AD" POST "/api/v1/branches/$BRANCH/welfare/activity/exports" '{"kind":"timeline","subjectStudentId":"'"$S4_STUDENT"'","format":"PDF","published":true,"documentName":"E2E welfare report"}')" "204"
+
+WACT=$(body "$AD" GET "/api/v1/branches/$BRANCH/welfare/activity")
+echo "$WACT" | grep -q 'welfare.list.exported' && ok "the export appears in the welfare activity log" \
+  || bad "welfare activity log" "a welfare.list.exported row" "not found"
+echo "$WACT" | grep -q 'welfare.report.published' && ok "the publish appears in the welfare activity log" \
+  || bad "welfare activity log" "a welfare.report.published row" "not found"
+
+# A class teacher may record an export of their OWN student, and never of another class's.
+eq "a class teacher cannot record an export about a student outside their classes (404)" \
+   "$(code "$T2" POST "/api/v1/branches/$BRANCH/welfare/activity/exports" '{"kind":"timeline","subjectStudentId":"'"$S4_STUDENT"'","format":"PDF"}')" "404"
+eq "a class teacher can record an export about their own student (204)" \
+   "$(code "$T4" POST "/api/v1/branches/$BRANCH/welfare/activity/exports" '{"kind":"timeline","subjectStudentId":"'"$S4_STUDENT"'","format":"PDF"}')" "204"
+
+# The read is scoped the same way: a class teacher must not read the school's export history.
+WACT_T2=$(body "$T2" GET "/api/v1/branches/$BRANCH/welfare/activity")
+if echo "$WACT_T2" | grep -q "$S4_STUDENT"; then
+  bad "the welfare activity log is class-scoped" "no S4 student events for the S2 teacher" "S4 events visible"
+else
+  ok "the welfare activity log is class-scoped for a class teacher"
+fi
+if echo "$WACT_T2" | grep -q 'welfare.list.exported'; then
+  bad "a scoped caller sees only their OWN subject-less exports" "none of the admin's list exports" "admin's export visible"
+else
+  ok "a scoped caller does not see another user's whole-branch export rows"
+fi
+
 # --- Cleanup: the media rows go; the welfare record stays (append-only, labelled dummy) --------
 eq "cleanup: shared document deleted" "$(code "$AD" DELETE "/api/v1/media/$SHARED_ID")" "204"
 eq "cleanup: public document deleted" "$(code "$AD" DELETE "/api/v1/media/$PUBLIC_ID")" "204"
