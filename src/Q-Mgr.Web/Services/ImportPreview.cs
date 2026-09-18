@@ -36,12 +36,24 @@ public sealed class ImportColumn
     /// <summary>Other spellings a real school's spreadsheet uses for the same column.</summary>
     public IReadOnlyList<string> Aliases { get; }
 
+    /// <summary>
+    /// Case-, space-, underscore- and hyphen-insensitive, so "Student Code", "student_code",
+    /// "student-code" and "StudentCode" are one column. Matches the normalisation rosterImport.js
+    /// has always used, because a school's own spreadsheet export really does write all four.
+    /// </summary>
     public bool Matches(string header)
     {
-        var h = header.Trim().ToLowerInvariant();
-        if (h == Name.ToLowerInvariant()) return true;
-        foreach (var a in Aliases) if (h == a.ToLowerInvariant()) return true;
+        var h = Normalize(header);
+        if (h == Normalize(Name)) return true;
+        foreach (var a in Aliases) if (h == Normalize(a)) return true;
         return false;
+    }
+
+    private static string Normalize(string s)
+    {
+        var t = (s ?? string.Empty).Trim().ToLowerInvariant().Replace('_', ' ').Replace('-', ' ');
+        while (t.Contains("  ")) t = t.Replace("  ", " ");
+        return t.Replace(" ", string.Empty);
     }
 }
 

@@ -875,108 +875,33 @@
 @* ---------------- Bulk Import ---------------- *@
 <QModal @bind-Visible="showImportModal" Title="Bulk Import Roster" Size="lg">
     <ChildContent>
-        @if (importJob == null)
-        {
-            <div class="import-upload">
-                <p>
-                    Upload an Excel (.xlsx/.xls) or CSV file with columns for student name, student code, class,
-                    guardian name, guardian phone/email, and relationship — column order doesn't matter, and common
-                    header variations are recognized automatically.
-                </p>
-                <input type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" @onchange="OnFileSelected" />
+        <p class="import-lede">
+            One row per student, from Excel (.xlsx) or CSV. Download the template below — column order
+            does not matter and the common header spellings are recognised. Dates are day-first, so
+            <code>03/04/2026</code> is 3 April. A student code already on file is updated rather than
+            duplicated; the preview says which rows those are before you commit.
+        </p>
 
-                @if (isParsingFile)
-                {
-                    <div class="loading-state"><QSpinner Size="sm" /><span>Reading file...</span></div>
-                }
-                else if (headerErrors.Any())
-                {
-                    <div class="import-errors">
-                        <strong>Couldn't read this file:</strong>
-                        <ul>
-                            @foreach (var err in headerErrors)
-                            {
-                                <li>@err</li>
-                            }
-                        </ul>
-                    </div>
-                }
-                else if (parsedRows.Any())
-                {
-                    <div class="import-preview">
-                        <p><strong>@parsedRows.Count</strong> row@(parsedRows.Count == 1 ? "" : "s") parsed from <strong>@parsedFileName</strong>. First few rows:</p>
-                        <div class="import-preview-table">
-                            <div class="import-preview-row import-preview-header">
-                                <span>Student</span><span>Code</span><span>Class</span><span>Guardian</span><span>Phone</span><span>Email</span><span>Relationship</span>
-                            </div>
-                            @foreach (var r in parsedRows.Take(5))
-                            {
-                                <div class="import-preview-row">
-                                    <span>@r.StudentFullName</span><span>@r.StudentCode</span><span>@r.ClassName</span>
-                                    <span>@r.GuardianFullName</span><span>@r.GuardianPhone</span><span>@r.GuardianEmail</span><span>@r.Relationship</span>
-                                </div>
-                            }
-                            @if (parsedRows.Count > 5)
-                            {
-                                <p class="import-preview-more">+ @(parsedRows.Count - 5) more row@(parsedRows.Count - 5 == 1 ? "" : "s")</p>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
-        }
-        else
-        {
-            <div class="import-progress">
-                <div class="import-progress-header">
-                    <span class="import-status-badge @importJob.Status.ToString().ToLower()">@importJob.Status</span>
-                    <span>@importJob.ProcessedRows / @importJob.TotalRows rows processed</span>
-                </div>
-                <div class="import-progress-bar">
-                    <div class="import-progress-fill" style="width: @(importJob.TotalRows > 0 ? (importJob.ProcessedRows * 100 / importJob.TotalRows) : 0)%"></div>
-                </div>
-                <div class="import-summary-grid">
-                    <div class="import-summary-tile created"><span class="value">@importJob.CreatedCount</span><span class="label">Created</span></div>
-                    <div class="import-summary-tile updated"><span class="value">@importJob.UpdatedCount</span><span class="label">Updated</span></div>
-                    <div class="import-summary-tile duplicate"><span class="value">@importJob.DuplicateCount</span><span class="label">Duplicates</span></div>
-                    <div class="import-summary-tile failed"><span class="value">@importJob.FailedCount</span><span class="label">Failed</span></div>
-                </div>
-
-                @if (importJob.Status == RosterImportStatus.Completed || importJob.Status == RosterImportStatus.CompletedWithErrors)
-                {
-                    <QButton Text="@(showImportEntries ? "Hide Row-by-Row Log" : "View Row-by-Row Log")" Icon="list-ul" Variant="secondary" OnClick="@ToggleImportEntries" />
-                    @if (showImportEntries)
-                    {
-                        <div class="import-log">
-                            @foreach (var entry in importEntries)
-                            {
-                                <div class="import-log-row outcome-@ImportOutcomeDisplay.CssModifier(entry.Outcome)">
-                                    <span class="import-log-rownum">#@entry.RowNumber</span>
-                                    <span class="import-log-outcome">@ImportOutcomeDisplay.Label(entry.Outcome)</span>
-                                    <span class="import-log-name">@(entry.StudentName ?? "—") / @(entry.GuardianName ?? "—")</span>
-                                    <span class="import-log-message">@entry.Message</span>
-                                </div>
-                            }
-                        </div>
-                    }
-                }
-            </div>
-        }
+        <QImportPanel TRow="RosterImportRow"
+                      BranchId="@branchId"
+                      InputId="roster-file-input"
+                      Noun="student"
+                      Columns="@RosterImportColumns"
+                      BuildRow="@BuildRosterRow"
+                      DuplicateKey="@(r => string.IsNullOrWhiteSpace(r.StudentCode) ? null : r.StudentCode.Trim().ToLowerInvariant())"
+                      DuplicateNoun="student code"
+                      TemplateRows="@RosterTemplateRows"
+                      TemplateFileStem="roster-import-template"
+                      StartAsync="@StartRosterImport"
+                      LoadJobAsync="@LoadRosterJob"
+                      LoadEntriesAsync="@LoadRosterEntries"
+                      OnCompleted="@OnRosterImportCompleted"
+                      RowSummary="@RosterRowSummary" />
     </ChildContent>
     <FooterContent>
-        @if (importJob == null)
-        {
-            <QButton Text="Cancel" Variant="ghost" OnClick="@CloseImportModal" />
-            <QButton Text="@($"Start Import{(parsedRows.Any() ? $" ({parsedRows.Count} rows)" : "")}")" Icon="upload" Variant="primary"
-                     OnClick="@StartImport" Disabled="@(!parsedRows.Any() || isStartingImport)" />
-        }
-        else
-        {
-            <QButton Text="Close" Variant="primary" OnClick="@CloseImportModal" />
-        }
+        <QButton Text="Close" Variant="ghost" OnClick="@CloseImportModal" />
     </FooterContent>
 </QModal>
-
 @* ---------------- Import History ---------------- *@
 <QModal @bind-Visible="showHistoryModal" Title="Import History" Size="lg">
     <ChildContent>
@@ -2659,14 +2584,7 @@
 
     // Bulk Import
     private bool showImportModal;
-    private bool isParsingFile;
-    private bool isStartingImport;
-    private string? parsedFileName;
-    private List<RosterImportRow> parsedRows = new();
-    private List<string> headerErrors = new();
     private RosterImportJobDto? importJob;
-    private bool showImportEntries;
-    private List<RosterImportJobEntryDto> importEntries = new();
 
     // History
     private bool showHistoryModal;
@@ -2968,12 +2886,7 @@
 
     private void OpenImportModal()
     {
-        parsedRows = new();
-        headerErrors = new();
-        parsedFileName = null;
         importJob = null;
-        showImportEntries = false;
-        importEntries = new();
         showImportModal = true;
     }
 
@@ -2991,55 +2904,129 @@
         }
     }
 
-    private record ParsedFileResult(string? FileName, List<RosterImportRow> Rows, List<string> HeaderErrors);
 
-    private async Task OnFileSelected(ChangeEventArgs e)
+    // ---- The roster import, on the shared panel (2026-09-18) -----------------------------------
+    // This page used to parse in JAVASCRIPT (rosterImport.parseFile did its own header mapping and
+    // returned typed rows) while the staff import parsed the same kind of sheet in C#. Two parsers,
+    // two alias lists, two ideas of what a bad row is. Both now go through QImportPanel and
+    // ImportParsing: SheetJS still turns the workbook into CSV in the browser — that is what keeps
+    // the server free of an Excel library — and everything above that is shared.
+    //
+    // The aliases below are exactly the ones rosterImport.js recognised, carried across so no
+    // spreadsheet that used to import stops importing.
+
+    private static readonly IReadOnlyList<ImportColumn> RosterImportColumns = new[]
     {
-        isParsingFile = true;
-        headerErrors = new();
-        parsedRows = new();
-        try
+        new ImportColumn("StudentFullName", true, "Student Name", "Student Full Name", "Name"),
+        new ImportColumn("StudentCode", false, "Student Code", "Admission No", "Admission Number", "Roll No", "Code"),
+        new ImportColumn("ClassName", false, "Class Name", "Class", "Grade", "Stream"),
+        new ImportColumn("GuardianFullName", false, "Guardian Name", "Guardian Full Name", "Parent Name"),
+        new ImportColumn("GuardianPhone", false, "Guardian Phone", "Phone", "Phone Number", "Mobile", "Contact"),
+        new ImportColumn("GuardianEmail", false, "Guardian Email", "Email", "Email Address"),
+        new ImportColumn("Relationship", false, "Relation")
+    };
+
+    private static readonly IReadOnlyList<IReadOnlyList<string>> RosterTemplateRows = new[]
+    {
+        new[] { "Amina Nakimuli", "ADM-2024-018", "S2A", "Sarah Nakimuli", "0770123456", "s.nakimuli@example.com", "Mother" },
+        new[] { "Brian Okecho", "ADM-2024-019", "S2A", "Peter Okecho", "0782555111", "", "Father" }
+    };
+
+    /// <summary>
+    /// One roster row. A student needs a name — everything else is optional, because a school
+    /// importing a bare class list has nothing else yet, and refusing that row would refuse the
+    /// whole use case. A guardian with no way to reach them is a warning, not a refusal: the point
+    /// of the roster is the student.
+    /// </summary>
+    private (RosterImportRow? Row, string? Error, List<string> Warnings) BuildRosterRow(
+        IReadOnlyList<string> cells, Dictionary<string, int> map, int rowNumber)
+    {
+        var warnings = new List<string>();
+        string C(string name) => ImportParsing.Cell(cells, map, name);
+
+        var studentName = C("StudentFullName");
+        var guardianName = C("GuardianFullName");
+        var code = C("StudentCode");
+
+        if (string.IsNullOrWhiteSpace(studentName) && string.IsNullOrWhiteSpace(guardianName) && string.IsNullOrWhiteSpace(code))
+            return (null, "The row is empty.", warnings);
+        if (string.IsNullOrWhiteSpace(studentName))
+            return (null, "Student name is missing.", warnings);
+
+        var phone = C("GuardianPhone");
+        string? normalizedPhone = null;
+        if (!string.IsNullOrWhiteSpace(phone))
         {
-            var json = await JS.InvokeAsync<string>("rosterImport.parseFile", "roster-file-input");
-            var result = System.Text.Json.JsonSerializer.Deserialize<ParsedFileResult>(json,
-                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (result != null)
-            {
-                parsedFileName = result.FileName;
-                parsedRows = result.Rows;
-                headerErrors = result.HeaderErrors;
-            }
+            normalizedPhone = ImportParsing.NormalizePhone(phone);
+            if (normalizedPhone == null) warnings.Add($"\"{phone}\" is not a usable phone number — it will be left blank.");
         }
-        catch (Exception ex)
+
+        var email = C("GuardianEmail");
+        if (!string.IsNullOrWhiteSpace(email) && !ImportParsing.LooksLikeEmail(email))
         {
-            headerErrors = new() { $"Failed to read the file: {ex.Message}" };
+            warnings.Add($"\"{email}\" is not an email address — it will be left blank.");
+            email = string.Empty;
         }
-        finally
+
+        if (!string.IsNullOrWhiteSpace(guardianName)
+            && string.IsNullOrWhiteSpace(normalizedPhone) && string.IsNullOrWhiteSpace(email))
+            warnings.Add("This guardian has no phone or email, so nobody can be reached about this student.");
+
+        if (string.IsNullOrWhiteSpace(code))
+            warnings.Add("No student code — a later import cannot match this student and would create a second one.");
+
+        var className = C("ClassName");
+        if (!string.IsNullOrWhiteSpace(className) && vocabularies?.Classes is { Count: > 0 } known
+            && !known.Any(k => string.Equals(k.Name?.Trim(), className.Trim(), StringComparison.OrdinalIgnoreCase)))
+            warnings.Add($"\"{className}\" is not one of this branch's classes — the student will be imported with it as typed.");
+
+        return (new RosterImportRow
         {
-            isParsingFile = false;
-        }
+            StudentFullName = studentName,
+            StudentCode = string.IsNullOrWhiteSpace(code) ? null : code,
+            ClassName = string.IsNullOrWhiteSpace(className) ? null : className,
+            GuardianFullName = guardianName,
+            GuardianPhone = normalizedPhone,
+            GuardianEmail = string.IsNullOrWhiteSpace(email) ? null : email,
+            Relationship = C("Relationship") is { Length: > 0 } rel ? rel : null
+        }, null, warnings);
     }
 
-    private async Task StartImport()
+    private RenderFragment<RosterImportRow> RosterRowSummary => row => __builder =>
     {
-        isStartingImport = true;
-        try
+        <span class="import-preview-name">@row.StudentFullName</span>
+        <span class="import-preview-sub">@(string.IsNullOrWhiteSpace(row.StudentCode) ? "no code" : row.StudentCode)@(string.IsNullOrWhiteSpace(row.ClassName) ? "" : " · " + row.ClassName)@(string.IsNullOrWhiteSpace(row.GuardianFullName) ? "" : " · " + row.GuardianFullName)</span>
+    };
+
+    private async Task<Guid> StartRosterImport(List<RosterImportRow> rows)
+    {
+        var started = await StudentApi.StartImportAsync(branchId, new StartRosterImportRequest
         {
-            importJob = await StudentApi.StartImportAsync(branchId, new StartRosterImportRequest
-            {
-                SourceFileName = parsedFileName,
-                Rows = parsedRows
-            });
-        }
-        catch (InvalidOperationException ex)
-        {
-            NotificationService.Notify(ToastSeverity.Error, "Could not start import", ex.Message);
-        }
-        finally
-        {
-            isStartingImport = false;
-        }
+            SourceFileName = importFileName,
+            Rows = rows
+        });
+        importJob = started;
+        return started.Id;
     }
+
+    private async Task<RosterImportJobDto?> LoadRosterJob(Guid jobId)
+    {
+        try { return await StudentApi.GetImportJobAsync(branchId, jobId); }
+        catch { return null; }
+    }
+
+    private async Task<List<RosterImportJobEntryDto>> LoadRosterEntries(Guid jobId)
+        => await StudentApi.GetImportJobEntriesAsync(branchId, jobId);
+
+    /// <summary>The roster changed underneath the modal — reload the list behind it.</summary>
+    private async Task OnRosterImportCompleted()
+    {
+        try { await LoadStudents(); }
+        catch { /* the panel already shows the outcome */ }
+        StateHasChanged();
+    }
+
+    private string? importFileName;
 
     private async Task HandleImportProgress(RosterImportProgressEvent progress)
     {
@@ -3056,15 +3043,6 @@
             FailedCount = progress.FailedCount
         };
         await InvokeAsync(StateHasChanged);
-    }
-
-    private async Task ToggleImportEntries()
-    {
-        showImportEntries = !showImportEntries;
-        if (showImportEntries && importJob != null && !importEntries.Any())
-        {
-            importEntries = await StudentApi.GetImportJobEntriesAsync(branchId, importJob.Id);
-        }
     }
 
     // ---------------- History ----------------
