@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Authorization;
 using QMgr.Application.Tenant;
 using QMgr.Application.Interfaces;
+using QMgr.Application.Interfaces.Billing;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Domain.Enums;
@@ -23,14 +24,17 @@ public class RolesController : ControllerBase
     private readonly ITenantContextAccessor _tenantAccessor;
     private readonly ILogger<RolesController> _logger;
     private readonly INotificationHubService _notificationHub;
+    private readonly IModuleAccessService _moduleAccess;
 
     public RolesController(
         QMgrDbContext dbContext,
         IMemoryCache cache,
         ITenantContextAccessor tenantAccessor,
         ILogger<RolesController> logger,
-        INotificationHubService notificationHub)
+        INotificationHubService notificationHub,
+        IModuleAccessService moduleAccess)
     {
+        _moduleAccess = moduleAccess;
         _notificationHub = notificationHub;
         _dbContext = dbContext;
         _cache = cache;
@@ -66,6 +70,22 @@ public class RolesController : ControllerBase
         if (RoleCodes.IsSuperAdmin(tenantContext?.UserRole)) return false;
         if (role.OrganizationId == null) return false;
         return role.OrganizationId != tenantContext?.OrganizationId;
+    }
+
+    /// <summary>
+    /// The active module codes to judge role visibility against, per <see cref="RoleCodes.IsVisibleToTenant"/>.
+    /// Returns null for a SuperAdmin, meaning "do not filter" — the platform console is the one place
+    /// every role is legitimately visible.
+    /// </summary>
+    private async Task<IReadOnlyCollection<string>?> RoleVisibilityModulesAsync()
+    {
+        var tenantContext = _tenantAccessor.TenantContext;
+        if (RoleCodes.IsSuperAdmin(tenantContext?.UserRole)) return null;
+
+        var orgId = tenantContext?.OrganizationId;
+        if (orgId is null || orgId == Guid.Empty) return Array.Empty<string>();
+
+        return await _moduleAccess.GetActiveModuleCodesAsync(orgId.Value);
     }
 
     /// <summary>
@@ -114,6 +134,18 @@ public class RolesController : ControllerBase
             })
             .ToListAsync();
 
+        // SECURITY / PRODUCT: the org filter above admits every OrganizationId == null row, and every
+        // SEEDED role has that — so a school's Users & Roles page listed Platform Admin, and a bank's
+        // listed Class Teacher and the five school staff roles. A custom role has a real
+        // OrganizationId and is never touched by this. One home for the rule: RoleCodes.
+        var visibilityModules = await RoleVisibilityModulesAsync();
+        if (visibilityModules is not null)
+        {
+            roles = roles
+                .Where(r => !r.IsSystem || RoleCodes.IsVisibleToTenant(r.Code, visibilityModules))
+                .ToList();
+        }
+
         return Ok(roles);
     }
 
@@ -157,6 +189,16 @@ public class RolesController : ControllerBase
                     .ToList()
             })
             .FirstOrDefaultAsync();
+
+        // A role the caller may not SEE answers 404, never 403 — a 403 confirms it exists, which is
+        // the same rule VerifyStudentAccess follows. Without this, a tenant admin could read Platform
+        // Admin's entire permission list by id even once it stopped being listed.
+        if (role != null && role.IsSystem)
+        {
+            var visibilityModules = await RoleVisibilityModulesAsync();
+            if (visibilityModules is not null && !RoleCodes.IsVisibleToTenant(role.Code, visibilityModules))
+                role = null;
+        }
 
         if (role == null)
             return NotFound(new ProblemDetails

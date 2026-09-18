@@ -158,4 +158,58 @@ public static class RoleCodes
     {
         return Rank(targetRoleCode) >= Rank(actorRoleCode);
     }
+
+    // ---- Who may SEE a seeded role (2026-09-18) ------------------------------------------------
+    // Assignment was already guarded: IsAtOrBelow plus RoleAssignmentGuard refuse a tenant admin
+    // handing out super-admin. What had no guard at all was VISIBILITY — RolesController admitted
+    // every row with OrganizationId == null, and every seeded role has that, so a school's Users &
+    // Roles page listed Platform Admin, and a bank's listed Class Teacher and the five school
+    // staff roles. This is the one home for that rule; do not re-derive it per endpoint.
+
+    /// <summary>
+    /// Roles that exist only at platform level. A tenant must never see one in its own role list:
+    /// Platform Admin is not a role a school can hold, assign, edit or be shown, and listing it
+    /// invites exactly the question "why can I see this?".
+    /// </summary>
+    public static readonly string[] PlatformOnly = { SuperAdmin };
+
+    /// <summary>True when the role belongs to the platform rather than to any tenant.</summary>
+    public static bool IsPlatformOnly(string? roleCode)
+        => PlatformOnly.Contains(roleCode, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The module a seeded role belongs to, or null when it is part of the core product and
+    /// therefore always available.
+    ///
+    /// Class Teacher and the five Staff Performance roles all map to <see cref="ModuleCodes.StudentWelfare"/>
+    /// because Staff Performance is PART of that module — display name "Welfare &amp; Performance"
+    /// (user decision 2026-09-17), not a module of its own. A custom role's code is arbitrary and
+    /// returns null here, so a tenant's own roles are never hidden by this.
+    /// </summary>
+    public static string? ModuleFor(string? roleCode) => roleCode?.Trim().ToLowerInvariant() switch
+    {
+        ClassTeacher or DirectorOfStudies or AcademicAssistant
+            or HeadOfDepartment or Teacher or SupportStaff => ModuleCodes.StudentWelfare,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Whether a tenant may see this role, given the modules that tenant has active. Platform roles
+    /// never; a module's roles only while that module is on; everything else always.
+    ///
+    /// <para>Deliberately a VISIBILITY rule only. A tenant that cancels Welfare &amp; Performance
+    /// keeps any user already holding Class Teacher — the role row and the assignment both survive,
+    /// because revoking a module must not silently strip someone's access on the way past. It stops
+    /// being offered, it is not retrospectively unassigned.</para>
+    /// </summary>
+    public static bool IsVisibleToTenant(string? roleCode, IReadOnlyCollection<string>? activeModuleCodes)
+    {
+        if (IsPlatformOnly(roleCode)) return false;
+
+        var module = ModuleFor(roleCode);
+        if (module is null) return true;
+
+        return activeModuleCodes is not null
+            && activeModuleCodes.Contains(module, StringComparer.OrdinalIgnoreCase);
+    }
 }

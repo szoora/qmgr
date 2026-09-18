@@ -319,6 +319,26 @@ public class UsersController : ControllerBase
                 });
         }
 
+        // SECURITY: "nobody chooses their own privilege". Both this endpoint and UpdateUser resolved
+        // the role with a bare FindAsync and assigned it, with no rank check at all — so a tenant
+        // Admin holding users.create could POST the seeded super-admin role's id and mint a Platform
+        // Administrator, a role that bypasses every permission check and reaches every organization.
+        // RoleAssignmentGuard is the one rule for this (it refuses super-admin outright, requires
+        // roles.edit for Tenant Admin, enforces rank, and refuses a custom role carrying permissions
+        // the caller lacks); the join-request and staff-import paths already called it.
+        var actorId = GetCurrentUserIdOrNull();
+        if (actorId is null)
+            return Unauthorized();
+
+        var roleRefusal = await RoleAssignmentGuard.RefusalAsync(_dbContext, actorId.Value, role!);
+        if (roleRefusal != null)
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Role cannot be assigned",
+                Detail = roleRefusal,
+                Status = StatusCodes.Status400BadRequest
+            });
+
         // Validate branch exists within organization if specified
         if (request.AssignedBranchId.HasValue)
         {
@@ -467,6 +487,21 @@ public class UsersController : ControllerBase
                     Detail = $"Role with ID '{request.RoleId}' was not found.",
                     Status = StatusCodes.Status400BadRequest
                 });
+            // SECURITY: same rule as CreateUser — without it a caller with users.edit could promote
+            // anyone, themselves included, straight into the platform administrator role.
+            var actorIdForRole = GetCurrentUserIdOrNull();
+            if (actorIdForRole is null)
+                return Unauthorized();
+
+            var roleRefusal = await RoleAssignmentGuard.RefusalAsync(_dbContext, actorIdForRole.Value, role);
+            if (roleRefusal != null)
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "Role cannot be assigned",
+                    Detail = roleRefusal,
+                    Status = StatusCodes.Status400BadRequest
+                });
+
             roleChanged = user.RoleId != role.Id;
             user.RoleId = role.Id;
         }
