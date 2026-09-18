@@ -382,7 +382,7 @@
             }
             catch (Exception ex)
             {
-                saveError = $"The bell schedule was saved; the rooms were not: {ex.Message}";
+                saveError = $"The school day was saved; the rooms were not: {ex.Message}";
                 return;
             }
             Toast.Notify(ToastSeverity.Success, "School day saved", $"{CycleDayCount}-day cycle, {rooms.Count(r => r.IsActive)} room{(rooms.Count(r => r.IsActive) == 1 ? "" : "s")} in use.");
