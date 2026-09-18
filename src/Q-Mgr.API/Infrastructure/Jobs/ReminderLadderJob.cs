@@ -160,6 +160,35 @@ public class ReminderLadderJob
     /// ladder for that person. A stage whose audience includes the supervisor also tells the administrator on duty who
     /// has not acknowledged, content-free, and the portal carries the same line as a to-do.
     /// </summary>
+    /// <summary>
+    /// Says out loud that a pre-start reminder was never sent, because every pre-start ladder filters
+    /// <c>StartsAt &gt; now</c> and a duty that has already begun simply drops out of the query.
+    ///
+    /// <para>That is the right send rule — "your duty starts in ten minutes" is not worth sending once it
+    /// has started — but the SILENCE was the bug. Found while hardening the e2e: one suite run saturated
+    /// the Hangfire pool for about eighty seconds, and a sweep that lands after the start leaves no trace
+    /// anywhere that somebody was never told. A real school's publish, materialisation and dispatch bursts
+    /// are the same shape.</para>
+    ///
+    /// <para>This only reports. Whether a late reminder should be sent anyway, and in what words, is a
+    /// product decision nobody has taken; until then the log is what makes the gap visible.</para>
+    /// </summary>
+    private async Task LogMissedPreStartAsync(DutyKind kind, DateTime now)
+    {
+        // A short look-back: anything older has been reported by an earlier run of this same sweep.
+        var since = now.AddHours(-2);
+        var missed = await _context.StaffDuties.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.IsActive && d.Kind == kind
+                        && d.StartsAt <= now && d.StartsAt > since
+                        && d.ReminderSentAt == null)
+            .CountAsync();
+
+        if (missed > 0)
+            _logger.LogWarning(
+                "Reminder ladder: {Count} {Kind} duty(ies) started in the last two hours with no reminder ever sent — " +
+                "the sweep did not run before they began", missed, kind);
+    }
+
     internal async Task<int> RotaStartAsync(DateTime now)
     {
         var horizon = now.AddDays(MaxLeadDays);
@@ -168,6 +197,8 @@ public class ReminderLadderJob
             .Where(d => d.IsActive && d.Kind == DutyKind.Rota && d.StartsAt > now && d.StartsAt <= horizon)
             .OrderBy(d => d.StartsAt)
             .ToListAsync();
+
+        await LogMissedPreStartAsync(DutyKind.Rota, now);
 
         var sent = 0;
         foreach (var duty in duties)
@@ -446,6 +477,8 @@ public class ReminderLadderJob
             .OrderBy(d => d.StartsAt)
             .Take(3000)
             .ToListAsync();
+
+        await LogMissedPreStartAsync(DutyKind.Lesson, now);
 
         var sent = 0;
         foreach (var lesson in lessons)
