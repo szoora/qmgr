@@ -1,0 +1,183 @@
+@page "/admin/staff/duty-reports"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>Duty Reports - Q-Mgr</PageTitle>
+
+@*
+    The review queue (plan §4.3). The API lists only reports the caller may read — a head sees their scope, an
+    administrator on duty sees the slots they supervise — and an unwritten report appears as a line, never its text.
+*@
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Duty Reports</h1>
+            <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Duty Rota" Icon="calendar-week" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/rota"))" />
+            <QButton Text="Print pack" Icon="printer" Variant="secondary" Disabled="@(queue == null || !queue.Items.Any())"
+                     OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/print?from={range.From:yyyy-MM-dd}&to={range.To:yyyy-MM-dd}"))" />
+        </div>
+    </div>
+
+    <QFilterBar Wrap="true">
+        <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" CaptionPrefix="Due" />
+        <QTabs Tabs="@StatusTabs" ActiveKey="@statusKey" ActiveKeyChanged="@OnStatusChanged" AriaLabel="Report status" />
+    </QFilterBar>
+
+    @if (queue?.ScopedToDepartments.Any() == true)
+    {
+        <p class="drq-scope">These reports cover <strong>@string.Join(", ", queue.ScopedToDepartments)</strong> only.</p>
+    }
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading reports...</span></div>
+    }
+    else if (forbidden)
+    {
+        <QEmptyState Icon="lock" Title="Duty reports are read by the heads who review them"
+                     Text="If you are on duty, write your reports from your portal. If you supervise a slot, its reports appear here once you are its administrator on duty." />
+    }
+    else if (queue != null)
+    {
+        <QStatRow>
+            <QStatTile Value="@(queue.OnTimePercent.HasValue ? $"{queue.OnTimePercent}%" : "—")" Label="Submitted on time" Icon="clock-history" Variant="@(queue.OnTimePercent is < 80 ? "warning" : "success")" />
+            <QStatTile Value="@queue.Overdue.ToString()" Label="Overdue, not written" Icon="alarm" Variant="@(queue.Overdue > 0 ? "danger" : "success")" />
+            <QStatTile Value="@queue.AwaitingReview.ToString()" Label="Awaiting review" Icon="inbox" Variant="@(queue.AwaitingReview > 0 ? "info" : "default")" />
+            <QStatTile Value="@queue.Returned.ToString()" Label="Returned for changes" Icon="arrow-return-left" Variant="@(queue.Returned > 0 ? "warning" : "default")" />
+        </QStatRow>
+
+        @if (!queue.Items.Any())
+        {
+            <QEmptyState Icon="journal-check" Title="No reports here" Text="Nothing matches the period and status chosen." />
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table q-stack">
+                        <thead><tr><th>Duty</th><th>Period</th><th>Author</th><th>Status</th><th>Due</th><th>Notes</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var r in queue.Items)
+                            {
+                                <tr class="@(r.IsOverdue ? "drq-overdue" : "")">
+                                    <td><strong>@r.DutyTitle</strong></td>
+                                    <td>@DutyReportPage.PeriodText(r)</td>
+                                    <td>@r.AuthorName @if (r.AuthorRole == DutyReportAuthorRole.Supervisor) { <QChip Text="Supervisor" Size="sm" Variant="muted" /> }</td>
+                                    <td>
+                                        <QChip Text="@DutyReportPage.StatusLabel(r.Status)" Variant="@DutyReportPage.StatusVariant(r.Status)" Size="sm" />
+                                        @if (r.IsOverdue) { <QChip Text="Overdue" Variant="danger" Size="sm" /> }
+                                        @if (r.SubmittedLate) { <QChip Text="Late" Variant="warning" Size="sm" /> }
+                                        @if (r.Visibility == WelfareVisibility.Confidential) { <QChip Text="Confidential" Variant="warning" Size="sm" Icon="lock" /> }
+                                    </td>
+                                    <td>@QDateFormat.LocalDT(r.DueAt)</td>
+                                    <td>@(r.CommentCount > 0 ? r.CommentCount.ToString() : "—")</td>
+                                    <td>
+                                        @if (r.Status != DutyReportStatus.Draft)
+                                        {
+                                            <QButton Text="Open" Icon="box-arrow-in-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/{r.Id}"))" />
+                                        }
+                                        else
+                                        {
+                                            <span class="drq-muted">Not written</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+            @if (queue.Total > queue.Items.Count) { <p class="drq-muted">Showing @queue.Items.Count of @queue.Total. Narrow the period to see the rest.</p> }
+        }
+    }
+</div>
+
+<style>
+    .drq-scope { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0; }
+    .drq-overdue td:first-child { box-shadow: inset 3px 0 0 var(--qm-danger); }
+    .drq-muted { font-size: 12.5px; color: var(--qm-text-muted); }
+    .admin-page .q-card { margin-top: 14px; }
+</style>
+
+@code {
+    private bool isLoading = true, forbidden;
+    private Guid branchId;
+    private DutyReportQueueDto? queue;
+    private DateRange range = new(DateOnly.FromDateTime(DateTime.Today.AddDays(-30)), DateOnly.FromDateTime(DateTime.Today.AddDays(1)));
+    private string statusKey = "all";
+
+    private static readonly IReadOnlyList<QTab> StatusTabs = new List<QTab>
+    {
+        new("all", "All"), new("Submitted", "Awaiting review"), new("Returned", "Returned"), new("Draft", "Not written"), new("Reviewed", "Reviewed")
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        forbidden = false;
+        try
+        {
+            DutyReportStatus? status = statusKey == "all" ? null : Enum.Parse<DutyReportStatus>(statusKey);
+            queue = await StaffApi.GetDutyReportQueueAsync(branchId, ToUtc(range.From.ToDateTime(TimeOnly.MinValue)), ToUtc(range.To.ToDateTime(TimeOnly.MaxValue)), status);
+        }
+        catch (Exception ex)
+        {
+            queue = null;
+            if (ex.Message.Contains("403") || ex.Message.Contains("Forbidden", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("permission", StringComparison.OrdinalIgnoreCase)) forbidden = true;
+            else Toast.Notify(ToastSeverity.Error, "Could not load duty reports", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        await LoadAsync();
+    }
+
+    private async Task OnStatusChanged(string key)
+    {
+        statusKey = key;
+        await LoadAsync();
+    }
+
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+}

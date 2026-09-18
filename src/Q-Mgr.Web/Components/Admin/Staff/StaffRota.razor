@@ -1,0 +1,963 @@
+@page "/admin/staff/rota"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+
+<PageTitle>Duty Rota - Q-Mgr</PageTitle>
+
+@*
+    The duty rota (plan §4.1, §10). A displayed school record, so everyone in the branch may read it (names and dates);
+    generating, editing, swapping and cancelling need staff.duties.manage; acknowledging is the person on the slot's;
+    the close-out register is the administrator on duty's. Rota slots are StaffDuty rows of kind Rota.
+*@
+
+<div class="admin-page rota-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Duty Rota</h1>
+            <p class="subtitle">Who is on duty, who supervises, and whether they have seen it. @(canManage ? "Generate a rotation instead of typing it; the checks warn about clashes and uneven load." : "")</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Sessions & registers" Icon="calendar-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" />
+            @if (canManage)
+            {
+                <QButton Text="New slot" Icon="plus-lg" Variant="secondary" OnClick="@OpenNewSlot" Disabled="@(branchId == Guid.Empty)" />
+                <QButton Text="Generate rota" Icon="magic" Variant="primary" OnClick="@OpenGenerate" Disabled="@(branchId == Guid.Empty)" />
+            }
+        </div>
+    </div>
+
+    <QFilterBar Wrap="true">
+        <QTabs Tabs="@ViewTabs" ActiveKey="@view" ActiveKeyChanged="@OnViewChanged" AriaLabel="Rota view" />
+        <div class="rota-nav">
+            <QButton Icon="chevron-left" Variant="ghost" Size="sm" Title="@(view == "week" ? "Previous week" : "Previous month")" OnClick="@(() => MoveAsync(-1))" />
+            <strong class="rota-nav__label">@PeriodLabel</strong>
+            <QButton Icon="chevron-right" Variant="ghost" Size="sm" Title="@(view == "week" ? "Next week" : "Next month")" OnClick="@(() => MoveAsync(1))" />
+            <QButton Text="Today" Variant="ghost" Size="sm" OnClick="@(() => GoToAsync(DateOnly.FromDateTime(DateTime.Today)))" />
+        </div>
+        <QCheckbox @bind-Value="@onlyMine" Label="Only slots I am on or supervise" />
+    </QFilterBar>
+
+    @if (fairness != null && fairness.Rows.Any())
+    {
+        <QCard Title="@($"Fairness — {fairness.PeriodName}")" Subtitle="@(fairness.Limit > 0 ? $"Rota slots on duty per person; the policy warns above {fairness.Limit} a term" : "Rota slots on duty per person")" Icon="bar-chart" Class="rota-fair">
+            <QBarList Items="@FairnessBars" Max="@((decimal)Math.Max(fairness.Limit, fairness.Rows.Max(r => r.OnDutySlots)))" Stacked="true" />
+        </QCard>
+    }
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the rota...</span></div>
+    }
+    else if (branchId == Guid.Empty)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="The rota belongs to a branch. Pick one in the switcher above." />
+    }
+    else if (!VisibleSlots.Any() && view == "week")
+    {
+        <QEmptyState Icon="calendar-week" Title="Nobody is rostered this week"
+                     Text="@(canManage ? "Generate a rota: pick the staff to rotate through, a start date and how many slots." : "When the rota is published you will see who is on duty here.")">
+            <Action>
+                @if (canManage) { <QButton Text="Generate rota" Icon="magic" Variant="primary" OnClick="@OpenGenerate" /> }
+            </Action>
+        </QEmptyState>
+    }
+    else if (view == "week")
+    {
+        <QWeekGrid TItem="SlotDay" Columns="@WeekColumns" Rows="@WeekRows" Items="@WeekItems"
+                   RowKey="@(i => i.Slot.Title)" ColumnKey="@(i => i.Day.ToString("yyyy-MM-dd"))"
+                   CellState="@WeekCellState" AriaLabel="Duty rota for the week" CornerLabel="Duty"
+                   EmptyDayText="Nobody rostered." Class="rota-week">
+            <CellTemplate Context="cell">
+                @foreach (var item in cell.Items)
+                {
+                    var s = item.Slot;
+                    <button type="button" class="rota-slot @(IsMine(s) ? "rota-slot--mine" : "")" @onclick="@(() => OpenSlot(s))" @onclick:stopPropagation="true"
+                            title="@SlotTitle(s)">
+                        <span class="rota-slot__people">
+                            @foreach (var (id, name) in People(s).Select(p => (p.Id, p.Name)))
+                            {
+                                <span class="rota-person">
+                                    @if (s.Acknowledgements != null)
+                                    {
+                                        <QIcon Name="@(s.Acknowledgements.ContainsKey(id) ? "check-circle-fill" : "circle")" Size="sm" Class="@(s.Acknowledgements.ContainsKey(id) ? "rota-ack" : "rota-noack")" />
+                                    }
+                                    @name
+                                </span>
+                            }
+                        </span>
+                        @if (s.SupervisorNames.Any())
+                        {
+                            <span class="rota-slot__sup">Supervised by @string.Join(", ", s.SupervisorNames)</span>
+                        }
+                    </button>
+                }
+            </CellTemplate>
+        </QWeekGrid>
+    }
+    else
+    {
+        <QMonthList TItem="StaffDutyDto" Month="@anchor" Items="@VisibleSlots" Start="@(s => DateOnly.FromDateTime(Local(s.StartsAt)))" End="@(s => DateOnly.FromDateTime(Local(s.EndsAt)))"
+                    EmptyWeekText="Nobody rostered.">
+            <ItemTemplate Context="s">
+                <button type="button" class="rota-chip @(IsMine(s) ? "rota-slot--mine" : "")" @onclick="@(() => OpenSlot(s))" title="@SlotTitle(s)">
+                    <strong>@s.Title</strong>
+                    <span>@SpanText(s)</span>
+                    <span class="rota-chip__people">@string.Join(", ", s.ExpectedNames)</span>
+                    @if (s.Acknowledgements != null && s.ExpectedUserIds != null && s.AcknowledgedCount < s.ExpectedUserIds.Count && s.EndsAt > DateTime.UtcNow)
+                    {
+                        <QChip Text="@($"{s.ExpectedUserIds.Count - s.AcknowledgedCount} not acknowledged")" Variant="warning" Size="sm" />
+                    }
+                </button>
+            </ItemTemplate>
+        </QMonthList>
+    }
+</div>
+
+@* ---- One slot ---------------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showSlot" Title="@(selected?.Title ?? "Rota slot")" Icon="calendar-week" Size="md">
+    <ChildContent>
+        @if (selected is { } s)
+        {
+            <dl class="rota-facts">
+                <div><dt>When</dt><dd>@QDateFormat.DD(Local(s.StartsAt)) @QDateFormat.T(Local(s.StartsAt)) – @QDateFormat.DD(Local(s.EndsAt)) @QDateFormat.T(Local(s.EndsAt))</dd></div>
+                @if (!string.IsNullOrEmpty(s.Location)) { <div><dt>Where</dt><dd>@s.Location</dd></div> }
+                <div>
+                    <dt>On duty</dt>
+                    <dd>
+                        <ul class="rota-people">
+                            @foreach (var (id, name) in People(s).Select(p => (p.Id, p.Name)))
+                            {
+                                <li>
+                                    <span>@name</span>
+                                    @if (s.Acknowledgements != null)
+                                    {
+                                        @if (s.Acknowledgements.TryGetValue(id, out var at))
+                                        {
+                                            <QChip Text="@($"Acknowledged {QDateFormat.CDT(Local(at))}")" Variant="success" Size="sm" Icon="check2" />
+                                        }
+                                        else
+                                        {
+                                            <QChip Text="Not acknowledged" Variant="warning" Size="sm" />
+                                        }
+                                    }
+                                </li>
+                            }
+                        </ul>
+                        @if (s.Acknowledgements == null && s.ExpectedUserIds != null)
+                        {
+                            <small class="rota-muted">@s.AcknowledgedCount of @s.ExpectedUserIds.Count acknowledged</small>
+                        }
+                    </dd>
+                </div>
+                <div><dt>Supervised by</dt><dd>@(s.SupervisorNames.Any() ? string.Join(", ", s.SupervisorNames) : "No administrator on duty")</dd></div>
+                <div><dt>Reports</dt><dd>@CadenceLabel(s.ReportCadence)@(s.ReportCadence != ReportCadence.None ? $", due {s.ReportDueLocalTime ?? "at the policy time"}" : "")</dd></div>
+                <div><dt>Scored as</dt><dd>@s.ParameterName</dd></div>
+                @if (s.RegisterClosedAt.HasValue) { <div><dt>Closed out</dt><dd>@QDateFormat.LocalDT(s.RegisterClosedAt)@(s.RegisterClosedByName != null ? $" by {s.RegisterClosedByName}" : "")</dd></div> }
+            </dl>
+            @if (slotReports != null && slotReports.Any())
+            {
+                <h4 class="rota-reports__head">Reports</h4>
+                <ul class="rota-reports">
+                    @foreach (var rep in slotReports.OrderBy(r => r.PeriodStart).ThenBy(r => r.AuthorRole))
+                    {
+                        <li>
+                            <span>@DutyReportPage.PeriodText(rep) · @rep.AuthorName</span>
+                            <QChip Text="@DutyReportPage.StatusLabel(rep.Status)" Size="sm" Variant="@DutyReportPage.StatusVariant(rep.Status)" />
+                            @if (rep.IsOverdue) { <QChip Text="Overdue" Size="sm" Variant="danger" /> }
+                            @if (rep.Status is not (DutyReportStatus.Draft)) { <a href="@($"/admin/staff/duty-reports/{rep.Id}")">Open</a> }
+                        </li>
+                    }
+                </ul>
+            }
+            @if (s.IsExpectedOfMe && s.MyAcknowledgedAt == null && s.EndsAt > DateTime.UtcNow)
+            {
+                <div class="rota-ack-cta">
+                    <QIcon Name="bell" />
+                    <span>You are on this duty. Acknowledge it and the reminders stop.</span>
+                    <QButton Text="Seen — I'm on duty" Icon="check2-circle" Variant="primary" Loading="@busy" OnClick="@(() => AcknowledgeAsync(s))" />
+                </div>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (selected is { } f)
+        {
+            <div class="rota-modal-actions">
+                @if (f.CanIRecord && f.StartsAt <= DateTime.UtcNow)
+                {
+                    <QButton Text="@(f.RegisterClosedAt.HasValue ? "View close-out" : "Close out the duty")" Icon="clipboard-check" Variant="primary" Size="sm"
+                             OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{f.Id}/register"))" />
+                }
+                @if (canManage && f.EndsAt > DateTime.UtcNow && !f.RegisterClosedAt.HasValue)
+                {
+                    <QButton Text="Edit" Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => OpenEditSlot(f))" />
+                    <QButton Text="Swap" Icon="arrow-left-right" Variant="ghost" Size="sm" OnClick="@(() => OpenSwap(f))" />
+                }
+                @if (canManage && f.SeriesId.HasValue)
+                {
+                    <QButton Text="Extend rota" Icon="plus-square" Variant="ghost" Size="sm" OnClick="@(() => OpenExtend(f))" />
+                    <QButton Text="Cancel rota" Icon="x-octagon" Variant="outline-danger" Size="sm" OnClick="@(() => { cancelSeriesTarget = f; showCancelSeries = true; })" />
+                }
+                @if (canManage && f.StartsAt > DateTime.UtcNow)
+                {
+                    <QButton Text="Cancel slot" Icon="x-circle" Variant="outline-danger" Size="sm" OnClick="@(() => CancelSlotAsync(f))" />
+                }
+            </div>
+        }
+    </FooterContent>
+</QModal>
+
+@* ---- Generate (and extend) --------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showGenerate" Title="@(extendSeries == null ? "Generate a rota" : $"Extend \"{extendSeries.Title}\"")" Icon="magic" Size="lg">
+    <ChildContent>
+        @if (extendSeries == null)
+        {
+            <div class="form-row">
+                <div class="form-group"><QInput TValue="string" @bind-Value="@gen.Title" Label="Title" MaxLength="200" Required="true" Placeholder="Teacher on duty" /></div>
+                <div class="form-group"><QInput TValue="string" @bind-Value="@gen.Location" Label="Location" MaxLength="200" Placeholder="Optional" /></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <QSelect TValue="RotaSpan" TItem="RotaSpan" Value="@gen.Span" ValueChanged="@(v => { gen.Span = v; ResetPreview(); })" Items="@Spans" TextSelector="@SpanLabel" ValueSelector="@(x => x)" Label="Each slot is" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker Value="@genStart" ValueChanged="@(d => { genStart = d; ResetPreview(); })" Label="First slot starts" Required="true" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="int" Value="@gen.Slots" ValueChanged="@(v => { gen.Slots = v; ResetPreview(); })" Type="number" Min="1" Max="60" Label="Slots" />
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><QInput TValue="string" Value="@gen.DayStartLocalTime" ValueChanged="@(v => { gen.DayStartLocalTime = v ?? ""; ResetPreview(); })" Type="time" Label="Duty starts at" /></div>
+                <div class="form-group"><QInput TValue="string" Value="@gen.DayEndLocalTime" ValueChanged="@(v => { gen.DayEndLocalTime = v ?? ""; ResetPreview(); })" Type="time" Label="Duty ends at" HelperText="On the last day of each slot." /></div>
+                <div class="form-group"><QInput TValue="string" @bind-Value="@gen.ReportDueLocalTime" Type="time" Label="Reports due at" HelperText="Blank uses the policy time." /></div>
+            </div>
+
+            <div class="rota-order">
+                <div class="rota-order__col">
+                    <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@genStaff" SelectedValuesChanged="@(v => { genStaff = MergeOrder(genStaff, v); ResetPreview(); })"
+                                  Items="@staff" ValueSelector="@(m => m.UserId)" TextSelector="@(m => m.FullName)" Label="Staff to rotate through" Required="true" ShowChips="false"
+                                  Placeholder="@(staffUnavailable ? "The staff list is not available to you" : "Add people")" Disabled="@staffUnavailable" />
+                    @OrderList(genStaff, list => genStaff = list)
+                    <QInput TValue="int" Value="@gen.PeoplePerSlot" ValueChanged="@(v => { gen.PeoplePerSlot = v; ResetPreview(); })" Type="number" Min="1" Max="10" Label="On duty per slot" />
+                </div>
+                <div class="rota-order__col">
+                    <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@genSupervisors" SelectedValuesChanged="@(v => { genSupervisors = MergeOrder(genSupervisors, v); ResetPreview(); })"
+                                  Items="@staff" ValueSelector="@(m => m.UserId)" TextSelector="@(m => m.FullName)" Label="Administrators on duty (optional)" ShowChips="false"
+                                  Placeholder="Add supervisors" Disabled="@staffUnavailable" />
+                    @OrderList(genSupervisors, list => genSupervisors = list)
+                    <QInput TValue="int" Value="@gen.SupervisorsPerSlot" ValueChanged="@(v => { gen.SupervisorsPerSlot = v; ResetPreview(); })" Type="number" Min="0" Max="5" Label="Supervisors per slot" />
+                </div>
+            </div>
+            <p class="form-hint">The lists rotate in the order shown and wrap round. Supervisors take the close-out register and read the reports.</p>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <QSelect TValue="ReportCadence?" TItem="ReportCadence?" @bind-Value="@gen.ReportCadence" Items="@CadenceOptions" TextSelector="@(c => c == null ? "Policy default for the slot length" : CadenceLabel(c.Value))" ValueSelector="@(c => c)" Label="Duty reports" />
+                </div>
+                <div class="form-group rota-checks">
+                    @if (gen.Span == RotaSpan.Day)
+                    {
+                        <QCheckbox Value="@gen.SkipWeekends" ValueChanged="@(v => { gen.SkipWeekends = v; ResetPreview(); })" Label="Skip Saturdays and Sundays" />
+                    }
+                    <QCheckbox Value="@gen.SkipHolidays" ValueChanged="@(v => { gen.SkipHolidays = v; ResetPreview(); })" Label="Skip slots outside term" />
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="form-hint">Continues the rotation from the last slot: same length, times, people per slot and report cadence, next person in turn.</p>
+            <QInput TValue="int" Value="@extendSlots" ValueChanged="@(v => { extendSlots = v; ResetPreview(); })" Type="number" Min="1" Max="60" Label="Add slots" />
+        }
+
+        @if (preview != null)
+        {
+            <h4 class="rota-preview__head">
+                @preview.Slots.Count slot@(preview.Slots.Count == 1 ? "" : "s")
+                @if (preview.Skipped > 0) { <small>· @preview.Skipped skipped (weekends or outside term)</small> }
+                <small>· reports @CadenceLabel(preview.ReportCadence).ToLowerInvariant()</small>
+            </h4>
+            <div class="table-wrap">
+                <table class="data-table q-stack rota-preview">
+                    <thead><tr><th>Slot</th><th>On duty</th><th>Supervised by</th><th>Checks</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in preview.Slots)
+                        {
+                            <tr>
+                                <td>@QDateFormat.DD(Local(p.StartsAt))@(Local(p.EndsAt).Date != Local(p.StartsAt).Date ? $" – {QDateFormat.DD(Local(p.EndsAt))}" : "")</td>
+                                <td>@string.Join(", ", p.Names)</td>
+                                <td>@(p.SupervisorNames.Any() ? string.Join(", ", p.SupervisorNames) : "—")</td>
+                                <td>
+                                    @if (!p.Warnings.Any()) { <QChip Text="Clear" Variant="success" Size="sm" /> }
+                                    @foreach (var w in p.Warnings) { <div class="rota-warn"><QIcon Name="exclamation-triangle-fill" Size="sm" /> @w.Message</div> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="form-hint">Warnings do not stop the rota — you decide. Everyone placed is told, and reminded before their duty.</p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => showGenerate = false)" />
+        <QButton Text="Preview" Icon="eye" Variant="secondary" Loading="@busy" OnClick="@PreviewAsync" />
+        <QButton Text="@(preview == null ? "Create" : $"Create {preview.Slots.Count} slot{(preview.Slots.Count == 1 ? "" : "s")}")" Icon="check-lg" Variant="primary" Loading="@busy"
+                 Disabled="@(preview == null || preview.Slots.Count == 0)" OnClick="@CommitAsync" />
+    </FooterContent>
+</QModal>
+
+@* ---- Edit or create one slot --------------------------------------------------------------------- *@
+<QModal @bind-Visible="showEditor" Title="@(editingId == null ? "New rota slot" : "Edit rota slot")" Icon="pencil" Size="lg">
+    <ChildContent>
+        <div class="form-row">
+            <div class="form-group"><QInput TValue="string" @bind-Value="@slotForm.Title" Label="Title" MaxLength="200" Required="true" /></div>
+            <div class="form-group"><QInput TValue="string" @bind-Value="@slotForm.Location" Label="Location" MaxLength="200" /></div>
+        </div>
+        <div class="form-group">
+            <QSelect TValue="Guid" TItem="PerformanceParameterDto" @bind-Value="@slotForm.ParameterId" Items="@dutyParameters"
+                     TextSelector="@(p => p.Name)" ValueSelector="@(p => p.Id)" Label="Scored as" HelperText="The supervisor's close-out writes a record on this parameter." />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <div class="q-datetime-pair">
+                    <QDatePicker Value="@slotStart" ValueChanged="@(d => { slotStart = d; warnings = null; })" Label="Starts" Required="true" />
+                    <QDatePicker Value="@slotStart" ValueChanged="@(d => { slotStart = d; warnings = null; })" ShowTime="true" Label="Time" />
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="q-datetime-pair">
+                    <QDatePicker Value="@slotEnd" ValueChanged="@(d => { slotEnd = d; warnings = null; })" Label="Ends" Required="true" Min="@slotStart" />
+                    <QDatePicker Value="@slotEnd" ValueChanged="@(d => { slotEnd = d; warnings = null; })" ShowTime="true" Label="Time" />
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@slotPeople" SelectedValuesChanged="@(v => { slotPeople = v.ToList(); warnings = null; })"
+                              Items="@staff" ValueSelector="@(m => m.UserId)" TextSelector="@(m => m.FullName)" Label="On duty" Required="true" />
+            </div>
+            <div class="form-group">
+                <QMultiSelect TValue="Guid" TItem="StaffMemberDto" SelectedValues="@slotSupervisors" SelectedValuesChanged="@(v => { slotSupervisors = v.ToList(); warnings = null; })"
+                              Items="@staff" ValueSelector="@(m => m.UserId)" TextSelector="@(m => m.FullName)" Label="Administrators on duty" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <QSelect TValue="ReportCadence?" TItem="ReportCadence?" @bind-Value="@slotForm.ReportCadence" Items="@CadenceOptions" TextSelector="@(c => c == null ? "Policy default for the slot length" : CadenceLabel(c.Value))" ValueSelector="@(c => c)" Label="Duty reports" />
+            </div>
+            <div class="form-group"><QInput TValue="string" @bind-Value="@slotForm.ReportDueLocalTime" Type="time" Label="Reports due at" HelperText="Blank uses the policy time." /></div>
+        </div>
+        @if (warnings is { Count: > 0 })
+        {
+            <div class="rota-warnings" role="alert">
+                <strong>Check before saving</strong>
+                @foreach (var w in warnings) { <div class="rota-warn"><QIcon Name="exclamation-triangle-fill" Size="sm" /> @w.Message</div> }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showEditor = false)" />
+        <QButton Text="@(warnings is { Count: > 0 } ? "Save anyway" : "Save")" Icon="check-lg" Variant="primary" Loading="@busy" OnClick="@SaveSlotAsync" />
+    </FooterContent>
+</QModal>
+
+@* ---- Swap ------------------------------------------------------------------------------------------ *@
+<QModal @bind-Visible="showSwap" Title="Swap two people" Icon="arrow-left-right" Size="md">
+    <ChildContent>
+        @if (swapFrom is { } from)
+        {
+            <p class="form-hint">@from.Title, @SpanText(from). Each person moves to the other's slot, both are told, and so is each slot's supervisor.</p>
+            <div class="form-group">
+                <QSelect TValue="Guid" TItem="PersonOption" @bind-Value="@swapFirstUser" Items="@People(from).ToList()" TextSelector="@(p => p.Name)" ValueSelector="@(p => p.Id)" Label="Moves out of this slot" />
+            </div>
+            <div class="form-group">
+                <QSelect TValue="Guid" TItem="StaffDutyDto" Value="@swapSecondDuty" ValueChanged="@(v => { swapSecondDuty = v; swapSecondUser = Guid.Empty; })" Items="@SwapCandidates" TextSelector="@(d => $"{d.Title}, {SpanText(d)} — {string.Join(", ", d.ExpectedNames)}")" ValueSelector="@(d => d.Id)" Label="Swaps with a person on" Placeholder="@(SwapCandidates.Any() ? "Choose a slot" : "No other upcoming slots in the next 90 days")" />
+            </div>
+            @if (swapCandidates.FirstOrDefault(d => d.Id == swapSecondDuty) is { } other)
+            {
+                <div class="form-group">
+                    <QSelect TValue="Guid" TItem="PersonOption" @bind-Value="@swapSecondUser" Items="@People(other).ToList()" TextSelector="@(p => p.Name)" ValueSelector="@(p => p.Id)" Label="Person" />
+                </div>
+            }
+            <QInput TValue="string" @bind-Value="@swapReason" Label="Reason (optional)" MaxLength="500" Placeholder="e.g. Sports day away fixture" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSwap = false)" />
+        <QButton Text="Swap" Icon="arrow-left-right" Variant="primary" Loading="@busy" Disabled="@(swapFirstUser == Guid.Empty || swapSecondDuty == Guid.Empty || swapSecondUser == Guid.Empty)" OnClick="@SwapAsync" />
+    </FooterContent>
+</QModal>
+
+<ConfirmDialog @bind-IsVisible="showCancelSeries" Title="Cancel this rota?"
+               Message="@($"Every upcoming slot of \"{cancelSeriesTarget?.Title}\" is cancelled and its reminders stop. Slots already under way or closed out are kept.")"
+               ConfirmText="Cancel upcoming slots" ConfirmButtonClass="btn-danger" OnClose="@CancelSeriesAsync" />
+
+<style>
+    .rota-nav { display: flex; align-items: center; gap: var(--q-row-gap, 8px); flex-wrap: wrap; }
+    .rota-nav__label { font-size: 14px; min-width: 150px; text-align: center; }
+    @@media (max-width: 640px) { .rota-nav { flex-wrap: nowrap; width: 100%; justify-content: space-between; } .rota-nav__label { min-width: 0; font-size: 13px; } }
+    .rota-fair { margin: 12px 0; }
+    .rota-week { margin-top: 12px; }
+    .rota-slot { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 5px 7px; margin-bottom: 4px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit; font-size: 12.5px; cursor: pointer; }
+    .rota-slot:hover { border-color: var(--qm-primary); }
+    .rota-slot--mine { border-left: 3px solid var(--qm-primary); }
+    .rota-slot__people { display: flex; flex-direction: column; gap: 2px; }
+    .rota-person { display: inline-flex; align-items: center; gap: 4px; }
+    .rota-ack { color: var(--qm-success); }
+    .rota-noack { color: var(--qm-text-muted); }
+    .rota-slot__sup { font-size: 11.5px; color: var(--qm-text-muted); }
+    .rota-chip { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 10px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit; font-size: 13px; cursor: pointer; text-align: left; max-width: 100%; }
+    .rota-chip:hover { border-color: var(--qm-primary); }
+    .rota-chip__people { color: var(--qm-text-secondary); }
+    .rota-facts { display: grid; gap: 10px; margin: 0; }
+    .rota-facts > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; }
+    .rota-facts dt { font-size: 12px; color: var(--qm-text-muted); }
+    .rota-facts dd { margin: 0; font-size: 13.5px; }
+    .rota-people { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .rota-people li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .rota-muted { color: var(--qm-text-muted); font-size: 12px; }
+    .rota-reports__head { margin: 14px 0 6px; font-size: 13px; font-family: var(--qm-font-display); }
+    .rota-reports { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .rota-reports li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .rota-ack-cta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .rota-modal-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .rota-order { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 8px 0; }
+    .rota-order__col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .rota-order__list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
+    .rota-order__list li { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--qm-border); font-size: 13px; }
+    .rota-order__list li:last-child { border-bottom: none; }
+    .rota-order__n { width: 20px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
+    .rota-order__name { flex: 1 1 auto; min-width: 0; }
+    .rota-checks { display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; }
+    .rota-preview__head { margin: 16px 0 8px; font-size: 14px; }
+    .rota-preview__head small { font-weight: 400; color: var(--qm-text-muted); }
+    .rota-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; color: var(--qm-warning); }
+    .rota-warnings { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); display: flex; flex-direction: column; gap: 4px; }
+    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
+    .admin-page .q-card { margin-top: 12px; }
+</style>
+
+@code {
+    private bool isLoading = true, canManage, canViewRecords, busy, onlyMine;
+    private Guid branchId, me;
+    private string view = "week";
+    private DateOnly anchor = DateOnly.FromDateTime(DateTime.Today);
+    private List<StaffDutyDto> slots = new();
+    private RotaFairnessDto? fairness;
+    private List<StaffMemberDto> staff = new();
+    private bool staffUnavailable, lookupsLoaded;
+    private List<PerformanceParameterDto> dutyParameters = new();
+
+    private bool showSlot;
+    private StaffDutyDto? selected;
+
+    // Generate / extend
+    private bool showGenerate;
+    private StaffDutyDto? extendSeries;
+    private int extendSlots = 4;
+    private GenerateRotaRequest gen = new();
+    private DateTime? genStart;
+    private List<Guid> genStaff = new(), genSupervisors = new();
+    private RotaGenerateResultDto? preview;
+
+    // Slot editor
+    private bool showEditor;
+    private Guid? editingId;
+    private SaveStaffDutyRequest slotForm = new();
+    private DateTime? slotStart, slotEnd;
+    private List<Guid> slotPeople = new(), slotSupervisors = new();
+    private List<RotaWarningDto>? warnings;
+
+    // Swap
+    private bool showSwap;
+    private StaffDutyDto? swapFrom;
+    private List<StaffDutyDto> swapCandidates = new();
+    private Guid swapFirstUser, swapSecondDuty, swapSecondUser;
+    private string? swapReason;
+
+    private bool showCancelSeries;
+    private StaffDutyDto? cancelSeriesTarget;
+
+    private sealed record SlotDay(StaffDutyDto Slot, DateOnly Day);
+
+    private static readonly IReadOnlyList<QTab> ViewTabs = new List<QTab> { new("week", "Week", "calendar-week"), new("month", "Month", "calendar-month") };
+    private static readonly IReadOnlyList<RotaSpan> Spans = Enum.GetValues<RotaSpan>();
+    private static readonly IReadOnlyList<ReportCadence?> CadenceOptions = new ReportCadence?[] { null }.Concat(Enum.GetValues<ReportCadence>().Select(c => (ReportCadence?)c)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        canManage = await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        canViewRecords = await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView);
+        me = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        lookupsLoaded = false;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    // ---- Loading ----------------------------------------------------------------------------------
+
+    private (DateOnly From, DateOnly To) Window()
+    {
+        if (view == "week")
+        {
+            var monday = anchor.AddDays(-(((int)anchor.DayOfWeek + 6) % 7));
+            return (monday, monday.AddDays(6));
+        }
+        var first = new DateOnly(anchor.Year, anchor.Month, 1);
+        var last = first.AddMonths(1).AddDays(-1);
+        return (first.AddDays(-(((int)first.DayOfWeek + 6) % 7)), last.AddDays(6 - (((int)last.DayOfWeek + 6) % 7)));
+    }
+
+    private async Task LoadAsync()
+    {
+        if (branchId == Guid.Empty) { isLoading = false; slots = new(); return; }
+        isLoading = true;
+        var (from, to) = Window();
+        try
+        {
+            slots = await StaffApi.GetDutiesAsync(branchId, ToUtc(from.ToDateTime(TimeOnly.MinValue)), ToUtc(to.ToDateTime(TimeOnly.MaxValue)), DutyKind.Rota);
+        }
+        catch (Exception ex)
+        {
+            slots = new();
+            Toast.Notify(ToastSeverity.Error, "Could not load the rota", ex.Message);
+        }
+        if (canManage || canViewRecords)
+        {
+            try { fairness = await StaffApi.GetRotaFairnessAsync(branchId); }
+            catch { fairness = null; }
+        }
+        isLoading = false;
+    }
+
+    private async Task EnsureLookupsAsync()
+    {
+        if (lookupsLoaded) return;
+        try
+        {
+            staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+            staffUnavailable = false;
+        }
+        catch
+        {
+            staff = new();
+            staffUnavailable = true;
+        }
+        try
+        {
+            dutyParameters = (await StaffApi.GetParametersAsync()).Where(p => p.IsActive && p.Kind is ParameterKind.Duty or ParameterKind.Attendance).OrderBy(p => p.SortOrder).ToList();
+        }
+        catch { dutyParameters = new(); }
+        lookupsLoaded = true;
+    }
+
+    private async Task OnViewChanged(string key)
+    {
+        view = key;
+        await LoadAsync();
+    }
+
+    private async Task MoveAsync(int step)
+        => await GoToAsync(view == "week" ? anchor.AddDays(7 * step) : anchor.AddMonths(step));
+
+    private async Task GoToAsync(DateOnly day)
+    {
+        anchor = day;
+        await LoadAsync();
+    }
+
+    // ---- Views ------------------------------------------------------------------------------------
+
+    private IEnumerable<StaffDutyDto> VisibleSlots => slots.Where(s => !onlyMine || IsMine(s));
+
+    private bool IsMine(StaffDutyDto s) => (s.ExpectedUserIds?.Contains(me) ?? false) || s.IsSupervisedByMe;
+
+    private string PeriodLabel
+    {
+        get
+        {
+            var (from, to) = Window();
+            return view == "week" ? $"{QDateFormat.C(from)} – {QDateFormat.D(to)}" : QDateFormat.MYLong(anchor.ToDateTime(TimeOnly.MinValue));
+        }
+    }
+
+    private IReadOnlyList<QWeekGridColumn> WeekColumns
+    {
+        get
+        {
+            var (from, _) = Window();
+            return Enumerable.Range(0, 7).Select(i => from.AddDays(i))
+                .Select(d => new QWeekGridColumn(d.ToString("yyyy-MM-dd"), d.ToString("ddd", System.Globalization.CultureInfo.InvariantCulture), QDateFormat.C(d), d == DateOnly.FromDateTime(DateTime.Today)))
+                .ToList();
+        }
+    }
+
+    private IReadOnlyList<QWeekGridRow> WeekRows
+        => VisibleSlots.Select(s => s.Title).Distinct(StringComparer.Ordinal).OrderBy(t => t).Select(t => new QWeekGridRow(t, t)).ToList();
+
+    private IEnumerable<SlotDay> WeekItems
+    {
+        get
+        {
+            var (from, to) = Window();
+            foreach (var s in VisibleSlots)
+            {
+                var first = DateOnly.FromDateTime(Local(s.StartsAt));
+                var last = DateOnly.FromDateTime(Local(s.EndsAt));
+                for (var d = first < from ? from : first; d <= last && d <= to; d = d.AddDays(1))
+                    yield return new SlotDay(s, d);
+            }
+        }
+    }
+
+    /// <summary>A day of a slot starting within a day with somebody not yet acknowledged is a warning — for the people who can see who.</summary>
+    private QWeekGridCellState WeekCellState(QWeekGridSlot cell)
+    {
+        var inCell = WeekItems.Where(i => i.Slot.Title == cell.RowKey && i.Day.ToString("yyyy-MM-dd") == cell.ColumnKey).Select(i => i.Slot).ToList();
+        if (inCell.Any(s => s.Acknowledgements != null && s.ExpectedUserIds != null && s.StartsAt > DateTime.UtcNow && s.StartsAt < DateTime.UtcNow.AddDays(1) && s.AcknowledgedCount < s.ExpectedUserIds.Count))
+            return QWeekGridCellState.Warning;
+        return inCell.Any(IsMine) ? QWeekGridCellState.Highlight : QWeekGridCellState.None;
+    }
+
+    private IReadOnlyList<QBarItem> FairnessBars => fairness == null
+        ? Array.Empty<QBarItem>()
+        : fairness.Rows.Select(r => new QBarItem(r.FullName, r.OnDutySlots,
+            Count: $"{r.OnDutySlots} on duty{(r.SupervisingSlots > 0 ? $" · {r.SupervisingSlots} supervising" : "")}",
+            Color: r.OverLimit ? "var(--qm-danger)" : null,
+            Hint: r.OverLimit ? "over the limit" : null)).ToList();
+
+    private sealed record PersonOption(Guid Id, string Name);
+
+    private IEnumerable<PersonOption> People(StaffDutyDto s)
+        => (s.ExpectedUserIds ?? new List<Guid>()).Zip(s.ExpectedNames.Concat(Enumerable.Repeat("", 50)), (id, name) => new PersonOption(id, name));
+
+    private static string SpanText(StaffDutyDto s)
+    {
+        var a = Local(s.StartsAt);
+        var b = Local(s.EndsAt);
+        return a.Date == b.Date ? QDateFormat.DD(a) : $"{QDateFormat.C(a)} – {QDateFormat.C(b)}";
+    }
+
+    private string SlotTitle(StaffDutyDto s) => $"{s.Title}: {string.Join(", ", s.ExpectedNames)}, {SpanText(s)}";
+
+    private static string CadenceLabel(ReportCadence c) => c switch
+    {
+        ReportCadence.None => "No reports",
+        ReportCadence.Daily => "Daily",
+        ReportCadence.Weekly => "Weekly",
+        ReportCadence.Monthly => "Monthly",
+        ReportCadence.EndOfDuty => "Once, at the end",
+        _ => c.ToString()
+    };
+
+    private static string SpanLabel(RotaSpan s) => s switch { RotaSpan.Day => "A day", RotaSpan.Week => "A week", _ => "A month" };
+
+    private static DateTime Local(DateTime value) => value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : DateTime.SpecifyKind(value, DateTimeKind.Utc).ToLocalTime();
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+
+    // ---- One slot ---------------------------------------------------------------------------------
+
+    private List<DutyReportSummaryDto>? slotReports;
+
+    private async Task OpenSlot(StaffDutyDto s)
+    {
+        selected = s;
+        slotReports = null;
+        showSlot = true;
+        if (s.ReportCadence == ReportCadence.None || s.StartsAt > DateTime.UtcNow || !(canManage || canViewRecords || s.IsSupervisedByMe)) return;
+        try
+        {
+            var q = await StaffApi.GetDutyReportQueueAsync(branchId, s.StartsAt.AddDays(-1), s.EndsAt.AddDays(40), null, s.Id);
+            slotReports = q.Items;
+        }
+        catch { slotReports = null; }
+    }
+
+    private async Task AcknowledgeAsync(StaffDutyDto s)
+    {
+        busy = true;
+        try
+        {
+            selected = await StaffApi.AcknowledgeDutyAsync(branchId, s.Id);
+            Toast.Notify(ToastSeverity.Success, "Acknowledged", "The reminders for this duty have stopped.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not acknowledge", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task CancelSlotAsync(StaffDutyDto s)
+    {
+        try
+        {
+            await StaffApi.CancelDutyAsync(branchId, s.Id);
+            Toast.Notify(ToastSeverity.Success, "Slot cancelled", SpanText(s));
+            showSlot = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not cancel the slot", ex.Message); }
+    }
+
+    private async Task CancelSeriesAsync(bool confirmed)
+    {
+        if (!confirmed || cancelSeriesTarget?.SeriesId is not { } seriesId) return;
+        try
+        {
+            var n = await StaffApi.CancelRotaSeriesAsync(branchId, seriesId);
+            Toast.Notify(ToastSeverity.Success, "Rota cancelled", $"{n} upcoming slot(s) cancelled.");
+            showSlot = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not cancel the rota", ex.Message); }
+    }
+
+    // ---- Generate / extend ------------------------------------------------------------------------
+
+    private async Task OpenGenerate()
+    {
+        await EnsureLookupsAsync();
+        extendSeries = null;
+        preview = null;
+        var nextMonday = DateTime.Today.AddDays(7 - (((int)DateTime.Today.DayOfWeek + 6) % 7));
+        genStart = nextMonday;
+        gen = new GenerateRotaRequest { Title = "Teacher on duty", Span = RotaSpan.Week, Slots = 4 };
+        genStaff = new();
+        genSupervisors = new();
+        showGenerate = true;
+    }
+
+    private void OpenExtend(StaffDutyDto s)
+    {
+        extendSeries = s;
+        extendSlots = 4;
+        preview = null;
+        showSlot = false;
+        showGenerate = true;
+    }
+
+    private void ResetPreview() => preview = null;
+
+    private GenerateRotaRequest BuildRequest(bool previewOnly)
+    {
+        var request = gen with
+        {
+            StartDate = DateOnly.FromDateTime(genStart ?? DateTime.Today),
+            StaffUserIds = genStaff.ToList(),
+            SupervisorUserIds = genSupervisors.ToList(),
+            ReportDueLocalTime = string.IsNullOrWhiteSpace(gen.ReportDueLocalTime) ? null : gen.ReportDueLocalTime[..Math.Min(5, gen.ReportDueLocalTime.Length)],
+            DayStartLocalTime = gen.DayStartLocalTime.Length > 5 ? gen.DayStartLocalTime[..5] : gen.DayStartLocalTime,
+            DayEndLocalTime = gen.DayEndLocalTime.Length > 5 ? gen.DayEndLocalTime[..5] : gen.DayEndLocalTime,
+            Preview = previewOnly
+        };
+        if (request.SupervisorUserIds.Count == 0) request.SupervisorsPerSlot = 0;
+        return request;
+    }
+
+    private async Task PreviewAsync()
+    {
+        busy = true;
+        try
+        {
+            preview = extendSeries?.SeriesId is { } seriesId
+                ? await StaffApi.ExtendRotaAsync(branchId, seriesId, new ExtendRotaRequest { Slots = extendSlots, Preview = true })
+                : await StaffApi.GenerateRotaAsync(branchId, BuildRequest(previewOnly: true));
+        }
+        catch (Exception ex) { preview = null; Toast.Notify(ToastSeverity.Error, "Could not plan the rota", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task CommitAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = extendSeries?.SeriesId is { } seriesId
+                ? await StaffApi.ExtendRotaAsync(branchId, seriesId, new ExtendRotaRequest { Slots = extendSlots, Preview = false })
+                : await StaffApi.GenerateRotaAsync(branchId, BuildRequest(previewOnly: false));
+            Toast.Notify(ToastSeverity.Success, extendSeries == null ? "Rota created" : "Rota extended", $"{result.Slots.Count} slot(s). Everyone placed has been told.");
+            showGenerate = false;
+            if (result.Slots.FirstOrDefault() is { } first) anchor = DateOnly.FromDateTime(Local(first.StartsAt));
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not create the rota", ex.Message); }
+        finally { busy = false; }
+    }
+
+    /// <summary>Keeps the order people were added in; QMultiSelect reports its own order, which is not the rotation.</summary>
+    private static List<Guid> MergeOrder(List<Guid> current, IEnumerable<Guid> selected)
+    {
+        var set = selected.ToHashSet();
+        return current.Where(set.Contains).Concat(selected.Where(id => !current.Contains(id))).ToList();
+    }
+
+    private RenderFragment OrderList(List<Guid> list, Action<List<Guid>> set) => __builder =>
+    {
+        if (list.Count == 0) return;
+        <ol class="rota-order__list">
+            @for (var i = 0; i < list.Count; i++)
+            {
+                var index = i;
+                var id = list[i];
+                <li>
+                    <span class="rota-order__n">@(index + 1)</span>
+                    <span class="rota-order__name">@(staff.FirstOrDefault(m => m.UserId == id)?.FullName ?? "Unknown")</span>
+                    <QButton Icon="chevron-up" Variant="ghost" Size="sm" Title="Earlier" Disabled="@(index == 0)" OnClick="@(() => { var l = list.ToList(); (l[index - 1], l[index]) = (l[index], l[index - 1]); set(l); ResetPreview(); })" />
+                    <QButton Icon="chevron-down" Variant="ghost" Size="sm" Title="Later" Disabled="@(index == list.Count - 1)" OnClick="@(() => { var l = list.ToList(); (l[index + 1], l[index]) = (l[index], l[index + 1]); set(l); ResetPreview(); })" />
+                    <QButton Icon="x-lg" Variant="ghost" Size="sm" Title="Remove" OnClick="@(() => { var l = list.ToList(); l.RemoveAt(index); set(l); ResetPreview(); })" />
+                </li>
+            }
+        </ol>
+    };
+
+    // ---- Slot editor -------------------------------------------------------------------------------
+
+    private async Task OpenNewSlot()
+    {
+        await EnsureLookupsAsync();
+        editingId = null;
+        var parameterId = Guid.Empty;
+        try { parameterId = await StaffApi.GetRotaParameterIdAsync(branchId); } catch { }
+        if (dutyParameters.All(p => p.Id != parameterId)) { lookupsLoaded = false; await EnsureLookupsAsync(); }
+        slotForm = new SaveStaffDutyRequest { Kind = DutyKind.Rota, Title = "Teacher on duty", ParameterId = parameterId };
+        var start = DateTime.Today.AddDays(1).AddHours(7);
+        slotStart = start;
+        slotEnd = start.AddHours(11);
+        slotPeople = new();
+        slotSupervisors = new();
+        warnings = null;
+        showEditor = true;
+    }
+
+    private async Task OpenEditSlot(StaffDutyDto s)
+    {
+        await EnsureLookupsAsync();
+        editingId = s.Id;
+        slotForm = new SaveStaffDutyRequest
+        {
+            Kind = DutyKind.Rota,
+            Title = s.Title,
+            Location = s.Location,
+            Description = s.Description,
+            ParameterId = s.ParameterId,
+            ReportCadence = s.ReportCadence,
+            ReportDueLocalTime = s.ReportDueLocalTime
+        };
+        slotStart = Local(s.StartsAt);
+        slotEnd = Local(s.EndsAt);
+        slotPeople = s.ExpectedUserIds?.ToList() ?? new();
+        slotSupervisors = s.SupervisorUserIds.ToList();
+        warnings = null;
+        showSlot = false;
+        showEditor = true;
+    }
+
+    private async Task SaveSlotAsync()
+    {
+        if (string.IsNullOrWhiteSpace(slotForm.Title) || slotStart == null || slotEnd == null || slotEnd <= slotStart || slotPeople.Count == 0 || slotForm.ParameterId == Guid.Empty)
+        {
+            Toast.Notify(ToastSeverity.Warning, "Fill in the slot", "A title, a parameter, a start before the end, and at least one person on duty.");
+            return;
+        }
+        busy = true;
+        try
+        {
+            // First press checks; a second press with the warnings on screen saves anyway (warnings, never refusals).
+            if (warnings == null)
+            {
+                warnings = await StaffApi.CheckRotaSlotAsync(branchId, new CheckRotaSlotRequest
+                {
+                    StartsAt = ToUtc(slotStart.Value), EndsAt = ToUtc(slotEnd.Value),
+                    UserIds = slotPeople, SupervisorUserIds = slotSupervisors, ExcludeDutyId = editingId
+                });
+                if (warnings.Count > 0) return;
+            }
+
+            slotForm.StartsAt = ToUtc(slotStart.Value);
+            slotForm.EndsAt = ToUtc(slotEnd.Value);
+            slotForm.ExpectedUserIds = slotPeople.ToList();
+            slotForm.SupervisorUserIds = slotSupervisors.ToList();
+            slotForm.RecorderUserIds = new();
+            if (!string.IsNullOrWhiteSpace(slotForm.ReportDueLocalTime) && slotForm.ReportDueLocalTime.Length > 5) slotForm.ReportDueLocalTime = slotForm.ReportDueLocalTime[..5];
+            if (editingId is { } id) await StaffApi.UpdateDutyAsync(branchId, id, slotForm);
+            else await StaffApi.CreateDutyAsync(branchId, slotForm);
+            Toast.Notify(ToastSeverity.Success, editingId == null ? "Slot added" : "Slot saved", "Anyone newly placed on it has been told.");
+            showEditor = false;
+            anchor = DateOnly.FromDateTime(slotStart.Value);
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save the slot", ex.Message); }
+        finally { busy = false; }
+    }
+
+    // ---- Swap -------------------------------------------------------------------------------------
+
+    private IReadOnlyList<StaffDutyDto> SwapCandidates => swapCandidates.Where(d => d.Id != swapFrom?.Id).ToList();
+
+    private async Task OpenSwap(StaffDutyDto s)
+    {
+        swapFrom = s;
+        swapFirstUser = s.ExpectedUserIds?.FirstOrDefault() ?? Guid.Empty;
+        swapSecondDuty = Guid.Empty;
+        swapSecondUser = Guid.Empty;
+        swapReason = null;
+        showSlot = false;
+        try
+        {
+            swapCandidates = (await StaffApi.GetDutiesAsync(branchId, DateTime.UtcNow, DateTime.UtcNow.AddDays(90), DutyKind.Rota))
+                .Where(d => d.IsActive && !d.RegisterClosedAt.HasValue && d.ExpectedUserIds is { Count: > 0 })
+                .OrderBy(d => d.StartsAt).ToList();
+        }
+        catch (Exception ex) { swapCandidates = new(); Toast.Notify(ToastSeverity.Error, "Could not load other slots", ex.Message); }
+        showSwap = true;
+    }
+
+    private async Task SwapAsync()
+    {
+        if (swapFrom == null) return;
+        busy = true;
+        try
+        {
+            await StaffApi.SwapRotaAsync(branchId, new SwapRotaRequest
+            {
+                FirstDutyId = swapFrom.Id, FirstUserId = swapFirstUser,
+                SecondDutyId = swapSecondDuty, SecondUserId = swapSecondUser,
+                Reason = swapReason
+            });
+            Toast.Notify(ToastSeverity.Success, "Swapped", "Both people and the supervisors have been told.");
+            showSwap = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not swap", ex.Message); }
+        finally { busy = false; }
+    }
+}

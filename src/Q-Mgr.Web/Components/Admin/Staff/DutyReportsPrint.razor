@@ -1,0 +1,232 @@
+@page "/admin/staff/duty-reports/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    A period's duty report pack on A4 (plan §4.3): every SUBMITTED or REVIEWED report the caller may read, in date order,
+    with the sections, summary and review trail. Linked welfare records appear only as the API rendered them for this
+    reader — a pack is never a side door to a child's file — and unwritten reports are listed, not invented.
+*@
+
+<PageTitle>Duty Report Pack - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="drp-sheet" Title="@($"Duty reports — {RangeText}")" Class="drp-sheet"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to duty reports" OnBack="@(() => Navigation.NavigateTo("/admin/staff/duty-reports"))"
+             CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
+    @if (!isLoading && loadError == null)
+    {
+        <header class="drp-head">
+            <div class="drp-head__brand">
+                @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl)) { <img class="drp-logo" src="@branding!.LogoUrl" alt="" /> }
+                <div>
+                    <div class="drp-org">@OrganizationName</div>
+                    <div class="drp-doc">Duty report pack</div>
+                </div>
+            </div>
+            <div class="drp-head__meta">
+                <div><span>Branch</span><strong>@(BranchState.CurrentBranchName ?? "—")</strong></div>
+                <div><span>Due</span><strong>@RangeText</strong></div>
+                <div><span>Generated</span><strong>@QDateFormat.Long(DateTime.Now)</strong></div>
+                @if (!string.IsNullOrWhiteSpace(generatedBy)) { <div><span>By</span><strong>@generatedBy</strong></div> }
+            </div>
+        </header>
+
+        @if (queue != null)
+        {
+            @if (queue.ScopedToDepartments.Any()) { <p class="drp-scope">These reports cover <strong>@string.Join(", ", queue.ScopedToDepartments)</strong> only.</p> }
+            <section>
+                <h2>Summary</h2>
+                <table class="drp-table">
+                    <tbody>
+                        <tr><td>Submitted on time</td><td class="drp-num">@(queue.OnTimePercent.HasValue ? $"{queue.OnTimePercent}%" : "—")</td></tr>
+                        <tr><td>Overdue, not written</td><td class="drp-num">@queue.Overdue</td></tr>
+                        <tr><td>Awaiting review</td><td class="drp-num">@queue.AwaitingReview</td></tr>
+                        <tr><td>Returned for changes</td><td class="drp-num">@queue.Returned</td></tr>
+                    </tbody>
+                </table>
+            </section>
+
+            var missing = queue.Items.Where(i => i.Status is DutyReportStatus.Draft or DutyReportStatus.Returned && i.IsOverdue).ToList();
+            @if (missing.Any())
+            {
+                <section>
+                    <h2>Not written</h2>
+                    <table class="drp-table">
+                        <thead><tr><th>Duty</th><th>Period</th><th>Author</th><th>Due</th></tr></thead>
+                        <tbody>
+                            @foreach (var m in missing.OrderBy(m => m.DueAt))
+                            {
+                                <tr><td>@m.DutyTitle</td><td>@DutyReportPage.PeriodText(m)</td><td>@m.AuthorName</td><td>@QDateFormat.LocalDT(m.DueAt)</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </section>
+            }
+        }
+
+        @foreach (var r in reports.OrderBy(r => r.PeriodStart).ThenBy(r => r.DutyTitle).ThenBy(r => r.AuthorRole))
+        {
+            <section class="drp-report">
+                <h2>@r.DutyTitle — @DutyReportPage.PeriodText(r)</h2>
+                <p class="drp-muted">
+                    @r.AuthorName@(r.AuthorRole == DutyReportAuthorRole.Supervisor ? " (administrator on duty)" : "") ·
+                    @DutyReportPage.StatusLabel(r.Status) · submitted @QDateFormat.LocalDT(r.SubmittedAt)@(r.SubmittedLate ? " (late)" : "")
+                    @(r.Visibility == WelfareVisibility.Confidential ? " · CONFIDENTIAL" : "")
+                </p>
+                <dl class="drp-answers">
+                    @foreach (var section in r.Template)
+                    {
+                        <div><dt>@section.Title</dt><dd>@(r.Sections.TryGetValue(section.Key, out var a) && !string.IsNullOrWhiteSpace(a) ? a : "—")</dd></div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(r.Summary)) { <div><dt>Summary</dt><dd>@r.Summary</dd></div> }
+                </dl>
+                @if (r.LinkedRecords.Any() || r.HiddenLinkedCount > 0)
+                {
+                    <p class="drp-muted">Linked records: @(string.Join("; ", r.LinkedRecords.Select(l => $"{l.StudentName} — {l.CategoryName}, {QDateFormat.D(l.OccurredAt)}")))@(r.HiddenLinkedCount > 0 ? $"{(r.LinkedRecords.Any() ? "; " : "")}{r.HiddenLinkedCount} not shown to you" : "")</p>
+                }
+                @if (r.Notes.Any())
+                {
+                    <p class="drp-muted drp-trail">@string.Join(" · ", r.Notes.Select(n => $"{n.Kind} by {n.AuthorName} {QDateFormat.CDT(n.CreatedAt.ToLocalTime())}"))</p>
+                }
+            </section>
+        }
+        @if (!reports.Any()) { <p class="drp-muted">No submitted reports are due in this period.</p> }
+
+        <footer class="drp-foot">
+            <p><strong>Internal.</strong> Duty reports are read by the administrators on duty and the heads who review them. This pack contains only the reports the person who generated it may read.</p>
+        </footer>
+    }
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="drp-state no-print"><QSpinner Size="lg" /><span>Building the pack...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="drp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .drp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .drp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid #14110f; padding-bottom: 10px; }
+    .drp-head__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .drp-logo { height: 42px; width: auto; max-width: 150px; object-fit: contain; }
+    .drp-org { font-family: var(--qm-font-display, inherit); font-size: 15pt; font-weight: 700; line-height: 1.15; }
+    .drp-doc { font-size: 10pt; letter-spacing: .08em; text-transform: uppercase; color: #5b524d; }
+    .drp-head__meta { display: flex; flex-direction: column; gap: 2px; font-size: 9pt; text-align: right; }
+    .drp-head__meta span { color: #5b524d; margin-right: 6px; }
+    .drp-scope { margin: 12px 0 0; padding: 6px 10px; border: 1px solid #14110f; border-left-width: 4px; font-size: 9.5pt; }
+    .drp-sheet h2 { font-family: var(--qm-font-display, inherit); font-size: 12pt; margin: 20px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #c9c0bb; }
+    .drp-table { width: 100%; max-width: 640px; border-collapse: collapse; font-size: 9.5pt; }
+    .drp-table th { text-align: left; font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; border-bottom: 1px solid #c9c0bb; padding: 5px 7px; }
+    .drp-table td { border-bottom: 1px solid #e3dcd8; padding: 5px 7px; vertical-align: top; }
+    .drp-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .drp-answers { margin: 6px 0 0; display: grid; gap: 6px; font-size: 9.5pt; }
+    .drp-answers dt { font-size: 8pt; letter-spacing: .05em; text-transform: uppercase; color: #5b524d; }
+    .drp-answers dd { margin: 0; white-space: pre-wrap; }
+    .drp-muted { color: #5b524d; font-size: 9pt; margin: 4px 0 0; }
+    .drp-trail { font-size: 8.5pt; }
+    .drp-foot { margin-top: 22px; padding-top: 10px; border-top: 2px solid #14110f; font-size: 8.5pt; }
+    @@media print {
+        .drp-report { break-inside: avoid; page-break-inside: avoid; }
+        .drp-sheet h2 { break-after: avoid; page-break-after: avoid; }
+    }
+    @@media (max-width: 480px) { .drp-head__meta { text-align: left; } }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "from")] public string? FromQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public string? ToQuery { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private DutyReportQueueDto? queue;
+    private List<DutyReportDto> reports = new();
+    private OrganizationBrandingDto? branding;
+    private DateOnly from, to;
+
+    private string RangeText => QDateFormat.Range(from, to);
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Duty reports";
+
+    protected override async Task OnInitializedAsync()
+    {
+        from = DateOnly.TryParse(FromQuery, out var f) ? f : DateOnly.FromDateTime(DateTime.Today.AddDays(-7));
+        to = DateOnly.TryParse(ToQuery, out var t) ? t : DateOnly.FromDateTime(DateTime.Today);
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await PermissionService.HasPermissionAsync(Permissions.StaffDutyReportsView)
+                         && await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
+            if (organizationId != Guid.Empty)
+                branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
+
+            queue = await StaffApi.GetDutyReportQueueAsync(branchId, ToUtc(from.ToDateTime(TimeOnly.MinValue)), ToUtc(to.ToDateTime(TimeOnly.MaxValue)));
+            foreach (var item in queue.Items.Where(i => i.Status is DutyReportStatus.Submitted or DutyReportStatus.Reviewed).Take(80))
+            {
+                try { reports.Add(await StaffApi.GetDutyReportAsync(branchId, item.Id)); }
+                catch { /* one the caller can no longer read is left out, never shown as an error */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the pack: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static DateTime ToUtc(DateTime local) => DateTime.SpecifyKind(local, DateTimeKind.Local).ToUniversalTime();
+
+    private async Task Print()
+    {
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty) return;
+        isPublishing = true;
+        try
+        {
+            var name = $"Duty reports — {BranchState.CurrentBranchName} ({RangeText})";
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "drp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"duty-reports-{from:yyyy-MM-dd}-{to:yyyy-MM-dd}.pdf",
+                DocumentName = name,
+                Summary = $"Duty report pack for {BranchState.CurrentBranchName}, due {RangeText}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Duty reports — {BranchState.CurrentBranchName}, {RangeText}{(queue?.ScopedToDepartments.Any() == true ? $" (scoped to {string.Join(", ", queue.ScopedToDepartments)})" : "")}",
+                SubjectNoun = "pack",
+                Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.DutyReports, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF" })
+            }, JS, DocShareApi, Toast, Navigation);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

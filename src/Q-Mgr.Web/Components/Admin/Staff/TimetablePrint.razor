@@ -1,0 +1,246 @@
+@page "/admin/timetable/{Id:guid}/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    A timetable on A4 landscape (plan §6.2 "class / teacher / room / master views and prints"): one page per class,
+    teacher or room, periods down, cycle days across, breaks as bands. Only a version the caller may read is printed —
+    a draft only for a timetable master, as the API decides. The print is logged like every other export (§13.13).
+*@
+
+<PageTitle>Timetable Print - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="ttp-sheet" Title="@DocTitle" Class="ttp-sheet" Landscape="true"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to the timetable" OnBack="@(() => Navigation.NavigateTo($"/admin/timetable?t={Id}"))"
+             CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
+    <ToolbarStart>
+        <QTabs Tabs="@ByTabs" ActiveKey="@by" ActiveKeyChanged="@(k => by = k)" AriaLabel="Print one page per" />
+    </ToolbarStart>
+    <ChildContent>
+        @if (detail != null)
+        {
+            var pages = Pages().ToList();
+            @if (!pages.Any())
+            {
+                <p class="ttp-muted">Nothing to print for this view.</p>
+            }
+            @foreach (var sheet in pages)
+            {
+                <section class="ttp-page">
+                    <header class="ttp-head">
+                        <div class="ttp-head__brand">
+                            @if (!string.IsNullOrWhiteSpace(branding?.LogoUrl)) { <img class="ttp-logo" src="@branding!.LogoUrl" alt="" /> }
+                            <div>
+                                <div class="ttp-org">@OrganizationName</div>
+                                <div class="ttp-doc">@detail.Timetable.Name@(detail.Timetable.Status == TimetableStatus.Draft ? " — DRAFT" : "")</div>
+                            </div>
+                        </div>
+                        <div class="ttp-head__who">
+                            <span>@ByLabel</span>
+                            <strong>@sheet.Label</strong>
+                            <span>@QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)</span>
+                        </div>
+                    </header>
+                    <table class="ttp-grid">
+                        <thead>
+                            <tr>
+                                <th class="ttp-corner">Period</th>
+                                @foreach (var d in Days) { <th>@TimetableCycle.CycleDayLabel(detail.Settings, detail.Timetable.CycleDays, d)</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in TimetableCycle.Rows(detail.Settings))
+                            {
+                                @if (row.Kind != BellPeriodKind.Lesson)
+                                {
+                                    <tr class="ttp-break"><th>@row.Label<small>@row.Start–@row.End</small></th><td colspan="@Days.Count">@row.Label</td></tr>
+                                    continue;
+                                }
+                                <tr>
+                                    <th>@row.Label<small>@row.Start–@row.End</small></th>
+                                    @foreach (var d in Days)
+                                    {
+                                        var inCell = sheet.Lessons.Where(l => l.CycleDay == d && string.Equals(l.PeriodKey, row.Key, StringComparison.OrdinalIgnoreCase)).GroupBy(l => l.GroupId ?? l.Id).ToList();
+                                        var teaching = TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, d, row.Key) != null;
+                                        <td class="@(teaching ? "" : "ttp-none")">
+                                            @foreach (var g in inCell)
+                                            {
+                                                var rows = g.ToList();
+                                                <div class="ttp-lesson">
+                                                    <strong>@rows[0].SubjectCode</strong>
+                                                    <span>@CellLine(rows)</span>
+                                                </div>
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <footer class="ttp-foot">Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}"). Timetables change: the one in Q-Mgr is the current version.</footer>
+                </section>
+            }
+        }
+    </ChildContent>
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="ttp-state no-print"><QSpinner Size="lg" /><span>Building the timetable...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="ttp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .ttp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .ttp-muted { color: #5b524d; }
+    .ttp-page { break-after: page; margin-bottom: 18mm; }
+    .ttp-page:last-child { break-after: auto; margin-bottom: 0; }
+    .ttp-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid #14110f; padding-bottom: 6px; margin-bottom: 8px; }
+    .ttp-head__brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .ttp-logo { height: 34px; width: auto; max-width: 120px; object-fit: contain; }
+    .ttp-org { font-family: var(--qm-font-display, inherit); font-size: 13pt; font-weight: 700; line-height: 1.15; }
+    .ttp-doc { font-size: 9pt; letter-spacing: .06em; text-transform: uppercase; color: #5b524d; }
+    .ttp-head__who { display: flex; flex-direction: column; align-items: flex-end; font-size: 9pt; }
+    .ttp-head__who strong { font-size: 14pt; font-family: var(--qm-font-display, inherit); }
+    .ttp-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8.5pt; }
+    .ttp-grid th, .ttp-grid td { border: 1px solid #8a817c; padding: 3px 4px; vertical-align: top; }
+    .ttp-grid thead th { background: none; font-weight: 700; text-align: left; border-bottom: 2px solid #14110f; }
+    .ttp-grid tbody th { width: 64px; text-align: left; font-weight: 700; }
+    .ttp-corner { width: 64px; }
+    .ttp-grid th small { display: block; font-weight: 400; color: #5b524d; font-size: 7.5pt; }
+    .ttp-break th, .ttp-break td { font-style: italic; color: #5b524d; padding: 1px 4px; }
+    .ttp-break td { text-align: center; letter-spacing: .08em; text-transform: uppercase; font-size: 7.5pt; }
+    .ttp-none { background: repeating-linear-gradient(135deg, transparent 0 5px, #d8d2ce 5px 6px); }
+    .ttp-lesson { display: flex; flex-direction: column; line-height: 1.2; }
+    .ttp-lesson + .ttp-lesson { border-top: 1px dashed #8a817c; margin-top: 2px; padding-top: 2px; }
+    .ttp-lesson span { color: #3a3431; overflow-wrap: anywhere; }
+    .ttp-foot { margin-top: 6px; font-size: 7.5pt; color: #5b524d; }
+    @@media screen and (max-width: 640px) {
+        .ttp-sheet .ttp-grid { display: table; min-width: 640px; }
+        .ttp-sheet .ttp-page { overflow-x: auto; }
+    }
+    @@media print { .ttp-grid tr { break-inside: avoid; } }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [SupplyParameterFromQuery(Name = "by")] public string? ByQuery { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private TimetableDetailDto? detail;
+    private OrganizationBrandingDto? branding;
+    private string by = "class";
+
+    private sealed record PrintPage(string Label, List<TimetableLessonDto> Lessons);
+
+    private static readonly IReadOnlyList<QTab> ByTabs = new List<QTab> { new("class", "Classes"), new("teacher", "Teachers"), new("room", "Rooms") };
+
+    private List<int> Days => detail == null ? new() : Enumerable.Range(1, detail.Timetable.CycleDays).ToList();
+    private string ByLabel => by switch { "teacher" => "Teacher", "room" => "Room", _ => "Class" };
+    private string DocTitle => detail == null ? "Timetable" : $"{detail.Timetable.Name} — by {ByLabel.ToLowerInvariant()}";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Timetable";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ByQuery is "class" or "teacher" or "room") by = ByQuery;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
+            if (organizationId != Guid.Empty)
+            {
+                try { branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId); } catch { branding = null; }
+            }
+            detail = await StaffApi.GetTimetableAsync(branchId, Id);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the timetable: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<PrintPage> Pages()
+    {
+        if (detail == null) return Enumerable.Empty<PrintPage>();
+        var lessons = detail.Lessons;
+        return by switch
+        {
+            "teacher" => lessons.GroupBy(l => l.TeacherUserId).OrderBy(g => g.First().TeacherName, StringComparer.OrdinalIgnoreCase)
+                // A joint lesson prints on the teacher's page with all its classes.
+                .Select(g => new PrintPage(g.First().TeacherName, lessons.Where(l => g.Any(x => x.Id == l.Id) || (l.GroupId != null && g.Any(x => x.GroupId == l.GroupId && x.TeacherUserId == g.Key))).ToList())),
+            "room" => lessons.Where(l => !string.IsNullOrEmpty(l.Room)).GroupBy(l => TimetableCycle.Normalize(l.Room)).OrderBy(g => g.First().Room, StringComparer.OrdinalIgnoreCase)
+                .Select(g => new PrintPage(g.First().Room!, g.ToList())),
+            _ => lessons.GroupBy(l => TimetableCycle.Normalize(l.ClassName)).OrderBy(g => g.First().ClassName, StringComparer.OrdinalIgnoreCase)
+                .Select(g => new PrintPage(g.First().ClassName, g.ToList()))
+        };
+    }
+
+    private string CellLine(List<TimetableLessonDto> rows) => by switch
+    {
+        "teacher" => $"{string.Join(" + ", rows.Select(r => r.ClassName).Distinct())}{Room(rows)}",
+        "room" => $"{string.Join(" + ", rows.Select(r => r.ClassName).Distinct())} · {string.Join(", ", rows.Select(r => r.TeacherName).Distinct())}",
+        _ => $"{string.Join(", ", rows.Select(r => r.TeacherName).Distinct())}{Room(rows)}"
+    };
+
+    private static string Room(List<TimetableLessonDto> rows) => string.IsNullOrEmpty(rows[0].Room) ? "" : $" · {rows[0].Room}";
+
+    private async Task Print()
+    {
+        if (detail != null)
+            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Timetable, DocumentName = DocTitle, Format = "Print", RowCount = Pages().Count() });
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || detail == null) return;
+        isPublishing = true;
+        try
+        {
+            var name = $"{DocTitle} — {BranchState.CurrentBranchName}";
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "ttp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"timetable-{by}-{detail.Timetable.EffectiveFrom:yyyy-MM-dd}.pdf",
+                DocumentName = name,
+                Summary = $"{detail.Timetable.Name}, {QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo)}, one page per {ByLabel.ToLowerInvariant()}. Generated {QDateFormat.D(DateTime.UtcNow)} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Timetable — {BranchState.CurrentBranchName}",
+                SubjectNoun = "timetable",
+                Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Timetable, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF" })
+            }, JS, DocShareApi, Toast, Navigation);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

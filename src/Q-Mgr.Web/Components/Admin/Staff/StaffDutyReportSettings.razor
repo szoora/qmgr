@@ -1,0 +1,136 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+
+@*
+    Duty report settings inside the Scoring Policy page (plan §4.3, §15 decisions 1–2): the default cadence per slot
+    length, the due time, whether the teacher on duty reads the supervisor's report about them, the fairness limit, and
+    the report template. An empty template means the default sections; "Customise" copies them in to edit. Section keys
+    are how submitted answers are stored, so a key cannot be renamed once written — only its title and hint.
+*@
+
+<QCard Title="Duty reports" Icon="journal-text" Class="pol-card pol-card--wide">
+    <div class="form-row">
+        <QSelect TValue="ReportCadence" TItem="ReportCadence" @bind-Value="@Defaults.DayLongCadence" Items="@Cadences" TextSelector="@CadenceLabel" ValueSelector="@(c => c)" Label="A one-day slot reports" />
+        <QSelect TValue="ReportCadence" TItem="ReportCadence" @bind-Value="@Defaults.WeekLongCadence" Items="@Cadences" TextSelector="@CadenceLabel" ValueSelector="@(c => c)" Label="A week-long slot reports" />
+        <QSelect TValue="ReportCadence" TItem="ReportCadence" @bind-Value="@Defaults.MonthLongCadence" Items="@Cadences" TextSelector="@CadenceLabel" ValueSelector="@(c => c)" Label="A month-long slot reports" />
+    </div>
+    <div class="form-row">
+        <QInput TValue="string" @bind-Value="@Defaults.DueLocalTime" Type="time" Label="Reports due at" HelperText="Branch-local, on the last day of each report period." />
+        <QInput TValue="int" @bind-Value="@Defaults.MaxRotaSlotsPerTerm" Type="number" Min="0" Max="200" Label="Fairness limit (slots a term)" HelperText="The rota warns when one person would be on duty more often than this. 0 turns the warning off." />
+    </div>
+    <QCheckbox @bind-Value="@Defaults.OnDutyMayReadSupervisorReport" Label="The teacher on duty may read the administrator on duty's report about them" />
+    <small class="pol-help">Off by default: the supervisor's report is for the heads who review it.</small>
+
+    <div class="drs-template">
+        <div class="drs-template__head">
+            <h4>Report sections @(customised ? "" : "(default)")</h4>
+            @if (customised)
+            {
+                <div class="drs-actions">
+                    <QButton Text="Add section" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddSection" Disabled="@(Policy.DutyReportTemplate.Count >= 20)" />
+                    <QButton Text="Use defaults" Icon="arrow-counterclockwise" Variant="ghost" Size="sm" OnClick="@(() => Policy.DutyReportTemplate.Clear())" />
+                </div>
+            }
+            else
+            {
+                <QButton Text="Customise" Icon="pencil" Variant="secondary" Size="sm" OnClick="@Customise" />
+            }
+        </div>
+        <p class="pol-help">Keep children out of the text: the Incidents section asks the writer to link a welfare record instead.</p>
+        @foreach (var (section, index) in Shown.Select((s, i) => (s, i)))
+        {
+            var s = section;
+            var i = index;
+            <div class="drs-section">
+                @if (customised)
+                {
+                    <div class="form-row">
+                        <QInput TValue="string" @bind-Value="@s.Title" Label="Title" MaxLength="100" />
+                        <QInput TValue="string" @bind-Value="@s.Key" Label="Key" MaxLength="40" HelperText="Stored with each answer; do not change once reports use it." Disabled="@originalKeys.Contains(s.Key)" />
+                        <QSelect TValue="DutyReportSectionKind" TItem="DutyReportSectionKind" @bind-Value="@s.Kind" Items="@Kinds" TextSelector="@(k => k == DutyReportSectionKind.Text ? "Written answer" : "Choice")" ValueSelector="@(k => k)" Label="Answer" />
+                    </div>
+                    <QInput TValue="string" @bind-Value="@s.Hint" Label="Hint" MaxLength="300" />
+                    @if (s.Kind == DutyReportSectionKind.Choice)
+                    {
+                        <QInput TValue="string" Value="@string.Join(", ", s.Choices)" ValueChanged="@(v => s.Choices = (v ?? "").Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).Distinct().ToList())"
+                                Label="Choices, separated by commas" HelperText="At least two." />
+                    }
+                    <div class="drs-row-foot">
+                        <QCheckbox @bind-Value="@s.Required" Label="Required" />
+                        <QButton Icon="chevron-up" Variant="ghost" Size="sm" Title="Earlier" Disabled="@(i == 0)" OnClick="@(() => Move(i, -1))" />
+                        <QButton Icon="chevron-down" Variant="ghost" Size="sm" Title="Later" Disabled="@(i == Policy.DutyReportTemplate.Count - 1)" OnClick="@(() => Move(i, 1))" />
+                        <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove" OnClick="@(() => Policy.DutyReportTemplate.RemoveAt(i))" />
+                    </div>
+                }
+                else
+                {
+                    <div class="drs-readonly"><strong>@s.Title</strong>@if (s.Required) { <QChip Text="Required" Size="sm" Variant="muted" /> } <span class="pol-help">@s.Hint</span></div>
+                }
+            </div>
+        }
+    </div>
+</QCard>
+
+<style>
+    .drs-template { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--qm-border); }
+    .drs-template__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .drs-template__head h4 { margin: 0; font-size: 14px; font-family: var(--qm-font-display); }
+    .drs-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .drs-section { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 12px; margin-top: 10px; min-width: 0; }
+    .drs-row-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .drs-readonly { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: 13px; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public StaffPerformancePolicyDto Policy { get; set; } = new();
+
+    /// <summary>The default sections, as the API would use them. Passed in by the page so they are not a hand-typed twin.</summary>
+    [Parameter] public IReadOnlyList<DutyReportSectionDto> DefaultTemplate { get; set; } = Array.Empty<DutyReportSectionDto>();
+
+    private static readonly IReadOnlyList<ReportCadence> Cadences = Enum.GetValues<ReportCadence>();
+    private static readonly IReadOnlyList<DutyReportSectionKind> Kinds = Enum.GetValues<DutyReportSectionKind>();
+    private HashSet<string> originalKeys = new();
+    private StaffPerformancePolicyDto? loadedFrom;
+
+    private DutyReportDefaultsDto Defaults => Policy.DutyReportDefaults ??= new DutyReportDefaultsDto();
+    private bool customised => Policy.DutyReportTemplate is { Count: > 0 };
+    private IEnumerable<DutyReportSectionDto> Shown => customised ? Policy.DutyReportTemplate : DefaultTemplate;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(loadedFrom, Policy)) return;
+        loadedFrom = Policy;
+        Policy.DutyReportTemplate ??= new();
+        originalKeys = Policy.DutyReportTemplate.Select(s => s.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void Customise()
+    {
+        Policy.DutyReportTemplate = DefaultTemplate.Select(s => s with { Choices = s.Choices.ToList() }).ToList();
+        originalKeys = DefaultTemplate.Select(s => s.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void AddSection()
+    {
+        var n = Policy.DutyReportTemplate.Count + 1;
+        Policy.DutyReportTemplate.Add(new DutyReportSectionDto { Key = $"section{n}", Title = $"Section {n}" });
+    }
+
+    private void Move(int index, int step)
+    {
+        var list = Policy.DutyReportTemplate;
+        var target = index + step;
+        if (target < 0 || target >= list.Count) return;
+        (list[index], list[target]) = (list[target], list[index]);
+    }
+
+    private static string CadenceLabel(ReportCadence c) => c switch
+    {
+        ReportCadence.None => "No reports",
+        ReportCadence.Daily => "Every day",
+        ReportCadence.Weekly => "Every week",
+        ReportCadence.Monthly => "Every month",
+        ReportCadence.EndOfDuty => "Once, at the end",
+        _ => c.ToString()
+    };
+}

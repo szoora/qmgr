@@ -1,0 +1,302 @@
+@using QMgr.Application.DTOs
+
+@*
+    Quiet hours and the escalating reminder ladders (duty rota plan §8.1), inside the Scoring Policy page.
+    A ladder the tenant has not customised is shown read-only from ReminderLadderDefaults — the same copy the
+    sweep runs — and is NOT written back, so the two derived ones keep following their source fields (the
+    session lead hours, the lesson minutes). "Customise" copies the defaults into editable rows; "Use defaults"
+    drops the tenant's own. The parent calls Apply() before saving.
+*@
+
+<QCard Title="Reminders" Icon="bell" Class="pol-card pol-card--wide">
+    <p class="form-hint">Each reminder is a ladder of stages that grows more urgent as the time approaches. A stage is sent once; missed stages collapse into the latest one due; finishing the task stops the ladder. Messages name the task and link to it — they never carry its content.</p>
+
+    <fieldset class="rl-quiet">
+        <legend>Quiet hours</legend>
+        <QCheckbox @bind-Value="@Policy.QuietHours.Enabled" Label="Hold non-urgent reminders overnight" />
+        <div class="form-row">
+            <QSelect TValue="int" TItem="int" @bind-Value="@Policy.QuietHours.StartHour" Items="@Hours" TextSelector="@HourText" ValueSelector="@(h => h)" Label="Quiet from" Disabled="@(!Policy.QuietHours.Enabled)" />
+            <QSelect TValue="int" TItem="int" @bind-Value="@Policy.QuietHours.EndHour" Items="@Hours" TextSelector="@HourText" ValueSelector="@(h => h)" Label="Until" Disabled="@(!Policy.QuietHours.Enabled)" />
+            <QSelect TValue="int" TItem="int" @bind-Value="@Policy.QuietHours.MorningHour" Items="@Hours" TextSelector="@HourText" ValueSelector="@(h => h)" Label="Morning hour"
+                     HelperText="A stage pinned to &quot;the morning&quot; goes at this hour." />
+        </div>
+        <small class="pol-help">Branch-local time. A stage held by quiet hours goes out when they end. A stage marked <em>may interrupt</em> — by default only the last one before a duty — is sent regardless.</small>
+    </fieldset>
+
+    @foreach (var subject in Subjects)
+    {
+        var customised = drafts.ContainsKey(subject);
+        var info = Info(subject);
+        <section class="rl-ladder">
+            <div class="rl-ladder__head">
+                <div>
+                    <h4>@info.Title <QChip Text="@(customised ? "Customised" : "Default")" Variant="@(customised ? "info" : "muted")" Size="sm" /></h4>
+                    <p class="pol-help">@info.Description</p>
+                </div>
+                <div class="rl-ladder__actions">
+                    @if (customised)
+                    {
+                        <QButton Text="Add stage" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => AddStage(subject))" Disabled="@(drafts[subject].Count >= 8)" />
+                        <QButton Text="Use defaults" Icon="arrow-counterclockwise" Variant="ghost" Size="sm" OnClick="@(() => drafts.Remove(subject))" />
+                    }
+                    else
+                    {
+                        <QButton Text="Customise" Icon="pencil" Variant="secondary" Size="sm" OnClick="@(() => Customise(subject))" />
+                    }
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table class="data-table q-stack pol-table rl-table">
+                    <thead>
+                        <tr>
+                            <th class="pol-num">Stage</th>
+                            <th>When</th>
+                            <th>At hour</th>
+                            <th>Channels</th>
+                            @if (info.HasAudience) { <th>Also to</th> }
+                            <th>May interrupt</th>
+                            @if (customised) { <th></th> }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (customised)
+                        {
+                            var rows = drafts[subject];
+                            @for (var i = 0; i < rows.Count; i++)
+                            {
+                                var d = rows[i];
+                                <tr>
+                                    <td class="pol-num" data-label="Stage"><strong>@(i + 1)</strong></td>
+                                    <td data-label="When">
+                                        <div class="rl-when">
+                                            <QInput TValue="int" @bind-Value="@d.Amount" Type="number" Min="0" Max="@MaxAmount(d.Unit, info.Before)" Class="rl-amount" aria-label="Amount" />
+                                            <QSelect TValue="OffsetUnit" TItem="OffsetUnit" @bind-Value="@d.Unit" Items="@Units" TextSelector="@(u => u.ToString().ToLowerInvariant())" ValueSelector="@(u => u)" Class="rl-unit" />
+                                            <span class="rl-anchor">@(info.Before ? "before" : "after")</span>
+                                        </div>
+                                    </td>
+                                    <td data-label="At hour">
+                                        <QSelect TValue="int?" TItem="int?" @bind-Value="@d.AtLocalHour" Items="@OptionalHours" TextSelector="@(h => h == null ? "Exact time" : HourText(h.Value))" ValueSelector="@(h => h)" Placeholder="Exact time" Class="rl-hour" />
+                                    </td>
+                                    <td data-label="Channels">
+                                        <div class="rl-flags">
+                                            @foreach (var ch in ChannelOptions)
+                                            {
+                                                var channel = ch;
+                                                <QCheckbox Value="@d.Channels.HasFlag(channel.Flag)" ValueChanged="@(on => d.Channels = on ? d.Channels | channel.Flag : d.Channels & ~channel.Flag)" Label="@channel.Label" />
+                                            }
+                                        </div>
+                                    </td>
+                                    @if (info.HasAudience)
+                                    {
+                                        <td data-label="Also to">
+                                            <div class="rl-flags">
+                                                @foreach (var au in AudienceOptions.Where(a => info.Audiences.Contains(a.Flag)))
+                                                {
+                                                    var audience = au;
+                                                    <QCheckbox Value="@d.Audience.HasFlag(audience.Flag)" ValueChanged="@(on => d.Audience = on ? d.Audience | audience.Flag : d.Audience & ~audience.Flag)" Label="@audience.Label" />
+                                                }
+                                            </div>
+                                        </td>
+                                    }
+                                    <td data-label="May interrupt"><QCheckbox @bind-Value="@d.Interruptive" Label="Yes" /></td>
+                                    <td><QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove this stage" OnClick="@(() => rows.Remove(d))" Disabled="@(rows.Count == 1)" /></td>
+                                </tr>
+                            }
+                        }
+                        else
+                        {
+                            @foreach (var s in ReminderLadderDefaults.For(Policy).First(l => l.Subject == subject).Stages.OrderBy(x => x.Stage))
+                            {
+                                <tr>
+                                    <td class="pol-num" data-label="Stage"><strong>@s.Stage</strong></td>
+                                    <td data-label="When">@WhenText(s.OffsetMinutes, info.Before)</td>
+                                    <td data-label="At hour">@(s.AtLocalHour is { } h ? HourText(h) : "Exact time")</td>
+                                    <td data-label="Channels">@ChannelsText(s.Channels)</td>
+                                    @if (info.HasAudience) { <td data-label="Also to">@AudienceText(s.Audience)</td> }
+                                    <td data-label="May interrupt">@(s.Interruptive ? "Yes" : "No")</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (!customised && info.DerivedFrom != null)
+            {
+                <small class="pol-help">Follows <strong>@info.DerivedFrom</strong> until you customise it.</small>
+            }
+        </section>
+    }
+    @if (error != null) { <p class="pol-error" role="alert">@error</p> }
+</QCard>
+
+<style>
+    .rl-quiet { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 14px; margin: 0 0 16px; min-width: 0; }
+    .rl-quiet legend { font-size: var(--q-control-font-sm); font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
+    .rl-ladder { border-top: 1px solid var(--qm-border); padding-top: 14px; margin-top: 14px; min-width: 0; }
+    .rl-ladder__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+    .rl-ladder__head h4 { margin: 0; font-size: 14px; font-family: var(--qm-font-display); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .rl-ladder__head .pol-help { margin-top: 2px; max-width: 72ch; }
+    .rl-ladder__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rl-table td { vertical-align: top; }
+    .rl-when { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .rl-amount { width: 76px; }
+    .rl-unit { width: 110px; }
+    .rl-hour { min-width: 120px; }
+    .rl-anchor { font-size: 12.5px; color: var(--qm-text-muted); }
+    .rl-flags { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .pol-card .rl-table .q-input-wrapper, .pol-card .rl-table .q-select-wrapper { margin-bottom: 0; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public StaffPerformancePolicyDto Policy { get; set; } = new();
+
+    /// <summary>The ladders whose feature is live. Each phase of the duty rota build adds its own.</summary>
+    [Parameter] public IReadOnlyList<ReminderSubject> Subjects { get; set; } = new[] { ReminderSubject.RotaStart, ReminderSubject.ReportDue, ReminderSubject.LessonStart, ReminderSubject.SessionStart, ReminderSubject.RegisterChase, ReminderSubject.TimetableClash };
+
+    public enum OffsetUnit { Minutes, Hours, Days }
+
+    private sealed class StageDraft
+    {
+        public int Amount;
+        public OffsetUnit Unit;
+        public int? AtLocalHour;
+        public ReminderChannels Channels;
+        public ReminderAudience Audience;
+        public bool Interruptive;
+    }
+
+    private sealed record SubjectInfo(string Title, string Description, bool Before, bool HasAudience, ReminderAudience[] Audiences, string? DerivedFrom);
+
+    private sealed record FlagOption<T>(T Flag, string Label);
+
+    private static readonly IReadOnlyList<int> Hours = Enumerable.Range(0, 24).ToList();
+    private static readonly IReadOnlyList<int?> OptionalHours = new int?[] { null }.Concat(Enumerable.Range(0, 24).Select(h => (int?)h)).ToList();
+    private static readonly IReadOnlyList<OffsetUnit> Units = Enum.GetValues<OffsetUnit>();
+
+    private static readonly FlagOption<ReminderChannels>[] ChannelOptions =
+    {
+        new(ReminderChannels.Digest, "Digest"), new(ReminderChannels.Bell, "Bell"), new(ReminderChannels.Email, "Email"), new(ReminderChannels.Sms, "SMS")
+    };
+
+    private static readonly FlagOption<ReminderAudience>[] AudienceOptions =
+    {
+        new(ReminderAudience.Supervisor, "Supervisor"), new(ReminderAudience.Heads, "Heads' digest"), new(ReminderAudience.TimetableMasters, "Timetable masters")
+    };
+
+    private readonly Dictionary<ReminderSubject, List<StageDraft>> drafts = new();
+    private string? error;
+    private StaffPerformancePolicyDto? loadedFrom;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(loadedFrom, Policy)) return;
+        loadedFrom = Policy;
+        Policy.QuietHours ??= new QuietHoursDto();
+        drafts.Clear();
+        foreach (var ladder in Policy.ReminderLadders ?? new())
+            if (ladder.Stages.Count > 0)
+                drafts[ladder.Subject] = ladder.Stages.OrderBy(s => s.Stage).Select(ToDraft).ToList();
+    }
+
+    private static SubjectInfo Info(ReminderSubject subject) => subject switch
+    {
+        ReminderSubject.SessionStart => new("Before a duty or meeting", "Sent to everyone expected at a session duty and to its named recorders.", true, false, Array.Empty<ReminderAudience>(), "Duty reminder lead (hours) under Timing"),
+        ReminderSubject.RegisterChase => new("Register not taken", "Sent to a duty's recorders after it ends with its register still open. Stops when the register is closed.", false, false, Array.Empty<ReminderAudience>(), null),
+        ReminderSubject.RotaStart => new("Before a rota slot", "Sent to the people on duty. Stops for a person once they acknowledge the duty; an unacknowledged final stage also tells the administrator on duty.", true, true, new[] { ReminderAudience.Supervisor }, null),
+        ReminderSubject.ReportDue => new("Duty report overdue", "Sent to the report's author from its due time, escalating to the administrator on duty and then the heads' digest. Stops when the report is submitted.", false, true, new[] { ReminderAudience.Supervisor, ReminderAudience.Heads }, null),
+        ReminderSubject.LessonStart => new("Before a lesson", "Sent to the teacher of a timetabled lesson.", true, false, Array.Empty<ReminderAudience>(), "Lesson reminder minutes"),
+        ReminderSubject.TimetableClash => new("New timetable clash", "Sent to timetable masters when a published timetable develops a clash.", false, false, Array.Empty<ReminderAudience>(), null),
+        _ => new(subject.ToString(), "", true, false, Array.Empty<ReminderAudience>(), null)
+    };
+
+    private static StageDraft ToDraft(ReminderStageDto s)
+    {
+        var minutes = Math.Abs(s.OffsetMinutes);
+        var (amount, unit) = minutes != 0 && minutes % (24 * 60) == 0 ? (minutes / (24 * 60), OffsetUnit.Days)
+            : minutes != 0 && minutes % 60 == 0 ? (minutes / 60, OffsetUnit.Hours)
+            : (minutes, OffsetUnit.Minutes);
+        return new StageDraft { Amount = amount, Unit = unit, AtLocalHour = s.AtLocalHour, Channels = s.Channels, Audience = s.Audience, Interruptive = s.Interruptive };
+    }
+
+    private static int Minutes(StageDraft d) => d.Amount * d.Unit switch { OffsetUnit.Days => 24 * 60, OffsetUnit.Hours => 60, _ => 1 };
+
+    private static string MaxAmount(OffsetUnit unit, bool before)
+    {
+        var days = before ? 14 : 31;
+        int max = unit switch { OffsetUnit.Days => days, OffsetUnit.Hours => days * 24, _ => days * 24 * 60 };
+        return max.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void Customise(ReminderSubject subject)
+        => drafts[subject] = ReminderLadderDefaults.For(Policy).First(l => l.Subject == subject).Stages.OrderBy(s => s.Stage).Select(ToDraft).ToList();
+
+    private void AddStage(ReminderSubject subject)
+    {
+        var last = drafts[subject].LastOrDefault();
+        drafts[subject].Add(new StageDraft
+        {
+            Amount = last == null ? 1 : Info(subject).Before ? Math.Max(0, last.Amount - 1) : last.Amount + 1,
+            Unit = last?.Unit ?? OffsetUnit.Hours,
+            Channels = ReminderChannels.Bell,
+            Audience = ReminderAudience.Subject
+        });
+    }
+
+    /// <summary>
+    /// Writes the customised ladders into the policy, stages ordered by when they fall due and renumbered from 1.
+    /// Returns an error to show, or null. Defaults are never written: an absent ladder is the default.
+    /// </summary>
+    public string? Apply()
+    {
+        error = null;
+        var ladders = new List<ReminderLadderDto>();
+        foreach (var (subject, rows) in drafts)
+        {
+            var info = Info(subject);
+            if (rows.Count == 0) continue;
+            if (rows.Any(r => r.Amount < 0)) return error = $"{info.Title}: an amount cannot be negative.";
+            if (rows.Any(r => r.Channels == ReminderChannels.None)) return error = $"{info.Title}: every stage needs at least one channel.";
+            if (info.Before && rows.Any(r => Minutes(r) > 14 * 24 * 60)) return error = $"{info.Title}: a stage can be at most 14 days before.";
+            if (!info.Before && rows.Any(r => Minutes(r) > 31 * 24 * 60)) return error = $"{info.Title}: a stage can be at most 31 days after.";
+
+            var stages = rows
+                .Select(r => new ReminderStageDto
+                {
+                    OffsetMinutes = info.Before ? -Minutes(r) : Minutes(r),
+                    AtLocalHour = r.AtLocalHour,
+                    Channels = r.Channels,
+                    // The person the reminder is about always receives it; the checkboxes add people.
+                    Audience = ReminderAudience.Subject | (r.Audience & ~ReminderAudience.Subject),
+                    Interruptive = r.Interruptive
+                })
+                .OrderBy(s => s.OffsetMinutes)
+                .ToList();
+            for (var i = 0; i < stages.Count; i++) stages[i].Stage = i + 1;
+            ladders.Add(new ReminderLadderDto { Subject = subject, Stages = stages });
+        }
+        // Ladders for subjects this editor does not show are kept as stored.
+        ladders.AddRange((Policy.ReminderLadders ?? new()).Where(l => !Subjects.Contains(l.Subject)));
+        Policy.ReminderLadders = ladders;
+        StateHasChanged();
+        return null;
+    }
+
+    private static string HourText(int h) => $"{h:00}:00";
+
+    private static string WhenText(int offsetMinutes, bool before)
+    {
+        var m = Math.Abs(offsetMinutes);
+        if (m == 0) return before ? "At the start" : "At the due time";
+        var text = m % (24 * 60) == 0 ? Plural(m / (24 * 60), "day") : m % 60 == 0 ? Plural(m / 60, "hour") : Plural(m, "minute");
+        return $"{text} {(before ? "before" : "after")}";
+    }
+
+    private static string Plural(int n, string unit) => n == 1 ? $"1 {unit}" : $"{n} {unit}s";
+
+    private static string ChannelsText(ReminderChannels c)
+        => string.Join(", ", ChannelOptions.Where(o => c.HasFlag(o.Flag)).Select(o => o.Label)) is { Length: > 0 } s ? s : "—";
+
+    private static string AudienceText(ReminderAudience a)
+        => string.Join(", ", AudienceOptions.Where(o => a.HasFlag(o.Flag)).Select(o => o.Label)) is { Length: > 0 } s ? s : "—";
+}

@@ -1,0 +1,384 @@
+@page "/my-day"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Staff
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>My Day - Q-Mgr</PageTitle>
+
+@*
+    A teacher's day (duty rota plan §7.2): today's lessons in order with Taught / Not taught on each one that has
+    started, then everything else that is theirs today — sessions, the duty rota, reports due — and what is still owed:
+    lessons unrecorded, missed lessons to recover. Phone first: this is the page opened between lessons.
+*@
+
+<div class="admin-page myday-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>My Day</h1>
+            <p class="subtitle">@QDateFormat.LongDay(date) @(IsToday ? "· today" : "")</p>
+        </div>
+        <div class="header-actions">
+            <QButton Icon="chevron-left" Variant="ghost" Title="Previous day" OnClick="@(() => MoveAsync(-1))" />
+            <QButton Text="Today" Variant="secondary" OnClick="@(() => GoToAsync(DateOnly.FromDateTime(DateTime.Today)))" Disabled="@IsToday" />
+            <QButton Icon="chevron-right" Variant="ghost" Title="Next day" OnClick="@(() => MoveAsync(1))" />
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading your day...</span></div>
+    }
+    else if (day != null)
+    {
+        @if (IsToday && day.NextLessonStartsAt is { } next)
+        {
+            var mins = (int)Math.Ceiling((next - DateTime.UtcNow).TotalMinutes);
+            var nextLesson = day.Lessons.FirstOrDefault(l => l.StartsAt == next);
+            <div class="myday-next" role="status">
+                <QIcon Name="hourglass-split" />
+                <span>Next: <strong>@nextLesson?.ClassName · @nextLesson?.SubjectName</strong> @(mins <= 0 ? "now" : mins < 60 ? $"in {mins} min" : $"at {QDateFormat.LocalT(next)}")@(string.IsNullOrEmpty(nextLesson?.Room) ? "" : $", {nextLesson!.Room}")</span>
+            </div>
+        }
+
+        <QCard Title="Lessons" Icon="journal-bookmark" Subtitle="@LessonsSubtitle" Class="myday-card">
+            @if (!day.Lessons.Any())
+            {
+                <p class="myday-muted">@(day.HasTimetable ? "No lessons on this day." : "No published timetable covers this day.")</p>
+            }
+            else
+            {
+                <ul class="myday-list">
+                    @foreach (var lesson in day.Lessons)
+                    {
+                        var l = lesson;
+                        <li class="myday-lesson myday-lesson--@StatusClass(l.Status)">
+                            <div class="myday-lesson__time">
+                                <strong>@QDateFormat.LocalT(l.StartsAt)</strong>
+                                <span>@(l.PeriodLabel ?? "")</span>
+                            </div>
+                            <div class="myday-lesson__main">
+                                <strong>@l.ClassName · @l.SubjectName</strong>
+                                <span class="myday-lesson__meta">
+                                    @if (!string.IsNullOrEmpty(l.Room)) { <span><QIcon Name="door-open" Size="sm" /> @l.Room</span> }
+                                    @if (!string.IsNullOrEmpty(l.RecoversText)) { <span><QIcon Name="arrow-repeat" Size="sm" /> @l.RecoversText</span> }
+                                </span>
+                                <span class="myday-lesson__status">
+                                    <QChip Text="@StaffDisplay.LessonStatusLabel(l.Status)" Size="sm" Variant="@StaffDisplay.LessonStatusVariant(l.Status)" />
+                                    @if (!string.IsNullOrEmpty(l.FlaggedByName) && l.Status is not (LessonStatus.TaughtSelfReported or LessonStatus.NotTaughtSelfReported))
+                                    {
+                                        <span class="myday-muted">by @l.FlaggedByName</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(l.CancelReason)) { <span class="myday-muted">@l.CancelReason</span> }
+                                </span>
+                            </div>
+                            <div class="myday-lesson__actions">
+                                @if (l.CanSelfReport)
+                                {
+                                    <QButton Text="Taught" Icon="check-lg" Size="sm" Variant="@(l.Status == LessonStatus.TaughtSelfReported ? "primary" : "secondary")" OnClick="@(() => TaughtAsync(l))" Disabled="@busy" />
+                                    <QButton Text="Not taught" Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => OpenNotTaught(l))" Disabled="@busy" />
+                                }
+                                @if (l.CanScheduleRecovery)
+                                {
+                                    <QButton Text="Schedule recovery" Icon="arrow-repeat" Size="sm" Variant="secondary" OnClick="@(() => OpenRecovery(l))" Disabled="@busy" />
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </QCard>
+
+        @if (day.Unrecorded.Any() || day.RecoveryOwed.Any())
+        {
+            <QCard Title="Still owed" Icon="exclamation-circle" Subtitle="Earlier lessons to record, and missed ones to recover" Class="myday-card">
+                <ul class="myday-list">
+                    @foreach (var lesson in day.Unrecorded.Concat(day.RecoveryOwed))
+                    {
+                        var l = lesson;
+                        <li class="myday-lesson myday-lesson--@StatusClass(l.Status)">
+                            <div class="myday-lesson__time">
+                                <strong>@QDateFormat.DD(l.StartsAt.ToLocalTime())</strong>
+                                <span>@QDateFormat.LocalT(l.StartsAt)</span>
+                            </div>
+                            <div class="myday-lesson__main">
+                                <strong>@l.ClassName · @l.SubjectName</strong>
+                                <span class="myday-lesson__status">
+                                    <QChip Text="@StaffDisplay.LessonStatusLabel(l.Status)" Size="sm" Variant="@StaffDisplay.LessonStatusVariant(l.Status)" />
+                                    @if (l.RecoverBy is { } by) { <span class="myday-muted">recover by @QDateFormat.DD(by.ToLocalTime())</span> }
+                                </span>
+                            </div>
+                            <div class="myday-lesson__actions">
+                                @if (l.CanSelfReport)
+                                {
+                                    <QButton Text="Taught" Icon="check-lg" Size="sm" Variant="secondary" OnClick="@(() => TaughtAsync(l))" Disabled="@busy" />
+                                    <QButton Text="Not taught" Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => OpenNotTaught(l))" Disabled="@busy" />
+                                }
+                                @if (l.CanScheduleRecovery)
+                                {
+                                    <QButton Text="Schedule recovery" Icon="arrow-repeat" Size="sm" Variant="secondary" OnClick="@(() => OpenRecovery(l))" Disabled="@busy" />
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            </QCard>
+        }
+
+        <div class="myday-grid">
+            @if (day.OnDuty.Any())
+            {
+                <QCard Title="On duty" Icon="shield-check" Class="myday-card">
+                    <ul class="myday-simple">
+                        @foreach (var d in day.OnDuty)
+                        {
+                            <li><strong>@d.Title</strong><span>@(d.IsSupervisedByMe ? "Supervising" : "On duty") · @QDateFormat.LocalDT(d.StartsAt) – @QDateFormat.LocalDT(d.EndsAt)</span></li>
+                        }
+                    </ul>
+                    <QButton Text="Portal" Icon="person-badge" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/portal#on-duty"))" />
+                </QCard>
+            }
+            @if (day.Sessions.Any())
+            {
+                <QCard Title="Meetings and sessions" Icon="calendar-event" Class="myday-card">
+                    <ul class="myday-simple">
+                        @foreach (var d in day.Sessions)
+                        {
+                            <li><strong>@d.Title</strong><span>@QDateFormat.LocalT(d.StartsAt)–@QDateFormat.LocalT(d.EndsAt)@(string.IsNullOrEmpty(d.Location) ? "" : $" · {d.Location}")</span></li>
+                        }
+                    </ul>
+                </QCard>
+            }
+            @if (day.ReportsDue.Any())
+            {
+                <QCard Title="Reports due" Icon="journal-text" Class="myday-card">
+                    <ul class="myday-simple">
+                        @foreach (var r in day.ReportsDue)
+                        {
+                            <li>
+                                <a href="@($"/admin/staff/duty-reports/{r.Id}")"><strong>@r.DutyTitle</strong></a>
+                                <span>due @QDateFormat.LocalDT(r.DueAt) @if (r.IsOverdue) { <QChip Text="Overdue" Size="sm" Variant="danger" /> }</span>
+                            </li>
+                        }
+                    </ul>
+                </QCard>
+            }
+            @if (day.WelfareActionsOwed > 0)
+            {
+                <QCard Title="Welfare actions" Icon="heart-pulse" Class="myday-card">
+                    <p class="myday-muted">@(day.WelfareActionsOwed == 1 ? "1 welfare record has" : $"{day.WelfareActionsOwed} welfare records have") an action assigned to you.</p>
+                    <QButton Text="Open welfare" Icon="box-arrow-in-right" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/admin/welfare-reports"))" />
+                </QCard>
+            }
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showNotTaught" Title="Not taught" Icon="x-lg" Size="sm">
+    <ChildContent>
+        @if (target != null)
+        {
+            <p>@target.ClassName · @target.SubjectName, @QDateFormat.LocalDT(target.StartsAt)</p>
+            <QInput TValue="string" @bind-Value="@reason" Type="textarea" Rows="3" MaxLength="1000" Label="Why was it not taught?" Required="true"
+                    HelperText="A lesson supervisor records whether it was with permission." />
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNotTaught = false)" />
+        <QButton Text="Record" Icon="check-lg" Variant="primary" OnClick="@NotTaughtAsync" Disabled="@(busy || string.IsNullOrWhiteSpace(reason))" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showRecovery" Title="Schedule a recovery lesson" Icon="arrow-repeat" Size="sm">
+    <ChildContent>
+        @if (target != null)
+        {
+            <p>For @target.ClassName · @target.SubjectName on @QDateFormat.LocalDT(target.StartsAt)@(target.RecoverBy is { } by ? $", to be recovered by {QDateFormat.DD(by.ToLocalTime())}" : "").</p>
+            <div class="q-datetime-pair">
+                <QDatePicker @bind-Value="@recoveryAt" Label="Date" Required="true" />
+                <QDatePicker @bind-Value="@recoveryAt" ShowTime="true" Label="Starts" Required="true" />
+            </div>
+            <QInput TValue="int" @bind-Value="@recoveryMinutes" Type="number" Min="10" Max="240" Label="Minutes" />
+            <QInput TValue="string" @bind-Value="@recoveryRoom" MaxLength="60" Label="Room" Placeholder="@(target.Room ?? "Where")" />
+            @if (!string.IsNullOrEmpty(modalError)) { <p class="myday-error" role="alert">@modalError</p> }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showRecovery = false)" />
+        <QButton Text="Schedule" Icon="calendar-plus" Variant="primary" OnClick="@RecoveryAsync" Disabled="@(busy || recoveryAt == null)" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .myday-page .q-card { margin-top: 14px; }
+    .myday-next { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--qm-border); border-left: 4px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); font-size: 14px; }
+    .myday-muted { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
+    .myday-error { color: var(--qm-danger); font-size: 13px; }
+    .myday-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .myday-lesson { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; align-items: start; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .myday-lesson--done { opacity: .8; }
+    .myday-lesson--attention { box-shadow: inset 3px 0 0 var(--qm-warning); }
+    .myday-lesson--missed { box-shadow: inset 3px 0 0 var(--qm-danger); }
+    .myday-lesson__time { display: flex; flex-direction: column; font-size: 13px; }
+    .myday-lesson__time span { color: var(--qm-text-muted); font-size: 12px; }
+    .myday-lesson__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 14px; }
+    .myday-lesson__meta, .myday-lesson__status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; color: var(--qm-text-secondary); }
+    .myday-lesson__actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .myday-lesson__actions:empty { display: none; }
+
+    @@media (min-width: 760px) {
+        .myday-lesson { grid-template-columns: 72px minmax(0, 1fr) auto; }
+        .myday-lesson__actions { grid-column: auto; align-self: center; }
+
+    }
+    .myday-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; }
+    @@media (min-width: 900px) { .myday-grid { grid-template-columns: 1fr 1fr; } }
+    .myday-simple { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+    .myday-simple li { display: flex; flex-direction: column; gap: 2px; }
+    .myday-simple li span { color: var(--qm-text-secondary); font-size: 12.5px; }
+</style>
+
+@code {
+    private bool isLoading = true, busy;
+    private Guid branchId;
+    private DateOnly date = DateOnly.FromDateTime(DateTime.Today);
+    private MyDayDto? day;
+
+    private bool showNotTaught, showRecovery;
+    private LessonItemDto? target;
+    private string? reason, recoveryRoom, modalError;
+    private DateTime? recoveryAt;
+    private int recoveryMinutes = 40;
+
+    private bool IsToday => date == DateOnly.FromDateTime(DateTime.Today);
+
+    private string LessonsSubtitle => day == null || !day.Lessons.Any() ? "From the published timetable"
+        : $"{Plural(day.Lessons.Count(l => l.Status != LessonStatus.Cancelled), "lesson")} · {day.Lessons.Count(l => l.Status is LessonStatus.Taught or LessonStatus.TaughtSelfReported)} taught · {day.Lessons.Count(l => l.Status == LessonStatus.Unrecorded)} to record";
+
+    private static string Plural(int n, string word) => n == 1 ? $"1 {word}" : $"{n} {word}s";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            day = branchId == Guid.Empty ? null : await StaffApi.GetMyDayAsync(branchId, date);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load your day", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private Task MoveAsync(int days) => GoToAsync(date.AddDays(days));
+
+    private async Task GoToAsync(DateOnly next)
+    {
+        date = next;
+        await LoadAsync();
+    }
+
+    private static string StatusClass(LessonStatus s) => s switch
+    {
+        LessonStatus.Taught or LessonStatus.Recovered or LessonStatus.Cancelled => "done",
+        LessonStatus.Unrecorded or LessonStatus.TaughtSelfReported or LessonStatus.NotTaughtSelfReported or LessonStatus.RecoveryScheduled => "attention",
+        LessonStatus.MissedWithoutPermission or LessonStatus.NotRecovered or LessonStatus.MissedWithPermission => "missed",
+        _ => "plain"
+    };
+
+    private async Task TaughtAsync(LessonItemDto lesson)
+    {
+        busy = true;
+        try
+        {
+            await StaffApi.FlagLessonAsync(branchId, lesson.DutyId, new FlagLessonRequest { Outcome = DutyOutcome.Present });
+            Toast.Notify(ToastSeverity.Success, "Recorded as taught", $"{lesson.ClassName} {lesson.SubjectName}");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not recorded", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenNotTaught(LessonItemDto lesson)
+    {
+        target = lesson;
+        reason = null;
+        showNotTaught = true;
+    }
+
+    private async Task NotTaughtAsync()
+    {
+        if (target == null) return;
+        busy = true;
+        try
+        {
+            await StaffApi.FlagLessonAsync(branchId, target.DutyId, new FlagLessonRequest { Outcome = DutyOutcome.Absent, Note = reason });
+            showNotTaught = false;
+            Toast.Notify(ToastSeverity.Success, "Recorded as not taught", "You can schedule a recovery lesson for it.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not recorded", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenRecovery(LessonItemDto lesson)
+    {
+        target = lesson;
+        modalError = null;
+        recoveryRoom = lesson.Room;
+        recoveryMinutes = Math.Max(10, (int)(lesson.EndsAt - lesson.StartsAt).TotalMinutes);
+        recoveryAt = DateTime.Today.AddDays(1).Add(lesson.StartsAt.ToLocalTime().TimeOfDay);
+        showRecovery = true;
+    }
+
+    private async Task RecoveryAsync()
+    {
+        if (target == null || recoveryAt == null) return;
+        busy = true;
+        modalError = null;
+        try
+        {
+            var starts = DateTime.SpecifyKind(recoveryAt.Value, DateTimeKind.Local).ToUniversalTime();
+            await StaffApi.ScheduleRecoveryAsync(branchId, target.DutyId, new ScheduleRecoveryRequest { StartsAt = starts, EndsAt = starts.AddMinutes(recoveryMinutes), Room = recoveryRoom });
+            showRecovery = false;
+            Toast.Notify(ToastSeverity.Success, "Recovery lesson scheduled", QDateFormat.LocalDT(starts));
+            await LoadAsync();
+        }
+        catch (Exception ex) { modalError = ex.Message; }
+        finally { busy = false; }
+    }
+}

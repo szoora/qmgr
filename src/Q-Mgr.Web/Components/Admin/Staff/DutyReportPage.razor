@@ -1,0 +1,516 @@
+@page "/admin/staff/duty-reports/{Id:guid}"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+
+<PageTitle>Duty report - Q-Mgr</PageTitle>
+
+@*
+    One duty report (plan §4.3). The author writes it against the tenant's template, links incidents as welfare
+    records (never typed in), attaches evidence, and submits; after that it is locked and everything is a note.
+    A reader sees what the API sent: the API already decided who may read, and blanked linked records the reader's
+    own welfare access does not reach. The buttons follow the Can* flags; none is shown only to be refused.
+*@
+
+<div class="admin-page dr-page">
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the report...</span></div>
+    }
+    else if (report == null)
+    {
+        <QEmptyState Icon="journal-x" Title="This report is not available to you"
+                     Text="Either it does not exist, or it is another person's report you do not read. Reports are read by their author, the administrator on duty, and the heads who review them.">
+            <Action><QButton Text="Back" Icon="arrow-left" Variant="secondary" OnClick="@Back" /></Action>
+        </QEmptyState>
+    }
+    else
+    {
+        var r = report;
+        <div class="page-header">
+            <div class="header-content">
+                <h1>@r.DutyTitle</h1>
+                <p class="subtitle">
+                    Duty report for <strong>@PeriodText(r)</strong> · @r.AuthorName @(r.AuthorRole == DutyReportAuthorRole.Supervisor ? "(administrator on duty)" : "")
+                </p>
+                <div class="dr-chips">
+                    <QChip Text="@StatusLabel(r.Status)" Variant="@StatusVariant(r.Status)" Size="sm" />
+                    @if (r.IsOverdue) { <QChip Text="Overdue" Variant="danger" Size="sm" Icon="alarm" /> }
+                    @if (r.SubmittedLate) { <QChip Text="Submitted late" Variant="warning" Size="sm" /> }
+                    @if (r.Visibility == WelfareVisibility.Confidential) { <QChip Text="Confidential" Variant="warning" Size="sm" Icon="lock" /> }
+                    <span class="dr-muted">Due @QDateFormat.LocalDT(r.DueAt)@(r.SubmittedAt.HasValue ? $" · submitted {QDateFormat.LocalDT(r.SubmittedAt)}" : "")@(r.ReviewedAt.HasValue ? $" · reviewed {QDateFormat.LocalDT(r.ReviewedAt)}{(r.ReviewedByName != null ? $" by {r.ReviewedByName}" : "")}" : "")</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <QButton Text="Back" Icon="arrow-left" Variant="ghost" OnClick="@Back" />
+                @if (r.CanReview)
+                {
+                    <QButton Text="Return for changes" Icon="arrow-return-left" Variant="secondary" OnClick="@(() => OpenReason("return"))" />
+                    <QButton Text="Mark reviewed" Icon="check2-all" Variant="primary" Loading="@busy" OnClick="@ReviewAsync" />
+                }
+                @if (r.Status == DutyReportStatus.Reviewed && r.CanComment)
+                {
+                    <QButton Text="Reopen" Icon="arrow-counterclockwise" Variant="ghost" OnClick="@(() => OpenReason("reopen"))" />
+                }
+                @if (r.CanMarkNoDuty)
+                {
+                    <QButton Text="No duty that day" Icon="calendar-x" Variant="ghost" OnClick="@(() => OpenReason("no-duty"))" />
+                }
+            </div>
+        </div>
+
+        <div class="dr-columns">
+            <div class="dr-main">
+                @if (r.CanEdit)
+                {
+                    <QCard Title="@(r.Status == DutyReportStatus.Returned ? "Correct and resubmit" : "Your report")" Icon="pencil-square">
+                        @if (r.Status == DutyReportStatus.Returned && r.Notes.LastOrDefault(n => n.Kind == DutyReportNoteKind.Return) is { } ret)
+                        {
+                            <div class="dr-returned" role="note">
+                                <QIcon Name="arrow-return-left" />
+                                <div><strong>Returned by @ret.AuthorName</strong><p>@ret.Body</p></div>
+                            </div>
+                        }
+                        @foreach (var section in r.Template)
+                        {
+                            var key = section.Key;
+                            <div class="dr-section">
+                                @if (section.Kind == DutyReportSectionKind.Choice)
+                                {
+                                    <QSelect TValue="string" TItem="string" Value="@Answer(key)" ValueChanged="@(v => SetAnswer(key, v))" Items="@section.Choices"
+                                             TextSelector="@(c => c)" ValueSelector="@(c => c)" Label="@section.Title" Required="@section.Required" AllowClear="true"
+                                             HelperText="@section.Hint" Placeholder="Choose" />
+                                }
+                                else
+                                {
+                                    <QInput TValue="string" Value="@Answer(key)" ValueChanged="@(v => SetAnswer(key, v))" Type="textarea" Rows="3"
+                                            Label="@section.Title" Required="@section.Required" HelperText="@section.Hint" MaxLength="4000" />
+                                }
+                            </div>
+                        }
+                        <QInput TValue="string" @bind-Value="@form.Summary" Type="textarea" Rows="3" Label="Summary" MaxLength="8000"
+                                HelperText="Anything else the administration should know. Do not describe children here — link a record below." />
+
+                        <div class="dr-links">
+                            <h4>Linked welfare and discipline records</h4>
+                            <p class="dr-muted">An incident involving a child is a welfare record, logged from the student roster, then linked here. Readers see a linked record only if their own welfare access allows it.</p>
+                            @if (form.LinkedWelfareRecordIds.Any())
+                            {
+                                <ul class="dr-linked">
+                                    @foreach (var id in form.LinkedWelfareRecordIds.ToList())
+                                    {
+                                        var known = linkable.Concat(r.LinkedRecords).FirstOrDefault(x => x.Id == id);
+                                        <li>
+                                            <span>@(known == null ? "A linked record" : $"{known.StudentName} — {known.CategoryName} ({known.CaseType}), {QDateFormat.D(known.OccurredAt)}")</span>
+                                            <QButton Icon="x-lg" Variant="ghost" Size="sm" Title="Remove the link" OnClick="@(() => form.LinkedWelfareRecordIds.Remove(id))" />
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            <div class="dr-link-add">
+                                <QSelect TValue="Guid" TItem="DutyReportLinkedRecordDto" Value="@linkPick" ValueChanged="@AddLink" Items="@linkable.Where(l => !form.LinkedWelfareRecordIds.Contains(l.Id)).ToList()"
+                                         TextSelector="@(l => $"{l.StudentName} — {l.CategoryName}, {QDateFormat.D(l.OccurredAt)}")" ValueSelector="@(l => l.Id)"
+                                         Label="Link a record you logged" Placeholder="@(linkable.Any() ? "Choose a record" : "No records logged by you in the last month")" />
+                                <a class="dr-link-new" href="/admin/students/roster" target="_blank" rel="noopener">Log a new record <QIcon Name="box-arrow-up-right" Size="sm" /></a>
+                            </div>
+                        </div>
+
+                        <div class="dr-evidence">
+                            <h4>Evidence</h4>
+                            <QFileUpload UploadUrl="@($"api/v1/branches/{branchId}/staff/duty-reports/{r.Id}/attachments")"
+                                         Accept="image/*,application/pdf,video/*,audio/*" Multiple="true" MaxSizeBytes="26214400"
+                                         HintText="Photos, PDF, video or audio — up to 25MB" OnUploaded="@OnUploaded" OnError="@(e => Toast.Notify(ToastSeverity.Error, "Upload failed", e))" />
+                            @Attachments(r)
+                        </div>
+
+                        <div class="dr-form-foot">
+                            <QSelect TValue="WelfareVisibility" TItem="WelfareVisibility" @bind-Value="@form.Visibility" Items="@Visibilities"
+                                     TextSelector="@(v => v == WelfareVisibility.Standard ? "Standard" : "Confidential — only those cleared for confidential staff matters")" ValueSelector="@(v => v)" Label="Who may read it" Class="dr-vis" />
+                            <div class="dr-form-buttons">
+                                <QButton Text="Save draft" Icon="save" Variant="secondary" Loading="@busy" OnClick="@SaveAsync" />
+                                <QButton Text="Submit" Icon="send" Variant="primary" Loading="@busy" OnClick="@SubmitAsync" />
+                            </div>
+                        </div>
+                    </QCard>
+                }
+                else
+                {
+                    <QCard Title="Report" Icon="journal-text">
+                        @if (r.Status == DutyReportStatus.NoDuty)
+                        {
+                            <p class="dr-muted">Marked "no duty that day". The reason is in the notes.</p>
+                        }
+                        <dl class="dr-answers">
+                            @foreach (var section in r.Template)
+                            {
+                                <div>
+                                    <dt>@section.Title</dt>
+                                    <dd>@(r.Sections.TryGetValue(section.Key, out var a) && !string.IsNullOrWhiteSpace(a) ? a : "—")</dd>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(r.Summary))
+                            {
+                                <div><dt>Summary</dt><dd>@r.Summary</dd></div>
+                            }
+                        </dl>
+                        @if (r.LinkedRecords.Any() || r.HiddenLinkedCount > 0)
+                        {
+                            <h4 class="dr-h4">Linked records</h4>
+                            <ul class="dr-linked">
+                                @foreach (var l in r.LinkedRecords)
+                                {
+                                    <li><a href="@($"/admin/students/{l.StudentId}/welfare")">@l.StudentName — @l.CategoryName (@l.CaseType), @QDateFormat.D(l.OccurredAt)</a></li>
+                                }
+                                @if (r.HiddenLinkedCount > 0)
+                                {
+                                    <li class="dr-muted">@r.HiddenLinkedCount linked record@(r.HiddenLinkedCount == 1 ? "" : "s") you do not have access to</li>
+                                }
+                            </ul>
+                        }
+                        @if (r.Attachments.Any())
+                        {
+                            <h4 class="dr-h4">Evidence</h4>
+                            @Attachments(r)
+                        }
+                    </QCard>
+                }
+            </div>
+
+            <aside class="dr-side">
+                <QCard Title="Notes" Icon="chat-left-text">
+                    <QTimeline EmptyText="No comments yet.">
+                        @foreach (var n in r.Notes)
+                        {
+                            <QTimelineItem MarkerIcon="@NoteIcon(n.Kind)" MarkerColor="@NoteColor(n.Kind)" Date="@n.CreatedAt.ToLocalTime()">
+                                <TitleContent>
+                                    <strong>@n.AuthorName</strong> <QChip Text="@n.Kind.ToString()" Size="sm" Variant="@(n.Kind == DutyReportNoteKind.Return ? "warning" : n.Kind == DutyReportNoteKind.Review ? "success" : "muted")" />
+                                </TitleContent>
+                                <ChildContent>
+                                    <p class="dr-note">@n.Body</p>
+                                    @if (n.SnapshotSections != null)
+                                    {
+                                        <details class="dr-snapshot">
+                                            <summary>The version that was returned</summary>
+                                            <dl>
+                                                @foreach (var (k, v) in n.SnapshotSections)
+                                                {
+                                                    <div><dt>@(r.Template.FirstOrDefault(t => t.Key == k)?.Title ?? k)</dt><dd>@v</dd></div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(n.SnapshotSummary)) { <div><dt>Summary</dt><dd>@n.SnapshotSummary</dd></div> }
+                                            </dl>
+                                        </details>
+                                    }
+                                </ChildContent>
+                            </QTimelineItem>
+                        }
+                    </QTimeline>
+                    @if (r.CanComment || r.CanRespond)
+                    {
+                        <div class="dr-comment">
+                            <QInput TValue="string" @bind-Value="@noteBody" Type="textarea" Rows="3" MaxLength="4000"
+                                    Label="@(r.CanRespond ? "Add a response" : "Add a comment")" Placeholder="@(r.CanRespond ? "Correct or add to your report" : "A question or a note for the author")" />
+                            <QButton Text="@(r.CanRespond ? "Respond" : "Comment")" Icon="send" Variant="secondary" Size="sm" Loading="@busy" Disabled="@string.IsNullOrWhiteSpace(noteBody)" OnClick="@NoteAsync" />
+                        </div>
+                    }
+                </QCard>
+            </aside>
+        </div>
+    }
+</div>
+
+<QModal @bind-Visible="showReason" Title="@ReasonTitle" Icon="chat-square-text" Size="sm">
+    <ChildContent>
+        <QInput TValue="string" @bind-Value="@reason" Type="textarea" Rows="4" MaxLength="4000" Required="true"
+                Label="@(reasonKind == "return" ? "What needs changing" : "Reason")" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showReason = false)" />
+        <QButton Text="@ReasonTitle" Icon="check-lg" Variant="primary" Loading="@busy" Disabled="@string.IsNullOrWhiteSpace(reason)" OnClick="@ReasonAsync" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .dr-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+    .dr-muted { font-size: 12.5px; color: var(--qm-text-muted); }
+    .dr-columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+    .dr-main { flex: 1 1 560px; min-width: 0; }
+    .dr-side { flex: 0 1 360px; min-width: 260px; }
+    .dr-section { margin-bottom: 14px; }
+    .dr-returned { display: flex; gap: 10px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-warning); border-radius: var(--qm-radius-md); font-size: 13px; }
+    .dr-returned p { margin: 2px 0 0; white-space: pre-wrap; }
+    .dr-links, .dr-evidence { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--qm-border); }
+    .dr-links h4, .dr-evidence h4, .dr-h4 { margin: 0 0 6px; font-size: 13.5px; font-family: var(--qm-font-display); }
+    .dr-h4 { margin-top: 16px; }
+    .dr-linked { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .dr-linked li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .dr-link-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+    .dr-link-add > .q-select-wrapper { flex: 1 1 260px; min-width: 0; }
+    .dr-link-new { font-size: 13px; padding-bottom: 10px; }
+    .dr-files { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+    .dr-form-foot { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--qm-border); }
+    .dr-vis { flex: 1 1 260px; min-width: 0; }
+    .dr-form-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+    .dr-answers { margin: 0; display: grid; gap: 12px; }
+    .dr-answers dt { font-size: 12px; color: var(--qm-text-muted); }
+    .dr-answers dd { margin: 2px 0 0; white-space: pre-wrap; font-size: 14px; }
+    .dr-note { margin: 4px 0 0; white-space: pre-wrap; font-size: 13px; }
+    .dr-snapshot { margin-top: 6px; font-size: 12.5px; }
+    .dr-snapshot dl { margin: 6px 0 0; display: grid; gap: 6px; }
+    .dr-snapshot dt { color: var(--qm-text-muted); }
+    .dr-snapshot dd { margin: 0; white-space: pre-wrap; }
+    .dr-comment { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-top: 12px; }
+    .dr-comment > .q-input-wrapper { width: 100%; }
+    .admin-page .q-card { margin-bottom: 16px; }
+</style>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private bool isLoading = true, busy, showReason;
+    private Guid branchId;
+    private DutyReportDto? report;
+    private SaveDutyReportRequest form = new();
+    private List<DutyReportLinkedRecordDto> linkable = new();
+    private Guid linkPick;
+    private string noteBody = string.Empty;
+    private string reasonKind = "return";
+    private string reason = string.Empty;
+
+    private static readonly IReadOnlyList<WelfareVisibility> Visibilities = new[] { WelfareVisibility.Standard, WelfareVisibility.Confidential };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (report != null && report.Id != Id) await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            Apply(await StaffApi.GetDutyReportAsync(branchId, Id));
+            if (report!.CanEdit)
+            {
+                try { linkable = await StaffApi.GetLinkableWelfareRecordsAsync(branchId); } catch { linkable = new(); }
+            }
+        }
+        catch
+        {
+            report = null;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void Apply(DutyReportDto dto)
+    {
+        report = dto;
+        form = new SaveDutyReportRequest
+        {
+            Sections = new Dictionary<string, string>(dto.Sections),
+            Summary = dto.Summary,
+            LinkedWelfareRecordIds = dto.LinkedWelfareRecordIds.ToList(),
+            Visibility = dto.Visibility
+        };
+    }
+
+    private string? Answer(string key) => form.Sections.TryGetValue(key, out var v) ? v : null;
+
+    private void SetAnswer(string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) form.Sections.Remove(key);
+        else form.Sections[key] = value;
+    }
+
+    private void AddLink(Guid id)
+    {
+        if (id != Guid.Empty && !form.LinkedWelfareRecordIds.Contains(id)) form.LinkedWelfareRecordIds.Add(id);
+        linkPick = Guid.Empty;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (report == null) return;
+        busy = true;
+        try
+        {
+            Apply(await StaffApi.SaveDutyReportAsync(branchId, report.Id, form));
+            Toast.Notify(ToastSeverity.Success, "Draft saved");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (report == null) return;
+        busy = true;
+        try
+        {
+            Apply(await StaffApi.SubmitDutyReportAsync(branchId, report.Id, form));
+            Toast.Notify(ToastSeverity.Success, "Report submitted", "It is locked now; add a response if you need to correct it.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not submit", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task NoteAsync()
+    {
+        if (report == null || string.IsNullOrWhiteSpace(noteBody)) return;
+        busy = true;
+        try
+        {
+            Apply(await StaffApi.AddDutyReportNoteAsync(branchId, report.Id, noteBody.Trim()));
+            noteBody = string.Empty;
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not add the note", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task ReviewAsync()
+    {
+        if (report == null) return;
+        busy = true;
+        try
+        {
+            Apply(await StaffApi.ReviewDutyReportAsync(branchId, report.Id, null));
+            Toast.Notify(ToastSeverity.Success, "Marked reviewed");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not mark reviewed", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenReason(string kind)
+    {
+        reasonKind = kind;
+        reason = string.Empty;
+        showReason = true;
+    }
+
+    private string ReasonTitle => reasonKind switch { "return" => "Return for changes", "reopen" => "Reopen", _ => "No duty that day" };
+
+    private async Task ReasonAsync()
+    {
+        if (report == null || string.IsNullOrWhiteSpace(reason)) return;
+        busy = true;
+        try
+        {
+            switch (reasonKind)
+            {
+                case "return":
+                    Apply(await StaffApi.ReturnDutyReportAsync(branchId, report.Id, reason.Trim()));
+                    Toast.Notify(ToastSeverity.Success, "Returned", "The author has been told.");
+                    break;
+                case "reopen":
+                    Apply(await StaffApi.ReopenDutyReportAsync(branchId, report.Id, reason.Trim()));
+                    break;
+                default:
+                    await StaffApi.MarkNoDutyAsync(branchId, report.Id, reason.Trim());
+                    Toast.Notify(ToastSeverity.Success, "Marked \"no duty that day\"", "The reminders for this report have stopped.");
+                    await LoadAsync();
+                    break;
+            }
+            showReason = false;
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not do that", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task OnUploaded(QFileUpload.UploadedFileResult result)
+    {
+        Toast.Notify(ToastSeverity.Success, "Uploaded", $"{result.FileName} attached");
+        if (report == null) return;
+        try
+        {
+            // Only the attachment list is refreshed; what the author has typed stays in the form.
+            report = await StaffApi.GetDutyReportAsync(branchId, report.Id);
+        }
+        catch { }
+    }
+
+    private void Back()
+    {
+        Navigation.NavigateTo(report?.CanEdit == true || report?.CanRespond == true ? "/portal" : "/admin/staff/duty-reports");
+    }
+
+    private RenderFragment Attachments(DutyReportDto r) => __builder =>
+    {
+        if (r.Attachments.Count == 0) return;
+        <ul class="dr-files">
+            @foreach (var a in r.Attachments)
+            {
+                <li><QChip Text="@a.FileName" Icon="@(a.ContentType.StartsWith("image/") ? "image" : "file-earmark")" Href="@a.FileUrl" Size="sm" Variant="muted" /></li>
+            }
+        </ul>
+    };
+
+    internal static string PeriodText(DutyReportSummaryDto r)
+        => r.PeriodStart == r.PeriodEnd ? QDateFormat.D(r.PeriodStart) : QDateFormat.Range(r.PeriodStart, r.PeriodEnd);
+
+    internal static string StatusLabel(DutyReportStatus s) => s switch
+    {
+        DutyReportStatus.Draft => "Not submitted",
+        DutyReportStatus.Submitted => "Awaiting review",
+        DutyReportStatus.Reviewed => "Reviewed",
+        DutyReportStatus.Returned => "Returned for changes",
+        DutyReportStatus.NoDuty => "No duty that day",
+        _ => s.ToString()
+    };
+
+    internal static string StatusVariant(DutyReportStatus s) => s switch
+    {
+        DutyReportStatus.Draft => "muted",
+        DutyReportStatus.Submitted => "info",
+        DutyReportStatus.Reviewed => "success",
+        DutyReportStatus.Returned => "warning",
+        _ => "muted"
+    };
+
+    private static string NoteIcon(DutyReportNoteKind k) => k switch
+    {
+        DutyReportNoteKind.Return => "arrow-return-left",
+        DutyReportNoteKind.Review => "check2-all",
+        DutyReportNoteKind.Response => "reply",
+        DutyReportNoteKind.Reopen => "arrow-counterclockwise",
+        _ => "chat-left"
+    };
+
+    private static string NoteColor(DutyReportNoteKind k) => k switch
+    {
+        DutyReportNoteKind.Return => "var(--qm-warning)",
+        DutyReportNoteKind.Review => "var(--qm-success)",
+        _ => "var(--qm-primary)"
+    };
+}

@@ -1,0 +1,252 @@
+@page "/admin/subjects"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Subjects - Q-Mgr</PageTitle>
+
+@* The subject catalogue (duty rota plan §5.2). Organization-wide: a subject is the same subject in every
+   branch, and the teacher count is this branch's. Retired, never deleted — assignments, timetable lessons and
+   lesson duties point at a subject by id. *@
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Subjects</h1>
+            <p class="subtitle">The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/class-teachers"))" />
+            <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
+        </div>
+    </div>
+
+    <QFilterBar Wrap="true">
+        <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, code or department" IconLeft="search" Clearable="true" Class="sj-search" />
+        <QCheckbox Value="@showRetired" ValueChanged="@OnShowRetiredChanged" Label="Show retired subjects" />
+    </QFilterBar>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading subjects...</span></div>
+    }
+    else if (Visible.Count == 0)
+    {
+        <QEmptyState Icon="book" Title="@(subjects.Count == 0 ? "No subjects yet" : "Nobody matches")"
+                     Text="@(subjects.Count == 0 ? "Add the subjects your school teaches. Each needs a short code, which the staff import's Teaches column uses (MATH:S2A,S2B)." : "Clear the search to see every subject.")" />
+    }
+    else
+    {
+        <QCard NoPadding="true">
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead><tr><th>Subject</th><th>Code</th><th>Department</th><th>Teachers here</th><th>State</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var s in Visible)
+                        {
+                            <tr class="@(s.IsActive ? "" : "sj-retired")">
+                                <td>
+                                    <div class="sj-name">
+                                        <span class="sj-swatch" style="background:@(s.Color ?? "var(--qm-border)")"></span>
+                                        <strong>@s.Name</strong>
+                                    </div>
+                                </td>
+                                <td><QChip Text="@s.Code" Size="sm" Class="q-chip--mono" /></td>
+                                <td>@(s.DepartmentName ?? "—")</td>
+                                <td>@s.TeacherCount</td>
+                                <td><QChip Text="@(s.IsActive ? "Active" : "Retired")" Variant="@(s.IsActive ? "success" : "muted")" Size="sm" /></td>
+                                <td>
+                                    <div class="sj-actions">
+                                        <QButton Text="Edit" Icon="pencil" Variant="ghost" Size="sm" OnClick="@(() => Open(s))" />
+                                        <QButton Text="@(s.IsActive ? "Retire" : "Restore")" Icon="@(s.IsActive ? "archive" : "arrow-counterclockwise")" Variant="ghost" Size="sm"
+                                                 Title="@(s.IsActive && s.TeacherCount > 0 ? "End its teaching assignments first" : null)"
+                                                 OnClick="@(() => Toggle(s))" />
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </QCard>
+        <p class="sj-note">A subject still taught in any class cannot be retired: end its assignments on the Class Teachers page first, or the timetable would keep placing a subject nobody can pick.</p>
+    }
+</div>
+
+<QModal @bind-Visible="showModal" Title="@(editingId == null ? "New subject" : "Edit subject")" Icon="book" Size="md">
+    <ChildContent>
+        <div class="sj-form">
+            <QInput TValue="string" Label="Name" @bind-Value="@form.Name" Required="true" MaxLength="100" Placeholder="e.g. Mathematics" />
+            <QInput TValue="string" Label="Code" @bind-Value="@form.Code" Required="true" MaxLength="20" Placeholder="e.g. MATH"
+                    HelperText="Short and permanent. Cannot contain : ; or , — the staff import's Teaches column uses them as separators." />
+            <QSelect TValue="Guid?" TItem="DepartmentDto" Label="Department" @bind-Value="@form.DepartmentId" Items="@departments.Where(d => d.IsActive).ToList()"
+                     TextSelector="@(d => d.Name)" ValueSelector="@(d => (Guid?)d.Id)" AllowClear="true" Placeholder="No department"
+                     HelperText="A head of department sees the teaching load of their department's subjects." />
+            <div class="sj-colour">
+                <label for="sj-colour-input">Colour</label>
+                <div class="sj-colour-row">
+                    <input id="sj-colour-input" type="color" value="@(form.Color ?? "#7a2847")" @onchange="@(e => form.Color = (string?)e.Value)" />
+                    <span class="sj-sub">@(form.Color ?? "None — the timetable uses a neutral cell")</span>
+                    @if (form.Color != null)
+                    {
+                        <QButton Text="Clear" Variant="ghost" Size="sm" OnClick="@(() => form.Color = null)" />
+                    }
+                </div>
+            </div>
+            <QInput TValue="int" Label="Sort order" Type="number" @bind-Value="@form.SortOrder" />
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showModal = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@saving" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .sj-search { flex: 1 1 260px; min-width: 0; }
+    .sj-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .sj-swatch { width: 10px; height: 10px; border-radius: var(--qm-radius-sm); flex-shrink: 0; }
+    .sj-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+    .sj-retired { opacity: .65; }
+    .sj-note { font-size: 12.5px; color: var(--qm-text-muted); margin: 10px 2px 0; max-width: 78ch; line-height: 1.5; }
+    .sj-form { display: flex; flex-direction: column; gap: 14px; }
+    .sj-colour label { display: block; font-size: 13px; font-weight: 600; color: var(--qm-text-primary); margin-bottom: 6px; }
+    .sj-colour-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .sj-colour-row input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
+    .sj-sub { font-size: 12px; color: var(--qm-text-muted); }
+    .admin-page .q-card { margin-top: 14px; }
+</style>
+
+@code {
+    private Guid branchId;
+    private bool isLoading = true, saving, showRetired, showModal;
+    private string? search;
+    private List<SubjectDto> subjects = new();
+    private List<DepartmentDto> departments = new();
+    private Guid? editingId;
+    private SaveSubjectRequest form = new();
+
+    private List<SubjectDto> Visible => subjects
+        .Where(s => string.IsNullOrWhiteSpace(search)
+                    || s.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || s.Code.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (s.DepartmentName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        if (branchId == Guid.Empty)
+        {
+            Toast.Notify(ToastSeverity.Warning, "No branch selected", "Pick a branch in the header first.");
+            isLoading = false;
+            return;
+        }
+        try
+        {
+            subjects = await StaffApi.GetSubjectsAsync(branchId, includeInactive: showRetired);
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load subjects", ex.Message);
+        }
+        try { departments = await StaffApi.GetDepartmentsAsync(branchId); }
+        catch { departments = new(); }
+        isLoading = false;
+    }
+
+    private async Task OnShowRetiredChanged(bool value)
+    {
+        showRetired = value;
+        await LoadAsync();
+    }
+
+    private void Open(SubjectDto? s)
+    {
+        editingId = s?.Id;
+        form = s == null
+            ? new SaveSubjectRequest { SortOrder = (subjects.Count == 0 ? 0 : subjects.Max(x => x.SortOrder)) + 1 }
+            : new SaveSubjectRequest { Name = s.Name, Code = s.Code, DepartmentId = s.DepartmentId, Color = s.Color, SortOrder = s.SortOrder };
+        showModal = true;
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.Name) || string.IsNullOrWhiteSpace(form.Code))
+        {
+            Toast.Notify(ToastSeverity.Warning, "Name and code are required");
+            return;
+        }
+        if (form.Code.IndexOfAny(new[] { ':', ';', ',' }) >= 0)
+        {
+            Toast.Notify(ToastSeverity.Warning, "A code cannot contain : ; or ,");
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            if (editingId == null) await StaffApi.CreateSubjectAsync(branchId, form);
+            else await StaffApi.UpdateSubjectAsync(branchId, editingId.Value, form);
+            Toast.Notify(ToastSeverity.Success, editingId == null ? "Subject added" : "Subject saved");
+            showModal = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the subject", ex.Message);
+        }
+        finally { saving = false; }
+    }
+
+    private async Task Toggle(SubjectDto s)
+    {
+        try
+        {
+            await StaffApi.ToggleSubjectAsync(branchId, s.Id);
+            Toast.Notify(ToastSeverity.Success, s.IsActive ? "Subject retired" : "Subject restored");
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            // The server's own words: "Mathematics has 3 live teaching assignment(s). End them…"
+            Toast.Notify(ToastSeverity.Error, "Could not change the subject", ex.Message);
+        }
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+}

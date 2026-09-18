@@ -1,0 +1,91 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IClassTeacherApiService ClassTeacherApi
+
+@* "Mathematics — S2A, S2B (12 periods)" (duty rota plan §5.2): a teacher's teaching, on their portal and on
+   their profile. One home for both so the two never phrase it differently. Reads
+   GET …/class-teachers/teaching, which answers the caller's own freely and somebody else's only within the
+   caller's reach (404 otherwise) — a 404 here renders nothing, never an error. Taught % joins it in Phase 4. *@
+@if (loaded && (items.Count > 0 || !HideWhenEmpty))
+{
+    <QCard Title="@Title" Subtitle="@Subtitle" Icon="book" Class="@Class">
+        @if (items.Count == 0)
+        {
+            <p class="ts-muted">No subjects assigned on this branch. Subject teachers are assigned on the Class Teachers page.</p>
+        }
+        else
+        {
+            <ul class="ts-list">
+                @foreach (var t in items)
+                {
+                    <li class="ts-row">
+                        <div class="ts-main">
+                            <QChip Text="@t.SubjectCode" Size="sm" Class="q-chip--mono" />
+                            <strong>@t.SubjectName</strong>
+                            <span class="ts-classes">@string.Join(", ", t.Classes)</span>
+                        </div>
+                        <span class="ts-periods" title="Planned periods a week@(t.TimetabledPeriodsPerWeek > 0 ? "; timetabled" : "")">
+                            @Periods(t.PlannedPeriodsPerWeek)
+                            @if (t.TimetabledPeriodsPerWeek > 0 && t.TimetabledPeriodsPerWeek != t.PlannedPeriodsPerWeek)
+                            {
+                                <span class="ts-mismatch"> · @t.TimetabledPeriodsPerWeek timetabled</span>
+                            }
+                        </span>
+                    </li>
+                }
+            </ul>
+            <p class="ts-total">@Periods(items.Sum(t => t.PlannedPeriodsPerWeek)) a week in total</p>
+        }
+    </QCard>
+}
+
+<style>
+    .ts-list { list-style: none; margin: 0; padding: 0; }
+    .ts-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 7px 0; border-bottom: 1px solid var(--qm-border); min-width: 0; }
+    .ts-row:last-child { border-bottom: none; }
+    .ts-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 13.5px; }
+    .ts-classes { color: var(--qm-text-secondary); }
+    .ts-periods { font-size: 12.5px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .ts-mismatch { color: var(--qm-warning); }
+    .ts-total { margin: 8px 0 0; font-size: 12.5px; color: var(--qm-text-muted); }
+    .ts-muted { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>Whose teaching. Null is the signed-in person.</summary>
+    [Parameter] public Guid? UserId { get; set; }
+
+    [Parameter] public string Title { get; set; } = "My teaching";
+    [Parameter] public string? Subtitle { get; set; } = "Subjects and classes, planned periods a week";
+
+    /// <summary>The portal hides the card for somebody who teaches nothing (support staff); a profile says so.</summary>
+    [Parameter] public bool HideWhenEmpty { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    private List<TeachingSummaryDto> items = new();
+    private bool loaded;
+    private (Guid, Guid?) loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (BranchId == Guid.Empty || (loaded && loadedFor == (BranchId, UserId))) return;
+        loadedFor = (BranchId, UserId);
+        try
+        {
+            items = (await ClassTeacherApi.GetTeachingAsync(BranchId, UserId))
+                .OrderBy(t => t.SortOrder).ThenBy(t => t.SubjectName).ToList();
+            loaded = true;
+        }
+        catch
+        {
+            // Out of reach (404) or a transient failure: the rest of the page is still right, so say nothing.
+            items = new();
+            loaded = false;
+        }
+    }
+
+    private static string Periods(int n) => n == 1 ? "1 period" : $"{n} periods";
+}

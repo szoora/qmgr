@@ -1,0 +1,62 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TItem
+
+@*
+    A month as a list of weeks (duty rota plan §9): each Monday-to-Sunday week that touches the month, with the
+    items that overlap it as chips. The month view of a rota on a phone, where a 7×5 calendar grid is unreadable —
+    and on a desktop, where a slot that runs a whole week reads better as one chip than as seven cells.
+*@
+
+<div class="q-monthlist @Class">
+    @foreach (var week in Weeks)
+    {
+        var items = Items.Where(i => Start(i) <= week.End && End(i) >= week.Start).OrderBy(Start).ToList();
+        var current = week.Start <= Today && Today <= week.End;
+        <section class="q-monthlist__week @(current ? "q-monthlist__week--current" : "")">
+            <h4 class="q-monthlist__head">
+                <span>@QDateFormat.C(week.Start) – @QDateFormat.D(week.End)</span>
+                @if (current) { <span class="q-monthlist__tag">This week</span> }
+            </h4>
+            @if (items.Count == 0)
+            {
+                <p class="q-monthlist__empty">@EmptyWeekText</p>
+            }
+            else
+            {
+                <div class="q-monthlist__items">
+                    @foreach (var item in items)
+                    {
+                        @ItemTemplate(item)
+                    }
+                </div>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    /// <summary>Any day in the month to show.</summary>
+    [Parameter, EditorRequired] public DateOnly Month { get; set; }
+    [Parameter] public IEnumerable<TItem> Items { get; set; } = Array.Empty<TItem>();
+    /// <summary>The first local day an item covers.</summary>
+    [Parameter, EditorRequired] public Func<TItem, DateOnly> Start { get; set; } = _ => default;
+    /// <summary>The last local day an item covers.</summary>
+    [Parameter, EditorRequired] public Func<TItem, DateOnly> End { get; set; } = _ => default;
+    [Parameter, EditorRequired] public RenderFragment<TItem> ItemTemplate { get; set; } = _ => __ => { };
+    [Parameter] public string EmptyWeekText { get; set; } = "Nothing this week.";
+    [Parameter] public string? Class { get; set; }
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    private IEnumerable<(DateOnly Start, DateOnly End)> Weeks
+    {
+        get
+        {
+            var first = new DateOnly(Month.Year, Month.Month, 1);
+            var last = first.AddMonths(1).AddDays(-1);
+            var monday = first.AddDays(-(((int)first.DayOfWeek + 6) % 7));
+            for (var w = monday; w <= last; w = w.AddDays(7))
+                yield return (w, w.AddDays(6));
+        }
+    }
+}

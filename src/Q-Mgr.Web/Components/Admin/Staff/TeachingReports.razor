@@ -1,0 +1,386 @@
+@page "/admin/timetable/reports"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+<PageTitle>Teaching Reports - Q-Mgr</PageTitle>
+
+@*
+    The teaching reports (duty rota plan §11): teaching load, lessons taught (MoES Annex 4) with the recovery schedule
+    (Annex 5), duty rota and report compliance, and timetable health. The API builds every figure in the caller's staff
+    scope and says so; this page shows it. Timetable health appears only for an unscoped timetable master.
+*@
+
+<div class="admin-page tr-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Teaching Reports</h1>
+            <p class="subtitle">Load against the norm, lessons taught and recovered, duty compliance and the timetable's health.</p>
+        </div>
+        <div class="header-actions">
+            <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+                     TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="tr-period" />
+            <QButton Text="Print lessons (Annex 4 and 5)" Icon="printer" Variant="secondary" Disabled="@(report == null)"
+                     OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/reports/print?period={Uri.EscapeDataString(period)}"))" />
+        </div>
+    </div>
+
+    <StaffScopeNote Departments="@(report?.ScopedToDepartments)" Noun="figures" />
+
+    @if (isLoading && report == null)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Building the reports...</span></div>
+    }
+    else if (report == null)
+    {
+        <QEmptyState Icon="bar-chart" Title="The reports could not be built" Text="Try another period, or reload the page." />
+    }
+    else
+    {
+        <QTabs Tabs="@Tabs" ActiveKey="@tab" ActiveKeyChanged="@(k => tab = k)" AriaLabel="Teaching report sections" />
+
+        @if (tab == "load")
+        {
+            <QStatRow>
+                <QStatTile Value="@report.Load.Count(r => r.Band != LoadBand.NotTeaching).ToString()" Label="Teaching" Icon="person-workspace" />
+                <QStatTile Value="@report.Load.Count(r => r.Band == LoadBand.Within).ToString()" Label="Within the norm" Icon="check-circle" Variant="success"
+                           Sub="@($"{report.Norms.MinLessonsPerWeek}–{report.Norms.MaxLessonsPerWeek} a week")" />
+                <QStatTile Value="@report.Load.Count(r => r.Band == LoadBand.Under).ToString()" Label="Under" Icon="arrow-down-circle" Variant="@(report.Load.Any(r => r.Band == LoadBand.Under) ? "warning" : "default")"
+                           Sub="@($"{report.Norms.MinLessonsPerWeekMixedLevel} for O- and A-Level")" />
+                <QStatTile Value="@report.Load.Count(r => r.Band == LoadBand.Over).ToString()" Label="Over" Icon="arrow-up-circle" Variant="@(report.Load.Any(r => r.Band == LoadBand.Over) ? "danger" : "default")" />
+            </QStatRow>
+            <QCard Title="By teacher" Icon="person-lines-fill" NoPadding="true" Class="tr-card">
+                @if (!report.Load.Any())
+                {
+                    <p class="tr-muted tr-pad">No subject-teacher assignments carry a planned load.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Teacher</th><th>Department</th><th class="tr-num">Planned</th><th class="tr-num">Timetabled</th><th>Band</th><th>Subjects</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in report.Load)
+                                {
+                                    <tr>
+                                        <td><strong>@r.Name</strong>@if (r.MixedLevel) { <QChip Text="O and A" Size="sm" Variant="muted" /> }</td>
+                                        <td>@(r.Departments ?? "—")</td>
+                                        <td class="tr-num">@r.Planned</td>
+                                        <td class="tr-num">@Fmt(r.Timetabled)</td>
+                                        <td><QChip Text="@BandLabel(r.Band)" Size="sm" Variant="@BandVariant(r.Band)" /></td>
+                                        <td class="tr-small">@string.Join("; ", r.BySubject.Select(s => $"{s.SubjectCode} {string.Join(", ", s.Classes)} ({Fmt(s.Timetabled)}/{s.Planned})"))</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </QCard>
+            <div class="tr-columns">
+                @AggregateCard("By department", "diagram-3", report.LoadByDepartment)
+                @AggregateCard("By subject", "book", report.LoadBySubject)
+                @AggregateCard("By level", "layers", report.LoadByLevel)
+            </div>
+        }
+        else if (tab == "lessons")
+        {
+            var t = report.LessonsTotal;
+            <QStatRow>
+                <QStatTile Value="@(t.TaughtPercent.HasValue ? $"{t.TaughtPercent:0.#}%" : "—")" Label="Taught" Icon="check-circle" Variant="@(t.TaughtPercent is < 90 ? "warning" : "success")"
+                           Sub="incl. recovered" />
+                <QStatTile Value="@t.Scheduled.ToString()" Label="Lessons" Icon="journal-bookmark" />
+                <QStatTile Value="@t.MissedWithoutPermission.ToString()" Label="Missed, no permission" Icon="x-circle" Variant="@(t.MissedWithoutPermission > 0 ? "danger" : "default")" />
+                <QStatTile Value="@t.MissedWithPermission.ToString()" Label="Missed, with permission" Icon="calendar-x" />
+                <QStatTile Value="@t.Recovered.ToString()" Label="Recovered" Icon="arrow-repeat" Variant="info" />
+                <QStatTile Value="@t.NotRecovered.ToString()" Label="Not recovered" Icon="exclamation-octagon" Variant="@(t.NotRecovered > 0 ? "danger" : "default")" />
+                <QStatTile Value="@t.Unrecorded.ToString()" Label="Unrecorded" Icon="question-circle" Variant="@(t.Unrecorded > 0 ? "warning" : "default")" Sub="not counted" />
+            </QStatRow>
+            <QTabs Tabs="@LessonTabs" ActiveKey="@lessonBy" ActiveKeyChanged="@(k => lessonBy = k)" AriaLabel="Lessons by" />
+            <QCard NoPadding="true" Class="tr-card">
+                @LessonTable(LessonRows)
+            </QCard>
+            <QCard Title="Lesson recovery schedule" Subtitle="Missed lessons and their recovery (MoES Annex 5)" Icon="arrow-repeat" NoPadding="true" Class="tr-card">
+                @if (!report.RecoverySchedule.Any())
+                {
+                    <p class="tr-muted tr-pad">No lessons were missed this period.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Missed</th><th>Teacher</th><th>Class · subject</th><th>Reason</th><th>Recovery</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in report.RecoverySchedule)
+                                {
+                                    <tr>
+                                        <td>@QDateFormat.LocalDT(r.MissedAt)</td>
+                                        <td>@r.TeacherName</td>
+                                        <td>@r.ClassName · @r.SubjectName</td>
+                                        <td class="tr-small">@(r.Reason ?? "—")</td>
+                                        <td>@(r.RecoveryAt.HasValue ? QDateFormat.LocalDT(r.RecoveryAt) : "—")</td>
+                                        <td><QChip Text="@StaffDisplay.LessonStatusLabel(r.Status)" Size="sm" Variant="@StaffDisplay.LessonStatusVariant(r.Status)" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </QCard>
+        }
+        else if (tab == "rota")
+        {
+            <QCard Title="Duty rota and reports" Subtitle="Slots this period, acknowledgements before the start, reports on time" Icon="calendar-week" NoPadding="true" Class="tr-card">
+                @if (!report.Rota.Any())
+                {
+                    <p class="tr-muted tr-pad">Nobody was on the rota this period.</p>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Person</th><th class="tr-num">On duty</th><th class="tr-num">Supervised</th><th class="tr-num">Acknowledged in time</th><th class="tr-num">Reports due</th><th class="tr-num">On time</th><th class="tr-num">Late</th><th class="tr-num">Overdue</th><th class="tr-num">Returned</th><th class="tr-num">Review turnaround</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in report.Rota)
+                                {
+                                    <tr>
+                                        <td><strong>@r.Name</strong></td>
+                                        <td class="tr-num">@r.OnDutySlots</td>
+                                        <td class="tr-num">@r.SupervisedSlots</td>
+                                        <td class="tr-num">@(r.OnDutySlots == 0 ? "—" : $"{r.AcknowledgedBeforeStart} of {r.OnDutySlots}")</td>
+                                        <td class="tr-num">@r.ReportsDue</td>
+                                        <td class="tr-num">@r.ReportsOnTime</td>
+                                        <td class="tr-num">@r.ReportsLate</td>
+                                        <td class="tr-num">@if (r.ReportsOverdue > 0) { <QChip Text="@r.ReportsOverdue.ToString()" Size="sm" Variant="danger" /> } else { <text>0</text> }</td>
+                                        <td class="tr-num">@r.ReportsReturned</td>
+                                        <td class="tr-num">@(r.ReviewTurnaroundHours is null ? "—" : r.ReviewTurnaroundHours < 0.1m ? "under 0.1 h" : $"{r.ReviewTurnaroundHours:0.#} h")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </QCard>
+        }
+        else if (tab == "health" && report.Timetable != null)
+        {
+            var h = report.Timetable;
+            @if (h.TimetableId == null)
+            {
+                <QEmptyState Icon="grid-3x3-gap" Title="No timetable in force" Text="Publish a timetable covering today to see its health." />
+            }
+            else
+            {
+                <QStatRow>
+                    <QStatTile Value="@h.Hard.ToString()" Label="Hard clashes" Icon="x-octagon" Variant="@(h.Hard > 0 ? "danger" : "success")" Href="@($"/admin/timetable?t={h.TimetableId}")" />
+                    <QStatTile Value="@h.Soft.ToString()" Label="Soft clashes" Icon="exclamation-triangle" Variant="@(h.Soft > 0 ? "warning" : "success")" />
+                    <QStatTile Value="@h.UnplacedAssignments.ToString()" Label="Assignments not fully placed" Icon="list-check" Sub="@($"{Fmt(h.UnplacedPeriods)} {(h.UnplacedPeriods == 1 ? "period" : "periods")} a week")" />
+                </QStatRow>
+                <div class="tr-columns">
+                    <QCard Title="@($"Clashes in {h.TimetableName}")" Icon="shield-exclamation" Class="tr-card">
+                        @if (!h.TopIssues.Any()) { <p class="tr-muted">No clashes.</p> }
+                        else
+                        {
+                            <ul class="tr-issues">
+                                @foreach (var i in h.TopIssues)
+                                {
+                                    <li><QChip Text="@(i.Severity == TimetableIssueSeverity.Hard ? "Hard" : "Soft")" Size="sm" Variant="@(i.Severity == TimetableIssueSeverity.Hard ? "danger" : "warning")" /> <span>@i.Message</span></li>
+                                }
+                            </ul>
+                        }
+                    </QCard>
+                    <QCard Title="Room use" Subtitle="Teaching periods a cycle each room holds a lesson" Icon="door-open" Class="tr-card">
+                        @if (!h.Rooms.Any()) { <p class="tr-muted">No rooms are configured.</p> }
+                        else { <QBarList Items="@RoomBars" Max="100" Stacked="true" /> }
+                    </QCard>
+                    <QCard Title="Clashes over time" Subtitle="From the daily integrity check" Icon="graph-up" Class="tr-card">
+                        @if (!h.Trend.Any()) { <p class="tr-muted">The daily check has not run on this version yet.</p> }
+                        else
+                        {
+                            <div class="table-wrap">
+                                <table class="data-table">
+                                    <thead><tr><th>Checked</th><th class="tr-num">Hard</th><th class="tr-num">Soft</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var p in h.Trend.AsEnumerable().Reverse().Take(14))
+                                        {
+                                            <tr><td>@QDateFormat.LocalDT(p.At)</td><td class="tr-num">@p.Hard</td><td class="tr-num">@p.Soft</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </QCard>
+                </div>
+            }
+        }
+    }
+</div>
+
+<style>
+    .tr-period { min-width: 220px; max-width: 280px; }
+    .tr-card { margin-top: 14px; }
+    .tr-pad { padding: 14px 16px; }
+    .tr-muted { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
+    .tr-small { font-size: 12.5px; color: var(--qm-text-secondary); }
+    .tr-num { text-align: right; white-space: nowrap; }
+    .tr-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; }
+    @@media (min-width: 1000px) { .tr-columns { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); } }
+    .tr-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+    .tr-issues li { display: flex; gap: 8px; align-items: flex-start; }
+    @@media (max-width: 640px) { .tr-num { text-align: left; } }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabQuery { get; set; }
+
+    private Guid branchId;
+    private bool isLoading = true;
+    private TeachingReportsDto? report;
+    private string period = StaffPeriods.CurrentKey();
+    private IReadOnlyList<StaffPeriods.Option> periodOptions = StaffPeriods.Options();
+    private string tab = "load";
+    private string lessonBy = "teacher";
+
+    private IReadOnlyList<QTab> Tabs => report?.Timetable != null
+        ? new List<QTab> { new("load", "Load", "person-workspace"), new("lessons", "Lessons", "journal-check"), new("rota", "Duty rota", "calendar-week"), new("health", "Timetable health", "heart-pulse") }
+        : new List<QTab> { new("load", "Load", "person-workspace"), new("lessons", "Lessons", "journal-check"), new("rota", "Duty rota", "calendar-week") };
+
+    private static readonly IReadOnlyList<QTab> LessonTabs = new List<QTab>
+    {
+        new("teacher", "Teacher"), new("department", "Department"), new("subject", "Subject"), new("class", "Class"), new("level", "Level"), new("week", "Week")
+    };
+
+    private IReadOnlyList<LessonCountsDto> LessonRows => report == null ? Array.Empty<LessonCountsDto>() : lessonBy switch
+    {
+        "department" => report.LessonsByDepartment,
+        "subject" => report.LessonsBySubject,
+        "class" => report.LessonsByClass,
+        "level" => report.LessonsByLevel,
+        "week" => report.LessonsByWeek.Select(w => w.Counts).ToList(),
+        _ => report.LessonsByTeacher
+    };
+
+    private IReadOnlyList<QBarItem> RoomBars => report?.Timetable?.Rooms.Select(r => new QBarItem(r.Room, r.Percent, Count: $"{r.Percent:0.#}% · {r.PeriodsUsed} of {r.PeriodsAvailable}")).ToList() ?? new List<QBarItem>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var may = await PermissionService.HasPermissionAsync(Permissions.StaffReportsView)
+                  || await PermissionService.HasPermissionAsync(Permissions.TimetableLessonsFlag)
+                  || await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
+        if (!may)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        if (TabQuery is "load" or "lessons" or "rota" or "health") tab = TabQuery;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            report = branchId == Guid.Empty ? null : await StaffApi.GetTeachingReportsAsync(branchId, period);
+            if (tab == "health" && report?.Timetable == null) tab = "load";
+        }
+        catch (Exception ex)
+        {
+            report = null;
+            Toast.Notify(ToastSeverity.Error, "Could not build the teaching reports", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnPeriodChanged(string key)
+    {
+        period = key;
+        await LoadAsync();
+    }
+
+    private static string Fmt(decimal d) => d == Math.Round(d) ? ((int)d).ToString() : d.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string BandLabel(LoadBand b) => b switch { LoadBand.Under => "Under", LoadBand.Within => "Within", LoadBand.Over => "Over", _ => "Not teaching" };
+    private static string BandVariant(LoadBand b) => b switch { LoadBand.Under => "warning", LoadBand.Within => "success", LoadBand.Over => "danger", _ => "muted" };
+
+    private RenderFragment AggregateCard(string title, string icon, IReadOnlyList<LoadAggregateDto> rows) => __builder =>
+    {
+        <QCard Title="@title" Icon="@icon" Class="tr-card">
+            @if (!rows.Any()) { <p class="tr-muted">Nothing to show.</p> }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>@title[3..]</th><th class="tr-num">Teachers</th><th class="tr-num">Planned</th><th class="tr-num">Timetabled</th><th class="tr-num">Under</th><th class="tr-num">Over</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in rows)
+                            {
+                                <tr><td>@r.Name</td><td class="tr-num">@r.Teachers</td><td class="tr-num">@r.Planned</td><td class="tr-num">@Fmt(r.Timetabled)</td><td class="tr-num">@r.Under</td><td class="tr-num">@r.Over</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </QCard>
+    };
+
+    private RenderFragment LessonTable(IReadOnlyList<LessonCountsDto> rows) => __builder =>
+    {
+        @if (!rows.Any())
+        {
+            <p class="tr-muted tr-pad">No lessons this period.</p>
+        }
+        else
+        {
+            <div class="table-wrap">
+                <table class="data-table q-stack">
+                    <thead><tr><th>@LessonTabs.First(t => t.Key == lessonBy).Label</th><th class="tr-num">Lessons</th><th class="tr-num">Taught</th><th class="tr-num">Missed, with permission</th><th class="tr-num">Missed, no permission</th><th class="tr-num">Recovered</th><th class="tr-num">Not recovered</th><th class="tr-num">Unrecorded</th><th class="tr-num">Taught %</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td><strong>@r.Name</strong></td>
+                                <td class="tr-num">@r.Scheduled</td>
+                                <td class="tr-num">@r.Taught</td>
+                                <td class="tr-num">@r.MissedWithPermission</td>
+                                <td class="tr-num">@r.MissedWithoutPermission</td>
+                                <td class="tr-num">@r.Recovered</td>
+                                <td class="tr-num">@r.NotRecovered</td>
+                                <td class="tr-num">@r.Unrecorded</td>
+                                <td class="tr-num">@(r.TaughtPercent.HasValue ? $"{r.TaughtPercent:0.#}%" : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    };
+}

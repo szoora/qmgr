@@ -1,0 +1,1128 @@
+@page "/admin/timetable"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IStudentApiService StudentApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IAuthService AuthService
+@inject IJSRuntime JS
+
+<PageTitle>Timetable - Q-Mgr</PageTitle>
+
+@*
+    The timetable (duty rota plan §6.2, §10). A published version is operational and readable by every member of the
+    branch: by class, by teacher, by room, and the whole school a day at a time. A timetable master (timetable.manage,
+    unscoped) also sees drafts, builds them here with the live diagnosis beside the grid, and publishes.
+
+    Every placement goes to the API, which runs the clash checker and answers with the full diagnosis; the grid only
+    colours what the server said. Nothing about a clash is decided in the browser.
+*@
+
+<div class="admin-page tt-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Timetable</h1>
+            <p class="subtitle">@(canManage ? "Build a draft for the term, check it, and publish it to the staff." : "Who teaches what, where and when.")</p>
+        </div>
+        <div class="header-actions">
+            @if (detail != null)
+            {
+                <QButton Text="Lessons" Icon="journal-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/lessons"))" />
+                <QButton Text="Print" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/{detail.Timetable.Id}/print?by={(by == "master" ? "class" : by)}"))" />
+            }
+            @if (canManage)
+            {
+                <QButton Text="Bell schedule" Icon="bell" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/settings"))" />
+                <QButton Text="New draft" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenNewDraft(null))" Disabled="@(branchId == Guid.Empty)" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the timetable...</span></div>
+    }
+    else if (branchId == Guid.Empty)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="A timetable belongs to a branch. Pick one in the switcher above." />
+    }
+    else if (!versions.Any())
+    {
+        <QEmptyState Icon="grid-3x3-gap" Title="No timetable yet"
+                     Text="@(canManage ? "Check the bell schedule, then start a draft for the term." : "When the timetable is published you will see it here.")">
+            <Action>
+                @if (canManage) { <QButton Text="New draft" Icon="plus-lg" Variant="primary" OnClick="@(() => OpenNewDraft(null))" /> }
+            </Action>
+        </QEmptyState>
+    }
+    else
+    {
+        <QFilterBar Wrap="true">
+            <div class="tt-version">
+                <QSelect TValue="Guid" TItem="TimetableDto" Value="@(detail?.Timetable.Id ?? Guid.Empty)" ValueChanged="@SelectVersionAsync"
+                         Items="@versions" ValueSelector="@(v => v.Id)" TextSelector="@VersionText" Label="Version" />
+            </div>
+            @if (detail != null)
+            {
+                <div class="tt-version-meta">
+                    <QChip Text="@StatusLabel(detail.Timetable.Status)" Variant="@StatusVariant(detail.Timetable.Status)" Size="sm" />
+                    <span>@QDateFormat.Range(detail.Timetable.EffectiveFrom, detail.Timetable.EffectiveTo) · @detail.Timetable.CycleDays-day cycle · @detail.Lessons.Count lesson rows</span>
+                </div>
+                @if (detail.CanManage)
+                {
+                    <div class="tt-version-actions">
+                        @if (IsDraft)
+                        {
+                            <QButton Text="Import" Icon="upload" Variant="secondary" Size="sm" OnClick="@OpenImport" Disabled="@busy" />
+                            <QButton Text="Publish" Icon="send" Variant="primary" Size="sm" OnClick="@(() => PublishAsync(false))" Disabled="@busy" />
+                            <QButton Text="Discard draft" Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => showDiscard = true)" Disabled="@busy" />
+                        }
+                        else if (detail.Timetable.Status == TimetableStatus.Published)
+                        {
+                            <QButton Text="New draft from this" Icon="files" Variant="secondary" Size="sm" OnClick="@(() => OpenNewDraft(detail.Timetable))" Disabled="@busy" />
+                            <QButton Text="Archive" Icon="archive" Variant="ghost" Size="sm" OnClick="@(() => showArchive = true)" Disabled="@busy" />
+                        }
+                    </div>
+                }
+            }
+        </QFilterBar>
+
+        @if (detail != null)
+        {
+            <QFilterBar Wrap="true">
+                <QTabs Tabs="@ViewTabs" ActiveKey="@by" ActiveKeyChanged="@OnViewChanged" AriaLabel="Timetable view" />
+                @if (by == "master")
+                {
+                    <div class="tt-key">
+                        <QSelect TValue="int" TItem="int" Value="@masterDay" ValueChanged="@(d => masterDay = d)" Items="@CycleDayList"
+                                 ValueSelector="@(d => d)" TextSelector="@DayLabel" Label="Day" />
+                    </div>
+                }
+                else
+                {
+                    <div class="tt-key">
+                        <QSelect TValue="string" TItem="KeyOption" Value="@key" ValueChanged="@(k => key = k)" Items="@KeyOptions"
+                                 ValueSelector="@(o => o.Key)" TextSelector="@(o => o.Label)" Label="@KeyLabel" Placeholder="@($"Choose a {KeyLabel.ToLowerInvariant()}")" />
+                    </div>
+                }
+            </QFilterBar>
+
+            <div class="tt-layout @(ShowSide ? "tt-layout--side" : "")">
+                <div class="tt-main">
+                    @if (by != "master" && string.IsNullOrEmpty(key))
+                    {
+                        <QEmptyState Icon="grid-3x3-gap" Title="@($"Choose a {KeyLabel.ToLowerInvariant()}")" Text="The grid shows one class, teacher or room at a time; School shows every class for one day." />
+                    }
+                    else
+                    {
+                        @if (CanEdit)
+                        {
+                            <p class="tt-hint"><QIcon Name="hand-index" Size="sm" /> Select a period to place a lesson there, or to move and remove what is in it.</p>
+                        }
+                        <QWeekGrid TItem="TimetableLessonDto" Columns="@GridColumns" Rows="@GridRows" Items="@GridItems"
+                                   RowKey="@(l => l.PeriodKey)" ColumnKey="@ColumnKeyOf"
+                                   CellState="@CellStateFor" CellTitle="@CellTitleFor"
+                                   Selectable="@CanEdit" OnCellActivated="@OnCellActivated"
+                                   ShowEmptySlotsInList="@CanEdit" EmptyDayText="No lessons."
+                                   AriaLabel="@GridAriaLabel" CornerLabel="Period" MaxHeight="72vh" Class="tt-grid">
+                            <CellTemplate Context="cell">
+                                @foreach (var group in cell.Items.GroupBy(l => l.GroupId ?? l.Id))
+                                {
+                                    var rows = group.ToList();
+                                    var first = rows[0];
+                                    <button type="button" class="tt-lesson" style="@SubjectStyle(first)" title="@LessonTitle(rows)"
+                                            @onclick="@(() => OpenLesson(rows))" @onclick:stopPropagation="true">
+                                        <strong class="tt-lesson__subject">@first.SubjectCode</strong>
+                                        <span class="tt-lesson__line">@Secondary(rows)</span>
+                                        @if (by != "room" && !string.IsNullOrEmpty(first.Room)) { <span class="tt-lesson__room"><QIcon Name="door-open" Size="sm" /> @first.Room</span> }
+                                    </button>
+                                }
+                            </CellTemplate>
+                        </QWeekGrid>
+                    }
+                </div>
+
+                @if (ShowSide)
+                {
+                    <aside class="tt-side">
+                        <QCard Title="Checks" Icon="shield-check" Subtitle="@(IsDraft ? "Hard clashes block publishing; soft ones need a note." : "The published version, checked against today.")">
+                            <QStatRow>
+                                <QStatTile Value="@Diagnosis!.HardCount.ToString()" Label="Hard" Icon="x-octagon" Variant="@(Diagnosis.HardCount > 0 ? "danger" : "success")" />
+                                <QStatTile Value="@Diagnosis.SoftCount.ToString()" Label="Soft" Icon="exclamation-triangle" Variant="@(Diagnosis.SoftCount > 0 ? "warning" : "success")" />
+                            </QStatRow>
+                            @if (Diagnosis.Issues.Any())
+                            {
+                                <QCheckbox @bind-Value="@issuesForViewOnly" Label="Only this view" />
+                                <ul class="tt-issues">
+                                    @foreach (var issue in ShownIssues.Take(60))
+                                    {
+                                        var i = issue;
+                                        <li class="tt-issue tt-issue--@(i.Severity == TimetableIssueSeverity.Hard ? "hard" : "soft")">
+                                            <button type="button" class="tt-issue__btn" @onclick="@(() => GoToIssue(i))" title="Show it">
+                                                <QChip Text="@(i.Severity == TimetableIssueSeverity.Hard ? "Hard" : "Soft")" Variant="@(i.Severity == TimetableIssueSeverity.Hard ? "danger" : "warning")" Size="sm" />
+                                                <span>@i.Message</span>
+                                            </button>
+                                        </li>
+                                    }
+                                </ul>
+                                @if (ShownIssues.Count() > 60) { <p class="tt-muted">And @(ShownIssues.Count() - 60) more.</p> }
+                            }
+                            else
+                            {
+                                <p class="tt-muted">No clashes.</p>
+                            }
+                        </QCard>
+
+                        @if (IsDraft)
+                        {
+                            <QCard Title="Load to place" Icon="list-check" Subtitle="Planned periods a week from the subject-teacher assignments">
+                                @if (!ShownUnplaced.Any())
+                                {
+                                    <p class="tt-muted">@(Diagnosis.Unplaced.Any() ? "Nothing for this view." : "No subject-teacher assignments carry planned periods yet.")</p>
+                                }
+                                else
+                                {
+                                    <ul class="tt-unplaced">
+                                        @foreach (var u in ShownUnplaced)
+                                        {
+                                            <li class="@(u.Placed >= u.Planned && u.Planned > 0 ? "tt-unplaced--done" : "")">
+                                                <span><strong>@u.ClassName</strong> @u.SubjectCode · @u.TeacherName</span>
+                                                <QChip Text="@($"{Fmt(u.Placed)} of {u.Planned}")" Size="sm" Variant="@(u.Planned == 0 ? "muted" : u.Placed == u.Planned ? "success" : u.Placed > u.Planned ? "warning" : "info")" />
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            </QCard>
+                        }
+                    </aside>
+                }
+            </div>
+        }
+    }
+</div>
+
+@* ---- A slot: place, move, remove (a draft, a master) ------------------------------------------ *@
+<QModal @bind-Visible="showSlot" Title="@SlotTitle" Icon="grid-3x3-gap" Size="lg">
+    <ChildContent>
+        @if (slot is { } sl && detail != null)
+        {
+            var inSlot = detail.Lessons.Where(l => l.CycleDay == sl.Day && string.Equals(l.PeriodKey, sl.Period, StringComparison.OrdinalIgnoreCase)).GroupBy(l => l.GroupId ?? l.Id).ToList();
+            @if (inSlot.Any())
+            {
+                <h4 class="tt-modal-head">In this period</h4>
+                <ul class="tt-slot-lessons">
+                    @foreach (var g in inSlot)
+                    {
+                        var rows = g.ToList();
+                        <li>
+                            <div class="tt-slot-lesson">
+                                <strong>@rows[0].SubjectName</strong>
+                                <span>@string.Join(" + ", rows.Select(r => r.ClassName).Distinct()) · @string.Join(", ", rows.Select(r => r.TeacherName).Distinct())@(string.IsNullOrEmpty(rows[0].Room) ? "" : $" · {rows[0].Room}")</span>
+                            </div>
+                            <div class="tt-slot-actions">
+                                <QButton Text="Move" Icon="arrows-move" Variant="ghost" Size="sm" OnClick="@(() => StartMove(rows))" Disabled="@busy" />
+                                <QButton Text="Remove" Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => RemoveAsync(rows[0]))" Disabled="@busy" />
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @if (moving != null)
+            {
+                <div class="tt-move">
+                    <h4 class="tt-modal-head">Move @moving[0].SubjectCode for @string.Join(" + ", moving.Select(r => r.ClassName).Distinct())</h4>
+                    <div class="form-row">
+                        <QSelect TValue="int" TItem="int" Value="@moveDay" ValueChanged="@(d => { moveDay = d; movePeriod = null; })" Items="@CycleDayList" ValueSelector="@(d => d)" TextSelector="@DayLabel" Label="Day" />
+                        <QSelect TValue="string" TItem="BellPeriodDto" Value="@movePeriod" ValueChanged="@(p => movePeriod = p)" Items="@LessonPeriods(moveDay)" ValueSelector="@(p => p.Key)" TextSelector="@PeriodText" Label="Period" Placeholder="Choose a period" />
+                        <QSelect TValue="string" TItem="string" Value="@moveRoom" ValueChanged="@(r => moveRoom = r)" Items="@rooms" ValueSelector="@(r => r)" TextSelector="@(r => r)" Label="Room" Placeholder="No room" AllowClear="true" />
+                    </div>
+                    <div class="tt-slot-actions">
+                        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => moving = null)" />
+                        <QButton Text="Move lesson" Icon="arrows-move" Variant="primary" OnClick="@MoveAsync" Disabled="@(busy || string.IsNullOrEmpty(movePeriod))" />
+                    </div>
+                </div>
+            }
+            else
+            {
+                <h4 class="tt-modal-head">Place a lesson</h4>
+                @if (!PlaceOptions.Any())
+                {
+                    <p class="tt-muted">No subject-teacher assignment fits this view. Assign subject teachers on the Class Teachers page first.</p>
+                }
+                else
+                {
+                    <QSelect TValue="Guid" TItem="UnplacedLoadDto" Value="@placeAssignment" ValueChanged="@OnPlaceAssignmentChanged" Items="@PlaceOptions"
+                             ValueSelector="@(u => u.AssignmentId)" TextSelector="@(u => $"{u.ClassName} · {u.SubjectName} · {u.TeacherName} ({Fmt(u.Placed)} of {u.Planned} placed)")"
+                             Label="Class, subject and teacher" Placeholder="Choose what to place" />
+                    @if (JointOptions.Any())
+                    {
+                        <QMultiSelect TValue="string" TItem="string" SelectedValues="@placeAlso" SelectedValuesChanged="@(v => placeAlso = v.ToList())" Items="@JointOptions"
+                                      ValueSelector="@(c => c)" TextSelector="@(c => c)" Label="Taught together with (a joint lesson)" Placeholder="No other stream" />
+                    }
+                    <QSelect TValue="string" TItem="string" Value="@placeRoom" ValueChanged="@(r => placeRoom = r)" Items="@rooms" ValueSelector="@(r => r)" TextSelector="@(r => r)"
+                             Label="Room" Placeholder="@(rooms.Any() ? "No room" : "No rooms configured")" AllowClear="true" Disabled="@(!rooms.Any())" />
+                }
+            }
+            @if (!string.IsNullOrEmpty(slotError)) { <p class="tt-error" role="alert">@slotError</p> }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@(() => showSlot = false)" />
+        @if (moving == null && PlaceOptions.Any())
+        {
+            <QButton Text="Place lesson" Icon="plus-lg" Variant="primary" OnClick="@PlaceAsync" Disabled="@(busy || placeAssignment == Guid.Empty)" />
+        }
+    </FooterContent>
+</QModal>
+
+@* ---- A lesson, read only ---------------------------------------------------------------------------- *@
+<QModal @bind-Visible="showLesson" Title="@(viewing?.FirstOrDefault()?.SubjectName ?? "Lesson")" Icon="journal-bookmark" Size="sm">
+    <ChildContent>
+        @if (viewing is { Count: > 0 } rows && detail != null)
+        {
+            var period = TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, rows[0].CycleDay, rows[0].PeriodKey);
+            <dl class="tt-dl">
+                <dt>When</dt><dd>@DayLabel(rows[0].CycleDay), @(period == null ? rows[0].PeriodKey : PeriodText(period))</dd>
+                <dt>@(rows.Select(r => r.ClassName).Distinct().Count() > 1 ? "Classes" : "Class")</dt><dd>@string.Join(" + ", rows.Select(r => r.ClassName).Distinct())</dd>
+                <dt>@(rows.Select(r => r.TeacherUserId).Distinct().Count() > 1 ? "Teachers" : "Teacher")</dt><dd>@string.Join(", ", rows.Select(r => r.TeacherName).Distinct())</dd>
+                <dt>Room</dt><dd>@(string.IsNullOrEmpty(rows[0].Room) ? "—" : rows[0].Room)</dd>
+            </dl>
+            @if (CanEdit)
+            {
+                <div class="tt-slot-actions">
+                    <QButton Text="Move or remove" Icon="arrows-move" Variant="secondary" Size="sm" OnClick="@(() => { showLesson = false; OpenSlot(rows[0].CycleDay, rows[0].PeriodKey); })" />
+                </div>
+            }
+        }
+    </ChildContent>
+</QModal>
+
+@* ---- New draft ------------------------------------------------------------------------------------ *@
+<QModal @bind-Visible="showNew" Title="@(copyFrom == null ? "New timetable draft" : $"New draft from '{copyFrom.Name}'")" Icon="plus-lg" Size="md">
+    <ChildContent>
+        <QInput TValue="string" @bind-Value="@newName" Label="Name" Required="true" MaxLength="100" Placeholder="Term 3 2026" />
+        <QSelect TValue="string" TItem="PerformancePeriodDto" Value="@newPeriod" ValueChanged="@OnNewPeriodChanged" Items="@terms" ValueSelector="@(p => p.Key)"
+                 TextSelector="@(p => $"{p.Name} ({QDateFormat.Range(p.Start, p.End)})")" Label="Term" Placeholder="The term covering today" AllowClear="true" />
+        <div class="form-row">
+            <QDatePicker Value="@newFrom" ValueChanged="@(d => newFrom = d)" Label="In force from" />
+            <QDatePicker Value="@newTo" ValueChanged="@(d => newTo = d)" Label="Until" />
+        </div>
+        <p class="tt-muted">@(copyFrom == null ? "Empty dates take the term's own." : "Every lesson is copied; publish the draft over the old version to replace it from its first date.")</p>
+        @if (!string.IsNullOrEmpty(newError)) { <p class="tt-error" role="alert">@newError</p> }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showNew = false)" />
+        <QButton Text="Create draft" Icon="plus-lg" Variant="primary" OnClick="@CreateDraftAsync" Disabled="@(busy || string.IsNullOrWhiteSpace(newName))" />
+    </FooterContent>
+</QModal>
+
+@* ---- Publish with soft clashes --------------------------------------------------------------------- *@
+<QModal @bind-Visible="showSoft" Title="Publish with soft clashes" Icon="exclamation-triangle" Size="md">
+    <ChildContent>
+        <p>@(Diagnosis?.SoftCount ?? 0) soft clash(es) remain. They do not stop the timetable working; say why they are acceptable and the note is kept with the publication.</p>
+        <ul class="tt-issues tt-issues--modal">
+            @foreach (var i in (Diagnosis?.Issues ?? new()).Where(i => i.Severity == TimetableIssueSeverity.Soft).Take(12))
+            {
+                <li class="tt-issue tt-issue--soft"><span>@i.Message</span></li>
+            }
+        </ul>
+        <QInput TValue="string" @bind-Value="@publishNote" Type="textarea" Rows="3" MaxLength="500" Label="Why they are acceptable" Required="true" />
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSoft = false)" />
+        <QButton Text="Publish" Icon="send" Variant="primary" OnClick="@(() => PublishAsync(true))" Disabled="@(busy || string.IsNullOrWhiteSpace(publishNote))" />
+    </FooterContent>
+</QModal>
+
+@* ---- Import a timetable export (plan §6.2, Phase 6) ------------------------------------------------ *@
+<QModal @bind-Visible="showImport" Title="Import lessons into this draft" Icon="upload" Size="lg">
+    <ChildContent>
+        @if (importJob == null)
+        {
+            <p class="tt-muted">A CSV or Excel export from aSc Timetables, FET or a spreadsheet, one lesson per row, with a header row naming
+                <strong>Day</strong>, <strong>Period</strong>, <strong>Class</strong>, <strong>Subject</strong>, <strong>Teacher</strong> and optionally <strong>Room</strong>.
+                Day is "Mon", "Monday", "Mon B" or the cycle-day number; Period is its key, label or start time; Subject its code or name;
+                Teacher an email, username or full name. The same teacher, subject and period for two classes becomes a joint lesson.</p>
+            <InputFile id="tt-import-file" OnChange="OnImportFile" accept=".csv,.xlsx,.xls,text/csv" />
+            @if (importRows.Any())
+            {
+                <p class="tt-import-count">@importRows.Count lesson row(s) read from @importFileName@(importProblems.Any() ? $" — {importProblems.Count} row(s) missing a Day, Period, Class, Subject or Teacher will be refused" : "").</p>
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead><tr><th>Day</th><th>Period</th><th>Class</th><th>Subject</th><th>Teacher</th><th>Room</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in importRows.Take(8))
+                            {
+                                <tr><td>@r.Day</td><td>@r.Period</td><td>@r.Class</td><td>@r.Subject</td><td>@r.Teacher</td><td>@r.Room</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (importRows.Count > 8) { <p class="tt-muted">and @(importRows.Count - 8) more.</p> }
+                <QCheckbox @bind-Value="@importReplace" Label="Replace this draft's lessons (the file becomes the whole timetable)" />
+            }
+            @if (!string.IsNullOrEmpty(importError)) { <p class="tt-error" role="alert">@importError</p> }
+        }
+        else
+        {
+            <div class="tt-import-progress" role="status">
+                <strong>@(importJob.Status is RosterImportStatus.Pending or RosterImportStatus.Processing ? $"Importing… {importJob.ProcessedRows} of {importJob.TotalRows}" : "Import finished")</strong>
+                <span>@importJob.CreatedCount created · @importJob.DuplicateCount already there · @importJob.FailedCount refused</span>
+            </div>
+            @if (importFailures.Any())
+            {
+                <h4 class="tt-modal-head">Refused rows</h4>
+                <ul class="tt-issues">
+                    @foreach (var e in importFailures.Take(60))
+                    {
+                        <li class="tt-issue tt-issue--hard"><span>Row @e.RowNumber: @e.Message</span></li>
+                    }
+                </ul>
+            }
+            @if (importJob.Status is not (RosterImportStatus.Pending or RosterImportStatus.Processing))
+            {
+                <p class="tt-muted">What was imported is checked like any placement: the draft's Checks now list any clashes it left.</p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="@CloseImport" />
+        @if (importJob == null)
+        {
+            <QButton Text="@($"Import {importRows.Count} row(s)")" Icon="upload" Variant="primary" OnClick="@StartImportAsync" Disabled="@(busy || !importRows.Any())" />
+        }
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showDiscard" Title="Discard this draft?" Icon="trash" Size="sm">
+    <ChildContent><p>Every lesson placed in '@detail?.Timetable.Name' is removed. A published timetable is not affected.</p></ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => showDiscard = false)" />
+        <QButton Text="Discard" Icon="trash" Variant="danger" OnClick="@DiscardAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showArchive" Title="Archive this timetable?" Icon="archive" Size="sm">
+    <ChildContent><p>'@detail?.Timetable.Name' stops being the timetable in force. It stays readable as history.</p></ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => showArchive = false)" />
+        <QButton Text="Archive" Icon="archive" Variant="danger" OnClick="@ArchiveAsync" Disabled="@busy" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .tt-version { min-width: 260px; flex: 1 1 260px; max-width: 420px; }
+    .tt-version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--qm-text-secondary); }
+    .tt-version-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+    .tt-key { min-width: 220px; flex: 0 1 280px; }
+    .tt-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 12px; }
+    @@media (min-width: 1200px) { .tt-layout--side { grid-template-columns: minmax(0, 1fr) 340px; } }
+    .tt-main, .tt-side { min-width: 0; }
+    .tt-side { display: flex; flex-direction: column; gap: 14px; }
+    .tt-hint { font-size: 12.5px; color: var(--qm-text-muted); margin: 0 0 8px; }
+    .tt-muted { font-size: 12.5px; color: var(--qm-text-muted); margin: 6px 0 0; }
+    .tt-error { color: var(--qm-danger); font-size: 13px; margin: 8px 0 0; }
+    .tt-lesson { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; padding: 4px 6px; margin: 0 0 3px;
+                 background: var(--qm-bg-secondary); border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-primary); border-radius: var(--qm-radius-sm);
+                 color: var(--qm-text-primary); font-size: 12px; line-height: 1.3; cursor: pointer; min-height: 44px; }
+    .tt-lesson:hover { background: var(--qm-bg-hover, var(--qm-bg-secondary)); border-color: var(--qm-primary); }
+    .tt-lesson__subject { font-size: 12.5px; }
+    .tt-lesson__line, .tt-lesson__room { color: var(--qm-text-secondary); overflow-wrap: anywhere; }
+    .tt-issues { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
+    .tt-issues--modal { max-height: 220px; margin-bottom: 12px; }
+    .tt-issue { font-size: 12.5px; }
+    .tt-issue__btn { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); padding: 6px 8px; color: var(--qm-text-primary); cursor: pointer; }
+    .tt-issue--hard .tt-issue__btn { border-left: 3px solid var(--qm-danger); }
+    .tt-issue--soft .tt-issue__btn, .tt-issues--modal .tt-issue--soft { border-left: 3px solid var(--qm-warning); }
+    .tt-issues--modal .tt-issue { padding: 4px 8px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); }
+    .tt-unplaced { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+    .tt-unplaced li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tt-unplaced--done { opacity: .65; }
+    .tt-modal-head { margin: 4px 0 8px; font-size: 14px; font-family: var(--qm-font-display); }
+    .tt-slot-lessons { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .tt-slot-lessons li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 8px 10px; }
+    .tt-slot-lesson { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+    .tt-slot-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .tt-move { border-top: 1px solid var(--qm-border); padding-top: 10px; }
+    .tt-import-count { font-size: 13px; margin: 10px 0 6px; }
+    .tt-import-progress { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); margin-bottom: 10px; font-size: 13.5px; }
+    .tt-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 13.5px; }
+    .tt-dl dt { color: var(--qm-text-muted); }
+    .tt-dl dd { margin: 0; }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "t")] public Guid? QueryTimetable { get; set; }
+    [SupplyParameterFromQuery(Name = "by")] public string? QueryBy { get; set; }
+    [SupplyParameterFromQuery(Name = "key")] public string? QueryKey { get; set; }
+
+    private bool isLoading = true, canManage, busy, issuesForViewOnly = true;
+    private Guid branchId, me;
+    private List<TimetableDto> versions = new();
+    private TimetableDetailDto? detail;
+    private string by = "class";
+    private string? key;
+    private int masterDay = 1;
+    private List<string> rooms = new(), classes = new();
+    private List<PerformancePeriodDto> terms = new();
+
+    // Slot modal
+    private bool showSlot;
+    private (int Day, string Period)? slot;
+    private string? slotError;
+    private Guid placeAssignment;
+    private List<string> placeAlso = new();
+    private string? placeRoom;
+    private List<TimetableLessonDto>? moving;
+    private int moveDay = 1;
+    private string? movePeriod, moveRoom;
+
+    private bool showLesson;
+    private List<TimetableLessonDto>? viewing;
+
+    private bool showNew;
+    private TimetableDto? copyFrom;
+    private string newName = string.Empty;
+    private string? newPeriod, newError;
+    private DateTime? newFrom, newTo;
+
+    private bool showSoft, showDiscard, showArchive;
+
+    // Import
+    private bool showImport, importReplace;
+    private string? importError, importFileName;
+    private List<TimetableImportRow> importRows = new();
+    private List<int> importProblems = new();
+    private RosterImportJobDto? importJob;
+    private List<RosterImportJobEntryDto> importFailures = new();
+    private string? publishNote;
+
+    private sealed record KeyOption(string Key, string Label);
+
+    private static readonly IReadOnlyList<QTab> ViewTabs = new List<QTab>
+    {
+        new("class", "Class", "people"), new("teacher", "Teacher", "person-badge"), new("room", "Room", "door-open"), new("master", "School", "grid-3x3-gap")
+    };
+
+    private TimetableDiagnosisDto? Diagnosis => detail?.Diagnosis;
+    private bool IsDraft => detail?.Timetable.Status == TimetableStatus.Draft;
+    private bool CanEdit => detail?.CanManage == true && IsDraft;
+    private bool ShowSide => detail?.CanManage == true && Diagnosis != null;
+    private IReadOnlyList<int> CycleDayList => detail == null ? Array.Empty<int>() : Enumerable.Range(1, detail.Timetable.CycleDays).ToList();
+    private string KeyLabel => by switch { "teacher" => "Teacher", "room" => "Room", _ => "Class" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        canManage = await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
+        me = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
+        if (QueryBy is "class" or "teacher" or "room" or "master") by = QueryBy;
+        key = QueryKey;
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync(QueryTimetable);
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        detail = null;
+        key = null;
+        _ = InvokeAsync(async () => { await LoadAsync(null); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync(Guid? preferred)
+    {
+        isLoading = true;
+        try
+        {
+            if (branchId == Guid.Empty) return;
+            versions = await StaffApi.GetTimetablesAsync(branchId);
+            var pick = versions.FirstOrDefault(v => v.Id == preferred)
+                       ?? versions.FirstOrDefault(v => v.Status == TimetableStatus.Published && v.EffectiveFrom <= DateOnly.FromDateTime(DateTime.Today) && v.EffectiveTo >= DateOnly.FromDateTime(DateTime.Today))
+                       ?? versions.FirstOrDefault(v => v.Status == TimetableStatus.Draft)
+                       ?? versions.FirstOrDefault();
+            detail = pick == null ? null : await StaffApi.GetTimetableAsync(branchId, pick.Id);
+            if (canManage)
+            {
+                try
+                {
+                    var vocab = await StudentApi.GetVocabulariesAsync(branchId);
+                    rooms = vocab.Rooms.Where(r => r.IsActive).OrderBy(r => r.SortOrder).Select(r => r.Name).ToList();
+                    classes = vocab.Classes.Where(c => c.IsActive).OrderBy(c => c.SortOrder).Select(c => c.Name).ToList();
+                }
+                catch { rooms = new(); classes = new(); }
+            }
+            ChooseDefaultKey();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the timetable", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ReloadDetailAsync()
+    {
+        if (detail == null) return;
+        detail = await StaffApi.GetTimetableAsync(branchId, detail.Timetable.Id);
+        versions = await StaffApi.GetTimetablesAsync(branchId);
+    }
+
+    /// <summary>A teacher opening the page sees their own week; everybody else the first class.</summary>
+    private void ChooseDefaultKey()
+    {
+        if (detail == null || by == "master") return;
+        if (!string.IsNullOrEmpty(key) && KeyOptions.Any(o => o.Key == key)) return;
+        if (by == "class" && string.IsNullOrEmpty(QueryBy) && detail.Lessons.Any(l => l.TeacherUserId == me))
+        {
+            by = "teacher";
+            key = me.ToString();
+            return;
+        }
+        key = KeyOptions.FirstOrDefault()?.Key;
+    }
+
+    private async Task SelectVersionAsync(Guid id)
+    {
+        if (id == Guid.Empty || id == detail?.Timetable.Id) return;
+        try
+        {
+            detail = await StaffApi.GetTimetableAsync(branchId, id);
+            ChooseDefaultKey();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not open that version", ex.Message); }
+    }
+
+    private void OnViewChanged(string next)
+    {
+        by = next;
+        key = null;
+        ChooseDefaultKey();
+    }
+
+    // ---- Views ------------------------------------------------------------------------------------
+
+    private IReadOnlyList<KeyOption> KeyOptions
+    {
+        get
+        {
+            if (detail == null) return Array.Empty<KeyOption>();
+            var unplaced = Diagnosis?.Unplaced ?? new();
+            return by switch
+            {
+                "teacher" => detail.Lessons.Select(l => (l.TeacherUserId, l.TeacherName)).Concat(unplaced.Select(u => (u.TeacherUserId, u.TeacherName)))
+                    .DistinctBy(t => t.Item1).OrderBy(t => t.Item2, StringComparer.OrdinalIgnoreCase)
+                    .Select(t => new KeyOption(t.Item1.ToString(), t.Item2)).ToList(),
+                "room" => detail.Lessons.Where(l => !string.IsNullOrEmpty(l.Room)).Select(l => l.Room!).Concat(rooms)
+                    .DistinctBy(TimetableCycle.Normalize).OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+                    .Select(r => new KeyOption(TimetableCycle.Normalize(r), r)).ToList(),
+                _ => ClassNames().Select(c => new KeyOption(TimetableCycle.Normalize(c), c)).ToList()
+            };
+        }
+    }
+
+    private List<string> ClassNames()
+    {
+        if (detail == null) return new();
+        var fromLessons = detail.Lessons.Select(l => l.ClassName).Concat((Diagnosis?.Unplaced ?? new()).Select(u => u.ClassName));
+        var ordered = classes.Concat(fromLessons.OrderBy(c => c, StringComparer.OrdinalIgnoreCase));
+        return ordered.DistinctBy(TimetableCycle.Normalize).ToList();
+    }
+
+    private bool InView(TimetableLessonDto l) => by switch
+    {
+        "teacher" => l.TeacherUserId.ToString() == key,
+        "room" => TimetableCycle.Normalize(l.Room) == key,
+        "master" => l.CycleDay == masterDay,
+        _ => TimetableCycle.Normalize(l.ClassName) == key
+    };
+
+    private IEnumerable<TimetableLessonDto> GridItems => detail?.Lessons.Where(InView) ?? Enumerable.Empty<TimetableLessonDto>();
+
+    private IReadOnlyList<QWeekGridRow> GridRows => detail == null ? Array.Empty<QWeekGridRow>() :
+        TimetableCycle.Rows(detail.Settings).Select(p => new QWeekGridRow(p.Key, p.Label, $"{p.Start}–{p.End}", p.Kind != BellPeriodKind.Lesson)).ToList();
+
+    private IReadOnlyList<QWeekGridColumn> GridColumns
+    {
+        get
+        {
+            if (detail == null) return Array.Empty<QWeekGridColumn>();
+            if (by == "master")
+            {
+                var inDay = detail.Lessons.Where(l => l.CycleDay == masterDay).Select(l => l.ClassName);
+                return ClassNames().Concat(inDay).DistinctBy(TimetableCycle.Normalize)
+                    .Select(c => new QWeekGridColumn(TimetableCycle.Normalize(c), c)).ToList();
+            }
+            var today = TodayCycleDay;
+            return CycleDayList.Select(d => new QWeekGridColumn(d.ToString(), DayLabel(d), IsToday: today == d)).ToList();
+        }
+    }
+
+    private int? TodayCycleDay
+    {
+        get
+        {
+            if (detail == null || detail.Timetable.Status != TimetableStatus.Published) return null;
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            if (today < detail.Timetable.EffectiveFrom || today > detail.Timetable.EffectiveTo) return null;
+            return TimetableCycle.CycleDayOn(detail.Settings, detail.Timetable.CycleDays, detail.Timetable.EffectiveFrom, today);
+        }
+    }
+
+    private string ColumnKeyOf(TimetableLessonDto l) => by == "master" ? TimetableCycle.Normalize(l.ClassName) : l.CycleDay.ToString();
+
+    private int DayOf(QWeekGridSlot s) => by == "master" ? masterDay : int.TryParse(s.ColumnKey, out var d) ? d : 0;
+
+    private string GridAriaLabel => by switch
+    {
+        "master" => $"Whole school timetable for {DayLabel(masterDay)}",
+        _ => $"Timetable for {KeyOptions.FirstOrDefault(o => o.Key == key)?.Label}"
+    };
+
+    private IEnumerable<TimetableIssueDto> IssuesAt(QWeekGridSlot s)
+    {
+        if (Diagnosis == null) return Enumerable.Empty<TimetableIssueDto>();
+        var day = DayOf(s);
+        var ids = GridItems.Where(l => l.CycleDay == day && string.Equals(l.PeriodKey, s.RowKey, StringComparison.OrdinalIgnoreCase)
+                                       && (by != "master" || TimetableCycle.Normalize(l.ClassName) == s.ColumnKey))
+            .Select(l => l.Id).ToHashSet();
+        return Diagnosis.Issues.Where(i => i.LessonIds.Any(ids.Contains) && (i.PeriodKey == null || string.Equals(i.PeriodKey, s.RowKey, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private QWeekGridCellState CellStateFor(QWeekGridSlot s)
+    {
+        if (detail == null) return QWeekGridCellState.None;
+        var day = DayOf(s);
+        if (TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, day, s.RowKey) == null) return QWeekGridCellState.Unavailable;
+        var issues = IssuesAt(s).ToList();
+        if (issues.Any(i => i.Severity == TimetableIssueSeverity.Hard)) return QWeekGridCellState.Conflict;
+        if (issues.Any(i => i.Severity == TimetableIssueSeverity.Soft && i.CycleDay != null)) return QWeekGridCellState.Warning;
+        if (by == "teacher" && Guid.TryParse(key, out var teacher)
+            && detail.Settings.Unavailability.Any(u => u.UserId == teacher && u.CycleDay == day && (u.PeriodKey == null || string.Equals(u.PeriodKey, s.RowKey, StringComparison.OrdinalIgnoreCase))))
+            return QWeekGridCellState.Unavailable;
+        return QWeekGridCellState.None;
+    }
+
+    private string? CellTitleFor(QWeekGridCell<TimetableLessonDto> cell)
+    {
+        var messages = IssuesAt(cell.Slot).Where(i => i.Severity == TimetableIssueSeverity.Hard || i.CycleDay != null).Select(i => i.Message).Distinct().ToList();
+        if (detail != null && TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, DayOf(cell.Slot), cell.Row.Key) == null)
+            messages.Insert(0, "Not a teaching period on this day.");
+        return messages.Count == 0 ? null : string.Join("\n", messages);
+    }
+
+    private string Secondary(List<TimetableLessonDto> rows) => by switch
+    {
+        "teacher" => string.Join(" + ", rows.Select(r => r.ClassName).Distinct()),
+        "room" => $"{string.Join(" + ", rows.Select(r => r.ClassName).Distinct())} · {string.Join(", ", rows.Select(r => r.TeacherName).Distinct())}",
+        _ => $"{string.Join(", ", rows.Select(r => r.TeacherName).Distinct())}{JointWith(rows)}"
+    };
+
+    /// <summary>A class's own view shows only its rows of a joint lesson; say who else is in the room.</summary>
+    private string JointWith(List<TimetableLessonDto> rows)
+    {
+        if (detail == null || rows[0].GroupId is not { } group) return "";
+        var mine = rows.Select(r => TimetableCycle.Normalize(r.ClassName)).ToHashSet();
+        var others = detail.Lessons.Where(l => l.GroupId == group && !mine.Contains(TimetableCycle.Normalize(l.ClassName))).Select(l => l.ClassName).Distinct().ToList();
+        return others.Count == 0 ? "" : $" · with {string.Join(" + ", others)}";
+    }
+
+    private static string SubjectStyle(TimetableLessonDto l) => string.IsNullOrEmpty(l.SubjectColor) ? "" : $"border-left-color:{l.SubjectColor}";
+
+    private string LessonTitle(List<TimetableLessonDto> rows)
+        => $"{rows[0].SubjectName} — {string.Join(" + ", rows.Select(r => r.ClassName).Distinct())}, {string.Join(", ", rows.Select(r => r.TeacherName).Distinct())}{(string.IsNullOrEmpty(rows[0].Room) ? "" : $", {rows[0].Room}")}";
+
+    private string DayLabel(int d) => detail == null ? $"Day {d}" : TimetableCycle.CycleDayLabel(detail.Settings, detail.Timetable.CycleDays, d);
+    private static string PeriodText(BellPeriodDto p) => $"{p.Label} ({p.Start}–{p.End})";
+    private IReadOnlyList<BellPeriodDto> LessonPeriods(int day) => detail == null ? Array.Empty<BellPeriodDto>() : TimetableCycle.LessonPeriodsOf(detail.Settings, detail.Timetable.CycleDays, day);
+    private static string Fmt(decimal d) => d == Math.Round(d) ? ((int)d).ToString() : d.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string VersionText(TimetableDto v) => $"{v.Name} — {StatusLabel(v.Status)}";
+    private static string StatusLabel(TimetableStatus s) => s switch { TimetableStatus.Draft => "Draft", TimetableStatus.Published => "Published", _ => "Archived" };
+    private static string StatusVariant(TimetableStatus s) => s switch { TimetableStatus.Draft => "info", TimetableStatus.Published => "success", _ => "muted" };
+
+    private IEnumerable<TimetableIssueDto> ShownIssues => (Diagnosis?.Issues ?? new()).Where(i => !issuesForViewOnly || IssueInView(i));
+
+    private bool IssueInView(TimetableIssueDto i)
+    {
+        if (by == "master") return i.CycleDay == null || i.CycleDay == masterDay;
+        if (string.IsNullOrEmpty(key)) return true;
+        if (i.Resource == by && i.ResourceKey == key) return true;
+        var ids = GridItems.Select(l => l.Id).ToHashSet();
+        return i.LessonIds.Any(ids.Contains);
+    }
+
+    private IEnumerable<UnplacedLoadDto> ShownUnplaced => (Diagnosis?.Unplaced ?? new()).Where(u => by switch
+    {
+        "teacher" => u.TeacherUserId.ToString() == key,
+        "class" => TimetableCycle.Normalize(u.ClassName) == key,
+        _ => true
+    });
+
+    private void GoToIssue(TimetableIssueDto i)
+    {
+        if (i.Resource is "class" or "teacher" or "room")
+        {
+            by = i.Resource;
+            key = i.ResourceKey;
+        }
+        if (i.CycleDay is { } d) masterDay = d;
+    }
+
+    // ---- Slot and lesson modals --------------------------------------------------------------------
+
+    private string SlotTitle
+    {
+        get
+        {
+            if (slot is not { } s || detail == null) return "Period";
+            var p = TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, s.Day, s.Period);
+            return $"{DayLabel(s.Day)}, {(p == null ? s.Period : PeriodText(p))}{(by == "master" ? "" : $" — {KeyOptions.FirstOrDefault(o => o.Key == key)?.Label}")}";
+        }
+    }
+
+    private void OnCellActivated(QWeekGridCell<TimetableLessonDto> cell)
+    {
+        if (!CanEdit)
+        {
+            var group = cell.Items.GroupBy(l => l.GroupId ?? l.Id).FirstOrDefault();
+            if (group != null) OpenLesson(group.ToList());
+            return;
+        }
+        if (detail == null || TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, DayOf(cell.Slot), cell.Row.Key) == null) return;
+        OpenSlot(DayOf(cell.Slot), cell.Row.Key, by == "master" ? cell.Column.Key : null);
+    }
+
+    private string? masterClassKey;
+
+    private void OpenSlot(int day, string period, string? classKey = null)
+    {
+        slot = (day, period);
+        masterClassKey = classKey;
+        slotError = null;
+        moving = null;
+        placeAlso = new();
+        placeRoom = by == "room" ? rooms.FirstOrDefault(r => TimetableCycle.Normalize(r) == key) : null;
+        placeAssignment = PlaceOptions.FirstOrDefault(u => u.Placed < u.Planned)?.AssignmentId ?? Guid.Empty;
+        showSlot = true;
+    }
+
+    private void OpenLesson(List<TimetableLessonDto> rows)
+    {
+        if (CanEdit)
+        {
+            OpenSlot(rows[0].CycleDay, rows[0].PeriodKey, by == "master" ? TimetableCycle.Normalize(rows[0].ClassName) : null);
+            return;
+        }
+        viewing = rows;
+        showLesson = true;
+    }
+
+    private IReadOnlyList<UnplacedLoadDto> PlaceOptions => (Diagnosis?.Unplaced ?? new()).Where(u => by switch
+    {
+        "teacher" => u.TeacherUserId.ToString() == key,
+        "class" => TimetableCycle.Normalize(u.ClassName) == key,
+        "master" => masterClassKey == null || TimetableCycle.Normalize(u.ClassName) == masterClassKey,
+        _ => true
+    }).OrderBy(u => u.Placed >= u.Planned).ThenBy(u => u.ClassName).ThenBy(u => u.SubjectCode).ToList();
+
+    private UnplacedLoadDto? ChosenAssignment => (Diagnosis?.Unplaced ?? new()).FirstOrDefault(u => u.AssignmentId == placeAssignment);
+
+    /// <summary>Other streams where the same teacher teaches the same subject: the candidates for a joint lesson.</summary>
+    private IReadOnlyList<string> JointOptions => ChosenAssignment is { } c
+        ? (Diagnosis?.Unplaced ?? new()).Where(u => u.TeacherUserId == c.TeacherUserId && u.SubjectId == c.SubjectId && TimetableCycle.Normalize(u.ClassName) != TimetableCycle.Normalize(c.ClassName))
+            .Select(u => u.ClassName).Distinct().ToList()
+        : Array.Empty<string>();
+
+    private void OnPlaceAssignmentChanged(Guid id)
+    {
+        placeAssignment = id;
+        placeAlso = new();
+    }
+
+    private async Task PlaceAsync()
+    {
+        if (detail == null || slot is not { } s || ChosenAssignment is not { } a) return;
+        busy = true;
+        slotError = null;
+        try
+        {
+            var result = await StaffApi.PlaceLessonAsync(branchId, detail.Timetable.Id, new PlaceLessonRequest
+            {
+                CycleDay = s.Day, PeriodKey = s.Period, ClassName = a.ClassName, SubjectId = a.SubjectId,
+                TeacherUserIds = new() { a.TeacherUserId }, Room = placeRoom, AlsoClassNames = placeAlso
+            });
+            await ReloadDetailAsync();
+            var hard = result.Diagnosis.Issues.Where(i => i.Severity == TimetableIssueSeverity.Hard && i.LessonIds.Any(id => result.Lessons.Any(l => l.Id == id))).ToList();
+            if (hard.Any()) Toast.Notify(ToastSeverity.Warning, "Placed, with a clash", hard[0].Message);
+            else Toast.Notify(ToastSeverity.Success, "Lesson placed", $"{a.ClassName} {a.SubjectCode}, {DayLabel(s.Day)} {s.Period}");
+            showSlot = false;
+        }
+        catch (Exception ex) { slotError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private void StartMove(List<TimetableLessonDto> rows)
+    {
+        moving = rows;
+        moveDay = rows[0].CycleDay;
+        movePeriod = rows[0].PeriodKey;
+        moveRoom = rows[0].Room;
+        slotError = null;
+    }
+
+    private async Task MoveAsync()
+    {
+        if (detail == null || moving == null || string.IsNullOrEmpty(movePeriod)) return;
+        busy = true;
+        slotError = null;
+        try
+        {
+            var result = await StaffApi.MoveLessonAsync(branchId, detail.Timetable.Id, moving[0].Id, new MoveLessonRequest { CycleDay = moveDay, PeriodKey = movePeriod, Room = moveRoom });
+            await ReloadDetailAsync();
+            Toast.Notify(ToastSeverity.Success, "Lesson moved", $"{moving[0].SubjectCode} to {DayLabel(moveDay)} {movePeriod}");
+            moving = null;
+            showSlot = false;
+        }
+        catch (Exception ex) { slotError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task RemoveAsync(TimetableLessonDto lesson)
+    {
+        if (detail == null) return;
+        busy = true;
+        slotError = null;
+        try
+        {
+            await StaffApi.RemoveLessonAsync(branchId, detail.Timetable.Id, lesson.Id);
+            await ReloadDetailAsync();
+            Toast.Notify(ToastSeverity.Success, "Lesson removed", $"{lesson.ClassName} {lesson.SubjectCode}");
+        }
+        catch (Exception ex) { slotError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    // ---- Versions ---------------------------------------------------------------------------------
+
+    private async Task OpenNewDraft(TimetableDto? from)
+    {
+        copyFrom = from;
+        newError = null;
+        newName = from == null ? string.Empty : $"{from.Name} (revised)";
+        newPeriod = from?.PeriodKey;
+        newFrom = null;
+        newTo = from == null ? null : from.EffectiveTo.ToDateTime(TimeOnly.MinValue);
+        if (!terms.Any())
+        {
+            try { terms = (await StaffApi.GetPolicyAsync()).Periods.OrderBy(p => p.Start).ToList(); }
+            catch { terms = new(); }
+        }
+        showNew = true;
+    }
+
+    private void OnNewPeriodChanged(string? key)
+    {
+        newPeriod = key;
+        if (terms.FirstOrDefault(p => p.Key == key) is { } term && copyFrom == null)
+        {
+            newFrom = term.Start.ToDateTime(TimeOnly.MinValue);
+            newTo = term.End.ToDateTime(TimeOnly.MinValue);
+        }
+    }
+
+    private async Task CreateDraftAsync()
+    {
+        busy = true;
+        newError = null;
+        try
+        {
+            var created = await StaffApi.CreateTimetableAsync(branchId, new CreateTimetableRequest
+            {
+                Name = newName.Trim(), PeriodKey = newPeriod,
+                EffectiveFrom = newFrom.HasValue ? DateOnly.FromDateTime(newFrom.Value) : null,
+                EffectiveTo = newTo.HasValue ? DateOnly.FromDateTime(newTo.Value) : null,
+                CopyFromTimetableId = copyFrom?.Id
+            });
+            showNew = false;
+            versions = await StaffApi.GetTimetablesAsync(branchId);
+            detail = created;
+            ChooseDefaultKey();
+            Toast.Notify(ToastSeverity.Success, "Draft created", created.Timetable.Name);
+        }
+        catch (Exception ex) { newError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task PublishAsync(bool acknowledge)
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            detail = await StaffApi.PublishTimetableAsync(branchId, detail.Timetable.Id, new PublishTimetableRequest { AcknowledgeSoftClashes = acknowledge, Note = acknowledge ? publishNote : null });
+            versions = await StaffApi.GetTimetablesAsync(branchId);
+            showSoft = false;
+            publishNote = null;
+            Toast.Notify(ToastSeverity.Success, "Timetable published", "Every teacher with lessons has been told.");
+        }
+        catch (TimetableClashesException ex) when (!ex.Hard)
+        {
+            await ReloadDetailAsync();
+            showSoft = true;
+        }
+        catch (TimetableClashesException ex)
+        {
+            await ReloadDetailAsync();
+            issuesForViewOnly = false;
+            Toast.Notify(ToastSeverity.Error, "Not published", $"{ex.Count} hard clash(es) remain — they are listed under Checks.");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not published", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenImport()
+    {
+        importRows = new();
+        importProblems = new();
+        importError = null;
+        importJob = null;
+        importFailures = new();
+        importReplace = false;
+        showImport = true;
+    }
+
+    /// <summary>Column names aSc, FET and hand-made sheets use for each field.</summary>
+    private static readonly Dictionary<string, string[]> ImportAliases = new()
+    {
+        ["day"] = new[] { "day", "dayname", "weekday", "days" },
+        ["period"] = new[] { "period", "periods", "lesson", "hour", "time", "start", "starttime" },
+        ["class"] = new[] { "class", "classes", "group", "groups", "form", "stream" },
+        ["subject"] = new[] { "subject", "subjects", "subjectcode", "course" },
+        ["teacher"] = new[] { "teacher", "teachers", "teacheremail", "staff", "email" },
+        ["room"] = new[] { "room", "rooms", "classroom", "venue" }
+    };
+
+    private async Task OnImportFile(InputFileChangeEventArgs e)
+    {
+        importError = null;
+        importRows = new();
+        importProblems = new();
+        try
+        {
+            if (e.File.Size > 5 * 1024 * 1024) { importError = "That file is over 5 MB; export only the lessons sheet."; return; }
+            importFileName = e.File.Name;
+            var text = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", "tt-import-file");
+            var lines = CsvText.Lines(text);
+            if (lines.Count < 2) { importError = "The file needs a header row and at least one lesson."; return; }
+            var header = CsvText.ParseLine(lines[0]).Select(h => new string(h.Trim().ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray())).ToList();
+            int Col(string field) => header.FindIndex(h => ImportAliases[field].Contains(h));
+            var cols = ImportAliases.Keys.ToDictionary(k => k, Col);
+            var missing = cols.Where(c => c.Key != "room" && c.Value < 0).Select(c => c.Key).ToList();
+            if (missing.Any()) { importError = $"No column found for: {string.Join(", ", missing)}. The header row must name Day, Period, Class, Subject and Teacher."; return; }
+            foreach (var (line, index) in lines.Skip(1).Select((l, i) => (l, i)))
+            {
+                var cells = CsvText.ParseLine(line);
+                string Cell(string field) => cols[field] >= 0 && cols[field] < cells.Count ? cells[cols[field]].Trim() : "";
+                var row = new TimetableImportRow { Day = Cell("day"), Period = Cell("period"), Class = Cell("class"), Subject = Cell("subject"), Teacher = Cell("teacher"), Room = Cell("room") };
+                if (new[] { row.Day, row.Period, row.Class, row.Subject, row.Teacher }.Any(string.IsNullOrWhiteSpace)) importProblems.Add(index + 1);
+                importRows.Add(row);
+            }
+            if (importRows.Count > 5000) { importError = "A timetable file is at most 5,000 lesson rows."; importRows = new(); }
+        }
+        catch (Exception ex)
+        {
+            importError = $"Could not read the file: {ex.Message}";
+        }
+    }
+
+    private async Task StartImportAsync()
+    {
+        if (detail == null || !importRows.Any()) return;
+        busy = true;
+        importError = null;
+        try
+        {
+            importJob = await StaffApi.StartTimetableImportAsync(branchId, detail.Timetable.Id,
+                new StartTimetableImportRequest { Rows = importRows, ReplaceExisting = importReplace, SourceFileName = importFileName });
+            _ = PollImportAsync(importJob.Id);
+        }
+        catch (Exception ex) { importError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task PollImportAsync(Guid jobId)
+    {
+        for (var i = 0; i < 400 && showImport; i++)
+        {
+            await Task.Delay(1500);
+            try
+            {
+                importJob = await StaffApi.GetTimetableImportJobAsync(branchId, jobId);
+                if (importJob.Status is not (RosterImportStatus.Pending or RosterImportStatus.Processing))
+                {
+                    importFailures = (await StaffApi.GetTimetableImportEntriesAsync(branchId, jobId)).Where(e => e.Outcome == RosterImportRowOutcome.Failed).ToList();
+                    await ReloadDetailAsync();
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+            catch { /* a missed poll is retried on the next tick */ }
+        }
+    }
+
+    private void CloseImport() => showImport = false;
+
+    private async Task DiscardAsync()
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            var name = detail.Timetable.Name;
+            await StaffApi.DeleteTimetableDraftAsync(branchId, detail.Timetable.Id);
+            showDiscard = false;
+            await LoadAsync(null);
+            Toast.Notify(ToastSeverity.Success, "Draft discarded", name);
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not discard the draft", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private async Task ArchiveAsync()
+    {
+        if (detail == null) return;
+        busy = true;
+        try
+        {
+            detail = await StaffApi.ArchiveTimetableAsync(branchId, detail.Timetable.Id);
+            versions = await StaffApi.GetTimetablesAsync(branchId);
+            showArchive = false;
+            Toast.Notify(ToastSeverity.Success, "Timetable archived", detail.Timetable.Name);
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not archive", ex.Message); }
+        finally { busy = false; }
+    }
+}

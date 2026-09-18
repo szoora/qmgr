@@ -1,0 +1,409 @@
+@page "/admin/timetable/lessons"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+
+<PageTitle>Lessons - Q-Mgr</PageTitle>
+
+@*
+    Lessons (duty rota plan §10, inside Timetable): the lessons taught, missed, recovered and still unrecorded, for the
+    teachers the caller supervises. The API decides the rows (staff scope) and what each row allows; this page only
+    shows it. Confirming self-reports is bounded and synchronous — never a background job, which could not be scoped.
+*@
+
+<div class="admin-page lessons-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Lessons</h1>
+            <p class="subtitle">Taught, missed and recovered lessons — and those nobody has recorded yet.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
+            <QButton Text="Reports" Icon="bar-chart-line" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))" />
+            @if (selected.Any())
+            {
+                <QButton Text="@($"Confirm {selected.Count} self-report(s)")" Icon="check2-all" Variant="primary" OnClick="@ConfirmSelectedAsync" Disabled="@busy" />
+            }
+        </div>
+    </div>
+
+    <QFilterBar Wrap="true">
+        <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" />
+        <QTabs Tabs="@StatusTabs" ActiveKey="@statusKey" ActiveKeyChanged="@(k => statusKey = k)" AriaLabel="Lesson status" />
+        @if (list != null && !list.OwnOnly && Teachers.Count > 1)
+        {
+            <div class="lessons-teacher">
+                <QSelect TValue="Guid?" TItem="(Guid Id, string Name)" Value="@teacher" ValueChanged="@(t => teacher = t)" Items="@Teachers"
+                         ValueSelector="@(t => (Guid?)t.Id)" TextSelector="@(t => t.Name)" Label="Teacher" Placeholder="Everyone" AllowClear="true" />
+            </div>
+        }
+    </QFilterBar>
+
+    @if (list?.ScopedToDepartments.Any() == true)
+    {
+        <p class="lessons-scope">These lessons cover <strong>@string.Join(", ", list.ScopedToDepartments)</strong> only.</p>
+    }
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading lessons...</span></div>
+    }
+    else if (list != null)
+    {
+        <QStatRow>
+            <QStatTile Value="@list.Taught.ToString()" Label="Taught" Icon="check-circle" Variant="success" />
+            <QStatTile Value="@list.Unrecorded.ToString()" Label="Unrecorded" Icon="question-circle" Variant="@(list.Unrecorded > 0 ? "warning" : "default")" />
+            <QStatTile Value="@list.Missed.ToString()" Label="Missed" Icon="x-circle" Variant="@(list.Missed > 0 ? "danger" : "default")" />
+            <QStatTile Value="@list.Recovered.ToString()" Label="Recovered" Icon="arrow-repeat" Variant="info" />
+            <QStatTile Value="@list.NotRecovered.ToString()" Label="Not recovered" Icon="exclamation-octagon" Variant="@(list.NotRecovered > 0 ? "danger" : "default")" />
+            @if (!list.OwnOnly)
+            {
+                <QStatTile Value="@list.SelfReportsToConfirm.ToString()" Label="To confirm" Icon="person-check" Variant="@(list.SelfReportsToConfirm > 0 ? "info" : "default")" />
+            }
+        </QStatRow>
+
+        @if (!Shown.Any())
+        {
+            <QEmptyState Icon="journal-check" Title="No lessons here" Text="Nothing matches the period, status and teacher chosen." />
+        }
+        else
+        {
+            <QCard NoPadding="true">
+                <div class="table-wrap">
+                    <table class="data-table q-stack">
+                        <thead>
+                            <tr>
+                                @if (AnyConfirmable) { <th><span class="visually-hidden">Select</span></th> }
+                                <th>When</th><th>Teacher</th><th>Lesson</th><th>Status</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in Shown)
+                            {
+                                var l = item;
+                                var confirmable = l.CanFlag && l.Status == LessonStatus.TaughtSelfReported;
+                                <tr>
+                                    @if (AnyConfirmable)
+                                    {
+                                        <td>
+                                            @if (confirmable)
+                                            {
+                                                <QCheckbox Value="@selected.Contains(l.DutyId)" ValueChanged="@(on => Toggle(l.DutyId, on))" Label="Select" />
+                                            }
+                                        </td>
+                                    }
+                                    <td>@QDateFormat.DD(l.StartsAt.ToLocalTime()) @QDateFormat.LocalT(l.StartsAt)@(l.PeriodLabel == null ? "" : $" · {l.PeriodLabel}")</td>
+                                    <td>@l.TeacherName</td>
+                                    <td>
+                                        <strong>@l.ClassName · @l.SubjectName</strong>
+                                        @if (!string.IsNullOrEmpty(l.Room)) { <span class="lessons-muted"> · @l.Room</span> }
+                                        @if (!string.IsNullOrEmpty(l.RecoversText)) { <div class="lessons-muted">@l.RecoversText</div> }
+                                    </td>
+                                    <td>
+                                        <QChip Text="@StaffDisplay.LessonStatusLabel(l.Status)" Size="sm" Variant="@StaffDisplay.LessonStatusVariant(l.Status)" />
+                                        @if (!string.IsNullOrEmpty(l.FlagNote)) { <div class="lessons-muted">@l.FlagNote</div> }
+                                        @if (!string.IsNullOrEmpty(l.CancelReason)) { <div class="lessons-muted">@l.CancelReason</div> }
+                                    </td>
+                                    <td>
+                                        <div class="lessons-actions">
+                                            @if (confirmable)
+                                            {
+                                                <QButton Text="Confirm" Icon="check-lg" Size="sm" Variant="secondary" OnClick="@(() => ConfirmOneAsync(l))" Disabled="@busy" />
+                                            }
+                                            @if (l.CanFlag)
+                                            {
+                                                <QButton Text="Record" Icon="pencil" Size="sm" Variant="ghost" OnClick="@(() => OpenFlag(l))" Disabled="@busy" />
+                                            }
+                                            @if (l.CanScheduleRecovery)
+                                            {
+                                                <QButton Text="Recovery" Icon="arrow-repeat" Size="sm" Variant="ghost" OnClick="@(() => OpenRecovery(l))" Disabled="@busy" />
+                                            }
+                                            @if (canCancel && l.Status == LessonStatus.Scheduled)
+                                            {
+                                                <QButton Text="Cancel" Icon="x-lg" Size="sm" Variant="ghost" OnClick="@(() => OpenCancel(l))" Disabled="@busy" />
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </QCard>
+            @if (list.Total >= 600) { <p class="lessons-muted">Showing the first 600 lessons. Narrow the period to see the rest.</p> }
+        }
+    }
+</div>
+
+<QModal @bind-Visible="showFlag" Title="Record a lesson" Icon="pencil" Size="sm">
+    <ChildContent>
+        @if (target != null)
+        {
+            <p>@target.TeacherName — @target.ClassName · @target.SubjectName, @QDateFormat.LocalDT(target.StartsAt)</p>
+            <QSelect TValue="DutyOutcome" TItem="DutyOutcome" Value="@flagOutcome" ValueChanged="@(o => flagOutcome = o)" Items="@SupervisorOutcomes"
+                     ValueSelector="@(o => o)" TextSelector="@OutcomeLabel" Label="The lesson was" />
+            <QInput TValue="string" @bind-Value="@flagNote" Type="textarea" Rows="3" MaxLength="1000" Label="Reason or note"
+                    Required="@(flagOutcome is DutyOutcome.Absent or DutyOutcome.Excused)" HelperText="Required when the lesson was missed." />
+            @if (!string.IsNullOrEmpty(modalError)) { <p class="lessons-error" role="alert">@modalError</p> }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showFlag = false)" />
+        <QButton Text="Record" Icon="check-lg" Variant="primary" OnClick="@FlagAsync"
+                 Disabled="@(busy || (flagOutcome is DutyOutcome.Absent or DutyOutcome.Excused && string.IsNullOrWhiteSpace(flagNote)))" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showRecovery" Title="Schedule a recovery lesson" Icon="arrow-repeat" Size="sm">
+    <ChildContent>
+        @if (target != null)
+        {
+            <p>For @target.TeacherName — @target.ClassName · @target.SubjectName, @QDateFormat.LocalDT(target.StartsAt)</p>
+            <div class="q-datetime-pair">
+                <QDatePicker @bind-Value="@recoveryAt" Label="Date" Required="true" />
+                <QDatePicker @bind-Value="@recoveryAt" ShowTime="true" Label="Starts" Required="true" />
+            </div>
+            <QInput TValue="int" @bind-Value="@recoveryMinutes" Type="number" Min="10" Max="240" Label="Minutes" />
+            <QInput TValue="string" @bind-Value="@recoveryRoom" MaxLength="60" Label="Room" />
+            @if (!string.IsNullOrEmpty(modalError)) { <p class="lessons-error" role="alert">@modalError</p> }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showRecovery = false)" />
+        <QButton Text="Schedule" Icon="calendar-plus" Variant="primary" OnClick="@RecoveryAsync" Disabled="@(busy || recoveryAt == null)" />
+    </FooterContent>
+</QModal>
+
+<QModal @bind-Visible="showCancel" Title="Cancel a lesson" Icon="x-lg" Size="sm">
+    <ChildContent>
+        @if (target != null)
+        {
+            <p>@target.ClassName · @target.SubjectName with @target.TeacherName, @QDateFormat.LocalDT(target.StartsAt). The teacher is told.</p>
+            <QInput TValue="string" @bind-Value="@cancelReason" MaxLength="500" Label="Why (a school event, a closure)" Required="true" />
+            @if (!string.IsNullOrEmpty(modalError)) { <p class="lessons-error" role="alert">@modalError</p> }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Keep it" Variant="ghost" OnClick="@(() => showCancel = false)" />
+        <QButton Text="Cancel lesson" Icon="x-lg" Variant="danger" OnClick="@CancelAsync" Disabled="@(busy || string.IsNullOrWhiteSpace(cancelReason))" />
+    </FooterContent>
+</QModal>
+
+<style>
+    .lessons-scope { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0; }
+    .lessons-teacher { min-width: 220px; flex: 0 1 280px; }
+    .lessons-muted { font-size: 12.5px; color: var(--qm-text-muted); }
+    .lessons-error { color: var(--qm-danger); font-size: 13px; }
+    .lessons-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+
+    .lessons-page .q-card { margin-top: 14px; }
+</style>
+
+@code {
+    private bool isLoading = true, busy, canCancel;
+    private Guid branchId;
+    private LessonListDto? list;
+    private DateRange range = new(DateOnly.FromDateTime(DateTime.Today.AddDays(-6)), DateOnly.FromDateTime(DateTime.Today));
+    private string statusKey = "all";
+    private Guid? teacher;
+    private readonly HashSet<Guid> selected = new();
+
+    private bool showFlag, showRecovery, showCancel;
+    private LessonItemDto? target;
+    private DutyOutcome flagOutcome = DutyOutcome.Present;
+    private string? flagNote, recoveryRoom, cancelReason, modalError;
+    private DateTime? recoveryAt;
+    private int recoveryMinutes = 40;
+
+    private static readonly IReadOnlyList<QTab> StatusTabs = new List<QTab>
+    {
+        new("all", "All"), new("unrecorded", "Unrecorded"), new("confirm", "To confirm"), new("missed", "Missed"), new("recovery", "Recovery")
+    };
+    private static readonly IReadOnlyList<DutyOutcome> SupervisorOutcomes = new[] { DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Excused, DutyOutcome.Absent };
+
+    private IReadOnlyList<(Guid Id, string Name)> Teachers => (list?.Items ?? new()).Select(i => (i.TeacherUserId, i.TeacherName)).DistinctBy(t => t.TeacherUserId).OrderBy(t => t.TeacherName).ToList();
+
+    private IEnumerable<LessonItemDto> Shown => (list?.Items ?? new())
+        .Where(i => teacher == null || i.TeacherUserId == teacher)
+        .Where(i => statusKey switch
+        {
+            "unrecorded" => i.Status == LessonStatus.Unrecorded,
+            "confirm" => i.CanFlag && i.Status is LessonStatus.TaughtSelfReported or LessonStatus.NotTaughtSelfReported,
+            "missed" => i.Status is LessonStatus.MissedWithPermission or LessonStatus.MissedWithoutPermission or LessonStatus.NotTaughtSelfReported or LessonStatus.NotRecovered,
+            "recovery" => i.Status is LessonStatus.RecoveryScheduled or LessonStatus.Recovered or LessonStatus.NotRecovered || i.RecoversDutyId != null,
+            _ => true
+        })
+        .OrderByDescending(i => i.StartsAt);
+
+    private bool AnyConfirmable => Shown.Any(i => i.CanFlag && i.Status == LessonStatus.TaughtSelfReported);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        canCancel = await PermissionService.HasPermissionAsync(Permissions.TimetableManage) || await PermissionService.HasPermissionAsync(Permissions.StaffDutiesManage);
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        selected.Clear();
+        try
+        {
+            if (branchId == Guid.Empty) { list = null; return; }
+            var from = DateTime.SpecifyKind(range.From.ToDateTime(TimeOnly.MinValue), DateTimeKind.Local).ToUniversalTime();
+            var to = DateTime.SpecifyKind(range.To.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Local).ToUniversalTime();
+            list = await StaffApi.GetLessonsAsync(branchId, from, to);
+        }
+        catch (Exception ex)
+        {
+            list = null;
+            Toast.Notify(ToastSeverity.Error, "Could not load lessons", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        await LoadAsync();
+    }
+
+    private void Toggle(Guid id, bool on)
+    {
+        if (on) selected.Add(id); else selected.Remove(id);
+    }
+
+    private static string OutcomeLabel(DutyOutcome o) => o switch
+    {
+        DutyOutcome.Present => "Taught",
+        DutyOutcome.Late => "Taught late",
+        DutyOutcome.Excused => "Missed, with permission",
+        DutyOutcome.Absent => "Missed, without permission",
+        _ => o.ToString()
+    };
+
+    private async Task ConfirmOneAsync(LessonItemDto lesson)
+    {
+        selected.Clear();
+        selected.Add(lesson.DutyId);
+        await ConfirmSelectedAsync();
+    }
+
+    private async Task ConfirmSelectedAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await StaffApi.ConfirmLessonsAsync(branchId, selected);
+            Toast.Notify(ToastSeverity.Success, $"{result.Confirmed} confirmed", result.Skipped > 0 ? $"{result.Skipped} could not be confirmed as they stand." : "Recorded as taught.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Not confirmed", ex.Message); }
+        finally { busy = false; }
+    }
+
+    private void OpenFlag(LessonItemDto lesson)
+    {
+        target = lesson;
+        modalError = null;
+        flagOutcome = lesson.Outcome is { } o && SupervisorOutcomes.Contains(o) ? o : DutyOutcome.Present;
+        flagNote = lesson.FlagNote;
+        showFlag = true;
+    }
+
+    private async Task FlagAsync()
+    {
+        if (target == null) return;
+        busy = true;
+        modalError = null;
+        try
+        {
+            await StaffApi.FlagLessonAsync(branchId, target.DutyId, new FlagLessonRequest { Outcome = flagOutcome, Note = flagNote });
+            showFlag = false;
+            Toast.Notify(ToastSeverity.Success, "Lesson recorded", $"{target.TeacherName} — {OutcomeLabel(flagOutcome).ToLowerInvariant()}");
+            await LoadAsync();
+        }
+        catch (Exception ex) { modalError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private void OpenRecovery(LessonItemDto lesson)
+    {
+        target = lesson;
+        modalError = null;
+        recoveryRoom = lesson.Room;
+        recoveryMinutes = Math.Max(10, (int)(lesson.EndsAt - lesson.StartsAt).TotalMinutes);
+        recoveryAt = DateTime.Today.AddDays(1).Add(lesson.StartsAt.ToLocalTime().TimeOfDay);
+        showRecovery = true;
+    }
+
+    private async Task RecoveryAsync()
+    {
+        if (target == null || recoveryAt == null) return;
+        busy = true;
+        modalError = null;
+        try
+        {
+            var starts = DateTime.SpecifyKind(recoveryAt.Value, DateTimeKind.Local).ToUniversalTime();
+            await StaffApi.ScheduleRecoveryAsync(branchId, target.DutyId, new ScheduleRecoveryRequest { StartsAt = starts, EndsAt = starts.AddMinutes(recoveryMinutes), Room = recoveryRoom });
+            showRecovery = false;
+            Toast.Notify(ToastSeverity.Success, "Recovery lesson scheduled", $"{target.TeacherName} is told.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { modalError = ex.Message; }
+        finally { busy = false; }
+    }
+
+    private void OpenCancel(LessonItemDto lesson)
+    {
+        target = lesson;
+        modalError = null;
+        cancelReason = null;
+        showCancel = true;
+    }
+
+    private async Task CancelAsync()
+    {
+        if (target == null || string.IsNullOrWhiteSpace(cancelReason)) return;
+        busy = true;
+        modalError = null;
+        try
+        {
+            await StaffApi.CancelLessonAsync(branchId, target.DutyId, cancelReason);
+            showCancel = false;
+            Toast.Notify(ToastSeverity.Success, "Lesson cancelled", $"{target.TeacherName} is told.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { modalError = ex.Message; }
+        finally { busy = false; }
+    }
+}

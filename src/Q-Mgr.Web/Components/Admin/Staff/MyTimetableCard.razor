@@ -1,0 +1,72 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject NavigationManager Navigation
+
+@*
+    "My timetable" on the portal (duty rota plan §10): the caller's own week from the published timetable in force,
+    read-only. Hidden for somebody with no lessons in it. The full views live on the Timetable page.
+*@
+
+@if (detail != null && Mine.Any())
+{
+    <QCard Title="My timetable" Subtitle="@($"{detail.Timetable.Name} · {Mine.Select(l => l.GroupId ?? l.Id).Distinct().Count()} lesson(s) a cycle")" Icon="grid-3x3-gap" Class="@Class">
+        <QWeekGrid TItem="TimetableLessonDto" Columns="@Columns" Rows="@Rows" Items="@Mine"
+                   RowKey="@(l => l.PeriodKey)" ColumnKey="@(l => l.CycleDay.ToString())"
+                   CellState="@StateFor" AriaLabel="My timetable" CornerLabel="Period" MaxHeight="420px" EmptyDayText="No lessons." Class="mytt-grid">
+            <CellTemplate Context="cell">
+                @foreach (var group in cell.Items.GroupBy(l => l.GroupId ?? l.Id))
+                {
+                    var rows = group.ToList();
+                    <div class="mytt-lesson" style="@(string.IsNullOrEmpty(rows[0].SubjectColor) ? "" : $"border-left-color:{rows[0].SubjectColor}")">
+                        <strong>@rows[0].SubjectCode</strong>
+                        <span>@string.Join(" + ", rows.Select(r => r.ClassName).Distinct())@(string.IsNullOrEmpty(rows[0].Room) ? "" : $" · {rows[0].Room}")</span>
+                    </div>
+                }
+            </CellTemplate>
+        </QWeekGrid>
+        <div class="mytt-actions">
+            <QButton Text="Open the timetable" Icon="box-arrow-in-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo($"/admin/timetable?t={detail.Timetable.Id}&by=teacher&key={UserId}"))" />
+        </div>
+    </QCard>
+}
+
+<style>
+    .mytt-lesson { display: flex; flex-direction: column; font-size: 11.5px; line-height: 1.25; padding: 2px 4px; border-left: 3px solid var(--qm-primary); }
+    .mytt-lesson span { color: var(--qm-text-secondary); overflow-wrap: anywhere; }
+    .mytt-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+    [Parameter, EditorRequired] public Guid UserId { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private TimetableDetailDto? detail;
+    private Guid loadedFor;
+
+    private List<TimetableLessonDto> Mine => detail?.Lessons.Where(l => l.TeacherUserId == UserId).ToList() ?? new();
+
+    private IReadOnlyList<QWeekGridColumn> Columns => detail == null ? Array.Empty<QWeekGridColumn>() :
+        Enumerable.Range(1, detail.Timetable.CycleDays).Select(d => new QWeekGridColumn(d.ToString(), TimetableCycle.CycleDayLabel(detail.Settings, detail.Timetable.CycleDays, d),
+            IsToday: TimetableCycle.CycleDayOn(detail.Settings, detail.Timetable.CycleDays, detail.Timetable.EffectiveFrom, DateOnly.FromDateTime(DateTime.Today)) == d)).ToList();
+
+    /// <summary>Only the periods somebody could teach in, plus the breaks between them — the card is a glance, not the grid.</summary>
+    private IReadOnlyList<QWeekGridRow> Rows => detail == null ? Array.Empty<QWeekGridRow>() :
+        TimetableCycle.Rows(detail.Settings).Where(p => p.Kind != BellPeriodKind.Assembly)
+            .Select(p => new QWeekGridRow(p.Key, p.Label, $"{p.Start}–{p.End}", p.Kind != BellPeriodKind.Lesson)).ToList();
+
+    private QWeekGridCellState StateFor(QWeekGridSlot s)
+        => detail != null && int.TryParse(s.ColumnKey, out var d) && TimetableCycle.LessonPeriodOn(detail.Settings, detail.Timetable.CycleDays, d, s.RowKey) == null
+            ? QWeekGridCellState.Unavailable : QWeekGridCellState.None;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (BranchId == Guid.Empty || loadedFor == BranchId) return;
+        loadedFor = BranchId;
+        try { detail = await StaffApi.GetCurrentTimetableAsync(BranchId); }
+        catch { detail = null; }
+    }
+}

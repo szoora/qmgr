@@ -1,0 +1,192 @@
+@page "/admin/timetable/reports/print"
+@layout QMgr.Web.Components.Layout.MinimalLayout
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Shared.UI
+@inject IStaffPerformanceApiService StaffApi
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+@inject IOrganizationApiService OrganizationApi
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject IDocumentShareApiService DocShareApi
+@inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    Lessons taught and the lesson recovery schedule on A4 landscape, in the layout of MoES's Annex 4 (summary per teacher)
+    and Annex 5 (the recovery schedule) — duty rota plan §11. Built from the same scoped report the page shows, so a
+    head's print covers their departments and says so. The print and a Library publication are logged.
+*@
+
+<PageTitle>Lessons Report - Q-Mgr</PageTitle>
+
+<QPrintSheet SheetId="trp-sheet" Title="@DocTitle" Class="trp-sheet" Landscape="true"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to the teaching reports" OnBack="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))"
+             CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
+    @if (report != null)
+    {
+        <header class="trp-head">
+            <div>
+                <div class="trp-org">@OrganizationName</div>
+                <div class="trp-doc">Lessons taught and recovered · @report.Period.Name (@QDateFormat.Range(report.Period.Start, report.Period.End))</div>
+            </div>
+            <div class="trp-meta">
+                <span>@(BranchState.CurrentBranchName ?? "")</span>
+                <span>Printed @QDateFormat.DT(DateTime.Now)@(string.IsNullOrWhiteSpace(generatedBy) ? "" : $" by {generatedBy}")</span>
+            </div>
+        </header>
+        @if (report.ScopedToDepartments.Any())
+        {
+            <p class="trp-scope">These figures cover <strong>@string.Join(", ", report.ScopedToDepartments)</strong> only.</p>
+        }
+
+        <section class="trp-section">
+            <h2>Summary of lessons taught (Annex 4)</h2>
+            <table class="trp-table">
+                <thead>
+                    <tr><th>Teacher</th><th>Lessons</th><th>Taught</th><th>Missed with permission</th><th>Missed without permission</th><th>Recovered</th><th>Not recovered</th><th>Unrecorded</th><th>Taught %</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in report.LessonsByTeacher.OrderBy(r => r.Name))
+                    {
+                        <tr><td>@r.Name</td><td>@r.Scheduled</td><td>@r.Taught</td><td>@r.MissedWithPermission</td><td>@r.MissedWithoutPermission</td><td>@r.Recovered</td><td>@r.NotRecovered</td><td>@r.Unrecorded</td><td>@Pct(r.TaughtPercent)</td></tr>
+                    }
+                    <tr class="trp-total">
+                        @{ var t = report.LessonsTotal; }
+                        <td>All</td><td>@t.Scheduled</td><td>@t.Taught</td><td>@t.MissedWithPermission</td><td>@t.MissedWithoutPermission</td><td>@t.Recovered</td><td>@t.NotRecovered</td><td>@t.Unrecorded</td><td>@Pct(t.TaughtPercent)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="trp-note">Taught % is taught and recovered lessons over those that count; a lesson missed with permission is outside it, and an unrecorded lesson is shown, never counted either way.</p>
+        </section>
+
+        <section class="trp-section">
+            <h2>Lesson recovery schedule (Annex 5)</h2>
+            @if (!report.RecoverySchedule.Any())
+            {
+                <p class="trp-note">No lessons were missed in this period.</p>
+            }
+            else
+            {
+                <table class="trp-table">
+                    <thead><tr><th>Date and time missed</th><th>Teacher</th><th>Class</th><th>Subject</th><th>Reason</th><th>Recovery date and time</th><th>Status</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in report.RecoverySchedule)
+                        {
+                            <tr>
+                                <td>@QDateFormat.LocalDT(r.MissedAt)</td><td>@r.TeacherName</td><td>@r.ClassName</td><td>@r.SubjectName</td>
+                                <td>@(r.Reason ?? "")</td><td>@(r.RecoveryAt.HasValue ? QDateFormat.LocalDT(r.RecoveryAt) : "")</td><td>@StaffDisplay.LessonStatusLabel(r.Status)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+        <footer class="trp-foot">Signed (Deputy / Director of Studies): ______________________ &nbsp;&nbsp; Date: ____________</footer>
+    }
+</QPrintSheet>
+
+@if (isLoading)
+{
+    <div class="trp-state no-print"><QSpinner Size="lg" /><span>Building the report...</span></div>
+}
+else if (loadError != null)
+{
+    <div class="trp-state no-print"><QIcon Name="exclamation-triangle" /><span>@loadError</span></div>
+}
+
+<style>
+    .trp-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 80px 20px; color: var(--qm-text-muted); }
+    .trp-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; border-bottom: 2px solid #14110f; padding-bottom: 6px; }
+    .trp-org { font-family: var(--qm-font-display, inherit); font-size: 14pt; font-weight: 700; }
+    .trp-doc { font-size: 9.5pt; color: #5b524d; }
+    .trp-meta { display: flex; flex-direction: column; align-items: flex-end; font-size: 8.5pt; color: #5b524d; }
+    .trp-scope { font-size: 9pt; margin: 6px 0 0; }
+    .trp-section { margin-top: 12px; }
+    .trp-section h2 { font-size: 11pt; margin: 0 0 6px; }
+    .trp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+    .trp-table th, .trp-table td { border: 1px solid #8a817c; padding: 3px 5px; text-align: left; vertical-align: top; }
+    .trp-table th { border-bottom: 2px solid #14110f; }
+    .trp-total td { font-weight: 700; border-top: 2px solid #14110f; }
+    .trp-note { font-size: 8pt; color: #5b524d; margin: 4px 0 0; }
+    .trp-foot { margin-top: 16px; font-size: 9pt; }
+    @@media print { .trp-table tr { break-inside: avoid; } .trp-section h2 { break-after: avoid; } }
+    @@media screen and (max-width: 640px) { .trp-sheet .trp-table { display: block; overflow-x: auto; } }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "period")] public string? PeriodQuery { get; set; }
+
+    private Guid branchId, organizationId;
+    private bool isLoading = true, isPublishing, canPublish;
+    private string? loadError, generatedBy;
+    private TeachingReportsDto? report;
+    private OrganizationBrandingDto? branding;
+
+    private string DocTitle => report == null ? "Lessons report" : $"Lessons taught — {report.Period.Name}";
+    private string OrganizationName => !string.IsNullOrWhiteSpace(branding?.BrandName) ? branding!.BrandName! : BranchState.CurrentBranchName ?? "Lessons";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        try
+        {
+            var user = await AuthService.GetCurrentUserAsync();
+            generatedBy = user?.FullName;
+            organizationId = user?.OrganizationId ?? Guid.Empty;
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
+            if (organizationId != Guid.Empty)
+            {
+                try { branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId); } catch { branding = null; }
+            }
+            report = await StaffApi.GetTeachingReportsAsync(branchId, PeriodQuery);
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Couldn't build the report: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string Pct(decimal? p) => p.HasValue ? $"{p:0.#}%" : "—";
+
+    private async Task Print()
+    {
+        if (report != null)
+            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.TeachingReports, DocumentName = DocTitle, Format = "Print", PeriodKey = report.Period.Key });
+        try { await JS.InvokeVoidAsync("window.print"); } catch { }
+    }
+
+    private async Task PublishToLibrary()
+    {
+        if (isPublishing || organizationId == Guid.Empty || report == null) return;
+        isPublishing = true;
+        try
+        {
+            var name = $"{DocTitle} — {BranchState.CurrentBranchName}";
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "trp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"lessons-{report.Period.Key}.pdf",
+                DocumentName = name,
+                Summary = $"Lessons taught and the lesson recovery schedule, {report.Period.Name}.{(report.ScopedToDepartments.Any() ? $" Covers {string.Join(", ", report.ScopedToDepartments)} only." : "")}",
+                PublishedFrom = $"Teaching reports — {BranchState.CurrentBranchName}",
+                Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.TeachingReports, Published = true, MediaContentId = doc.Id, DocumentName = name, Format = "PDF", PeriodKey = report.Period.Key })
+            }, JS, DocShareApi, Toast, Navigation);
+        }
+        finally
+        {
+            isPublishing = false;
+        }
+    }
+}

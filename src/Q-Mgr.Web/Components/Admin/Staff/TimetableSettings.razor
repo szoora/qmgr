@@ -1,0 +1,399 @@
+@page "/admin/timetable/settings"
+@implements IDisposable
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+@inject IBranchStateService BranchState
+@inject IPermissionService PermissionService
+
+<PageTitle>Bell Schedule - Q-Mgr</PageTitle>
+
+@*
+    The bell schedule, the cycle and declared unavailability (duty rota plan §6.1) — Branch.Settings["Timetable"],
+    written by the API under the branch-settings lock. Rooms are edited here too (PUT …/timetable/rooms, the only writer of
+    BranchVocabulariesDto.Rooms; a rename moves the lessons that name the room); load norms
+    live in the scoring policy. A period's KEY is what lessons store, so renaming a key strands the lessons on it:
+    the label is the thing to rename.
+*@
+
+<div class="admin-page tts-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Bell Schedule</h1>
+            <p class="subtitle">Teaching days, periods and breaks, the cycle, and when teachers cannot be timetabled.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
+            @if (canManage && settings != null)
+            {
+                <QButton Text="@(saving ? "Saving..." : "Save")" Icon="check-lg" Variant="primary" OnClick="@SaveAsync" Disabled="@saving" />
+            }
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="loading-container"><QSpinner Size="lg" /><span>Loading the bell schedule...</span></div>
+    }
+    else if (settings == null)
+    {
+        <QEmptyState Icon="building" Title="Choose a branch" Text="The bell schedule belongs to a branch." />
+    }
+    else
+    {
+        @if (!settings.IsSaved)
+        {
+            <p class="tts-note"><QIcon Name="info-circle" Size="sm" /> Nothing is saved yet: these are the defaults — ten 40-minute periods, Monday to Friday. Adjust them and save.</p>
+        }
+        @if (!canManage)
+        {
+            <p class="tts-note"><QIcon Name="lock" Size="sm" /> Read only: the bell schedule is kept by a timetable master.</p>
+        }
+
+        <QCard Title="Cycle" Icon="arrow-repeat">
+            <div class="form-row">
+                <QSelect TValue="int" TItem="int" Value="@settings.CycleWeeks" ValueChanged="@(v => settings.CycleWeeks = v)" Items="@(new[] { 1, 2 })"
+                         ValueSelector="@(v => v)" TextSelector="@(v => v == 1 ? "One week" : "Two weeks (A and B)")" Label="The timetable repeats every" Disabled="@(!canManage)" />
+                <QInput TValue="int" @bind-Value="@settings.DefaultPeriodMinutes" Type="number" Min="10" Max="180" Label="Default period (minutes)" HelperText="Used when you add a period." Disabled="@(!canManage)" />
+            </div>
+            <p class="tts-help">@CycleDayCount-day cycle over @(TeachingDaysText). Changing the cycle does not change an existing timetable version: start a new draft.</p>
+        </QCard>
+
+        @foreach (var (type, index) in settings.DayTypes.Select((t, i) => (t, i)))
+        {
+            var t = type;
+            var ti = index;
+            <QCard Title="@(string.IsNullOrWhiteSpace(t.Name) ? "Day type" : t.Name)" Icon="calendar3-week" Class="tts-daytype">
+                <div class="form-row">
+                    <QInput TValue="string" @bind-Value="@t.Name" Label="Name" MaxLength="60" Disabled="@(!canManage)" />
+                </div>
+                <div class="tts-days" role="group" aria-label="Days this schedule applies to">
+                    @foreach (var day in WeekOrder)
+                    {
+                        var d = day;
+                        var takenElsewhere = settings.DayTypes.Where((_, i) => i != ti).Any(o => o.Days.Contains(d));
+                        <QCheckbox Value="@t.Days.Contains(d)" ValueChanged="@(on => ToggleDay(t, d, on))" Label="@d.ToString()[..3]" Disabled="@(!canManage || takenElsewhere)" />
+                    }
+                </div>
+
+                <div class="table-wrap">
+                    <table class="data-table q-stack tts-periods">
+                        <thead><tr><th>Key</th><th>Label</th><th>Starts</th><th>Ends</th><th>Kind</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var (period, pi) in t.Periods.Select((p, i) => (p, i)))
+                            {
+                                var p = period;
+                                var pIndex = pi;
+                                <tr>
+                                    <td><QInput TValue="string" @bind-Value="@p.Key" MaxLength="20" Disabled="@(!canManage || savedKeys.Contains(p.Key))" /></td>
+                                    <td><QInput TValue="string" @bind-Value="@p.Label" MaxLength="40" Disabled="@(!canManage)" /></td>
+                                    <td><QInput TValue="string" @bind-Value="@p.Start" Type="time" Disabled="@(!canManage)" /></td>
+                                    <td><QInput TValue="string" @bind-Value="@p.End" Type="time" Disabled="@(!canManage)" /></td>
+                                    <td>
+                                        <QSelect TValue="BellPeriodKind" TItem="BellPeriodKind" Value="@p.Kind" ValueChanged="@(k => p.Kind = k)" Items="@Kinds"
+                                                 ValueSelector="@(k => k)" TextSelector="@KindLabel" Disabled="@(!canManage)" />
+                                    </td>
+                                    <td>
+                                        @if (canManage)
+                                        {
+                                            <QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove period" OnClick="@(() => t.Periods.RemoveAt(pIndex))" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (canManage)
+                {
+                    <div class="tts-actions">
+                        <QButton Text="Add period" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@(() => AddPeriod(t))" Disabled="@(t.Periods.Count >= TimetableCycle.MaxPeriodsPerDayType)" />
+                        @if (settings.DayTypes.Count > 1)
+                        {
+                            <QButton Text="Remove day type" Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => settings.DayTypes.RemoveAt(ti))" />
+                        }
+                    </div>
+                }
+                <p class="tts-help">A period key is what each lesson stores. Once saved it is locked — rename the label instead.</p>
+            </QCard>
+        }
+
+        @if (canManage && settings.DayTypes.Count < TimetableCycle.MaxDayTypes)
+        {
+            <div class="tts-actions tts-actions--page">
+                <QButton Text="Add a day type" Icon="plus-lg" Variant="secondary" OnClick="@AddDayType" Disabled="@(!WeekOrder.Any(d => !settings.DayTypes.Any(t => t.Days.Contains(d))))"
+                         Title="For days with a different bell, such as a Saturday morning" />
+            </div>
+        }
+
+        <QCard Title="Rooms" Icon="door-open" Subtitle="Where lessons are held. The timetable checks that no room is booked twice.">
+            @if (rooms.Any())
+            {
+                <div class="table-wrap">
+                    <table class="data-table q-stack tts-rooms">
+                        <thead><tr><th>Name</th><th>Type</th><th>Seats</th><th>In use</th><th>Lessons</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var (room, ri) in rooms.Select((r, i) => (r, i)))
+                            {
+                                var r = room;
+                                var rIndex = ri;
+                                <tr class="@(r.IsActive ? "" : "tts-retired")">
+                                    <td><QInput TValue="string" @bind-Value="@r.Name" MaxLength="100" Placeholder="Physics Lab" Disabled="@(!canManage)" /></td>
+                                    <td><QInput TValue="string" @bind-Value="@r.RoomType" MaxLength="40" Placeholder="Lab, general, hall" Disabled="@(!canManage)" /></td>
+                                    <td><QInput TValue="int?" @bind-Value="@r.Capacity" Type="number" Min="0" Max="5000" Placeholder="—" Disabled="@(!canManage)" /></td>
+                                    <td><QCheckbox @bind-Value="@r.IsActive" Label="@(r.IsActive ? "In use" : "Retired")" Disabled="@(!canManage)" /></td>
+                                    <td>@(r.LessonCount == 0 ? "—" : r.LessonCount.ToString())</td>
+                                    <td>
+                                        @if (canManage)
+                                        {
+                                            <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => rooms.RemoveAt(rIndex))" Disabled="@(r.LessonCount > 0)"
+                                                     Title="@(r.LessonCount > 0 ? "Lessons are held here: retire it instead" : "Remove room")" />
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <p class="tts-help">No rooms yet. Lessons can still be placed without one.</p>
+            }
+            @if (canManage)
+            {
+                <div class="tts-actions">
+                    <QButton Text="Add a room" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddRoom" />
+                </div>
+                <p class="tts-help">Renaming a room moves the lessons that name it. A room with lessons cannot be removed; retire it and it stops being offered.</p>
+            }
+        </QCard>
+
+        @if (canManage)
+        {
+            <QCard Title="When teachers cannot be timetabled" Icon="person-x" Subtitle="A lesson placed here is a hard clash. Declared by the timetable master; teachers do not see who declared what.">
+                @if (staffUnavailable)
+                {
+                    <p class="tts-help">The staff list is not available to you.</p>
+                }
+                @if (settings.Unavailability.Any())
+                {
+                    <div class="table-wrap">
+                        <table class="data-table q-stack">
+                            <thead><tr><th>Teacher</th><th>Day</th><th>Period</th><th>Note</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var (line, li) in settings.Unavailability.Select((u, i) => (u, i)))
+                                {
+                                    var u = line;
+                                    var uIndex = li;
+                                    <tr>
+                                        <td>
+                                            <QSelect TValue="Guid" TItem="StaffMemberDto" Value="@u.UserId" ValueChanged="@(v => u.UserId = v)" Items="@staff"
+                                                     ValueSelector="@(m => m.UserId)" TextSelector="@(m => m.FullName)" Placeholder="@(u.UserName ?? "Choose a teacher")" />
+                                        </td>
+                                        <td>
+                                            <QSelect TValue="int" TItem="int" Value="@u.CycleDay" ValueChanged="@(v => { u.CycleDay = v; u.PeriodKey = null; })" Items="@CycleDays"
+                                                     ValueSelector="@(d => d)" TextSelector="@(d => TimetableCycle.CycleDayLabel(settings, CycleDayCount, d))" />
+                                        </td>
+                                        <td>
+                                            <QSelect TValue="string" TItem="BellPeriodDto" Value="@u.PeriodKey" ValueChanged="@(v => u.PeriodKey = v)"
+                                                     Items="@TimetableCycle.LessonPeriodsOf(settings, CycleDayCount, u.CycleDay)" ValueSelector="@(p => p.Key)" TextSelector="@(p => $"{p.Label} ({p.Start}–{p.End})")"
+                                                     Placeholder="The whole day" AllowClear="true" />
+                                        </td>
+                                        <td><QInput TValue="string" @bind-Value="@u.Note" MaxLength="200" Placeholder="Why (optional)" /></td>
+                                        <td><QButton Icon="trash" Variant="ghost" Size="sm" Title="Remove" OnClick="@(() => settings.Unavailability.RemoveAt(uIndex))" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <p class="tts-help">Nobody has declared a time they cannot teach.</p>
+                }
+                <div class="tts-actions">
+                    <QButton Text="Add a line" Icon="plus-lg" Variant="ghost" Size="sm" OnClick="@AddUnavailability" Disabled="@(staffUnavailable || CycleDayCount == 0)" />
+                </div>
+            </QCard>
+        }
+
+        @if (!string.IsNullOrEmpty(saveError))
+        {
+            <p class="tts-error" role="alert">@saveError</p>
+        }
+    }
+</div>
+
+<style>
+    .tts-page .q-card { margin-top: 14px; }
+    .tts-note { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0 0; }
+    .tts-help { font-size: 12.5px; color: var(--qm-text-muted); margin: 8px 0 0; }
+    .tts-error { color: var(--qm-danger); font-size: 13px; margin: 12px 0 0; }
+    .tts-days { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 12px; }
+    .tts-actions { display: flex; flex-wrap: wrap; margin-top: 8px; }
+    .tts-actions--page { margin-top: 12px; }
+    .tts-periods td, .tts-rooms td { vertical-align: middle; }
+    .tts-rooms td .q-input-wrapper { margin-bottom: 0; }
+    .tts-retired td { color: var(--qm-text-muted); }
+    .tts-periods td .q-input-wrapper, .tts-periods td .q-select { margin-bottom: 0; }
+</style>
+
+@code {
+    private bool isLoading = true, canManage, saving, staffUnavailable;
+    private Guid branchId;
+    private TimetableSettingsDto? settings;
+    private List<StaffMemberDto> staff = new();
+    private HashSet<string> savedKeys = new(StringComparer.OrdinalIgnoreCase);
+    private string? saveError;
+
+    // Rooms, with each loaded row's stored name so a rename can be sent as one.
+    private List<TimetableRoomDto> rooms = new();
+    private Dictionary<TimetableRoomDto, string> roomOriginalNames = new(ReferenceEqualityComparer.Instance);
+
+    private static readonly DayOfWeek[] WeekOrder = { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
+    private static readonly IReadOnlyList<BellPeriodKind> Kinds = Enum.GetValues<BellPeriodKind>();
+
+    private int CycleDayCount => settings == null ? 0 : TimetableCycle.CycleDayCount(settings);
+    private IReadOnlyList<int> CycleDays => Enumerable.Range(1, CycleDayCount).ToList();
+    private string TeachingDaysText => settings == null ? "" : string.Join(", ", TimetableCycle.TeachingDays(settings).Select(d => d.ToString()[..3]));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        {
+            Navigation.NavigateTo("/billing/modules");
+            return;
+        }
+        canManage = await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
+        await BranchState.InitializeAsync();
+        branchId = BranchState.CurrentBranchId;
+        BranchState.OnBranchChanged += HandleBranchChanged;
+        await LoadAsync();
+    }
+
+    private void HandleBranchChanged()
+    {
+        branchId = BranchState.CurrentBranchId;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    public void Dispose() => BranchState.OnBranchChanged -= HandleBranchChanged;
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        saveError = null;
+        try
+        {
+            if (branchId == Guid.Empty) { settings = null; return; }
+            settings = await StaffApi.GetTimetableSettingsAsync(branchId);
+            SetRooms(await StaffApi.GetTimetableRoomsAsync(branchId));
+            savedKeys = settings.IsSaved ? settings.DayTypes.SelectMany(t => t.Periods).Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
+            if (canManage)
+            {
+                try
+                {
+                    staff = (await StaffApi.GetDirectoryAsync(branchId)).Items.Where(s => s.IsActive).OrderBy(s => s.FullName).ToList();
+                    staffUnavailable = false;
+                }
+                catch { staff = new(); staffUnavailable = true; }
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the bell schedule", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static void ToggleDay(BellDayTypeDto type, DayOfWeek day, bool on)
+    {
+        if (on && !type.Days.Contains(day)) type.Days.Add(day);
+        if (!on) type.Days.Remove(day);
+    }
+
+    private void AddPeriod(BellDayTypeDto type)
+    {
+        var last = type.Periods.Select(p => TimetableCycle.ParseTime(p.End)).Where(t => t != null).Max() ?? new TimeOnly(8, 0);
+        var minutes = Math.Clamp(settings?.DefaultPeriodMinutes ?? 40, 10, 180);
+        var end = last.AddMinutes(minutes);
+        var n = type.Periods.Count(p => p.Kind == BellPeriodKind.Lesson) + 1;
+        var key = $"P{n}";
+        while (type.Periods.Any(p => string.Equals(p.Key, key, StringComparison.OrdinalIgnoreCase))) key = $"P{++n}";
+        type.Periods.Add(new BellPeriodDto { Key = key, Label = key, Start = last.ToString("HH:mm"), End = end.ToString("HH:mm"), Kind = BellPeriodKind.Lesson });
+    }
+
+    private void AddDayType()
+    {
+        if (settings == null) return;
+        var free = WeekOrder.FirstOrDefault(d => !settings.DayTypes.Any(t => t.Days.Contains(d)));
+        settings.DayTypes.Add(new BellDayTypeDto
+        {
+            Key = $"type{settings.DayTypes.Count + 1}",
+            Name = free == DayOfWeek.Saturday ? "Saturday" : "Another day",
+            Days = new() { free },
+            Periods = new() { new BellPeriodDto { Key = "P1", Label = "P1", Start = "08:00", End = "08:40" } }
+        });
+    }
+
+    private void AddUnavailability()
+    {
+        if (settings == null) return;
+        settings.Unavailability.Add(new TeacherUnavailabilityDto { UserId = staff.FirstOrDefault()?.UserId ?? Guid.Empty, CycleDay = 1 });
+    }
+
+    private void SetRooms(List<TimetableRoomDto> list)
+    {
+        rooms = list;
+        roomOriginalNames = new(ReferenceEqualityComparer.Instance);
+        foreach (var r in rooms) roomOriginalNames[r] = r.Name;
+    }
+
+    private void AddRoom() => rooms.Add(new TimetableRoomDto { IsActive = true });
+
+    private static string KindLabel(BellPeriodKind k) => k switch { BellPeriodKind.Lesson => "Lesson", BellPeriodKind.Break => "Break", _ => "Assembly" };
+
+    private async Task SaveAsync()
+    {
+        if (settings == null) return;
+        saving = true;
+        saveError = null;
+        try
+        {
+            settings = await StaffApi.SaveTimetableSettingsAsync(branchId, settings);
+            savedKeys = settings.DayTypes.SelectMany(t => t.Periods).Select(p => p.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var renames = rooms.Where(r => roomOriginalNames.TryGetValue(r, out var old) && !string.Equals(old.Trim(), r.Name?.Trim(), StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(r.Name))
+                .GroupBy(r => roomOriginalNames[r], StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Name.Trim());
+            try
+            {
+                SetRooms(await StaffApi.SaveTimetableRoomsAsync(branchId, new UpdateTimetableRoomsRequest { Rooms = rooms, Renames = renames }));
+            }
+            catch (Exception ex)
+            {
+                saveError = $"The bell schedule was saved; the rooms were not: {ex.Message}";
+                return;
+            }
+            Toast.Notify(ToastSeverity.Success, "Bell schedule saved", $"{CycleDayCount}-day cycle, {rooms.Count(r => r.IsActive)} room{(rooms.Count(r => r.IsActive) == 1 ? "" : "s")} in use.");
+        }
+        catch (Exception ex)
+        {
+            saveError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

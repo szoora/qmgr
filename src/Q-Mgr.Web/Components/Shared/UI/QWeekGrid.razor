@@ -1,0 +1,325 @@
+@namespace QMgr.Web.Components.Shared.UI
+@typeparam TItem
+
+@*
+    Rows × columns with something in each slot (duty rota plan §9): a timetable by class, teacher or room
+    (periods × cycle days), a rota by day, a teacher's week. One component so every week-shaped page
+    scrolls, selects, reads out and collapses on a phone the same way.
+
+    - The grid scrolls INSIDE its own box, with the day header and the period column sticky; the page never
+      scrolls sideways (see layout.css and CLAUDE.md, "The page must never scroll sideways").
+    - Below 640px it is not a grid at all but a per-day list: a 6×8 table at phone width is unreadable.
+      Both are rendered and CSS picks one, so there is no JS measurement and no first-paint flash.
+    - Keyboard: one cell is in the tab order (roving tabindex); arrows move, Home/End go to the row's ends,
+      Enter or Space activates. Break rows are skipped: they are not slots.
+    - State (conflict, warning, unavailable, highlight) is carried by a border and an icon as well as a
+      tint, so it survives a mono printer and colour blindness alike.
+*@
+
+<div class="q-weekgrid @Class" @attributes="AdditionalAttributes">
+    <div class="q-weekgrid__scroll" style="@(MaxHeight == null ? null : $"max-height:{MaxHeight}")">
+        <table class="q-weekgrid__table" role="grid" aria-label="@AriaLabel" aria-rowcount="@(Rows.Count + 1)" aria-colcount="@(Columns.Count + 1)">
+            <thead>
+                <tr role="row">
+                    <th class="q-weekgrid__corner" scope="col" role="columnheader">@CornerLabel</th>
+                    @foreach (var col in Columns)
+                    {
+                        <th scope="col" role="columnheader" class="q-weekgrid__colhead @(col.IsToday ? "q-weekgrid__colhead--today" : "")"
+                            aria-current="@(col.IsToday ? "date" : null)">
+                            <span class="q-weekgrid__head-label">@col.Label</span>
+                            @if (!string.IsNullOrEmpty(col.SubLabel))
+                            {
+                                <span class="q-weekgrid__head-sub">@col.SubLabel</span>
+                            }
+                        </th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @for (var r = 0; r < Rows.Count; r++)
+                {
+                    var row = Rows[r];
+                    if (row.IsBreak)
+                    {
+                        <tr role="row" class="q-weekgrid__break">
+                            <th scope="row" role="rowheader" class="q-weekgrid__rowhead">
+                                <span class="q-weekgrid__head-label">@row.Label</span>
+                                @if (!string.IsNullOrEmpty(row.SubLabel)) { <span class="q-weekgrid__head-sub">@row.SubLabel</span> }
+                            </th>
+                            <td colspan="@Columns.Count" class="q-weekgrid__break-band" role="gridcell" aria-readonly="true">@row.Label</td>
+                        </tr>
+                        continue;
+                    }
+                    <tr role="row">
+                        <th scope="row" role="rowheader" class="q-weekgrid__rowhead">
+                            <span class="q-weekgrid__head-label">@row.Label</span>
+                            @if (!string.IsNullOrEmpty(row.SubLabel)) { <span class="q-weekgrid__head-sub">@row.SubLabel</span> }
+                        </th>
+                        @for (var c = 0; c < Columns.Count; c++)
+                        {
+                            var cell = CellAt(row, Columns[c]);
+                            var key = RefKey(row.Key, Columns[c].Key);
+                            var colIndex = c;
+                            var rowIndex = r;
+                            <td role="gridcell"
+                                class="@CellClass(cell)"
+                                tabindex="@(IsFocusTarget(cell.Slot) ? 0 : -1)"
+                                aria-selected="@(Selectable ? (cell.IsSelected ? "true" : "false") : null)"
+                                aria-label="@CellAriaLabel(cell)"
+                                title="@CellTitle?.Invoke(cell)"
+                                @ref="cellRefs[key]"
+                                @onclick="@(() => ActivateAsync(cell))"
+                                @onkeydown="@(e => OnKeyDownAsync(e, rowIndex, colIndex))"
+                                @onfocus="@(() => focused = cell.Slot)">
+                                @if (cell.State is QWeekGridCellState.Conflict or QWeekGridCellState.Warning or QWeekGridCellState.Unavailable)
+                                {
+                                    <span class="q-weekgrid__state-icon" aria-hidden="true"><QIcon Name="@StateIcon(cell.State)" /></span>
+                                }
+                                @if (CellTemplate != null)
+                                {
+                                    @CellTemplate(cell)
+                                }
+                                else if (!cell.IsEmpty)
+                                {
+                                    <span class="q-weekgrid__count">@cell.Items.Count</span>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @* ---- The phone: a list per day ---------------------------------------------------------------- *@
+    <div class="q-weekgrid__list" aria-label="@AriaLabel">
+        @foreach (var col in Columns)
+        {
+            var slots = Rows.Where(r => !r.IsBreak)
+                            .Select(r => CellAt(r, col))
+                            .Where(cell => ShowEmptySlotsInList || !cell.IsEmpty || cell.State != QWeekGridCellState.None)
+                            .ToList();
+            <section class="q-weekgrid__day @(col.IsToday ? "q-weekgrid__day--today" : "")">
+                <h4 class="q-weekgrid__day-head">
+                    @col.Label
+                    @if (!string.IsNullOrEmpty(col.SubLabel)) { <span class="q-weekgrid__head-sub">@col.SubLabel</span> }
+                    @if (col.IsToday) { <span class="q-weekgrid__today-tag">Today</span> }
+                </h4>
+                @if (slots.Count == 0)
+                {
+                    <p class="q-weekgrid__day-empty">@EmptyDayText</p>
+                }
+                else
+                {
+                    <ul class="q-weekgrid__day-list">
+                        @foreach (var cell in slots)
+                        {
+                            <li>
+                                <button type="button" class="@($"q-weekgrid__item {StateClass(cell.State)} {(cell.IsSelected ? "q-weekgrid__item--selected" : "")}")"
+                                        aria-pressed="@(Selectable ? (cell.IsSelected ? "true" : "false") : null)"
+                                        aria-label="@CellAriaLabel(cell)"
+                                        @onclick="@(() => ActivateAsync(cell))">
+                                    <span class="q-weekgrid__item-when">
+                                        <strong>@cell.Row.Label</strong>
+                                        @if (!string.IsNullOrEmpty(cell.Row.SubLabel)) { <span>@cell.Row.SubLabel</span> }
+                                    </span>
+                                    <span class="q-weekgrid__item-body">
+                                        @if (cell.State is QWeekGridCellState.Conflict or QWeekGridCellState.Warning or QWeekGridCellState.Unavailable)
+                                        {
+                                            <span class="q-weekgrid__state-icon" aria-hidden="true"><QIcon Name="@StateIcon(cell.State)" /></span>
+                                        }
+                                        @if (CellTemplate != null)
+                                        {
+                                            @CellTemplate(cell)
+                                        }
+                                        else if (!cell.IsEmpty)
+                                        {
+                                            <span class="q-weekgrid__count">@cell.Items.Count</span>
+                                        }
+                                    </span>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<QWeekGridColumn> Columns { get; set; } = Array.Empty<QWeekGridColumn>();
+    [Parameter, EditorRequired] public IReadOnlyList<QWeekGridRow> Rows { get; set; } = Array.Empty<QWeekGridRow>();
+
+    [Parameter] public IEnumerable<TItem> Items { get; set; } = Array.Empty<TItem>();
+
+    /// <summary>Which row an item belongs in. Required whenever <see cref="Items"/> is used.</summary>
+    [Parameter] public Func<TItem, string>? RowKey { get; set; }
+
+    /// <summary>Which column an item belongs in.</summary>
+    [Parameter] public Func<TItem, string>? ColumnKey { get; set; }
+
+    /// <summary>What a slot shows, in the grid and in the phone list alike. Default: a count.</summary>
+    [Parameter] public RenderFragment<QWeekGridCell<TItem>>? CellTemplate { get; set; }
+
+    /// <summary>A slot's state (the timetable's diagnosis, a rota's warnings). Default: none, except more than one item reads as a conflict when <see cref="ConflictWhenShared"/> is set.</summary>
+    [Parameter] public Func<QWeekGridSlot, QWeekGridCellState>? CellState { get; set; }
+
+    /// <summary>Two items in one slot is itself a clash (a teacher's own week). Off for a class-and-group view, where a joint lesson is legitimate.</summary>
+    [Parameter] public bool ConflictWhenShared { get; set; }
+
+    /// <summary>Hover text for a slot: say WHY it is a conflict, not just that it is one.</summary>
+    [Parameter] public Func<QWeekGridCell<TItem>, string?>? CellTitle { get; set; }
+
+    /// <summary>What a screen reader hears for a slot. Default: "Mon, P3: 2 items, conflict".</summary>
+    [Parameter] public Func<QWeekGridCell<TItem>, string>? CellLabel { get; set; }
+
+    [Parameter] public bool Selectable { get; set; }
+    [Parameter] public QWeekGridSlot? Selected { get; set; }
+    [Parameter] public EventCallback<QWeekGridSlot?> SelectedChanged { get; set; }
+
+    /// <summary>A click, a tap, Enter or Space on a slot.</summary>
+    [Parameter] public EventCallback<QWeekGridCell<TItem>> OnCellActivated { get; set; }
+
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public string? CornerLabel { get; set; }
+
+    /// <summary>Caps the grid's height so a long day scrolls inside it with the header still visible ("70vh", "520px").</summary>
+    [Parameter] public string? MaxHeight { get; set; }
+
+    /// <summary>The phone list shows only slots with something in them unless this is set (an editor placing lessons wants the empty ones).</summary>
+    [Parameter] public bool ShowEmptySlotsInList { get; set; }
+
+    [Parameter] public string EmptyDayText { get; set; } = "Nothing on this day.";
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private readonly Dictionary<string, ElementReference> cellRefs = new();
+    private Dictionary<(string Row, string Col), List<TItem>> itemsBySlot = new();
+    private QWeekGridSlot? focused;
+
+    protected override void OnParametersSet()
+    {
+        itemsBySlot = new();
+        if (RowKey == null || ColumnKey == null) return;
+        foreach (var item in Items)
+        {
+            var slot = (RowKey(item), ColumnKey(item));
+            if (!itemsBySlot.TryGetValue(slot, out var list)) itemsBySlot[slot] = list = new List<TItem>();
+            list.Add(item);
+        }
+    }
+
+    private QWeekGridCell<TItem> CellAt(QWeekGridRow row, QWeekGridColumn col)
+    {
+        var items = itemsBySlot.TryGetValue((row.Key, col.Key), out var list) ? (IReadOnlyList<TItem>)list : Array.Empty<TItem>();
+        var slot = new QWeekGridSlot(row.Key, col.Key);
+        var state = CellState?.Invoke(slot) ?? QWeekGridCellState.None;
+        if (state == QWeekGridCellState.None && ConflictWhenShared && items.Count > 1) state = QWeekGridCellState.Conflict;
+        return new QWeekGridCell<TItem>(row, col, items, state, Selected is { } s && s == slot);
+    }
+
+    private static string RefKey(string row, string col) => $"{row}{col}";
+
+    /// <summary>Exactly one slot is tabbable: the focused one, else the selected one, else the first.</summary>
+    private bool IsFocusTarget(QWeekGridSlot slot)
+    {
+        var target = focused ?? Selected ?? FirstSlot();
+        return target is { } t && t == slot;
+    }
+
+    private QWeekGridSlot? FirstSlot()
+        => Rows.FirstOrDefault(r => !r.IsBreak) is { } row && Columns.Count > 0 ? new QWeekGridSlot(row.Key, Columns[0].Key) : null;
+
+    private string CellClass(QWeekGridCell<TItem> cell)
+    {
+        var classes = "q-weekgrid__cell " + StateClass(cell.State);
+        if (cell.IsEmpty) classes += " q-weekgrid__cell--empty";
+        if (cell.IsSelected) classes += " q-weekgrid__cell--selected";
+        if (cell.Column.IsToday) classes += " q-weekgrid__cell--today";
+        if (Selectable || OnCellActivated.HasDelegate) classes += " q-weekgrid__cell--interactive";
+        return classes;
+    }
+
+    private static string StateClass(QWeekGridCellState state) => state switch
+    {
+        QWeekGridCellState.Highlight => "q-weekgrid--highlight",
+        QWeekGridCellState.Warning => "q-weekgrid--warning",
+        QWeekGridCellState.Conflict => "q-weekgrid--conflict",
+        QWeekGridCellState.Unavailable => "q-weekgrid--unavailable",
+        _ => ""
+    };
+
+    private static string StateIcon(QWeekGridCellState state) => state switch
+    {
+        QWeekGridCellState.Conflict => "exclamation-octagon-fill",
+        QWeekGridCellState.Warning => "exclamation-triangle-fill",
+        QWeekGridCellState.Unavailable => "slash-circle",
+        _ => "circle"
+    };
+
+    private string CellAriaLabel(QWeekGridCell<TItem> cell)
+    {
+        if (CellLabel != null) return CellLabel(cell);
+        var what = cell.IsEmpty ? "empty" : cell.Items.Count == 1 ? "1 item" : $"{cell.Items.Count} items";
+        var state = cell.State switch
+        {
+            QWeekGridCellState.Conflict => ", conflict",
+            QWeekGridCellState.Warning => ", warning",
+            QWeekGridCellState.Unavailable => ", unavailable",
+            _ => ""
+        };
+        return $"{cell.Column.Label}, {cell.Row.Label}: {what}{state}";
+    }
+
+    private async Task ActivateAsync(QWeekGridCell<TItem> cell)
+    {
+        focused = cell.Slot;
+        if (Selectable)
+        {
+            QWeekGridSlot? next = cell.IsSelected ? null : cell.Slot;
+            Selected = next;
+            await SelectedChanged.InvokeAsync(next);
+        }
+        await OnCellActivated.InvokeAsync(cell);
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e, int rowIndex, int colIndex)
+    {
+        int r = rowIndex, c = colIndex;
+        switch (e.Key)
+        {
+            case "ArrowRight": c = Math.Min(Columns.Count - 1, c + 1); break;
+            case "ArrowLeft": c = Math.Max(0, c - 1); break;
+            case "Home": c = 0; break;
+            case "End": c = Columns.Count - 1; break;
+            case "ArrowDown": r = NextSlotRow(r, +1); break;
+            case "ArrowUp": r = NextSlotRow(r, -1); break;
+            case "Enter":
+            case " ":
+                await ActivateAsync(CellAt(Rows[rowIndex], Columns[colIndex]));
+                return;
+            default:
+                return;
+        }
+        if (r == rowIndex && c == colIndex) return;
+
+        focused = new QWeekGridSlot(Rows[r].Key, Columns[c].Key);
+        StateHasChanged();
+        if (cellRefs.TryGetValue(RefKey(Rows[r].Key, Columns[c].Key), out var target))
+        {
+            try { await target.FocusAsync(); } catch { /* the element was re-rendered away mid-move */ }
+        }
+    }
+
+    /// <summary>The next row in a direction that is a slot, skipping breaks; stays put at either end.</summary>
+    private int NextSlotRow(int from, int step)
+    {
+        for (var i = from + step; i >= 0 && i < Rows.Count; i += step)
+            if (!Rows[i].IsBreak) return i;
+        return from;
+    }
+}
