@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
+using QMgr.Infrastructure.Services;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
@@ -29,6 +31,7 @@ public class ContentController : ControllerBase
     private readonly IWebHostEnvironment _webHostEnvironment;
     private readonly IMediaStorageService _mediaStorage;
     private readonly IUsageTrackingService _usageTracking;
+    private readonly QMgr.Infrastructure.Services.Storage.IUploadAuthorizer _uploadAuthorizer;
 
     public ContentController(
         QMgrDbContext dbContext,
@@ -37,7 +40,8 @@ public class ContentController : ControllerBase
         IDisplayHubContext displayHub,
         IWebHostEnvironment webHostEnvironment,
         IMediaStorageService mediaStorage,
-        IUsageTrackingService usageTracking)
+        IUsageTrackingService usageTracking,
+        QMgr.Infrastructure.Services.Storage.IUploadAuthorizer uploadAuthorizer)
     {
         _dbContext = dbContext;
         _tenantAccessor = tenantAccessor;
@@ -46,6 +50,7 @@ public class ContentController : ControllerBase
         _webHostEnvironment = webHostEnvironment;
         _mediaStorage = mediaStorage;
         _usageTracking = usageTracking;
+        _uploadAuthorizer = uploadAuthorizer;
     }
 
     private Guid? CurrentUserId()
@@ -88,13 +93,27 @@ public class ContentController : ControllerBase
             .Distinct()
             .ToListAsync()).ToHashSet();
 
-        var activeShares = await db.DocumentShares
-            .Where(s => ids.Contains(s.MediaContentId) && s.RevokedAt == null && s.IsActive
-                        && (s.ExpiresAt == null || s.ExpiresAt > now)
-                        && (s.MaxViews == null || s.ViewCount < s.MaxViews))
+        // "Live links" is whatever DocumentShareService.EvaluateState calls Active, and nothing else.
+        // This used to be a second predicate written in SQL, and it had already drifted: it checked
+        // revoked / active / expiry / view-limit but NOT LockedUntil, NotBefore, or the document's own
+        // IsShareable / IsActive / FilePath. So the Library card advertised "3 live links" on a
+        // document whose sharing had been turned off and whose every link refused, while the activity
+        // modal — which does use EvaluateState — said none. Two numbers, one fact, same page.
+        // Fetched and evaluated in memory: a share row is small and a document has a handful of links.
+        var shareRows = await db.DocumentShares
+            .Where(s => ids.Contains(s.MediaContentId))
+            .ToListAsync();
+        var docsById = items.ToDictionary(m => m.Id);
+        var activeShares = shareRows
+            .Where(s =>
+            {
+                // EvaluateState reads share.MediaContent for the fail-closed checks; these rows come
+                // from a projection that does not Include it, so attach the one we already have.
+                s.MediaContent ??= docsById.GetValueOrDefault(s.MediaContentId);
+                return DocumentShareService.EvaluateStateOf(s, now) == DocumentShareState.Active;
+            })
             .GroupBy(s => s.MediaContentId)
-            .Select(g => new { g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.Key, x => x.Count);
+            .ToDictionary(g => g.Key, g => g.Count());
 
         var publisherIds = items.Where(m => m.PublishedByUserId.HasValue).Select(m => m.PublishedByUserId!.Value).Distinct().ToList();
         var publishers = publisherIds.Count == 0
@@ -107,7 +126,9 @@ public class ContentController : ControllerBase
         return items.Select(m =>
         {
             var signage = onSignage.Contains(m.Id);
-            var gated = m.IsShareable && !signage;
+            // MediaServing is the one home for this rule. It reads IsShareable ALONE — signage
+            // membership is shown to the user below but no longer decides how the bytes are served.
+            var gated = MediaServing.IsGated(m.IsShareable);
             return new MediaContentDto
             {
                 Id = m.Id,
@@ -128,7 +149,10 @@ public class ContentController : ControllerBase
                 PublishedByName = m.PublishedByUserId.HasValue ? publishers.GetValueOrDefault(m.PublishedByUserId.Value) : null,
                 OnSignage = signage,
                 ActiveShareCount = activeShares.GetValueOrDefault(m.Id),
-                IsGated = gated
+                IsGated = gated,
+                Classification = m.Classification,
+                ClassificationSetAt = m.ClassificationSetAt,
+                ClassificationReason = m.ClassificationReason
             };
         }).ToList();
     }
@@ -481,9 +505,43 @@ public class ContentController : ControllerBase
         if (media == null)
             return NotFound();
 
-        _dbContext.MediaContents.Remove(media);
+        // A document that has ever been shared is RETIRED, not deleted (plan §14 finding 1,
+        // decision D6). document_shares cascades from media_content and document_share_events
+        // cascades from that, so a hard delete used to erase the whole record of who opened the
+        // document — performed on content.delete, which Manager holds, by someone who may hold
+        // neither documents.share.manage nor documents.share.audit. That is the one thing NIST
+        // SP 800-53 AU-9 exists to forbid, and it contradicted this feature's own rule that
+        // "the history of who could open a document is the audit answer".
+        //
+        // Retiring clears IsActive and IsShareable, so every existing link evaluates to
+        // Unavailable and refuses (EvaluateState fails closed on both), the bytes go, and the
+        // audit rows stay. A document nobody ever shared has no history to protect and is
+        // deleted outright, as before.
+        var hasShareHistory = await _dbContext.DocumentShares.AnyAsync(s => s.MediaContentId == mediaId);
+        if (hasShareHistory)
+        {
+            media.IsActive = false;
+            media.IsShareable = false;
+            media.UpdatedBy = CurrentUserId();
+            media.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            _dbContext.MediaContents.Remove(media);
+        }
+
         await _dbContext.SaveChangesAsync();
         await RecalculateStorageUsageAsync(media.OrganizationId);
+
+        // Either way the serving decision for the file has changed.
+        var retiredFileName = QMgr.Infrastructure.Services.Storage.UploadAccessService.FileNameOf(media.FileUrl);
+        if (retiredFileName != null) _uploadAuthorizer.Invalidate(retiredFileName);
+
+        _logger.LogInformation(
+            hasShareHistory
+                ? "Media {MediaId} retired by {UserId}: it has share history, so the row and its audit trail are kept"
+                : "Media {MediaId} deleted by {UserId}",
+            mediaId, CurrentUserId());
 
         // Found while wiring this endpoint through IMediaStorageService: the physical file
         // was never actually deleted before, only the DB row — a disk-space leak on every
@@ -777,6 +835,23 @@ public class ContentController : ControllerBase
             if (campaign == null || campaign.BranchId != playlist.BranchId)
                 return BadRequest(new ProblemDetails { Title = "Invalid campaign", Detail = "Campaign does not belong to this playlist's branch.", Status = StatusCodes.Status400BadRequest });
         }
+
+        // A shared document cannot also play on a wall. Refused here rather than resolved silently:
+        // the serving mode follows IsShareable alone (MediaServing), so without this refusal a
+        // shareable document added to a playlist would be gated and simply stop rendering on the
+        // display with no error anywhere. The plan (§1, Revision 3) makes this the write-time half
+        // of that invariant; the read-time half is in UploadAuthorizer.
+        var mediaShareable = await _dbContext.MediaContents.AsNoTracking()
+            .Where(m => m.Id == request.MediaContentId)
+            .Select(m => (bool?)m.IsShareable)
+            .FirstOrDefaultAsync();
+        if (mediaShareable == true)
+            return BadRequest(new ProblemDetails
+            {
+                Title = MediaServing.CombinationRefusedTitle,
+                Detail = MediaServing.CombinationRefusedDetail,
+                Status = StatusCodes.Status400BadRequest
+            });
 
         var maxPosition = await _dbContext.PlaylistItems
             .Where(i => i.PlaylistId == playlistId)

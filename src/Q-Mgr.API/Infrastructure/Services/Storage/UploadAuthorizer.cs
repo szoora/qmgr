@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using QMgr.API.Application.Services;
 using QMgr.Application.Tenant;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Enums;
@@ -24,7 +25,9 @@ public enum UploadOwnerKind
     /// <summary>Evidence on a staff performance record. About an employee. Never public; the record's own rung and the staff scope apply.</summary>
     StaffEvidence = 7,
     /// <summary>A member of staff's own profile photograph (duty rota plan §12.3). Readable by signed-in staff of the same organization; never public.</summary>
-    StaffPhoto = 8
+    StaffPhoto = 8,
+    /// <summary>Evidence on a duty report (plan §4.3). Readable exactly by those who may read the report.</summary>
+    DutyReportAttachment = 9
 }
 
 /// <summary>
@@ -65,7 +68,12 @@ public interface IUploadAuthorizer
     /// </summary>
     Task<bool> CanCurrentUserReadAsync(UploadClassification classification, CancellationToken cancellationToken = default);
 
-    /// <summary>Forget a cached classification, e.g. after a document's shareable flag or playlist membership changed.</summary>
+    /// <summary>
+    /// Forget a cached classification, after a document's shareable flag changed. Playlist membership
+    /// is deliberately NOT a reason any more: since 2026-09-18 it does not enter the decision at all
+    /// (see <see cref="Application.Services.MediaServing"/>), which also retired a promise this
+    /// comment used to make that no playlist endpoint ever kept.
+    /// </summary>
     void Invalidate(string fileName);
 }
 
@@ -79,6 +87,7 @@ public class UploadAuthorizer : IUploadAuthorizer
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IStudentScopeService _scope;
     private readonly IStaffScopeService _staffScope;
+    private readonly IStaffPerformancePolicyService _staffPolicy;
 
     public UploadAuthorizer(
         QMgrDbContext db,
@@ -86,8 +95,10 @@ public class UploadAuthorizer : IUploadAuthorizer
         ITenantContextAccessor tenantAccessor,
         IHttpContextAccessor httpContextAccessor,
         IStudentScopeService scope,
-        IStaffScopeService staffScope)
+        IStaffScopeService staffScope,
+        IStaffPerformancePolicyService staffPolicy)
     {
+        _staffPolicy = staffPolicy;
         _staffScope = staffScope;
         _db = db;
         _cache = cache;
@@ -107,9 +118,9 @@ public class UploadAuthorizer : IUploadAuthorizer
 
         var result = await LookUpAsync(fileName, cancellationToken);
 
-        // Short. A document that was just flagged share-only, or just taken off its last playlist,
-        // becomes gated within half a minute even if nobody called Invalidate; and a public file's
-        // owner never changes, so 30 seconds saves the display screens six queries per fetch.
+        // Short. A document that was just flagged share-only becomes gated within half a minute even
+        // if nobody called Invalidate; and a public file's owner never changes, so 30 seconds saves
+        // the display screens six queries per fetch.
         _cache.Set(CacheKey(fileName), result, CacheFor);
         return result;
     }
@@ -149,6 +160,14 @@ public class UploadAuthorizer : IUploadAuthorizer
         if (staff != null)
             return new UploadClassification(UploadOwnerKind.StaffEvidence, IsPublic: false, staff.OrganizationId, staff.BranchId, staff.SubjectUserId, staff.Visibility, staff.LoggedByUserId, staff.IsDraft);
 
+        // 1c. Duty report evidence: the report's own read rule decides (StaffDutyReports.AccessForAsync).
+        var dutyReport = await _db.StaffDutyReportAttachments.IgnoreQueryFilters().AsNoTracking()
+            .Where(a => a.FileUrl.EndsWith(suffix))
+            .Select(a => new { a.Report!.OrganizationId, a.Report.BranchId, a.ReportId })
+            .FirstOrDefaultAsync(ct);
+        if (dutyReport != null)
+            return new UploadClassification(UploadOwnerKind.DutyReportAttachment, IsPublic: false, dutyReport.OrganizationId, dutyReport.BranchId, dutyReport.ReportId);
+
         // 2. Student photographs: roster-gated and row-scoped.
         var student = await _db.Students.IgnoreQueryFilters().AsNoTracking()
             .Where(s => s.PhotoUrl != null && s.PhotoUrl.EndsWith(suffix))
@@ -174,12 +193,15 @@ public class UploadAuthorizer : IUploadAuthorizer
             return new UploadClassification(UploadOwnerKind.StaffPhoto, IsPublic: false, staffPhoto.OrganizationId, null, staffPhoto.Id);
 
         // 4. Signage media and Library documents. Public unless share-only. FilePath only.
+        // The decision is IsShareable alone — MediaServing.IsPublic is the one home for that rule.
+        // It used to read `|| OnSignage` here, which made a share-only document public the moment
+        // anybody added it to a playlist; the combination is now refused at the write paths instead.
         var media = await _db.MediaContents.IgnoreQueryFilters().AsNoTracking()
             .Where(m => m.FilePath == relative)
-            .Select(m => new { m.OrganizationId, m.IsShareable, OnSignage = m.PlaylistItems.Any() })
+            .Select(m => new { m.OrganizationId, m.IsShareable })
             .FirstOrDefaultAsync(ct);
         if (media != null)
-            return new UploadClassification(UploadOwnerKind.Media, IsPublic: !media.IsShareable || media.OnSignage, media.OrganizationId);
+            return new UploadClassification(UploadOwnerKind.Media, MediaServing.IsPublic(media.IsShareable), media.OrganizationId);
 
         // 5. Broadcast attachments go out to contacts as links in email/Telegram/WhatsApp; the
         //    recipients have no login. Public by the sender's own choice. FilePath only, same reason.
@@ -274,6 +296,21 @@ public class UploadAuthorizer : IUploadAuthorizer
                 };
                 if (!staffRungOk) return false;
                 return c.BranchId != null && c.StudentId != null && await _staffScope.CanSeeStaffAsync(c.BranchId.Value, c.StudentId.Value);
+            }
+
+            case UploadOwnerKind.DutyReportAttachment:
+            {
+                // StudentId carries the REPORT id for this kind. The report decides, so evidence can never be readable
+                // where the report is not: a peer on the same slot gets 404 for both.
+                var callerRaw = _httpContextAccessor.HttpContext?.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(callerRaw, out var callerId) || c.StudentId == null || c.BranchId == null) return false;
+                var report = await _db.StaffDutyReports.IgnoreQueryFilters().AsNoTracking().Include(r => r.Duty)
+                    .FirstOrDefaultAsync(r => r.Id == c.StudentId.Value, cancellationToken);
+                if (report?.Duty == null) return false;
+                var policy = await _staffPolicy.GetAsync(report.OrganizationId);
+                var access = await QMgr.API.Application.Services.StaffDutyReports.AccessForAsync(callerId, report, report.Duty, policy,
+                    code => HasPermissionAsync(code, cancellationToken), _staffScope.CanSeeStaffAsync);
+                return access.CanRead;
             }
 
             default:

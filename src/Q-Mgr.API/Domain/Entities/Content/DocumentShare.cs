@@ -71,6 +71,20 @@ public class DocumentShare : BaseAuditableEntity
     public DateTime? FirstOpenedAt { get; set; }
     public DateTime? LastOpenedAt { get; set; }
 
+    /// <summary>
+    /// Why this link was issued. Optional, and kept because ISO 23081-1 (quoted in MoReq2010) expects
+    /// an event history to record "why it occurred" and not only who and when — the same reason
+    /// revoking already demands a reason. It is internal: the viewer never sees it.
+    /// </summary>
+    public string? Reason { get; set; }
+
+    /// <summary>
+    /// When the creator was warned that this link is about to expire, so they are warned once.
+    /// Box does the same, defaulting to seven days ahead; a link that dies silently becomes a
+    /// support call from whoever was relying on it.
+    /// </summary>
+    public DateTime? ExpiryWarningSentAt { get; set; }
+
     public virtual MediaContent? MediaContent { get; set; }
     public virtual ICollection<DocumentShareEvent> Events { get; set; } = new List<DocumentShareEvent>();
 

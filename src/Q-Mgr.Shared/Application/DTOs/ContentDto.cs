@@ -25,13 +25,25 @@ public record MediaContentDto
     public string? PublishedByName { get; init; }
     /// <summary>On at least one playlist — the signage distribution flag.</summary>
     public bool OnSignage { get; init; }
-    /// <summary>Links that are neither revoked nor expired.</summary>
+    /// <summary>
+    /// Links this document has that <c>EvaluateState</c> calls Active right now — so a document whose
+    /// sharing has been turned off, or whose links are locked out or not yet open, counts none.
+    /// This used to be a separate SQL predicate that disagreed with the activity modal on the same page.
+    /// </summary>
     public int ActiveShareCount { get; init; }
     /// <summary>
-    /// True when the raw file path answers 401 to the public: shareable and on no playlist. The
-    /// FileUrl on this DTO then carries a short-lived access token for the caller who fetched it.
+    /// True when the raw file path answers 401 to the public. Decided by <c>IsShareable</c> alone —
+    /// playlist membership does not enter it (see <c>MediaServing</c>), and the two cannot both be
+    /// true because the write paths refuse the combination. The FileUrl on this DTO then carries a
+    /// short-lived access token for the caller who fetched it.
     /// </summary>
     public bool IsGated { get; init; }
+
+    /// <summary>How sensitive this document is. Narrows what its links may do; General is the default and the old behaviour.</summary>
+    public DocumentClassification Classification { get; init; }
+    public DateTime? ClassificationSetAt { get; init; }
+    /// <summary>Only ever set when somebody LOWERED the classification — the record of why.</summary>
+    public string? ClassificationReason { get; init; }
 }
 
 public record CreateMediaContentRequest

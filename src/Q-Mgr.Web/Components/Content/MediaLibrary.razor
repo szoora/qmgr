@@ -374,13 +374,8 @@
                     <input type="text" class="form-control" @bind="newMedia.Name" placeholder="Enter display name" />
                 </div>
                 <div class="form-group" style="width: 140px;">
-                    <label class="form-label">Type</label>
-                    <select class="form-select" @bind="newMedia.ContentType">
-                        @foreach (var type in contentTypeValues)
-                        {
-                            <option value="@type">@type</option>
-                        }
-                    </select>
+                    <QSelect TValue="ContentType" TItem="ContentType" @bind-Value="newMedia.ContentType"
+                             Items="@contentTypeValues" TextSelector="@(x => x.ToString())" Label="Type" />
                 </div>
             </div>
 
@@ -439,7 +434,7 @@
 
     .toolbar-left, .toolbar-right {
         display: flex;
-        gap: 12px;
+        gap: var(--q-row-gap, 8px);
         align-items: center;
     }
 
@@ -615,7 +610,6 @@
     .dialog-actions {
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
         margin-top: 24px;
     }
 
@@ -1159,7 +1153,6 @@
     .add-url-dialog .dialog-actions {
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
         padding-top: 16px;
         border-top: 1px solid var(--qm-border);
         margin-top: 0;
@@ -1283,7 +1276,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             NavigationManager.NavigateTo("/billing/modules", forceLoad: false);
             return;
@@ -1994,14 +1987,10 @@
         return media.ContentType.ToString();
     }
 
-    private string FormatFileSize(long? bytes)
-    {
-        if (!bytes.HasValue) return "--";
-        var kb = bytes.Value / 1024.0;
-        if (kb < 1024) return $"{kb:F1} KB";
-        var mb = kb / 1024.0;
-        return $"{mb:F1} MB";
-    }
+    // One formatter app-wide (QFileSize) — this copy said "0.5 KB" where the Library picker's said
+    // "512 B" for the same file, and "1.0 MB" where it said "1 MB". Kept as a one-line pass-through
+    // so the three call sites in the markup above read unchanged.
+    private string FormatFileSize(long? bytes) => QFileSize.Format(bytes);
 
     private string FormatDuration(int seconds)
     {

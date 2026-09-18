@@ -22,6 +22,21 @@
 
 <PageTitle>@(gate?.DocumentName ?? "Shared document") - Q-Mgr</PageTitle>
 
+@*
+    The address of this page IS the capability: /s/{slug} is the whole credential, which is what the
+    W3C TAG's finding on capability URLs warns about, and Referer is the header that hands it to a
+    third party. no-referrer for this page: nothing here needs a referrer sent anywhere, and a
+    reader who follows a link out of a watermarked document must not carry the slug with them.
+
+    It arrives with the circuit rather than the first paint (prerendering is off app-wide, so
+    nothing a page renders reaches the host document's head before then) — which is early enough,
+    because the leak route is a navigation the READER makes, and the head's own cross-origin
+    fetches already send origin only under every current browser's default policy.
+*@
+<HeadContent>
+    <meta name="referrer" content="no-referrer" />
+</HeadContent>
+
 <div class="sd @(stage == Stage.Viewer ? "sd--viewer" : "")">
     @if (stage != Stage.Viewer)
     {
@@ -139,7 +154,9 @@
                 <div class="sd-viewer-actions">
                     @if (open.AllowDownload && sessionToken != null)
                     {
-                        <a class="sd-download" href="@DocShareApi.DownloadUrl(Slug, sessionToken)" target="_blank" rel="noopener"><QIcon Name="download" /> Download</a>
+                        @* noreferrer as well as noopener: this opens in a new tab, and the tab it
+                           opens must not be told the slug it came from. The only anchor on the page. *@
+                        <a class="sd-download" href="@DocShareApi.DownloadUrl(Slug, sessionToken)" target="_blank" rel="noopener noreferrer"><QIcon Name="download" /> Download</a>
                     }
                     else
                     {
@@ -169,28 +186,31 @@
     .sd { min-height: 100vh; background: #f4f4f6; color: #1f1f24; font-family: var(--qm-font-primary, 'Poppins', sans-serif); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; box-sizing: border-box; }
     .sd--viewer { padding: 0; align-items: stretch; }
     .sd-card { width: 100%; max-width: 560px; background: #fff; border: 1px solid #e3e3e8; border-radius: 6px; box-shadow: 0 3px 10px rgba(0,0,0,.08); padding: 1.75rem; display: flex; flex-direction: column; gap: 1.1rem; }
-    .sd-brand { display: flex; align-items: center; gap: .5rem; color: #7a2847; font-weight: 600; font-size: .85rem; letter-spacing: .02em; text-transform: uppercase; }
+    .sd-brand { display: flex; align-items: center; gap: .5rem; color: var(--qm-primary, #7a2847); font-weight: 600; font-size: .85rem; letter-spacing: .02em; text-transform: uppercase; }
     .sd h1 { font-family: var(--qm-font-display, 'Montserrat', sans-serif); font-size: 1.4rem; margin: 0; }
     .sd-org { font-size: .85rem; color: #666; margin-bottom: .25rem; }
     .sd-summary { margin: .5rem 0 0; color: #444; }
-    .sd-provenance { margin: .75rem 0 0; font-size: .8rem; color: #666; display: flex; gap: .4rem; align-items: flex-start; background: #faf6f8; border-left: 3px solid #7a2847; padding: .5rem .75rem; }
+    /* The wine wash here sits UNDER the accent border, so it derives from the accent rather than
+       being a second literal that a rebrand would leave behind (the rule the kiosk tint audit set).
+       The plain rgba() first is the fallback for a browser without var() in a colour function. */
+    .sd-provenance { margin: .75rem 0 0; font-size: .8rem; color: #666; display: flex; gap: .4rem; align-items: flex-start; background: #faf6f8; background: rgba(var(--qm-primary-rgb, 122, 40, 71), .05); border-left: 3px solid var(--qm-primary, #7a2847); padding: .5rem .75rem; }
     .sd-muted { color: #666; font-size: .85rem; }
     .sd-state { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 2rem 0; color: #666; }
     .sd-refused { display: flex; gap: .75rem; align-items: flex-start; padding: 1rem; border: 1px solid #e0b4b4; background: #fdf3f3; border-radius: 4px; color: #7a1f1f; }
     .sd-error { display: flex; gap: .5rem; align-items: center; padding: .6rem .85rem; background: #fdf3f3; border: 1px solid #e0b4b4; border-radius: 4px; color: #7a1f1f; font-size: .9rem; }
     .sd-gate { display: flex; flex-direction: column; gap: .6rem; }
     .sd-gate label { font-weight: 600; }
-    .sd-gate a { color: #7a2847; }
+    .sd-gate a { color: var(--qm-primary, #7a2847); }
     .sd-rules { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; font-size: .85rem; color: #555; border-top: 1px solid #eee; padding-top: 1rem; }
     .sd-rules li { display: flex; gap: .5rem; align-items: flex-start; }
     .sd-viewer { display: flex; flex-direction: column; width: 100%; height: 100vh; min-width: 0; }
     .sd-viewer-bar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .6rem 1rem; background: #fff; border-bottom: 1px solid #e3e3e8; flex-wrap: wrap; }
     .sd-viewer-title { display: flex; gap: .6rem; align-items: center; min-width: 0; }
-    .sd-viewer-title > .q-icon { color: #7a2847; font-size: 1.3rem; }
+    .sd-viewer-title > .q-icon { color: var(--qm-primary, #7a2847); font-size: 1.3rem; }
     .sd-viewer-title div { display: flex; flex-direction: column; min-width: 0; }
     .sd-viewer-title strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sd-viewer-actions { display: flex; gap: .5rem; align-items: center; }
-    .sd-download { display: inline-flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border-radius: 4px; background: #7a2847; color: #fff; text-decoration: none; font-size: .9rem; }
+    .sd-download { display: inline-flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border-radius: 4px; background: var(--qm-primary, #7a2847); color: #fff; text-decoration: none; font-size: .9rem; }
     .sd-viewonly { display: inline-flex; gap: .4rem; align-items: center; padding: .45rem .8rem; border-radius: 4px; border: 1px solid #ccc; color: #555; font-size: .85rem; cursor: help; }
     .sd-viewer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: .75rem; }
     .sd-viewer-body .pdf-flipbook { flex: 1; min-height: 0; }

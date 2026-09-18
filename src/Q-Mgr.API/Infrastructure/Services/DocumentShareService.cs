@@ -138,6 +138,7 @@ public class DocumentShareService : IDocumentShareService
             Watermark = request.Watermark,
             WatermarkText = Trim(request.WatermarkText, 200),
             NotifyOnFirstOpen = request.NotifyOnFirstOpen,
+            Reason = Trim(request.Reason, 500),
             CreatedBy = actorUserId
         };
         ValidateWatermark(share);
@@ -148,7 +149,11 @@ public class DocumentShareService : IDocumentShareService
             ShareId = share.Id,
             Type = DocumentShareEventType.Issued,
             ActorUserId = actorUserId,
-            Detail = DescribeRules(share)
+            // The rules, and the why when one was given. ISO 23081-1 (quoted in MoReq2010) expects an
+            // event history to say why something happened, not only who and when.
+            Detail = Trim(string.IsNullOrWhiteSpace(share.Reason)
+                ? DescribeRules(share)
+                : DescribeRules(share) + " — " + share.Reason, 500)
         });
         await _db.SaveChangesAsync(ct);
 
@@ -233,7 +238,15 @@ public class DocumentShareService : IDocumentShareService
             .FirstOrDefaultAsync(s => s.SlugHash == hash, ct);
     }
 
-    public DocumentShareState EvaluateState(DocumentShare share, DateTime nowUtc)
+    public DocumentShareState EvaluateState(DocumentShare share, DateTime nowUtc) => EvaluateStateOf(share, nowUtc);
+
+    /// <summary>
+    /// The same rule, reachable without an instance. <c>ContentController.ToDtosAsync</c> is static
+    /// and batch-shaped, and it needs this to count a document's live links; before 2026-09-18 it
+    /// wrote its own predicate in SQL instead and the two had already drifted apart. One
+    /// implementation, two entry points — never a second predicate.
+    /// </summary>
+    public static DocumentShareState EvaluateStateOf(DocumentShare share, DateTime nowUtc)
     {
         // Fail closed first: a share whose document is gone, deactivated, or no longer shareable
         // refuses. It never falls back to serving the file.

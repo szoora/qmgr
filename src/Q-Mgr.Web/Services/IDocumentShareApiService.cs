@@ -18,6 +18,9 @@ public interface IDocumentShareApiService
     Task<MediaContentDto> UploadDocumentAsync(Guid organizationId, Stream file, string fileName, string? name, string? summary, string? publishedFrom, bool shareable);
     Task<MediaContentDto> UpdatePublishingAsync(Guid mediaId, UpdateMediaPublishingRequest request);
 
+    /// <summary>Raising needs library.publish; lowering needs documents.share.manage and a reason.</summary>
+    Task<MediaContentDto> UpdateClassificationAsync(Guid mediaId, UpdateMediaClassificationRequest request);
+
     // ---- Links ----
     Task<List<DocumentShareDto>> GetSharesAsync(Guid mediaId);
     Task<DocumentShareIssuedDto> CreateShareAsync(Guid mediaId, CreateDocumentShareRequest request);
@@ -89,6 +92,9 @@ public class DocumentShareApiService : IDocumentShareApiService
 
     public async Task<MediaContentDto> UpdatePublishingAsync(Guid mediaId, UpdateMediaPublishingRequest request)
         => await ReadOrThrow<MediaContentDto>(await _http.PutAsJsonAsync($"api/v1/media/{mediaId}/publishing", request, _json));
+
+    public async Task<MediaContentDto> UpdateClassificationAsync(Guid mediaId, UpdateMediaClassificationRequest request)
+        => await ReadOrThrow<MediaContentDto>(await _http.PutAsJsonAsync($"api/v1/media/{mediaId}/classification", request, _json));
 
     // ---- Links ----
 

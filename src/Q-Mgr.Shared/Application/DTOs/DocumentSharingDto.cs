@@ -40,6 +40,12 @@ public record DocumentShareDto
 public record CreateDocumentShareRequest
 {
     public string? Label { get; init; }
+    /// <summary>
+    /// Why this link is being issued. Optional and internal — a viewer never sees it. Kept because
+    /// ISO 23081-1 (quoted in MoReq2010) expects an event history to record why something happened
+    /// and not only who and when; revoking already demanded one, and issuing is the other half.
+    /// </summary>
+    public string? Reason { get; init; }
     /// <summary>Plain passcode, hashed on arrival and never stored or logged in clear. Null for none.</summary>
     public string? Passcode { get; init; }
     public bool RequireEmail { get; init; }
@@ -147,6 +153,114 @@ public record DocumentSharingPolicyDto
     public bool RequireEmailByDefault { get; init; }
     public bool AllowDownloadByDefault { get; init; }
     public bool NotifyOnFirstOpenByDefault { get; init; } = true;
+
+    /// <summary>
+    /// Per-classification constraints. Empty means "use the defaults below", which is what every
+    /// tenant seeded before 2026-09-18 has, so behaviour is unchanged until somebody classifies
+    /// something above General.
+    /// </summary>
+    public List<DocumentClassificationRuleDto> ClassificationRules { get; init; } = new();
+
+    /// <summary>
+    /// The rule actually applied to a document: the tenant setting above, narrowed by the rule for
+    /// its classification. <b>The more restrictive of the two always wins</b> — Microsoft's own
+    /// conflict rule where a site default and a document label disagree — so adding a rule can only
+    /// ever tighten, never loosen, and a tenant cannot accidentally widen a Confidential document by
+    /// relaxing its own defaults.
+    /// </summary>
+    public DocumentClassificationRuleDto EffectiveFor(DocumentClassification classification)
+    {
+        var rule = ClassificationRules.FirstOrDefault(r => r.Classification == classification)
+                   ?? DocumentClassificationRuleDto.Default(classification);
+
+        var maxDays = MaxLinkDays;
+        if (rule.MaxLinkDays is { } ruleDays && ruleDays > 0)
+            maxDays = maxDays == 0 ? ruleDays : Math.Min(maxDays, ruleDays);
+
+        return rule with
+        {
+            // MaxLinkDays is a CAP on both sides, so the shorter of the two wins.
+            MaxLinkDays = maxDays,
+            // AllowDownload and RequireEmail are NOT folded together with the tenant's
+            // *ByDefault settings, and that distinction is the whole point: those two are what a
+            // NEW link is pre-set to, which the person creating it may change. Only the
+            // classification rule CONSTRAINS. Folding them in once made a General document with
+            // `allowDownload: true` come back with download withheld, because the tenant's default
+            // happened to be false — caught by the e2e assertion "download is allowed when the link
+            // says so". Null here means "no constraint"; a value means the link cannot do otherwise.
+            AllowDownload = rule.AllowDownload,
+            RequireEmail = rule.RequireEmail,
+            AttributionRetentionDays = rule.AttributionRetentionDays ?? AttributionRetentionDays
+        };
+    }
+}
+
+/// <summary>
+/// What links to a document of one classification may do. A null means "inherit the tenant setting";
+/// a value narrows it.
+/// </summary>
+public record DocumentClassificationRuleDto
+{
+    public DocumentClassification Classification { get; init; }
+
+    /// <summary>May a link be created at all? A tenant can forbid sharing its most sensitive class outright.</summary>
+    public bool MayShare { get; init; } = true;
+
+    /// <summary>A cap in days, narrowing the tenant's. Null or 0 = no extra cap.</summary>
+    public int? MaxLinkDays { get; init; }
+
+    /// <summary>Null = the tenant default. False = the download control is withheld however the link was made.</summary>
+    public bool? AllowDownload { get; init; }
+
+    /// <summary>Null = the tenant default. True = a viewer must verify an address, so no view is anonymous.</summary>
+    public bool? RequireEmail { get; init; }
+
+    /// <summary>
+    /// Null = the tenant-wide window. A value is the differentiated retention the statute
+    /// contemplates: Uganda s.18(1)(a)–(b) allows a longer period where retention is "required or
+    /// authorised by law", which is what "keep safeguarding access records for years and marketing
+    /// ones for months" means in practice.
+    /// </summary>
+    public int? AttributionRetentionDays { get; init; }
+
+    /// <summary>
+    /// The shipped defaults. General is unconstrained — it is the old behaviour, and it is what every
+    /// existing document is. Internal and Confidential are deliberately conservative because they
+    /// only ever apply to a document somebody has explicitly labelled.
+    /// </summary>
+    public static DocumentClassificationRuleDto Default(DocumentClassification classification) => classification switch
+    {
+        DocumentClassification.Internal => new DocumentClassificationRuleDto
+        {
+            Classification = classification,
+            MaxLinkDays = 90,
+            RequireEmail = true
+        },
+        DocumentClassification.Confidential => new DocumentClassificationRuleDto
+        {
+            Classification = classification,
+            MaxLinkDays = 30,
+            RequireEmail = true,
+            AllowDownload = false,
+            // Longer than the tenant's 180 days: a record of who read a document about a named
+            // person is the evidence for Uganda s.24(1)(c) and reg. 39(7), and those outlive the link.
+            AttributionRetentionDays = 730
+        },
+        _ => new DocumentClassificationRuleDto { Classification = classification }
+    };
+}
+
+/// <summary>
+/// Sets a document's classification. Raising needs <c>library.publish</c>; LOWERING needs
+/// <c>documents.share.manage</c> and a reason of at least ten characters — the lock that stops a
+/// label being edited away to escape the restriction it carries.
+/// </summary>
+public record UpdateMediaClassificationRequest
+{
+    public DocumentClassification Classification { get; init; }
+
+    /// <summary>Required when lowering. Ignored when raising.</summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>Publishing decisions on a Library document. Gated on library.publish.</summary>

@@ -55,6 +55,21 @@ public class MediaContent : BaseAuditableEntity
     /// <summary>The publish audit: who put this into the Library. With PublishedAt and PublishedFrom, this row is how a document that turns up where it should not is traced.</summary>
     public Guid? PublishedByUserId { get; set; }
 
+    /// <summary>
+    /// How sensitive this document is, which narrows what its links may do (plan D7). Defaults to
+    /// General, so every row that existed before 2026-09-18 behaves exactly as it did.
+    /// </summary>
+    public DocumentClassification Classification { get; set; } = DocumentClassification.General;
+
+    // The reclassification audit. Three nullable columns on a table that already exists rather than a
+    // notes table — the project's standing "enhance before you add" rule — and enough to answer the
+    // only question anyone asks of it: who lowered this, when, and what reason did they give.
+    public DateTime? ClassificationSetAt { get; set; }
+    public Guid? ClassificationSetByUserId { get; set; }
+
+    /// <summary>Required when LOWERING a classification; kept so the decision can be read back later.</summary>
+    public string? ClassificationReason { get; set; }
+
     // Navigation properties
     public virtual Organization.Organization? Organization { get; set; }
     public virtual ICollection<PlaylistItem> PlaylistItems { get; set; } = new List<PlaylistItem>();

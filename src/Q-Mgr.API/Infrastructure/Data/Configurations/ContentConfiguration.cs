@@ -38,6 +38,11 @@ public class MediaContentConfiguration : IEntityTypeConfiguration<MediaContent>
         // bounded; PublishedFrom is a caption ("Welfare report — Jane Doe, Jan–Mar 2026").
         builder.Property(mc => mc.Summary).HasMaxLength(1000);
         builder.Property(mc => mc.PublishedFrom).HasMaxLength(500);
+
+        // Classification (2026-09-18). Indexed because the attribution purge now walks events by
+        // classification — one retention window per class — and that join is per organization per run.
+        builder.Property(mc => mc.ClassificationReason).HasMaxLength(1000);
+        builder.HasIndex(mc => new { mc.OrganizationId, mc.Classification });
         builder.Property(mc => mc.IsShareable).HasDefaultValue(false);
 
         builder.HasIndex(mc => new { mc.OrganizationId, mc.ContentType })

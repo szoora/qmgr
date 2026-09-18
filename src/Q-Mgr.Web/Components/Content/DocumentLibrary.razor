@@ -5,6 +5,8 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 @using Microsoft.AspNetCore.WebUtilities
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 @inject IContentApiService ContentApi
 @inject IDocumentShareApiService DocShareApi
 @inject IPermissionService PermissionService
@@ -12,6 +14,7 @@
 @inject IToastService Toast
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@using QMgr.Domain.Constants
 
 @*
     The Document Library — the Library IS MediaContent, filtered to PDF documents, with the
@@ -86,6 +89,12 @@
                                 {
                                     <QBadge Text="Gated" Variant="warning" Size="sm" Icon="lock-fill" />
                                 }
+                                @if (doc.Classification != DocumentClassification.General)
+                                {
+                                    <QBadge Text="@doc.Classification.ToString()"
+                                            Variant="@(doc.Classification == DocumentClassification.Confidential ? "danger" : "secondary")"
+                                            Size="sm" Icon="shield-lock-fill" />
+                                }
                             </div>
                         </div>
                     </div>
@@ -112,6 +121,10 @@
                         @if (canPublish)
                         {
                             <QButton Text="@(doc.IsShareable ? "Details" : "Make shareable")" Icon="@(doc.IsShareable ? "pencil" : "unlock")" Variant="secondary" Size="sm" OnClick="@(() => OpenPublishing(doc))" />
+                        }
+                        @if (canPublish || canManage)
+                        {
+                            <QButton Text="Classification" Icon="shield-lock" Variant="secondary" Size="sm" OnClick="@(() => OpenClassification(doc))" />
                         }
                         @if (canShare && doc.IsShareable)
                         {
@@ -381,6 +394,45 @@
     </FooterContent>
 </QModal>
 
+@* ---------------- Classification ---------------- *@
+<QModal @bind-Visible="showClassification" Title="Classification" Size="sm">
+    <ChildContent>
+        @if (classifyDoc != null)
+        {
+            <div class="doclib-form">
+                <p class="doclib-summary">
+                    How sensitive <strong>@classifyDoc.Name</strong> is. This narrows what its share links
+                    may do — it can only ever tighten the organization's own settings, never loosen them.
+                </p>
+                <QSelect TValue="DocumentClassification" TItem="DocumentClassification" @bind-Value="classifyTo"
+                         Label="Classification"
+                         Items="@ClassificationOptions"
+                         ValueSelector="@(c => c)"
+                         TextSelector="@(c => c.ToString())" />
+                <p class="doclib-summary">@ClassificationHelp(classifyTo)</p>
+
+                @if (classifyTo < classifyDoc.Classification)
+                {
+                    <QInput TValue="string" @bind-Value="classifyReason" Label="Why is it being lowered?"
+                            Type="textarea" Rows="2" MaxLength="1000"
+                            HelperText="At least ten characters. Kept with the document, because lowering a classification is how a restriction would be escaped." />
+                }
+                @if (classifyDoc.ClassificationSetAt.HasValue && !string.IsNullOrWhiteSpace(classifyDoc.ClassificationReason))
+                {
+                    <p class="doclib-summary">
+                        <QIcon Name="clock-history" /> Last lowered @QDateFormat.DT(classifyDoc.ClassificationSetAt):
+                        “@classifyDoc.ClassificationReason”
+                    </p>
+                }
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="secondary" OnClick="@(() => showClassification = false)" Disabled="@isSavingClassification" />
+        <QButton Text="@(isSavingClassification ? "Saving..." : "Save")" Icon="check-lg" Variant="primary" OnClick="@SaveClassification" Disabled="@isSavingClassification" />
+    </FooterContent>
+</QModal>
+
 @* ---------------- Policy ---------------- *@
 <QModal @bind-Visible="showPolicy" Title="Sharing policy" Size="sm">
     <ChildContent>
@@ -405,7 +457,7 @@
 <style>
     .doclib { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
     .doclib-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-    .doclib-header h1 { font-family: var(--qm-font-display); font-size: 1.5rem; margin: 0; display: flex; align-items: center; gap: .5rem; }
+    .doclib-header h1 { margin: 0; display: flex; align-items: center; gap: .5rem; }
     .doclib-sub { color: var(--qm-text-secondary); margin: .25rem 0 0; max-width: 60ch; }
     .doclib-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
     .doclib-filters { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
@@ -426,7 +478,7 @@
     .doclib-meta div { display: flex; gap: .5rem; }
     .doclib-meta dt { color: var(--qm-text-secondary); flex: 0 0 100px; }
     .doclib-meta dd { margin: 0; min-width: 0; }
-    .doclib-card-actions { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--qm-border); }
+    .doclib-card-actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--qm-border); }
     .doclib-preview { height: min(70vh, 720px); display: flex; flex-direction: column; }
     .doclib-preview .pdf-flipbook { flex: 1; min-height: 0; }
     .doclib-form { display: flex; flex-direction: column; gap: .85rem; }
@@ -492,6 +544,24 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // The guards every sibling content page has and this one did not (plan §14 finding 3). Without
+        // them a tenant that does not hold the module could open /content/documents directly — the nav
+        // link is hidden, but every successful publish navigates straight here — and got a toast-storm
+        // of API refusals instead of the billing page. A FAILED module load must not redirect: an API
+        // blip is not an absent module, and the next LoadAsync retries.
+        if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
         var user = await AuthService.GetCurrentUserAsync();
         organizationId = user?.OrganizationId ?? Guid.Empty;
         canCreate = await PermissionService.HasPermissionAsync(Permissions.ContentCreate);
@@ -890,6 +960,57 @@
 
     // ---- Policy ----
     private bool showPolicy, isSavingPolicy;
+
+    // ---- Classification (plan D7) --------------------------------------------------------------
+    private bool showClassification, isSavingClassification;
+    private MediaContentDto? classifyDoc;
+    private DocumentClassification classifyTo;
+    private string? classifyReason;
+
+    private static readonly DocumentClassification[] ClassificationOptions = Enum.GetValues<DocumentClassification>();
+
+    private static string ClassificationHelp(DocumentClassification c) => c switch
+    {
+        DocumentClassification.Internal =>
+            "For the school's own people. Links are capped shorter and every viewer must verify an address, so no view is anonymous.",
+        DocumentClassification.Confidential =>
+            "About a named person, or otherwise sensitive. Links are capped shorter still, download is withheld however the link was made, every viewer verifies an address, and who read it is kept for longer.",
+        _ => "No extra restriction — the organization's own sharing settings apply as they are."
+    };
+
+    private void OpenClassification(MediaContentDto doc)
+    {
+        classifyDoc = doc;
+        classifyTo = doc.Classification;
+        classifyReason = null;
+        showClassification = true;
+    }
+
+    private async Task SaveClassification()
+    {
+        if (classifyDoc == null) return;
+        isSavingClassification = true;
+        try
+        {
+            var updated = await DocShareApi.UpdateClassificationAsync(classifyDoc.Id, new UpdateMediaClassificationRequest
+            {
+                Classification = classifyTo,
+                Reason = classifyReason
+            });
+            var i = documents.FindIndex(d => d.Id == updated.Id);
+            if (i >= 0) documents[i] = updated;
+            showClassification = false;
+            Toast.Notify(ToastSeverity.Success, "Classification saved", $"\"{updated.Name}\" is now {updated.Classification}.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save the classification", ex.Message);
+        }
+        finally
+        {
+            isSavingClassification = false;
+        }
+    }
     private PolicyEdit policyEdit = new();
     private class PolicyEdit
     {

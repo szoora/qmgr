@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
@@ -67,6 +68,19 @@ public class DocumentSharesController : ControllerBase
     private Task<MediaContent?> FindDocumentAsync(Guid mediaId)
         => _db.MediaContents.Include(m => m.PlaylistItems).FirstOrDefaultAsync(m => m.Id == mediaId);
 
+    // Permissions aren't JWT claims here (see PermissionAuthorizationHandler); resolved by role
+    // lookup, the same shape ContentController and WelfareController use.
+    private async Task<bool> HasPermissionAsync(string code)
+    {
+        if (RoleCodes.IsSuperAdmin(_tenantAccessor.TenantContext?.UserRole)) return true;
+        var userId = CurrentUserId();
+        if (userId == Guid.Empty) return false;
+        return await _db.Users
+            .Where(u => u.Id == userId && u.IsActive)
+            .SelectMany(u => u.Role.RolePermissions)
+            .AnyAsync(rp => rp.Permission.Code == code);
+    }
+
     private async Task<DocumentSharingPolicyDto> PolicyForAsync(Guid organizationId)
     {
         var settings = await _db.Organizations.AsNoTracking().Where(o => o.Id == organizationId).Select(o => o.Settings).FirstOrDefaultAsync();
@@ -94,6 +108,18 @@ public class DocumentSharesController : ControllerBase
         if (request.IsShareable && string.IsNullOrEmpty(media.FilePath))
             return BadRequest(new ProblemDetails { Title = "Only uploaded documents can be shared", Detail = "A document linked by URL is hosted elsewhere; Q-Mgr cannot gate it.", Status = StatusCodes.Status400BadRequest });
 
+        // The other half of the §1 invariant, mirroring ContentController.AddPlaylistItem: a document
+        // already on a playlist cannot be made shareable, because a shared document's bytes are gated
+        // and the display fetches them anonymously. One wording, held in MediaServing, so the two
+        // refusals cannot drift.
+        if (request.IsShareable && await _db.PlaylistItems.AnyAsync(pi => pi.MediaContentId == media.Id))
+            return BadRequest(new ProblemDetails
+            {
+                Title = MediaServing.CombinationRefusedTitle,
+                Detail = MediaServing.CombinationRefusedDetail,
+                Status = StatusCodes.Status400BadRequest
+            });
+
         var wasShareable = media.IsShareable;
         media.IsShareable = request.IsShareable;
         media.Summary = string.IsNullOrWhiteSpace(request.Summary) ? null : request.Summary.Trim();
@@ -112,6 +138,65 @@ public class DocumentSharesController : ControllerBase
         if (fileName != null) _uploadAuthorizer.Invalidate(fileName);
 
         _logger.LogInformation("Document {MediaId} publishing changed by {UserId}: shareable={Shareable}", media.Id, CurrentUserId(), media.IsShareable);
+        return Ok(await ContentController.ToDtoAsync(_db, media));
+    }
+
+    /// <summary>
+    /// Sets how sensitive a document is, which narrows what its links may do (plan D7).
+    ///
+    /// <para><b>Raising is ordinary publishing work</b> — <c>library.publish</c>, no reason needed.
+    /// <b>Lowering is the dangerous direction</b>, because it is how a restriction would be escaped:
+    /// it needs <c>documents.share.manage</c> and a written reason, and both are kept on the row.
+    /// Google locks a DLP-applied label against exactly this; Microsoft requires a recorded
+    /// justification. Without the lock the label is decoration.</para>
+    /// </summary>
+    [HttpPut("media/{mediaId:guid}/classification")]
+    [RequirePermissionAny(Permissions.LibraryPublish, Permissions.DocumentsShareManage)]
+    [ProducesResponseType(typeof(MediaContentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> UpdateClassification(Guid mediaId, [FromBody] UpdateMediaClassificationRequest request)
+    {
+        var media = await FindDocumentAsync(mediaId);
+        if (media == null) return NotFound();
+
+        if (!Enum.IsDefined(request.Classification))
+            return BadRequest(new ProblemDetails { Title = "Unknown classification", Status = StatusCodes.Status400BadRequest });
+
+        var lowering = request.Classification < media.Classification;
+        if (lowering)
+        {
+            if (!await HasPermissionAsync(Permissions.DocumentsShareManage))
+                return Forbid();
+            if ((request.Reason ?? string.Empty).Trim().Length < 10)
+                return BadRequest(new ProblemDetails
+                {
+                    Title = "Lowering a classification needs a reason",
+                    Detail = "Say why this document is no longer at the higher classification. It is kept with the document.",
+                    Status = StatusCodes.Status400BadRequest
+                });
+        }
+        else if (!await HasPermissionAsync(Permissions.LibraryPublish) && !await HasPermissionAsync(Permissions.DocumentsShareManage))
+        {
+            return Forbid();
+        }
+
+        if (request.Classification == media.Classification)
+            return Ok(await ContentController.ToDtoAsync(_db, media));
+
+        var from = media.Classification;
+        media.Classification = request.Classification;
+        media.ClassificationSetAt = DateTime.UtcNow;
+        media.ClassificationSetByUserId = CurrentUserId();
+        media.ClassificationReason = lowering ? request.Reason!.Trim() : null;
+        media.UpdatedBy = CurrentUserId();
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "Document {MediaId} classification changed by {UserId}: {From} -> {To}{Reason}",
+            media.Id, CurrentUserId(), from, media.Classification,
+            lowering ? " (lowered, reason recorded)" : string.Empty);
+
         return Ok(await ContentController.ToDtoAsync(_db, media));
     }
 
@@ -146,6 +231,24 @@ public class DocumentSharesController : ControllerBase
             return BadRequest(new ProblemDetails { Title = "This document is not shareable", Detail = "Mark it as shareable in the Document Library first.", Status = StatusCodes.Status400BadRequest });
 
         var policy = await PolicyForAsync(media.OrganizationId);
+
+        // The document's classification narrows the tenant policy, never widens it (plan D7).
+        // Microsoft's conflict rule where a site default and a document label disagree: "the more
+        // restrictive scope settings will be applied". So a Confidential document gets its shorter
+        // cap, its forced email gate and its withheld download even if the tenant's own defaults are
+        // laxer — and the person creating the link cannot opt out of any of them.
+        var rule = policy.EffectiveFor(media.Classification);
+        if (!rule.MayShare)
+            return BadRequest(new ProblemDetails
+            {
+                Title = $"{media.Classification} documents cannot be shared by link",
+                Detail = "This organization's sharing policy forbids it for documents at this classification.",
+                Status = StatusCodes.Status400BadRequest
+            });
+
+        policy = policy with { MaxLinkDays = rule.MaxLinkDays ?? policy.MaxLinkDays };
+        if (rule.AllowDownload == false) request = request with { AllowDownload = false };
+        if (rule.RequireEmail == true) request = request with { RequireEmail = true };
 
         // Refuse a foreign link origin BEFORE the row exists, so a refusal never leaves a live
         // link behind that the caller was not told about.
@@ -379,11 +482,27 @@ public class DocumentSharesController : ControllerBase
         if (request.AttributionRetentionDays < 1 || request.AttributionRetentionDays > 3650)
             return BadRequest(new ProblemDetails { Title = "Attribution retention must be between 1 and 3650 days", Status = StatusCodes.Status400BadRequest });
 
-        var org = await _db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId);
-        if (org == null) return NotFound();
+        // Organization.Settings is one JSON blob shared with the staff-performance policy, staff
+        // onboarding, industry features, visitor retention and module billing. Every writer
+        // read-modify-writes the whole thing, so a save here that raced a save there silently
+        // dropped one of the two keys. Take the lock, then RE-READ inside it — the blob fetched
+        // before the lock is exactly the stale copy the race is made of.
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var saved = await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            await OrganizationSettingsLock.AcquireAsync(_db, orgId);
 
-        org.Settings = _shares.WritePolicy(org.Settings, request);
-        await _db.SaveChangesAsync();
+            var org = await _db.Organizations.FirstOrDefaultAsync(o => o.Id == orgId);
+            if (org == null) return false;
+
+            org.Settings = _shares.WritePolicy(org.Settings, request);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return true;
+        });
+        if (!saved) return NotFound();
+
         _logger.LogInformation("Document-sharing policy updated for organization {OrganizationId} by {UserId}", orgId, CurrentUserId());
         return Ok(request);
     }
