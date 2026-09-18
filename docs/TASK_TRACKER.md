@@ -5,68 +5,128 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (rewritten 2026-09-18, late evening)
+## ▶ NEXT SESSION — start here (rewritten 2026-09-18, night)
 
-**State: everything through Phase 94 is BUILT, VERIFIED, COMMITTED and PUSHED.** Sections 0–14 are
-**517 / 0**, section 15 **206 / 0** (one honest SKIP: 15.9 needs a teaching period still to come
-today, and the run was at 23:34), the hub suite **42 / 0** and the roles/branch suite **25 / 0**.
+**Start with the Communication nav group.** It is the one thing carried forward as open work, the
+user named it as the next task, and everything it needs is already written down. Section 1 is the
+whole brief — do not re-survey the code first, the survey is here.
 
-**Branch: `master`, and it is the ONLY branch** (user instruction, 2026-09-18: *"we need to maintain
-single branch please"*). **Work on `master` directly; do not open a feature branch without asking.**
+**State: everything through Phase 94 is BUILT, VERIFIED, COMMITTED and PUSHED to `master`** (the only
+branch — *"we need to maintain single branch please"*; do not open a feature branch without asking).
+Sections 0–14 are **517 / 0**, section 15 **206 / 0** (one honest SKIP: 15.9 needs a teaching period
+still to come in the day, and the run was at 23:34), the hub suite **42 / 0**, roles **25 / 0**.
 **Dev database:** migrations applied through `20260918203611_RenameEngagementModuleToCommunication`.
+**A deployment package is built and NOT deployed** — see section 4.
 
-### 1. The one thing that is genuinely urgent
+### 1. THE TASK: the Communication group is ten nav entries; make it four
 
-**A tenant-to-platform privilege escalation is fixed here and STILL OPEN ON PRODUCTION.**
-`UsersController.CreateUser`/`UpdateUser` assigned any `RoleId` with no rank check, so a tenant Admin
-holding `users.create`/`users.edit` could mint or promote themselves into `super-admin` — full access
-across every organization. Both now call `RoleAssignmentGuard`. Production is behind `master`, so it
-does not have this fix. **Committing and deploying is the user's decision and is not a task here** —
-but say it plainly when the subject of deployment next comes up, because several other production-only
-fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0), the API-docs gate)
-ride along with it.
+Staff Performance went from sixteen entries to six on 2026-09-18 (Phase 94). Communication has the
+same problem and was deliberately left alone, because it is its own piece of work rather than a
+tidy-up. **Read CLAUDE.md's *"A hub owns the route; its sections own nothing"* first** — it is the
+contract, written as rules, and it names the five traps that bit last time.
 
-### 2. What was done on 2026-09-18, late
+**What is there now** (`MainLayout.razor`, the `engagement` submenu — all ten also gated on
+`HasModule(ModuleCodes.EngagementCommunications)`):
 
-`[x]` **The navigation is six hubs, not sixteen entries** — Phase 94, and the rules it left are in
-CLAUDE.md under *"A hub owns the route; its sections own nothing"*. Read that before adding a Staff
-Performance page: a section carries no `@page`, the hub owns `?tab=`, and `StaffHubTabs` decides
-which tabs a caller sees. Retiring a route means finding its callers in the **API and Shared**
-projects too — four notification `ActionUrl`s and two Dashboard tiles pointed at deleted routes.
+| # | Entry | Route | Gate | Page | Lines |
+|---|---|---|---|---|---|
+| 1 | Media Library | `/content/media` | `canViewContent` | `Content/MediaLibrary.razor` | 2039 |
+| 2 | Document Library | `/content/documents` | `canViewContent` | `Content/DocumentLibrary.razor` | 1146 |
+| 3 | Playlists | `/content/playlists` | `canViewContent` | `Content/Playlists.razor` | 596 |
+| 4 | Display Campaigns | `/content/campaigns` | `canViewContent` | `Content/Campaigns.razor` | 821 |
+| 5 | Display Zones | `/content/zones` | `canViewContent` | `Content/DisplayZones.razor` | 867 |
+| 6 | Schedules | `/content/schedules` | `canViewContent` | `Content/Schedules.razor` | 811 |
+| 7 | Full-Screen Signage | `/display/signage/{branchId}` | `canViewContent` | `Display/SignageDisplay.razor` | — |
+| 8 | Campaign Marketing | `/admin/marketing` | `canViewMarketing` | `Admin/CampaignMarketing.razor` | 588 |
+| 9 | Feedback Management | `/admin/feedback` | `canViewFeedback` | `Admin/FeedbackManagement.razor` | 1552 |
+| 10 | Feedback Reports | `/reports/feedback` | `canViewFeedback` | `Reports/CustomerFeedback.razor` | 813 |
 
-`[x]` **Three renames a person reads**: My Portal → **My Workspace**, My Day → **My School Day**,
-Engagement & Communications → **Communication**. Routes, module codes and event keys are wire formats
-and did not move. A seeded catalog name needs a MIGRATION (`ModuleCatalogDefaults` is
-insert-if-missing only), renaming only where the row still holds its shipped value.
+**The proposed shape — four entries.** Build it unless the user says otherwise; the one genuine
+question is flagged below and is worth asking first.
 
-### 3. Genuinely open, and small
+1. **Library** — a hub, sections **Media** and **Documents**. Two asset libraries already side by side.
+2. **Signage** — a hub, sections **Playlists**, **Display Campaigns**, **Display Zones**,
+   **Schedules**. One subject: what plays, where, and when.
+3. **Campaign Marketing** — stays a single entry on its own route. One page, its own permission,
+   nothing to group it with. A hub of one is not a hub.
+4. **Feedback** — a hub, sections **Management** and **Reports**.
 
-1. `[ ]` **The Communication group is ten nav entries** and has the same length problem Staff
-   Performance just had fixed. Nothing has been done to it. It is its own piece of work — the hub
-   pattern and its five traps are written down now, so it is mechanical, but it is not a tidy-up and
-   it needs the user's word first.
-2. `[!]` **`MediaLibrary`'s page guard — do NOT sweep on the carried note.** It says the page shares
+**Five things specific to THIS group that are not in the Staff Performance rules:**
+
+- **Full-Screen Signage CANNOT become a tab, and its route must not be deleted.** It is
+  `@layout DisplayLayout` — a public display surface, in the same excluded set as the kiosk and the
+  print sheets that every size and radius rule in CLAUDE.md skips. Make it an **action on the Signage
+  hub** ("Open full-screen signage", navigating to `/display/signage/{branchId}`), the way a launch
+  target is handled, and leave its `@page` alone.
+- **`/content/documents` already carries a query key, and two NOTIFICATIONS point at it.**
+  `DocumentShareService.cs:439` and `DocumentShareRetentionJob.cs:131` both build
+  `ActionUrl = "/content/documents?document={doc.Id}"`, and `DocumentLibrary.razor:529` reads
+  `[SupplyParameterFromQuery(Name = "document")] highlightId`. When Documents becomes a section,
+  **both ActionUrls must become `…?tab=documents&document={id}`** and the section keeps `?document=`
+  (no collision — the hub owns `tab`, the section owns `document`). Miss it and somebody tapping the
+  notification lands on the wrong tab or a 404. **This is the exact class Phase 94 had to fix in four
+  places. It is pre-found here, so there is no excuse for shipping it broken.**
+- **`ModuleRouteMap` needs nothing for a route under `/content`** — the entry is the prefix
+  `("/content", ModuleCodes.EngagementCommunications)`, so `/content/library` and `/content/signage`
+  are covered already. A Feedback hub on a NEW route outside `/admin/feedback` and `/reports/feedback`
+  would need its own entry; prefer reusing `/admin/feedback` as the hub route and the question does
+  not arise.
+- **`canViewContent` gates six of the seven content entries identically**, so `StaffHubTabs` has
+  little to filter inside Library and Signage — **use it anyway**, and still make each hub's own gate
+  the OR of its sections. Feedback's two sections share `canViewFeedback`. The rule earns its keep
+  the moment somebody adds a section with a narrower permission, which is exactly how the Records hub
+  silently lost Reports for a `staff.reports.view` holder.
+- **These are big pages** (Media 2039 lines, Feedback Management 1552, Documents 1146). The hubs
+  render one section at a time (`@if (hubTab == …)`) as the Staff hubs do, so size is not a problem —
+  but do not render them all and hide with CSS.
+
+**The one question to put to the user before building:** "Display Campaigns" (signage) and "Campaign
+Marketing" (SMS/WhatsApp/email broadcasts) are two unrelated things both called campaigns, and after
+this change they sit one above the other in the nav. One of them probably wants renaming — the user
+cares about short, precise names and retired "Tenant Admin" and "Engagement & Communications" on
+exactly that ground. **Do not pick for them.**
+
+**How to verify it:** add a Communication section to `scripts/e2e/browser/staff-nav-hubs.mjs`, or
+copy its shape into a sibling suite. Assert the same five things: the group has four entries, every
+folded entry is absent, each hub opens with the right tab count, **every retired route 404s** rather
+than serving a second copy, and each deep link — including the repointed
+`?tab=documents&document=…` — opens its own section. Run Chrome **headed**; see section 4.
+
+### 2. Genuinely open after that, and small
+
+1. `[!]` **`MediaLibrary`'s page guard — do NOT sweep on the carried note.** It says the page shares
    the Document Library's cold-navigation race. The guard is where the note says
    (`MediaLibrary.razor:1269-1281`), but **the stated mechanism does not survive a code read**:
-   `MainLayout` renders `@Body` only inside `@if (!authChecked)`'s else branch and `authChecked` is set
-   only after `AppInit.InitializeAsync()`, so a page under it cannot run against an uninitialised token
-   store; and **76 pages redirect to `/unauthorized` while exactly one calls `AppInit`**, so a real
-   mechanism would be a 75-page outage rather than a latent edge case. Something genuinely bounced the
-   Document Library on 2026-09-18 (`f9d65bf`) and the recorded cause does not explain it.
-   **Reproduce it first.**
-3. `[ ]` **The welfare history import** on `WelfareReports.razor` is the third import still on the old
+   `MainLayout` renders `@Body` only inside `@if (!authChecked)`'s else branch and `authChecked` is
+   set only after `AppInit.InitializeAsync()`, so a page under it cannot run against an uninitialised
+   token store; and **76 pages redirect to `/unauthorized` while exactly one calls `AppInit`**, so a
+   real mechanism would be a 75-page outage rather than a latent edge case. Something genuinely
+   bounced the Document Library on 2026-09-18 (`f9d65bf`) and the recorded cause does not explain it.
+   **Reproduce it first.** It sits in the very group section 1 touches, so it will come up.
+2. `[ ]` **The welfare history import** on `WelfareReports.razor` is the third import still on the old
    JS `parseFile` path; staff and students both moved to `QImportPanel`.
-4. `[ ]` **Two person-facing `yyyy-MM-dd` strings** (`RosterImportProcessorJob:498`,
+3. `[ ]` **Two person-facing `yyyy-MM-dd` strings** (`RosterImportProcessorJob:498`,
    `BatchController:217`) — deliberate; ISO cannot show the Sept/Sep ambiguity the rule exists to fix.
-5. `[ ]` **Two reminder-ladder observations**, deliberately unchanged (see `674a1aa`).
-6. `[ ]` **`S3MediaStorageService` is unexercised** — at parity with the upload-type fix but never run
+4. `[ ]` **Two reminder-ladder observations**, deliberately unchanged (see `674a1aa`).
+5. `[ ]` **`S3MediaStorageService` is unexercised** — at parity with the upload-type fix but never run
    against a bucket, and **serving still reads local disk** (`UploadsController:126` returns
    `PhysicalFile`), so the gate needs teaching to stream from S3 first. User said leave it.
-7. `[ ]` **`AdvancedAnalytics` / `WebhookIntegration` feature codes** appear only in doc comments —
+6. `[ ]` **`AdvancedAnalytics` / `WebhookIntegration` feature codes** appear only in doc comments —
    a missing-feature gap, not a wiring gap.
-8. `[!]` **Deployment** is never a task here. The user decides when to deploy.
 
-### 4. Running and watching it
+### 3. What is fixed here and STILL OPEN ON PRODUCTION
+
+**A tenant-to-platform privilege escalation.** `UsersController.CreateUser`/`UpdateUser` assigned any
+`RoleId` with no rank check, so a tenant Admin holding `users.create`/`users.edit` could mint or
+promote themselves into `super-admin` — full access across every organization. Both now call
+`RoleAssignmentGuard`. Riding along with it: the API-docs gate; Platform Admin and the school roles
+leaking into a tenant's role list (and the by-id route leaking their permissions); the stretched
+SYSTEM badge; "Edit Permissions" erroring; PERMISSIONS (0).
+
+**Deployment is never a task here — the user decides when to deploy.** Say the above plainly when the
+subject comes up; do not list deploying as a pending item.
+
+### 4. Running, watching and packaging it
 
     dotnet build                     # stop both apps first, or the DLL lock fails the build
     Cors__AllowedOrigins__4=http://127.0.0.1:5003 dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
@@ -78,9 +138,19 @@ insert-if-missing only), renaming only where the row still holds its shipped val
     node scripts/e2e/browser/staff-nav-hubs.mjs      # the six hubs; needs Chrome on 9333
     node scripts/e2e/browser/roles-and-branch-ui.mjs
 
+**A deployment package is already built from `7acbfa0` and has NOT been deployed:**
+`scripts/deploy/dist/qmgr-0.2.0-20260918.2344.tar.gz`, version `0.2.0+20260918.2344.7acbfa0`.
+**Always pass `-ApiPort 8586 -WebPort 8587`** — the script's own 8581/8582 defaults are taken on that
+box. The DB password ships as `__SET_ON_SERVER__` by design (`install.sh` preserves the API's
+`appsettings.Production.json`); the SMTP password comes from the untracked
+`scripts/deploy/secrets.local.json`. If you build again, re-check that the API unit still carries
+`MediaStorage__PublicBaseUrl`, `MediaStorage__LocalPath`, `DataProtection__KeyPath` and `Email__*`,
+and that BOTH units carry the key path — **an existing server only picks a setting up from the unit**,
+never from appsettings.
+
 **`Cors__AllowedOrigins__4` is not optional.** Without it the API refuses the share-link origin and
-**section 12 cascade-fails 34 checks** that read exactly like product bugs. That happened again on
-2026-09-18; it is correct behaviour for a misconfigured origin.
+**section 12 cascade-fails 34 checks** that read exactly like product bugs. It happened again on
+2026-09-18; it is correct behaviour for a misconfigured origin, not a regression.
 
 **The user WATCHES the browser suites, so run Chrome HEADED** — `chrome.exe --remote-debugging-port=9333`
 with a temp `--user-data-dir` and **no** `--headless`. Being asked three times why the tests were
@@ -100,17 +170,19 @@ invisible is what put this line here.
 - **`BRANCH` is `a805ba99-ef62-4685-a1ad-b11b2ea7747f`** — the full guid. A wrong one gets
   `Branch not found` (404) from every call and the suite stops at "resolved S4_STUDENT: empty",
   which reads like missing tenant data rather than a typo.
+- **A text replace across a doc needs its END boundary checked, not just its start.** Rewriting this
+  very handover deleted 888 lines of phase history on the first attempt, because the next `---` sat
+  far below the block. Diff before committing; this tracker never deletes history.
 
 ### 5. Test data
 
-**None left from this session.** The nav and rename work created no rows; the hub suite only reads.
-Earlier in the day the probe branch was deleted, e2e 13c3 revokes and restores `student-welfare`
-within the run, and module statuses were confirmed normal afterwards. Everything from Phase 89 and
-earlier still stands, including the welfare ledger's undeletable dummy rows.
+**None left.** The nav and rename work created no rows and the hub suite only reads. Earlier on
+2026-09-18 the probe branch was deleted, e2e 13c3 revokes and restores `student-welfare` within the
+run, and module statuses were confirmed normal afterwards. Everything from Phase 89 and earlier still
+stands, including the welfare ledger's undeletable dummy rows.
 
-**Do not re-plan:** everything in the 2026-09-17 list still stands, plus the shared
-`BranchAwareComponentBase` and `ActivityEvent.SubjectStudentId` for welfare exports — both were put
-to the user on 2026-09-18 and both are built.
+**Do not re-plan:** `BranchAwareComponentBase` and `ActivityEvent.SubjectStudentId` are BUILT, and so
+is everything else on the 2026-09-17 list.
 
 ### Phase 94 (2026-09-18, late evening) — sixteen nav entries became six hubs, and every link that pointed at what they replaced
 
