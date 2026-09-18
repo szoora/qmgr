@@ -1,3 +1,4 @@
+using System.Globalization;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Controllers.v1;
@@ -94,7 +95,7 @@ public class AppointmentJobs
                 var branchName = appointment.Branch?.Name ?? "our branch";
 
                 var message =
-                    $"Reminder: {serviceName} at {branchName} on {local:ddd d MMM} at {local:HH:mm}. " +
+                    string.Create(CultureInfo.InvariantCulture, $"Reminder: {serviceName} at {branchName} on {local:ddd d MMM} at {local:HH:mm}. ") +
                     $"Reference {appointment.ReferenceCode}. Please arrive a few minutes early.";
 
                 var delivered = false;
@@ -110,7 +111,7 @@ public class AppointmentJobs
                     delivered = await _notificationService.SendEmailAsync(
                         appointment.OrganizationId,
                         appointment.CustomerEmail,
-                        $"Reminder: your appointment on {local:ddd d MMM}",
+                        string.Create(CultureInfo.InvariantCulture, $"Reminder: your appointment on {local:ddd d MMM}"),
                         message,
                         isHtml: false);
                 }

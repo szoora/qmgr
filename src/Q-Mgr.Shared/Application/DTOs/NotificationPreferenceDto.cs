@@ -25,6 +25,8 @@ public static class NotificationEventKeys
 
     /// <summary>A document share link you created was opened for the first time.</summary>
     public const string DocumentShareOpened = "documents.share-opened";
+    /// <summary>A link you issued is about to stop working — seven days' notice, once per link.</summary>
+    public const string DocumentShareExpiring = "documents.share-expiring";
 
     // ---- Staff Performance Monitor (2026-09-16). Category "Staff Performance". ----
 
@@ -79,6 +81,8 @@ public static class NotificationEventKeys
     public const string StaffTimetablePublished = "staff.timetable-published";
     /// <summary>New clashes in a published timetable (timetable masters).</summary>
     public const string StaffTimetableClash = "staff.timetable-clash";
+    /// <summary>The Monday lesson analysis for lesson supervisors and report readers (plan §11).</summary>
+    public const string StaffLessonAnalysis = "staff.lesson-analysis";
 
     // ---- Staff onboarding (duty rota plan §12, 2026-09-17). ----
 
@@ -104,6 +108,9 @@ public static class NotificationEventKeys
             "Visitors", DefaultEmail: false, DefaultSms: false),
         new(DocumentShareOpened, "A document I shared was opened",
             "The first time someone opens a share link you created. Only for links where you asked to be told.",
+            "Document Library", DefaultEmail: true, DefaultSms: false),
+        new(DocumentShareExpiring, "A link I created is about to expire",
+            "Seven days' notice, once per link, so a document somebody is relying on does not stop working without warning.",
             "Document Library", DefaultEmail: true, DefaultSms: false),
         new(StaffRecordLogged, "A record was logged about me",
             "Attendance, duties, observations, contributions and conduct logged about you. A confidential record tells you only that one exists.",
@@ -173,6 +180,9 @@ public static class NotificationEventKeys
             "Lessons", DefaultEmail: true, DefaultSms: false),
         new(StaffTimetableClash, "New timetable clashes",
             "For timetable masters: new clashes found in a published timetable.",
+            "Lessons", DefaultEmail: true, DefaultSms: false),
+        new(StaffLessonAnalysis, "The weekly lesson analysis",
+            "Mondays, for lesson supervisors and report readers: last week's lessons taught, missed, recovered and unrecorded for the staff you oversee.",
             "Lessons", DefaultEmail: true, DefaultSms: false),
         new(StaffJoinRequests, "Staff join requests are waiting",
             "For approvers: people who registered through the join link and are waiting for a decision.",

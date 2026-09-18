@@ -65,6 +65,19 @@ public class StaffDutyConfiguration : IEntityTypeConfiguration<StaffDuty>
         b.PrimitiveCollection(d => d.ExpectedUserIds).HasColumnType("uuid[]");
         b.PrimitiveCollection(d => d.RecorderUserIds).HasColumnType("uuid[]");
         b.HasIndex(d => new { d.Kind, d.StartsAt }).HasDatabaseName("idx_staff_duties_kind_start");
+        // Duty rota (plan §3.2). Supervisors are an id list like the recorders; acknowledgements a jsonb map like a notice's.
+        b.PrimitiveCollection(d => d.SupervisorUserIds).HasColumnType("uuid[]");
+        b.Property(d => d.Acknowledgements).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").IsRequired();
+        b.HasIndex(d => d.SeriesId).HasFilter("\"SeriesId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_series");
+        // Lessons (plan §7.1): materialisation is idempotent on one duty per timetable lesson per start, so the nightly
+        // run and the run a publish enqueues can overlap without doubling a teacher's day.
+        b.Property(d => d.ClassName).HasMaxLength(100);
+        b.Property(d => d.Room).HasMaxLength(60);
+        b.HasIndex(d => new { d.TimetableLessonId, d.StartsAt })
+            .IsUnique()
+            .HasFilter("\"TimetableLessonId\" IS NOT NULL")
+            .HasDatabaseName("ux_staff_duties_lesson_start");
+        b.HasIndex(d => d.RecoversDutyId).HasFilter("\"RecoversDutyId\" IS NOT NULL").HasDatabaseName("idx_staff_duties_recovers");
 
         // "What is on this week" and the two sweeps ("starts soon, not reminded", "ended, register not
         // taken") all read by branch and start time.
@@ -220,5 +233,103 @@ public class SubjectConfiguration : IEntityTypeConfiguration<Subject>
 
         b.HasOne(s => s.Organization).WithMany().HasForeignKey(s => s.OrganizationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(s => s.Department).WithMany().HasForeignKey(s => s.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+// ---- Duty reports (duty rota plan §3.2, Phase 2 migration AddDutyReports) --------------------------------
+
+public class StaffDutyReportConfiguration : IEntityTypeConfiguration<StaffDutyReport>
+{
+    public void Configure(EntityTypeBuilder<StaffDutyReport> b)
+    {
+        b.ToTable("StaffDutyReports");
+        b.HasKey(r => r.Id);
+        b.Property(r => r.SectionsJson).HasColumnType("jsonb").HasDefaultValueSql("'{}'::jsonb").IsRequired();
+        b.Property(r => r.Summary).HasColumnType("text");
+        b.PrimitiveCollection(r => r.LinkedWelfareRecordIds).HasColumnType("uuid[]");
+        // One report per author per period of a slot: two simultaneous "open my report" or submits cannot make two.
+        b.HasIndex(r => new { r.DutyId, r.AuthorUserId, r.PeriodStart }).IsUnique().HasDatabaseName("ux_staff_duty_reports_author_period");
+        // The review queue and the overdue sweep read by branch and due time.
+        b.HasIndex(r => new { r.BranchId, r.DueAt }).HasDatabaseName("idx_staff_duty_reports_branch_due");
+        b.HasIndex(r => r.AuthorUserId).HasDatabaseName("idx_staff_duty_reports_author");
+        b.HasOne(r => r.Duty).WithMany().HasForeignKey(r => r.DutyId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public class StaffDutyReportNoteConfiguration : IEntityTypeConfiguration<StaffDutyReportNote>
+{
+    public void Configure(EntityTypeBuilder<StaffDutyReportNote> b)
+    {
+        b.ToTable("StaffDutyReportNotes");
+        b.HasKey(n => n.Id);
+        b.Property(n => n.Body).HasMaxLength(4000).IsRequired();
+        b.Property(n => n.SnapshotJson).HasColumnType("jsonb");
+        b.HasIndex(n => n.ReportId).HasDatabaseName("idx_staff_duty_report_notes_report");
+        b.HasOne(n => n.Report).WithMany(r => r.Notes).HasForeignKey(n => n.ReportId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class StaffDutyReportAttachmentConfiguration : IEntityTypeConfiguration<StaffDutyReportAttachment>
+{
+    public void Configure(EntityTypeBuilder<StaffDutyReportAttachment> b)
+    {
+        b.ToTable("StaffDutyReportAttachments");
+        b.HasKey(a => a.Id);
+        b.Property(a => a.FileUrl).HasMaxLength(500).IsRequired();
+        b.Property(a => a.FileName).HasMaxLength(255).IsRequired();
+        b.Property(a => a.ContentType).HasMaxLength(100).IsRequired();
+        b.HasIndex(a => a.ReportId).HasDatabaseName("idx_staff_duty_report_attachments_report");
+        // UploadAuthorizer looks a file up by the tail of FileUrl on every gated fetch.
+        b.HasIndex(a => a.FileUrl).HasDatabaseName("idx_staff_duty_report_attachments_file_url");
+        b.HasOne(a => a.Report).WithMany(r => r.Attachments).HasForeignKey(a => a.ReportId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+// ---- The timetable (duty rota plan §3.2, Phase 3 migration AddTimetable) --------------------------------
+
+public class TimetableConfiguration : IEntityTypeConfiguration<Timetable>
+{
+    public void Configure(EntityTypeBuilder<Timetable> b)
+    {
+        b.ToTable("Timetables");
+        b.HasKey(t => t.Id);
+        b.Property(t => t.Name).HasMaxLength(100).IsRequired();
+        b.Property(t => t.PeriodKey).HasMaxLength(20).IsRequired();
+        b.PrimitiveCollection(t => t.ReportedIssueKeys).HasColumnType("text[]");
+        b.HasIndex(t => new { t.BranchId, t.Status }).HasDatabaseName("idx_timetables_branch_status");
+        // Published versions may not overlap in dates (plan §3.2). A btree index cannot express overlap and a gist
+        // exclusion constraint needs an extension, so publish checks overlap under a per-branch advisory lock; this
+        // index is the database's backstop for the commonest collision, two versions published from the same day.
+        b.HasIndex(t => new { t.BranchId, t.EffectiveFrom })
+            .IsUnique()
+            .HasFilter("\"Status\" = 1")
+            .HasDatabaseName("ux_timetables_branch_from_published");
+        b.HasMany(t => t.Lessons).WithOne(l => l.Timetable).HasForeignKey(l => l.TimetableId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class TimetableLessonConfiguration : IEntityTypeConfiguration<TimetableLesson>
+{
+    public void Configure(EntityTypeBuilder<TimetableLesson> b)
+    {
+        b.ToTable("TimetableLessons");
+        b.HasKey(l => l.Id);
+        b.Property(l => l.PeriodKey).HasMaxLength(20).IsRequired();
+        b.Property(l => l.ClassName).HasMaxLength(100).IsRequired();
+        b.Property(l => l.ClassNameNormalized).HasMaxLength(100).IsRequired();
+        b.Property(l => l.Room).HasMaxLength(60);
+        b.Property(l => l.RoomNormalized).HasMaxLength(60);
+        // A teacher is in one place per period: refused by the database, so two masters placing at once cannot both win.
+        b.HasIndex(l => new { l.TimetableId, l.CycleDay, l.PeriodKey, l.TeacherUserId })
+            .IsUnique()
+            .HasFilter("\"GroupId\" IS NULL")
+            .HasDatabaseName("ux_timetable_lessons_teacher_slot");
+        // Inside a joint lesson the teacher may appear once per class, never twice for the same class.
+        b.HasIndex(l => new { l.TimetableId, l.CycleDay, l.PeriodKey, l.TeacherUserId, l.ClassNameNormalized })
+            .IsUnique()
+            .HasDatabaseName("ux_timetable_lessons_teacher_class_slot");
+        b.HasIndex(l => l.TeacherUserId).HasDatabaseName("idx_timetable_lessons_teacher");
+        b.HasIndex(l => l.GroupId).HasDatabaseName("idx_timetable_lessons_group");
+        b.HasOne(l => l.Subject).WithMany().HasForeignKey(l => l.SubjectId).OnDelete(DeleteBehavior.Restrict);
     }
 }

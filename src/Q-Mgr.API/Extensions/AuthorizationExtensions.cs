@@ -84,11 +84,13 @@ public class PermissionPolicyProvider : IAuthorizationPolicyProvider
         // Check if this is a permission-based policy
         if (policyName.StartsWith(RequirePermissionAttribute.PolicyPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            var permission = policyName[RequirePermissionAttribute.PolicyPrefix.Length..];
+            // One code normally; RequirePermissionAny joins several with '|' and holding ANY satisfies it.
+            var codes = policyName[RequirePermissionAttribute.PolicyPrefix.Length..]
+                .Split(RequirePermissionAnyAttribute.Separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
             var policy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
-                .AddRequirements(new PermissionRequirement(permission))
+                .AddRequirements(new PermissionRequirement(codes))
                 .Build();
 
             return Task.FromResult<AuthorizationPolicy?>(policy);

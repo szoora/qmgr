@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using QMgr.Application.DTOs;
+using QMgr.Domain.Enums;
 
 namespace QMgr.Web.Services;
 
@@ -32,6 +33,12 @@ public interface IStaffPerformanceApiService
     Task<StaffMemberDto> UpdateMemberStructureAsync(Guid branchId, Guid userId, UpdateStaffStructureRequest request);
     Task<StructureCoverageDto> GetCoverageAsync(Guid branchId, string? period = null);
 
+    // Subjects (duty rota plan §5.2). Organization-wide catalogue, read through a branch for its teacher counts.
+    Task<List<SubjectDto>> GetSubjectsAsync(Guid branchId, bool includeInactive = false);
+    Task<SubjectDto> CreateSubjectAsync(Guid branchId, SaveSubjectRequest request);
+    Task<SubjectDto> UpdateSubjectAsync(Guid branchId, Guid id, SaveSubjectRequest request);
+    Task<SubjectDto> ToggleSubjectAsync(Guid branchId, Guid id);
+
     // Records
     Task<StaffRecordSearchResultDto> SearchRecordsAsync(Guid branchId, Guid? subjectUserId = null, Guid? parameterId = null, DateTime? from = null, DateTime? to = null, string? status = null, string? q = null, int page = 1, int pageSize = 25);
     /// <summary>Throws <see cref="LateEntryConfirmationRequiredException"/> when the date is past the policy's late-entry threshold and <paramref name="acknowledgeLateEntry"/> is false.</summary>
@@ -50,7 +57,62 @@ public interface IStaffPerformanceApiService
     Task<RecognitionBudgetDto> GetRecognitionBudgetAsync(Guid branchId);
 
     // Duties
-    Task<List<StaffDutyDto>> GetDutiesAsync(Guid branchId, DateTime from, DateTime to);
+    Task<List<StaffDutyDto>> GetDutiesAsync(Guid branchId, DateTime from, DateTime to, DutyKind? kind = null);
+    /// <summary>"Seen, I'm on duty" (plan §4.2). Only a person the rota slot names.</summary>
+    Task<StaffDutyDto> AcknowledgeDutyAsync(Guid branchId, Guid id);
+
+    // Duty rota (plan §4.1)
+    Task<Guid> GetRotaParameterIdAsync(Guid branchId);
+    Task<RotaGenerateResultDto> GenerateRotaAsync(Guid branchId, GenerateRotaRequest request);
+    Task<RotaGenerateResultDto> ExtendRotaAsync(Guid branchId, Guid seriesId, ExtendRotaRequest request);
+    Task<int> CancelRotaSeriesAsync(Guid branchId, Guid seriesId);
+    Task SwapRotaAsync(Guid branchId, SwapRotaRequest request);
+    Task<List<RotaWarningDto>> CheckRotaSlotAsync(Guid branchId, CheckRotaSlotRequest request);
+    Task<RotaFairnessDto> GetRotaFairnessAsync(Guid branchId, string? period = null);
+
+    // Duty reports (plan §4.3)
+    Task<List<DutyReportSummaryDto>> GetMyDutyReportsAsync(Guid branchId, bool openOnly = false);
+    Task<DutyReportQueueDto> GetDutyReportQueueAsync(Guid branchId, DateTime? from = null, DateTime? to = null, DutyReportStatus? status = null, Guid? dutyId = null);
+    Task<DutyReportDto> GetDutyReportAsync(Guid branchId, Guid id);
+    Task<DutyReportDto> SaveDutyReportAsync(Guid branchId, Guid id, SaveDutyReportRequest request);
+    Task<DutyReportDto> SubmitDutyReportAsync(Guid branchId, Guid id, SaveDutyReportRequest request);
+    Task<DutyReportDto> AddDutyReportNoteAsync(Guid branchId, Guid id, string body);
+    Task<DutyReportDto> ReturnDutyReportAsync(Guid branchId, Guid id, string reason);
+    Task<DutyReportDto> ReviewDutyReportAsync(Guid branchId, Guid id, string? remark);
+    Task<DutyReportDto> ReopenDutyReportAsync(Guid branchId, Guid id, string reason);
+    Task MarkNoDutyAsync(Guid branchId, Guid id, string reason);
+    Task<List<DutyReportLinkedRecordDto>> GetLinkableWelfareRecordsAsync(Guid branchId);
+
+    // Timetable (duty rota plan §6)
+    Task<TimetableSettingsDto> GetTimetableSettingsAsync(Guid branchId);
+    Task<TimetableSettingsDto> SaveTimetableSettingsAsync(Guid branchId, TimetableSettingsDto settings);
+    Task<List<TimetableRoomDto>> GetTimetableRoomsAsync(Guid branchId);
+    Task<List<TimetableRoomDto>> SaveTimetableRoomsAsync(Guid branchId, UpdateTimetableRoomsRequest request);
+    Task<List<TimetableDto>> GetTimetablesAsync(Guid branchId);
+    Task<TimetableDetailDto> GetTimetableAsync(Guid branchId, Guid id);
+    /// <summary>The published version in force today, or null.</summary>
+    Task<TimetableDetailDto?> GetCurrentTimetableAsync(Guid branchId);
+    Task<TimetableDetailDto> CreateTimetableAsync(Guid branchId, CreateTimetableRequest request);
+    Task DeleteTimetableDraftAsync(Guid branchId, Guid id);
+    Task<LessonChangeResultDto> PlaceLessonAsync(Guid branchId, Guid timetableId, PlaceLessonRequest request);
+    Task<LessonChangeResultDto> MoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId, MoveLessonRequest request);
+    Task<LessonChangeResultDto> RemoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId);
+    /// <summary>Throws <see cref="TimetableClashesException"/> for HARD_CLASHES or SOFT_CLASHES.</summary>
+    Task<TimetableDetailDto> PublishTimetableAsync(Guid branchId, Guid id, PublishTimetableRequest request);
+    Task<TimetableDetailDto> ArchiveTimetableAsync(Guid branchId, Guid id);
+    Task<RosterImportJobDto> StartTimetableImportAsync(Guid branchId, Guid timetableId, StartTimetableImportRequest request);
+    Task<RosterImportJobDto> GetTimetableImportJobAsync(Guid branchId, Guid jobId);
+    Task<List<RosterImportJobEntryDto>> GetTimetableImportEntriesAsync(Guid branchId, Guid jobId, int limit = 500);
+
+    // Lessons (duty rota plan §7)
+    Task<MyDayDto> GetMyDayAsync(Guid branchId, DateOnly? date = null);
+    Task<LessonListDto> GetLessonsAsync(Guid branchId, DateTime from, DateTime to, Guid? teacherUserId = null, LessonStatus? status = null);
+    Task<LessonItemDto> FlagLessonAsync(Guid branchId, Guid dutyId, FlagLessonRequest request);
+    Task<ConfirmLessonsResultDto> ConfirmLessonsAsync(Guid branchId, IEnumerable<Guid> dutyIds);
+    Task<LessonItemDto> ScheduleRecoveryAsync(Guid branchId, Guid dutyId, ScheduleRecoveryRequest request);
+    Task<LessonItemDto> CancelLessonAsync(Guid branchId, Guid dutyId, string reason);
+    Task<TeachingReportsDto> GetTeachingReportsAsync(Guid branchId, string? period = null);
+    Task<TeachingDashboardDto> GetTeachingDashboardAsync(Guid branchId);
     Task<StaffDutyDto> CreateDutyAsync(Guid branchId, SaveStaffDutyRequest request);
     Task<StaffDutyDto> UpdateDutyAsync(Guid branchId, Guid id, SaveStaffDutyRequest request);
     Task CancelDutyAsync(Guid branchId, Guid id);
@@ -104,6 +166,14 @@ public class LateEntryConfirmationRequiredException : InvalidOperationException
     public int ThresholdDays { get; }
     public LateEntryConfirmationRequiredException(int thresholdDays)
         : base($"This record is dated more than {thresholdDays} days ago.") => ThresholdDays = thresholdDays;
+}
+
+/// <summary>Publishing refused for clashes: <see cref="Hard"/> cannot be overridden; soft ones can, with a note.</summary>
+public class TimetableClashesException : InvalidOperationException
+{
+    public bool Hard { get; }
+    public int Count { get; }
+    public TimetableClashesException(bool hard, int count, string message) : base(message) { Hard = hard; Count = count; }
 }
 
 public class StaffPerformanceApiService : IStaffPerformanceApiService
@@ -177,6 +247,67 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
 
     private static string? D(DateTime? d) => d?.ToUniversalTime().ToString("O");
 
+    // ---- Timetable ----
+    private static string TT(Guid branchId) => $"api/v1/branches/{branchId}/timetable";
+    public Task<TimetableSettingsDto> GetTimetableSettingsAsync(Guid branchId) => GetAsync<TimetableSettingsDto>($"{TT(branchId)}/settings");
+    public Task<TimetableSettingsDto> SaveTimetableSettingsAsync(Guid branchId, TimetableSettingsDto settings) => SendAsync<TimetableSettingsDto>(HttpMethod.Put, $"{TT(branchId)}/settings", settings);
+    public Task<List<TimetableRoomDto>> GetTimetableRoomsAsync(Guid branchId) => GetAsync<List<TimetableRoomDto>>($"{TT(branchId)}/rooms");
+    public Task<List<TimetableRoomDto>> SaveTimetableRoomsAsync(Guid branchId, UpdateTimetableRoomsRequest request) => SendAsync<List<TimetableRoomDto>>(HttpMethod.Put, $"{TT(branchId)}/rooms", request);
+    public Task<List<TimetableDto>> GetTimetablesAsync(Guid branchId) => GetAsync<List<TimetableDto>>($"{TT(branchId)}/timetables");
+    public Task<TimetableDetailDto> GetTimetableAsync(Guid branchId, Guid id) => GetAsync<TimetableDetailDto>($"{TT(branchId)}/timetables/{id}");
+    public async Task<TimetableDetailDto?> GetCurrentTimetableAsync(Guid branchId)
+    {
+        var response = await _http.GetAsync($"{TT(branchId)}/current");
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<TimetableDetailDto>(_json);
+    }
+    public Task<TimetableDetailDto> CreateTimetableAsync(Guid branchId, CreateTimetableRequest request) => SendAsync<TimetableDetailDto>(HttpMethod.Post, $"{TT(branchId)}/timetables", request);
+    public Task DeleteTimetableDraftAsync(Guid branchId, Guid id) => SendAsync(HttpMethod.Delete, $"{TT(branchId)}/timetables/{id}");
+    public Task<LessonChangeResultDto> PlaceLessonAsync(Guid branchId, Guid timetableId, PlaceLessonRequest request) => SendAsync<LessonChangeResultDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{timetableId}/lessons", request);
+    public Task<LessonChangeResultDto> MoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId, MoveLessonRequest request) => SendAsync<LessonChangeResultDto>(HttpMethod.Put, $"{TT(branchId)}/timetables/{timetableId}/lessons/{lessonId}", request);
+    public Task<LessonChangeResultDto> RemoveLessonAsync(Guid branchId, Guid timetableId, Guid lessonId) => SendAsync<LessonChangeResultDto>(HttpMethod.Delete, $"{TT(branchId)}/timetables/{timetableId}/lessons/{lessonId}");
+    public async Task<TimetableDetailDto> PublishTimetableAsync(Guid branchId, Guid id, PublishTimetableRequest request)
+    {
+        var response = await _http.PostAsJsonAsync($"{TT(branchId)}/timetables/{id}/publish", request, _json);
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            var text = await response.Content.ReadAsStringAsync();
+            var hard = text.Contains("HARD_CLASHES", StringComparison.Ordinal);
+            if (hard || text.Contains("SOFT_CLASHES", StringComparison.Ordinal))
+            {
+                var count = 0;
+                try
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty(hard ? "hardCount" : "softCount", out var c) && c.TryGetInt32(out var n)) count = n;
+                }
+                catch (JsonException) { }
+                throw new TimetableClashesException(hard, count, ApiErrorService.GetErrorMessageFromBody(text, "Clashes remain."));
+            }
+            throw new InvalidOperationException(ApiErrorService.GetErrorMessageFromBody(text, "This change conflicts with the current state."));
+        }
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<TimetableDetailDto>(_json))!;
+    }
+    public Task<TimetableDetailDto> ArchiveTimetableAsync(Guid branchId, Guid id) => SendAsync<TimetableDetailDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{id}/archive");
+    public Task<RosterImportJobDto> StartTimetableImportAsync(Guid branchId, Guid timetableId, StartTimetableImportRequest request) => SendAsync<RosterImportJobDto>(HttpMethod.Post, $"{TT(branchId)}/timetables/{timetableId}/import", request);
+    public Task<RosterImportJobDto> GetTimetableImportJobAsync(Guid branchId, Guid jobId) => GetAsync<RosterImportJobDto>($"{TT(branchId)}/import-jobs/{jobId}");
+    public Task<List<RosterImportJobEntryDto>> GetTimetableImportEntriesAsync(Guid branchId, Guid jobId, int limit = 500) => GetAsync<List<RosterImportJobEntryDto>>($"{TT(branchId)}/import-jobs/{jobId}/entries?limit={limit}");
+
+    // ---- Lessons ----
+    private static string LS(Guid branchId) => $"api/v1/branches/{branchId}/staff/lessons";
+    public Task<MyDayDto> GetMyDayAsync(Guid branchId, DateOnly? date = null) => GetAsync<MyDayDto>($"{LS(branchId)}/my-day{Q(("date", date?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)))}");
+    public Task<LessonListDto> GetLessonsAsync(Guid branchId, DateTime from, DateTime to, Guid? teacherUserId = null, LessonStatus? status = null)
+        => GetAsync<LessonListDto>($"{LS(branchId)}{Q(("from", D(from)), ("to", D(to)), ("teacherUserId", teacherUserId?.ToString()), ("status", status?.ToString()))}");
+    public Task<LessonItemDto> FlagLessonAsync(Guid branchId, Guid dutyId, FlagLessonRequest request) => SendAsync<LessonItemDto>(HttpMethod.Post, $"{LS(branchId)}/{dutyId}/flag", request);
+    public Task<ConfirmLessonsResultDto> ConfirmLessonsAsync(Guid branchId, IEnumerable<Guid> dutyIds) => SendAsync<ConfirmLessonsResultDto>(HttpMethod.Post, $"{LS(branchId)}/confirm", new ConfirmLessonsRequest { DutyIds = dutyIds.ToList() });
+    public Task<LessonItemDto> ScheduleRecoveryAsync(Guid branchId, Guid dutyId, ScheduleRecoveryRequest request) => SendAsync<LessonItemDto>(HttpMethod.Post, $"{LS(branchId)}/{dutyId}/recovery", request);
+    public Task<LessonItemDto> CancelLessonAsync(Guid branchId, Guid dutyId, string reason) => SendAsync<LessonItemDto>(HttpMethod.Post, $"{LS(branchId)}/{dutyId}/cancel", new CancelLessonRequest { Reason = reason });
+
+    public Task<TeachingReportsDto> GetTeachingReportsAsync(Guid branchId, string? period = null) => GetAsync<TeachingReportsDto>($"{B(branchId)}/reports/teaching{Q(("period", period))}");
+    public Task<TeachingDashboardDto> GetTeachingDashboardAsync(Guid branchId) => GetAsync<TeachingDashboardDto>($"{B(branchId)}/reports/teaching/dashboard");
+
     // ---- Parameters and policy ----
     public Task<List<PerformanceParameterDto>> GetParametersAsync(bool includeInactive = false) => GetAsync<List<PerformanceParameterDto>>($"api/v1/staff/parameters{Q(("includeInactive", includeInactive ? "true" : null))}");
     public Task<PerformanceParameterDto> CreateParameterAsync(SavePerformanceParameterRequest request) => SendAsync<PerformanceParameterDto>(HttpMethod.Post, "api/v1/staff/parameters", request);
@@ -195,6 +326,10 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<DepartmentDto> ToggleDepartmentAsync(Guid branchId, Guid id) => SendAsync<DepartmentDto>(HttpMethod.Patch, $"{B(branchId)}/structure/departments/{id}/toggle");
     public Task<StaffDirectoryDto> GetDirectoryAsync(Guid branchId, string? period = null) => GetAsync<StaffDirectoryDto>($"{B(branchId)}/structure/members{Q(("period", period))}");
     public Task<StaffMemberDto> UpdateMemberStructureAsync(Guid branchId, Guid userId, UpdateStaffStructureRequest request) => SendAsync<StaffMemberDto>(HttpMethod.Put, $"{B(branchId)}/structure/members/{userId}", request);
+    public Task<List<SubjectDto>> GetSubjectsAsync(Guid branchId, bool includeInactive = false) => GetAsync<List<SubjectDto>>($"{B(branchId)}/subjects{Q(("includeInactive", includeInactive ? "true" : null))}");
+    public Task<SubjectDto> CreateSubjectAsync(Guid branchId, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Post, $"{B(branchId)}/subjects", request);
+    public Task<SubjectDto> UpdateSubjectAsync(Guid branchId, Guid id, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Put, $"{B(branchId)}/subjects/{id}", request);
+    public Task<SubjectDto> ToggleSubjectAsync(Guid branchId, Guid id) => SendAsync<SubjectDto>(HttpMethod.Patch, $"{B(branchId)}/subjects/{id}/toggle");
     public Task<StructureCoverageDto> GetCoverageAsync(Guid branchId, string? period = null) => GetAsync<StructureCoverageDto>($"{B(branchId)}/structure/coverage{Q(("period", period))}");
 
     // ---- Records ----
@@ -217,7 +352,28 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<RecognitionBudgetDto> GetRecognitionBudgetAsync(Guid branchId) => GetAsync<RecognitionBudgetDto>($"{B(branchId)}/recognition/budget");
 
     // ---- Duties ----
-    public Task<List<StaffDutyDto>> GetDutiesAsync(Guid branchId, DateTime from, DateTime to) => GetAsync<List<StaffDutyDto>>($"{B(branchId)}/duties{Q(("from", D(from)), ("to", D(to)))}");
+    public Task<List<StaffDutyDto>> GetDutiesAsync(Guid branchId, DateTime from, DateTime to, DutyKind? kind = null) => GetAsync<List<StaffDutyDto>>($"{B(branchId)}/duties{Q(("from", D(from)), ("to", D(to)), ("kind", kind?.ToString()))}");
+    public Task<StaffDutyDto> AcknowledgeDutyAsync(Guid branchId, Guid id) => SendAsync<StaffDutyDto>(HttpMethod.Post, $"{B(branchId)}/duties/{id}/acknowledge");
+    public async Task<Guid> GetRotaParameterIdAsync(Guid branchId) => (await GetAsync<RotaDefaultsResponse>($"{B(branchId)}/rota/defaults")).ParameterId;
+    public Task<RotaGenerateResultDto> GenerateRotaAsync(Guid branchId, GenerateRotaRequest request) => SendAsync<RotaGenerateResultDto>(HttpMethod.Post, $"{B(branchId)}/rota/generate", request);
+    public Task<RotaGenerateResultDto> ExtendRotaAsync(Guid branchId, Guid seriesId, ExtendRotaRequest request) => SendAsync<RotaGenerateResultDto>(HttpMethod.Post, $"{B(branchId)}/rota/series/{seriesId}/extend", request);
+    public async Task<int> CancelRotaSeriesAsync(Guid branchId, Guid seriesId) => (await SendAsync<CancelSeriesResponse>(HttpMethod.Delete, $"{B(branchId)}/rota/series/{seriesId}")).Cancelled;
+    public Task SwapRotaAsync(Guid branchId, SwapRotaRequest request) => SendAsync(HttpMethod.Post, $"{B(branchId)}/rota/swap", request);
+    public Task<List<RotaWarningDto>> CheckRotaSlotAsync(Guid branchId, CheckRotaSlotRequest request) => SendAsync<List<RotaWarningDto>>(HttpMethod.Post, $"{B(branchId)}/rota/check", request);
+    public Task<RotaFairnessDto> GetRotaFairnessAsync(Guid branchId, string? period = null) => GetAsync<RotaFairnessDto>($"{B(branchId)}/rota/fairness{Q(("period", period))}");
+    public Task<List<DutyReportSummaryDto>> GetMyDutyReportsAsync(Guid branchId, bool openOnly = false) => GetAsync<List<DutyReportSummaryDto>>($"{B(branchId)}/duty-reports/mine{Q(("openOnly", openOnly ? "true" : null))}");
+    public Task<DutyReportQueueDto> GetDutyReportQueueAsync(Guid branchId, DateTime? from = null, DateTime? to = null, DutyReportStatus? status = null, Guid? dutyId = null) => GetAsync<DutyReportQueueDto>($"{B(branchId)}/duty-reports{Q(("from", D(from)), ("to", D(to)), ("status", status?.ToString()), ("dutyId", dutyId?.ToString()))}");
+    public Task<DutyReportDto> GetDutyReportAsync(Guid branchId, Guid id) => GetAsync<DutyReportDto>($"{B(branchId)}/duty-reports/{id}");
+    public Task<DutyReportDto> SaveDutyReportAsync(Guid branchId, Guid id, SaveDutyReportRequest request) => SendAsync<DutyReportDto>(HttpMethod.Put, $"{B(branchId)}/duty-reports/{id}", request);
+    public Task<DutyReportDto> SubmitDutyReportAsync(Guid branchId, Guid id, SaveDutyReportRequest request) => SendAsync<DutyReportDto>(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/submit", request);
+    public Task<DutyReportDto> AddDutyReportNoteAsync(Guid branchId, Guid id, string body) => SendAsync<DutyReportDto>(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/notes", new DutyReportNoteRequest { Body = body });
+    public Task<DutyReportDto> ReturnDutyReportAsync(Guid branchId, Guid id, string reason) => SendAsync<DutyReportDto>(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/return", new DutyReportNoteRequest { Body = reason });
+    public Task<DutyReportDto> ReviewDutyReportAsync(Guid branchId, Guid id, string? remark) => SendAsync<DutyReportDto>(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/review", new DutyReportNoteRequest { Body = remark ?? string.Empty });
+    public Task<DutyReportDto> ReopenDutyReportAsync(Guid branchId, Guid id, string reason) => SendAsync<DutyReportDto>(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/reopen", new DutyReportNoteRequest { Body = reason });
+    public Task MarkNoDutyAsync(Guid branchId, Guid id, string reason) => SendAsync(HttpMethod.Post, $"{B(branchId)}/duty-reports/{id}/no-duty", new DutyReportNoteRequest { Body = reason });
+    public Task<List<DutyReportLinkedRecordDto>> GetLinkableWelfareRecordsAsync(Guid branchId) => GetAsync<List<DutyReportLinkedRecordDto>>($"{B(branchId)}/duty-reports/linkable-welfare-records");
+    private sealed record RotaDefaultsResponse(Guid ParameterId);
+    private sealed record CancelSeriesResponse(int Cancelled, int Kept);
     public Task<StaffDutyDto> CreateDutyAsync(Guid branchId, SaveStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Post, $"{B(branchId)}/duties", request);
     public Task<StaffDutyDto> UpdateDutyAsync(Guid branchId, Guid id, SaveStaffDutyRequest request) => SendAsync<StaffDutyDto>(HttpMethod.Put, $"{B(branchId)}/duties/{id}", request);
     public Task CancelDutyAsync(Guid branchId, Guid id) => SendAsync(HttpMethod.Delete, $"{B(branchId)}/duties/{id}");

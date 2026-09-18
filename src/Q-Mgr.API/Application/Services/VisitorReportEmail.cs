@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using QMgr.Application.DTOs;
@@ -80,7 +81,7 @@ public static class VisitorReportEmail
 
         return Shell(
             $"Evacuation roll call — {report.BranchName}",
-            $"Generated {report.GeneratedAt.ToLocalTime():dddd d MMMM yyyy, HH:mm}",
+            string.Create(CultureInfo.InvariantCulture, $"Generated {report.GeneratedAt.ToLocalTime():dddd d MMMM yyyy, HH:mm}"),
             body.ToString());
     }
 
@@ -97,7 +98,7 @@ public static class VisitorReportEmail
         body.Append(Table(
             new[] { "Day", "Visits" },
             report.VisitsByDay.OrderByDescending(d => d.Count).Take(7)
-                .Select(d => new[] { E(d.Day.ToString("ddd d MMM")), d.Count.ToString("N0") }),
+                .Select(d => new[] { E(d.Day.ToString("ddd d MMM", CultureInfo.InvariantCulture)), d.Count.ToString("N0") }),
             Math.Min(7, report.VisitsByDay.Count)));
 
         if (report.TopHosts.Count > 0)
@@ -120,7 +121,7 @@ public static class VisitorReportEmail
 
         return Shell(
             $"Visitor summary — {report.ScopeName}",
-            $"{report.From:d MMM yyyy} to {report.To:d MMM yyyy} · {report.FilterDescription} · times in {report.TimeZoneId}",
+            string.Create(CultureInfo.InvariantCulture, $"{report.From:d MMM yyyy} to {report.To:d MMM yyyy} · {report.FilterDescription} · times in {report.TimeZoneId}"),
             body.ToString());
     }
 
@@ -131,7 +132,7 @@ public static class VisitorReportEmail
         if (exceptions.TotalCount == 0)
         {
             body.Append($@"<p style=""margin:0;padding:14px 16px;background:#e4f0ea;border-left:3px solid #2c6f4c;font-size:14px"">Nothing needs attention. Everyone who checked in has checked out, every visit has a host, and no contractor was admitted on a lapsed induction.</p>");
-            return Shell($"Visitor exceptions — {exceptions.ScopeName}", $"{exceptions.From:d MMM} to {exceptions.To:d MMM yyyy}", body.ToString());
+            return Shell($"Visitor exceptions — {exceptions.ScopeName}", string.Create(CultureInfo.InvariantCulture, $"{exceptions.From:d MMM} to {exceptions.To:d MMM yyyy}"), body.ToString());
         }
 
         body.Append(Stat("Still on site", exceptions.StillOnSite.Count.ToString(), alert: exceptions.StillOnSite.Count > 0));
@@ -162,7 +163,7 @@ public static class VisitorReportEmail
 
         return Shell(
             $"Visitor exceptions — {exceptions.ScopeName}",
-            $"{exceptions.From:d MMM} to {exceptions.To:d MMM yyyy} · open visits are shown regardless of that range",
+            string.Create(CultureInfo.InvariantCulture, $"{exceptions.From:d MMM} to {exceptions.To:d MMM yyyy} · open visits are shown regardless of that range"),
             body.ToString());
     }
 
@@ -200,7 +201,7 @@ public static class VisitorReportEmail
                     $"<strong>{E(i.FullName)}</strong>",
                     E(i.Company),
                     i.InductionCompletedAt.HasValue
-                        ? E($"expired {i.InductionExpiresAt:d MMM yyyy}")
+                        ? E(string.Create(CultureInfo.InvariantCulture, $"expired {i.InductionExpiresAt:d MMM yyyy}"))
                         : "none on record"
                 }),
                 compliance.InductionRegister.Count(i => !i.ValidOnVisitDate)));
@@ -211,13 +212,13 @@ public static class VisitorReportEmail
         body.Append($@"<p style=""margin:0 0 18px;font-size:13px;color:{Muted}"">
             Policy: keep visitor records for {r.RetentionDays} days.
             {(r.LastRunAt.HasValue
-                ? E($"Last purge ran {r.LastRunAt.Value.ToLocalTime():d MMM yyyy, HH:mm}, removing {r.LastRunVisitsPurged} visit(s) and {r.LastRunProfilesPurged} profile(s). {r.TotalVisitsPurged} visits removed under this policy in total.")
+                ? E(string.Create(CultureInfo.InvariantCulture, $"Last purge ran {r.LastRunAt.Value.ToLocalTime():d MMM yyyy, HH:mm}, removing {r.LastRunVisitsPurged} visit(s) and {r.LastRunProfilesPurged} profile(s). {r.TotalVisitsPurged} visits removed under this policy in total."))
                 : "The purge has not recorded a run yet.")}
         </p>");
 
         return Shell(
             $"Visitor compliance — {compliance.ScopeName}",
-            $"{compliance.From:d MMM yyyy} to {compliance.To:d MMM yyyy}",
+            string.Create(CultureInfo.InvariantCulture, $"{compliance.From:d MMM yyyy} to {compliance.To:d MMM yyyy}"),
             body.ToString());
     }
 
@@ -240,7 +241,7 @@ public static class VisitorReportEmail
 
         return Shell(
             $"Visitor log — {report.ScopeName}",
-            $"{report.From:d MMM yyyy} to {report.To:d MMM yyyy} · {report.FilterDescription}",
+            string.Create(CultureInfo.InvariantCulture, $"{report.From:d MMM yyyy} to {report.To:d MMM yyyy} · {report.FilterDescription}"),
             body.ToString());
     }
 }

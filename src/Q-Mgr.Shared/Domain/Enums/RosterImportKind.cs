@@ -34,5 +34,12 @@ public enum RosterImportKind
     /// User with a random password and an invitation sent through the existing password-reset link,
     /// so "invite" needed no new column. A fourth discriminator for the same reason the third was.
     /// </summary>
-    Staff = 3
+    Staff = 3,
+
+    /// <summary>
+    /// Timetable lessons (TimetableImportRow) exported from aSc Timetables, FET or a spreadsheet, into a DRAFT timetable
+    /// (duty rota plan §6.2, Phase 6). Every row is checked like a lesson placed by hand; the draft's own diagnosis then
+    /// shows what the import left to fix. A fifth discriminator for the same reason as the others.
+    /// </summary>
+    Timetable = 4
 }

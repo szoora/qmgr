@@ -231,6 +231,23 @@ else
                             <span>My Portal</span>
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a href="my-day" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/my-day") ? "active" : "")">
+                            <i class="bi bi-sunrise"></i>
+                            <span>My Day</span>
+                        </a>
+                    </li>
+                    @* The published timetable is readable by every member of staff (duty rota plan §13.5). Somebody who
+                       sees the Staff Performance group finds it there; everybody else gets it beside their portal. *@
+                    @if (!(canManageTimetable || canManageStaffDuties || canViewStaffRecords))
+                    {
+                        <li class="nav-item">
+                            <a href="admin/timetable" @onclick="CollapseSidebarOnMobile" class="nav-link @(IsActive("/admin/timetable") ? "active" : "")">
+                                <i class="bi bi-grid-3x3-gap"></i>
+                                <span>Timetable</span>
+                            </a>
+                        </li>
+                    }
                 }
                 @if ((canViewStaffRecords || canManageStaffDuties || canConductAppraisals || canApproveAppraisals || canViewStaffReports || canManageStaffNotices || canManageStaffParameters || canManageStaffStructure) && HasModule(ModuleCodes.StudentWelfare))
                 {
@@ -249,6 +266,14 @@ else
                             @if (canManageStaffDuties || canViewStaffRecords)
                             {
                                 <li><a href="admin/staff/duties" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duties") ? "active" : "")"><i class="bi bi-calendar-check"></i>Duties & Registers</a></li>
+                                <li><a href="admin/staff/rota" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/rota") ? "active" : "")"><i class="bi bi-calendar-week"></i>Duty Rota</a></li>
+                                <li><a href="admin/staff/duty-reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/duty-reports") ? "active" : "")"><i class="bi bi-journal-text"></i>Duty Reports</a></li>
+                            }
+                            @if (canManageTimetable || canManageStaffDuties || canViewStaffRecords)
+                            {
+                                <li><a href="admin/timetable" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/timetable") ? "active" : "")"><i class="bi bi-grid-3x3-gap"></i>Timetable</a></li>
+                                <li><a href="admin/timetable/lessons" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/timetable/lessons") ? "active" : "")"><i class="bi bi-journal-check"></i>Lessons</a></li>
+                                <li><a href="admin/timetable/reports" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/timetable/reports") ? "active" : "")"><i class="bi bi-bar-chart-line"></i>Teaching Reports</a></li>
                             }
                             @if (canConductAppraisals || canApproveAppraisals)
                             {
@@ -270,6 +295,7 @@ else
                             @if (canManageStaffStructure)
                             {
                                 <li><a href="admin/staff/structure" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/structure") ? "active" : "")"><i class="bi bi-diagram-3"></i>Departments & Structure</a></li>
+                                <li><a href="admin/subjects" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/subjects") ? "active" : "")"><i class="bi bi-book"></i>Subjects</a></li>
                             }
                             @if (canViewStaffRecords)
                             {
@@ -712,6 +738,7 @@ else
     private bool canManageStaffNotices = false;
     private bool canManageStaffParameters = false;
     private bool canManageStaffStructure = false;
+    private bool canManageTimetable = false;
 
     // Modular subscription system: which of the 4 modules this org currently has active.
     // SuperAdmin bypasses this entirely (sees everything, same bypass used everywhere else).
@@ -998,7 +1025,8 @@ else
         canManageClassTeachers = await PermissionService.HasPermissionAsync(Permissions.ClassTeachersManage);
         canManageWelfareCategories = await PermissionService.HasPermissionAsync(Permissions.WelfareCategoriesManage);
         canViewWelfare = await PermissionService.HasPermissionAsync(Permissions.WelfareView);
-        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
+        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView)
+            || await PermissionService.HasPermissionAsync(Permissions.WelfareReportsOwn);
         canViewMarketing = await PermissionService.HasPermissionAsync(Permissions.MarketingView);
         canViewBilling = await PermissionService.HasPermissionAsync(Permissions.BillingView);
         canViewPlatformAdmin = await PermissionService.HasPermissionAsync(Permissions.PlatformAdmin);
@@ -1010,6 +1038,7 @@ else
         canManageStaffNotices = await PermissionService.HasPermissionAsync(Permissions.StaffNoticesManage);
         canManageStaffParameters = await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage);
         canManageStaffStructure = await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
+        canManageTimetable = await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
     }
 
     // An unpurchased module is fully invisible in the nav (per explicit direction — a per-module

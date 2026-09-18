@@ -158,6 +158,9 @@ public static class QDateFormat
     public static string LocalDT(DateTime utc) => DT(utc.Kind == DateTimeKind.Utc ? utc.ToLocalTime() : utc);
     public static string LocalDT(DateTime? utc) => utc.HasValue ? LocalDT(utc.Value) : "—";
 
+    /// <summary>A UTC timestamp's time of day in the reader's own time (a lesson, a meeting).</summary>
+    public static string LocalT(DateTime utc) => T(utc.Kind == DateTimeKind.Utc ? utc.ToLocalTime() : utc);
+
     /// <summary>
     /// A range, written the shortest way that stays unambiguous:
     /// one day → "9 Sep 2026"; inside a month → "1–30 Sep 2026"; inside a year → "1 Sep – 3 Oct 2026";

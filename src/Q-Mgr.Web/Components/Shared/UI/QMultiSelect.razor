@@ -21,7 +21,7 @@
                 disabled="@Disabled"
                 @onclick="ToggleDropdown"
                 @onclick:stopPropagation="true"
-                @onfocus="() => HasFocus = true"
+                @onfocus="HandleFocus"
                 @onblur="HandleBlur">
             @if (!string.IsNullOrEmpty(IconLeft))
             {
@@ -64,15 +64,19 @@
 
         @if (isOpen)
         {
-            <div class="q-select__dropdown q-multiselect__dropdown">
+            @* mousedown inside the open list must not move focus, or the list closes under the pointer: see QSelect.HandleBlur.
+               It also keeps the list open while several options are ticked. The filter box opts back out. *@
+            <div class="q-select__dropdown q-multiselect__dropdown" @onmousedown:preventDefault="true">
                 @if (AllowFilter)
                 {
-                    <div class="q-multiselect__filter">
+                    <div class="q-multiselect__filter" @onmousedown:stopPropagation="true">
                         <input type="text"
                                class="q-multiselect__filter-input"
                                placeholder="Search..."
                                @bind="filterText"
                                @bind:event="oninput"
+                               @onfocus="HandleFocus"
+                               @onblur="HandleBlur"
                                @onclick:stopPropagation="true" />
                     </div>
                 }
@@ -136,6 +140,9 @@
     private bool isOpen;
     private bool HasFocus;
     private string filterText = "";
+
+    /// <summary>Bumped whenever a pending close must not happen (the list opened again, or focus came back to this component).</summary>
+    private int closeGeneration;
 
     /// <summary>
     /// Currently selected values
@@ -262,6 +269,7 @@
         if (!Disabled)
         {
             isOpen = !isOpen;
+            closeGeneration++;
             if (!isOpen)
             {
                 filterText = "";
@@ -269,14 +277,22 @@
         }
     }
 
+    /// <summary>Focus returning to the trigger or the filter box cancels a pending close. See QSelect.HandleBlur.</summary>
+    private void HandleFocus()
+    {
+        HasFocus = true;
+        closeGeneration++;
+    }
+
     private void HandleBlur()
     {
         HasFocus = false;
-        // Delay closing to allow click on dropdown item
-        _ = Task.Delay(200).ContinueWith(_ =>
+        var generation = closeGeneration;
+        _ = Task.Delay(150).ContinueWith(_ =>
         {
             InvokeAsync(() =>
             {
+                if (generation != closeGeneration || !isOpen) return;
                 isOpen = false;
                 filterText = "";
                 StateHasChanged();

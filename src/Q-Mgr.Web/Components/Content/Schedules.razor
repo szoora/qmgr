@@ -134,35 +134,20 @@
             }
         </div>
 
-        <!-- Weekly Timeline Preview -->
+        <!-- Weekly overview on the shared week grid (duty rota plan §9, Phase 6): the same scrolling, keyboard and
+             phone list as the timetable and the rota, and two playlists over the same hours shown as an overlap. -->
         <QCard Class="timeline-card">
             <h3>Weekly Schedule Overview</h3>
-            <div class="timeline-container">
-                <div class="timeline-header">
-                    <div class="time-label"></div>
-                    @foreach (var hour in Enumerable.Range(0, 24).Where(h => h % 3 == 0))
+            <QWeekGrid TItem="ScheduleSlot" Columns="@WeekColumns" Rows="@WeekRows" Items="@WeekItems"
+                       RowKey="@(x => x.Band)" ColumnKey="@(x => x.Day)" CellState="@OverlapState" CellTitle="@OverlapTitle"
+                       AriaLabel="Weekly schedule overview" CornerLabel="Time" EmptyDayText="Nothing scheduled." MaxHeight="520px">
+                <CellTemplate Context="cell">
+                    @foreach (var slot in cell.Items)
                     {
-                        <div class="time-slot">@hour:00</div>
+                        <span class="sched-chip" title="@slot.Playlist.Name">@slot.Playlist.Name</span>
                     }
-                </div>
-                @foreach (var day in daysOfWeek)
-                {
-                    <div class="timeline-row">
-                        <div class="day-label">@day</div>
-                        <div class="day-slots">
-                            @foreach (var playlist in playlists.Where(p => p.ScheduleType == "scheduled"))
-                            {
-                                @foreach (var block in GetScheduleBlocks(playlist, day))
-                                {
-                                    <div class="schedule-block" style="left: @(block.StartPercent)%; width: @(block.WidthPercent)%;" title="@playlist.Name">
-                                        <span>@playlist.Name</span>
-                                    </div>
-                                }
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
+                </CellTemplate>
+            </QWeekGrid>
         </QCard>
     }
 </div>
@@ -269,7 +254,7 @@
 
     .toolbar-left, .toolbar-right {
         display: flex;
-        gap: 12px;
+        gap: var(--q-row-gap, 8px);
         align-items: center;
     }
 
@@ -413,65 +398,15 @@
         font-weight: 600;
     }
 
-    .timeline-container {
-        overflow-x: auto;
-    }
-
-    .timeline-header {
-        display: flex;
-        padding-left: 80px;
-        margin-bottom: 8px;
-    }
-
-    .time-label {
-        width: 80px;
-        flex-shrink: 0;
-    }
-
-    .time-slot {
-        flex: 1;
-        font-size: 11px;
-        color: var(--qm-text-secondary);
-        text-align: center;
-    }
-
-    .timeline-row {
-        display: flex;
-        align-items: center;
-        margin-bottom: 4px;
-    }
-
-    .day-label {
-        width: 80px;
-        flex-shrink: 0;
-        font-size: 12px;
-        font-weight: 500;
-    }
-
-    .day-slots {
-        flex: 1;
-        height: 28px;
-        background: var(--qm-bg-elevated);
+    .sched-chip {
+        display: block;
+        margin: 0 0 3px;
+        padding: 2px 6px;
         border-radius: var(--qm-radius-sm);
-        position: relative;
-        overflow: hidden;
-    }
-
-    .schedule-block {
-        position: absolute;
-        top: 2px;
-        bottom: 2px;
-        background: var(--qm-primary);
-        border-radius: var(--qm-radius-sm);
-        display: flex;
-        align-items: center;
-        padding: 0 6px;
-        min-width: 0;
-    }
-
-    .schedule-block span {
-        font-size: 10px;
-        color: var(--qm-text-on-primary);
+        background: rgba(var(--qm-primary-rgb), 0.12);
+        border-left: 3px solid var(--qm-primary);
+        color: var(--qm-text-primary);
+        font-size: 11.5px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -561,7 +496,6 @@
     .dialog-actions {
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
         margin-top: 24px;
     }
 </style>
@@ -598,7 +532,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             NavigationManager.NavigateTo("/billing/modules", forceLoad: false);
             return;
@@ -788,40 +722,54 @@
         return "Custom schedule";
     }
 
-    private List<ScheduleBlock> GetScheduleBlocks(PlaylistDetailDto playlist, string day)
+    private sealed record ScheduleSlot(PlaylistDetailDto Playlist, string Day, string Band);
+
+    private IReadOnlyList<QWeekGridColumn> WeekColumns => daysOfWeek
+        .Select(d => new QWeekGridColumn(d, d[..3], IsToday: d == DateTime.Today.DayOfWeek.ToString())).ToList();
+
+    private static readonly IReadOnlyList<QWeekGridRow> WeekRows = Enumerable.Range(0, 8)
+        .Select(i => new QWeekGridRow($"b{i}", $"{i * 3:00}:00", $"to {(i + 1) * 3:00}:00")).ToList();
+
+    private IEnumerable<ScheduleSlot> WeekItems => playlists.Where(p => p.ScheduleType == "scheduled")
+        .SelectMany(p => daysOfWeek.SelectMany(day => BandsFor(p, day).Select(b => new ScheduleSlot(p, day, $"b{b}"))));
+
+    private QWeekGridCellState OverlapState(QWeekGridSlot slot)
+        => WeekItems.Count(x => x.Day == slot.ColumnKey && x.Band == slot.RowKey) > 1 ? QWeekGridCellState.Warning : QWeekGridCellState.None;
+
+    private string? OverlapTitle(QWeekGridCell<ScheduleSlot> cell)
+        => cell.Items.Count > 1 ? $"{cell.Items.Count} playlists overlap here; the one with the higher priority plays." : null;
+
+    /// <summary>The three-hour bands a playlist's schedule touches on a day. An overnight schedule (end before start) wraps.</summary>
+    private static List<int> BandsFor(PlaylistDetailDto playlist, string day)
     {
-        var blocks = new List<ScheduleBlock>();
+        var bands = new List<int>();
+        if (!TryReadSchedule(playlist.Schedule, day, out var start, out var end)) return bands;
+        var spans = end > start ? new[] { (start, end) } : new[] { (start, TimeSpan.FromHours(24)), (TimeSpan.Zero, end) };
+        for (var band = 0; band < 8; band++)
+        {
+            var bandStart = TimeSpan.FromHours(band * 3);
+            var bandEnd = TimeSpan.FromHours((band + 1) * 3);
+            if (spans.Any(x => x.Item1 < bandEnd && x.Item2 > bandStart)) bands.Add(band);
+        }
+        return bands;
+    }
 
-        if (string.IsNullOrEmpty(playlist.Schedule) || playlist.Schedule == "{}")
-            return blocks;
-
+    /// <summary>Whether the schedule JSON runs on the day, and between which times.</summary>
+    private static bool TryReadSchedule(string? json, string day, out TimeSpan start, out TimeSpan end)
+    {
+        start = end = TimeSpan.Zero;
+        if (string.IsNullOrEmpty(json) || json == "{}") return false;
         try
         {
-            var doc = System.Text.Json.JsonDocument.Parse(playlist.Schedule);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
             var root = doc.RootElement;
-
-            if (root.TryGetProperty("days", out var days))
-            {
-                var daysList = days.EnumerateArray().Select(d => d.GetString()).ToList();
-                if (!daysList.Contains(day)) return blocks;
-            }
-
-            if (root.TryGetProperty("startTime", out var startTime) && root.TryGetProperty("endTime", out var endTime))
-            {
-                var start = TimeSpan.Parse(startTime.GetString() ?? "00:00");
-                var end = TimeSpan.Parse(endTime.GetString() ?? "23:59");
-
-                var startPercent = (start.TotalHours / 24.0) * 100;
-                var duration = (end - start).TotalHours;
-                if (duration < 0) duration += 24; // Handle overnight
-                var widthPercent = (duration / 24.0) * 100;
-
-                blocks.Add(new ScheduleBlock { StartPercent = startPercent, WidthPercent = widthPercent });
-            }
+            if (root.TryGetProperty("days", out var days) && !days.EnumerateArray().Select(d => d.GetString()).Contains(day)) return false;
+            if (!root.TryGetProperty("startTime", out var st) || !root.TryGetProperty("endTime", out var et)) return false;
+            start = TimeSpan.Parse(st.GetString() ?? "00:00", System.Globalization.CultureInfo.InvariantCulture);
+            end = TimeSpan.Parse(et.GetString() ?? "23:59", System.Globalization.CultureInfo.InvariantCulture);
+            return true;
         }
-        catch { }
-
-        return blocks;
+        catch { return false; }
     }
 
     private class ScheduleEditModel
@@ -837,9 +785,4 @@
         public int Priority { get; set; } = 1;
     }
 
-    private class ScheduleBlock
-    {
-        public double StartPercent { get; set; }
-        public double WidthPercent { get; set; }
-    }
 }

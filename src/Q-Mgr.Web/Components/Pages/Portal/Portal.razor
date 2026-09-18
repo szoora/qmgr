@@ -94,6 +94,29 @@
         </QStatRow>
 
         @* ---- Coming up ---------------------------------------------------------------------- *@
+        @* ---- My Day (duty rota plan §7.2, §10): today's lessons at a glance; the full day is /my-day ---- *@
+        @if (myDay != null && (myDay.Lessons.Any() || myDay.Unrecorded.Any() || myDay.RecoveryOwed.Any()))
+        {
+            var toRecord = myDay.Lessons.Count(l => l.Status == LessonStatus.Unrecorded) + myDay.Unrecorded.Count;
+            <QCard id="my-day" Title="My Day" Subtitle="@MyDaySubtitle" Icon="sunrise" Class="portal-card">
+                @if (myDay.NextLessonStartsAt is { } next && myDay.Lessons.FirstOrDefault(l => l.StartsAt == next) is { } nextLesson)
+                {
+                    <p class="portal-myday-next"><QIcon Name="hourglass-split" Size="sm" /> Next: <strong>@nextLesson.ClassName · @nextLesson.SubjectName</strong> at @QDateFormat.LocalT(next)@(string.IsNullOrEmpty(nextLesson.Room) ? "" : $", {nextLesson.Room}")</p>
+                }
+                @if (toRecord > 0)
+                {
+                    <p class="portal-myday-owed"><QIcon Name="question-circle" Size="sm" /> @(toRecord == 1 ? "1 lesson" : $"{toRecord} lessons") to mark taught or not taught</p>
+                }
+                @if (myDay.RecoveryOwed.Any())
+                {
+                    <p class="portal-myday-owed"><QIcon Name="arrow-repeat" Size="sm" /> @(myDay.RecoveryOwed.Count == 1 ? "1 missed lesson" : $"{myDay.RecoveryOwed.Count} missed lessons") to recover</p>
+                }
+                <div class="portal-duty__actions">
+                    <QButton Text="Open My Day" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/my-day"))" />
+                </div>
+            </QCard>
+        }
+
         <QCard Title="Coming up" Subtitle="Duties you are expected at" Icon="calendar-event" Class="portal-card">
             @if (!portal.ComingUp.Any())
             {
@@ -131,6 +154,89 @@
                 </ul>
             }
         </QCard>
+
+        @* ---- On duty (duty rota plan §4.2, §10): rota slots I am on or supervise ------------------- *@
+        @if (portal.OnDuty.Any())
+        {
+            <QCard id="on-duty" Title="On duty" Subtitle="Your rota slots, now and in the next two weeks" Icon="shield-check" Class="portal-card">
+                <ul class="portal-list">
+                    @foreach (var slot in portal.OnDuty.OrderBy(d => d.StartsAt))
+                    {
+                        var underWay = slot.StartsAt <= DateTime.UtcNow;
+                        <li class="portal-duty">
+                            <div class="portal-duty__main">
+                                <strong>@slot.Title</strong>
+                                <span class="portal-duty__when">
+                                    <QIcon Name="calendar-week" Size="sm" />
+                                    @QDateFormat.LocalDT(slot.StartsAt) – @QDateFormat.LocalDT(slot.EndsAt)
+                                    @if (!string.IsNullOrEmpty(slot.Location)) { <span> · <QIcon Name="geo-alt" Size="sm" /> @slot.Location</span> }
+                                </span>
+                                <span class="portal-duty__param">
+                                    @if (slot.IsSupervisedByMe)
+                                    {
+                                        <QChip Text="@($"You supervise: {string.Join(", ", slot.ExpectedNames)}")" Size="sm" Variant="info" Icon="person-badge" />
+                                    }
+                                    else
+                                    {
+                                        @if (slot.MyAcknowledgedAt.HasValue)
+                                        {
+                                            <QChip Text="Acknowledged" Size="sm" Variant="success" Icon="check2" />
+                                        }
+                                        else
+                                        {
+                                            <QChip Text="Not yet acknowledged" Size="sm" Variant="warning" />
+                                        }
+                                        @if (slot.SupervisorNames.Any()) { <QChip Text="@($"Supervised by {string.Join(", ", slot.SupervisorNames)}")" Size="sm" Variant="muted" /> }
+                                    }
+                                    @if (underWay) { <QChip Text="Under way" Size="sm" Variant="primary" /> }
+                                </span>
+                            </div>
+                            <div class="portal-duty__actions">
+                                @if (!slot.IsSupervisedByMe && !slot.MyAcknowledgedAt.HasValue)
+                                {
+                                    <QButton Text="Seen — I'm on duty" Icon="check2-circle" Size="sm" Variant="primary" Loading="@(busyDutyId == slot.Id)" OnClick="@(() => AcknowledgeDutyAsync(slot))" />
+                                }
+                                @if (slot.CanIRecord && underWay)
+                                {
+                                    <QButton Text="Close out" Icon="clipboard-check" Size="sm" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duties/{slot.Id}/register"))" />
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            </QCard>
+        }
+
+        @* ---- Reports to write (duty rota plan §4.3, §10) ------------------------------------------ *@
+        @if (portal.ReportsToWrite.Any())
+        {
+            <QCard id="duty-reports" Title="Reports to write" Subtitle="Duty reports for periods that have started" Icon="journal-text" Class="portal-card">
+                <ul class="portal-list">
+                    @foreach (var rep in portal.ReportsToWrite.OrderBy(r => r.DueAt))
+                    {
+                        <li class="portal-duty">
+                            <div class="portal-duty__main">
+                                <strong>@rep.DutyTitle</strong>
+                                <span class="portal-duty__when"><QIcon Name="calendar3" Size="sm" /> @DutyReportPage.PeriodText(rep) · due @QDateFormat.LocalDT(rep.DueAt)</span>
+                                <span class="portal-duty__param">
+                                    <QChip Text="@DutyReportPage.StatusLabel(rep.Status)" Size="sm" Variant="@DutyReportPage.StatusVariant(rep.Status)" />
+                                    @if (rep.IsOverdue) { <QChip Text="Overdue" Size="sm" Variant="danger" /> }
+                                    @if (rep.AuthorRole == DutyReportAuthorRole.Supervisor) { <QChip Text="As administrator on duty" Size="sm" Variant="muted" /> }
+                                </span>
+                            </div>
+                            <div class="portal-duty__actions">
+                                <QButton Text="@(rep.Status == DutyReportStatus.Returned ? "Correct" : "Write")" Icon="pencil" Size="sm" Variant="primary"
+                                         OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/{rep.Id}"))" />
+                            </div>
+                        </li>
+                    }
+                </ul>
+            </QCard>
+        }
+
+        @* ---- My teaching (duty rota plan §10): hidden for somebody who teaches nothing ------------- *@
+        <TeachingSummaryCard BranchId="@portal.BranchId" HideWhenEmpty="true" Class="portal-card" />
+        <MyTimetableCard BranchId="@portal.BranchId" UserId="@portal.Me.UserId" Class="portal-card" />
 
         <div class="portal-grid">
             @* ---- Reminders & to-do ---------------------------------------------------------- *@
@@ -539,7 +645,7 @@
     .portal-page { max-width: 1200px; margin: 0 auto; }
     .portal-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
     .portal-greeting { display: flex; align-items: center; gap: 16px; min-width: 0; }
-    .portal-greeting h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .portal-greeting h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .portal-band-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .portal-rank { font-size: 13px; color: var(--qm-text-secondary); }
@@ -569,6 +675,9 @@
     .portal-duty__when { font-size: 13px; color: var(--qm-text-secondary); }
     .portal-duty__param { display: flex; gap: 6px; flex-wrap: wrap; }
     .portal-duty__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .portal-myday-next, .portal-myday-owed { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13.5px; }
+    .portal-myday-owed { color: var(--qm-text-secondary); }
+
 
     .portal-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
     .portal-item:last-child { border-bottom: 0; }
@@ -666,6 +775,28 @@
     private int activityPageIndex;
 
     private Guid? busyRecordId;
+    private Guid? busyDutyId;
+
+    /// <summary>"Seen — I'm on duty": stops the pre-duty reminders for this person (plan §4.2).</summary>
+    private async Task AcknowledgeDutyAsync(StaffDutyDto slot)
+    {
+        if (portal == null) return;
+        busyDutyId = slot.Id;
+        try
+        {
+            await StaffApi.AcknowledgeDutyAsync(portal.BranchId, slot.Id);
+            Toast.Notify(ToastSeverity.Success, "Acknowledged", "The reminders for this duty have stopped.");
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not acknowledge", ex.Message);
+        }
+        finally
+        {
+            busyDutyId = null;
+        }
+    }
     private Guid? busyNoticeId;
     private bool exporting;
 
@@ -734,6 +865,23 @@
                 Count: $"{d.AverageComposite.Value:0.#} · {d.StaffCount} staff"))
             .ToList();
 
+    private MyDayDto? myDay;
+
+    private string MyDaySubtitle => myDay == null ? "" : myDay.Lessons.Count(l => l.Status != LessonStatus.Cancelled) switch
+    {
+        0 => "No lessons today",
+        1 => "1 lesson today",
+        var n => $"{n} lessons today"
+    };
+
+    /// <summary>My Day is a nicety on the portal: if it cannot load, the portal still does.</summary>
+    private async Task LoadMyDayAsync()
+    {
+        if (portal == null) return;
+        try { myDay = await StaffApi.GetMyDayAsync(portal.BranchId); }
+        catch { myDay = null; }
+    }
+
     private async Task LoadAsync()
     {
         isLoading = true;
@@ -741,6 +889,7 @@
         try
         {
             portal = await StaffApi.GetPortalAsync();
+            await LoadMyDayAsync();
         }
         catch (Exception ex)
         {

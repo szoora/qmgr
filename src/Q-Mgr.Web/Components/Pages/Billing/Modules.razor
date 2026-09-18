@@ -110,11 +110,8 @@ else
         {
             <p>@purchaseTarget.Description</p>
             <div class="form-group">
-                <label>Billing cycle</label>
-                <select class="form-control" @bind="purchaseBillingCycle">
-                    <option value="Monthly">Monthly — UGX @purchaseTarget.MonthlyPriceUgx.ToString("N0")</option>
-                    <option value="Annual">Annual — UGX @purchaseTarget.AnnualPriceUgx.ToString("N0")</option>
-                </select>
+                <QSelect TValue="string" TItem="string" @bind-Value="purchaseBillingCycle" Items="@(new[] { "Monthly", "Annual" })"
+                         TextSelector="@(c => $"{c} — UGX {(c == "Annual" ? purchaseTarget.AnnualPriceUgx : purchaseTarget.MonthlyPriceUgx):N0}")" Label="Billing cycle" />
             </div>
             <div class="form-group">
                 <label>Payment method</label>
@@ -229,7 +226,7 @@ else
         text-transform: uppercase;
         letter-spacing: 0.4px;
         padding: 3px 9px;
-        border-radius: 100px;
+        border-radius: var(--qm-radius-lg);
         white-space: nowrap;
         background: var(--qm-bg-elevated);
         color: var(--qm-text-secondary);

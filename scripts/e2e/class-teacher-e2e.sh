@@ -277,9 +277,33 @@ echo "$SUM_A" | grep -q '"scopedToClasses":\[\]' && ok "summary is empty-scoped 
 
 # --- The cohort report is a report ------------------------------------------
 # It was gated on welfare.view until 2026-09-10, so any welfare reader could pull a
-# whole-school disproportionality breakdown. A class teacher holds welfare.reports.view and
-# still reads it (scoped); the gate is what changed, not their access.
+# whole-school disproportionality breakdown. A class teacher reads it (scoped); the gate is what
+# changed, not their access.
 eq "class teacher still reads the cohort report" "$(code "$T4" GET "$B/welfare/cohorts")" "200"
+
+# --- The reports gate is TWO codes now (2026-09-18) --------------------------
+# welfare.reports.own is the class teacher's; welfare.reports.view is the branch-wide one a manager
+# holds. Both open the same three reports — splitting them is what lets a school withhold the page
+# from a class-teacher role without touching what a manager reads. The figures a scoped caller sees
+# were already narrowed by IStudentScopeService, so the new code grants nothing wider.
+ME_T4=$(body "$T4" GET "/api/v1/auth/me")
+case "$ME_T4" in
+  *'"welfare.reports.own"'*) ok "class teacher holds welfare.reports.own" ;;
+  *) bad "class teacher holds welfare.reports.own" "the code in their permission set" "absent" ;;
+esac
+case "$ME_T4" in
+  *'"welfare.reports.view"'*) bad "class teacher does NOT hold the branch-wide welfare.reports.view" "absent" "present" ;;
+  *) ok "class teacher does NOT hold the branch-wide welfare.reports.view" ;;
+esac
+ME_AD=$(body "$AD" GET "/api/v1/auth/me")
+case "$ME_AD" in
+  *'"welfare.reports.view"'*) ok "the administrator still holds the branch-wide welfare.reports.view" ;;
+  *) bad "the administrator still holds the branch-wide welfare.reports.view" "present" "absent" ;;
+esac
+# Either code opens all three reports.
+eq "own-class code reads the record search"  "$(code "$T4" GET "$B/welfare-records")" "200"
+eq "own-class code reads the summary"        "$(code "$T4" GET "$B/welfare/summary")" "200"
+eq "branch-wide code reads the record search" "$(code "$AD" GET "$B/welfare-records")" "200"
 
 # --- A bulk welfare import is not a form tutor's --------------------------------
 IMP=$(code "$T4" POST "$B/welfare-records/import-jobs" '{"sourceFileName":"e2e.csv","rows":[{"studentCode":"X","categoryName":"Probe Behavior","description":"probe","occurredAt":"2026-09-01"}]}')
@@ -505,6 +529,72 @@ echo "$PUBLIC" | grep -q '"isGated":false' && ok "a plain upload is public (sign
   || bad "public flag" '"isGated":false' "$(echo "$PUBLIC" | grep -o '"isGated":[a-z]*')"
 eq "its raw path serves the public (200)" "$(raw "$PUBLIC_URL")" "200"
 eq "a class teacher cannot mark a document shareable (403)" "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/api/v1/organizations/$ORG_ID/media/upload" -H "Authorization: Bearer $T4" -F "file=@$E2E_PDF;filename=e2e.pdf;type=application/pdf" -F shareable=true)" "403"
+
+# --- 12a2. The combination the plan blessed and never tested (Revision 3, §1) ---------------
+# A document that is BOTH shareable and on a playlist used to be served anonymously: the classifier
+# read `!IsShareable || OnSignage`, so signage won. §12's list asserted each state separately —
+# "on no playlist" above, "a plain upload" above — and never both. The rule now lives in one place
+# (MediaServing) and reads IsShareable alone, and the two write paths refuse the combination so a
+# shared document can never silently stop rendering on a wall.
+PL=$(body "$AD" POST "$B/playlists" '{"name":"E2E share-vs-signage probe","defaultDurationSeconds":10}')
+PL_ID=$(jget "$PL" id)
+if [ -n "$PL_ID" ]; then
+  ok "a probe playlist is created"
+  ADD_SHAREABLE=$(code "$AD" POST "/api/v1/playlists/$PL_ID/items" '{"mediaContentId":"'"$SHARED_ID"'","durationSeconds":10}')
+  eq "a SHAREABLE document cannot be added to a playlist (400)" "$ADD_SHAREABLE" "400"
+  eq "the shareable document's raw path still refuses (401)"    "$(raw "$(strip_token "$SHARED_URL")")" "401"
+
+  ADD_PUBLIC=$(code "$AD" POST "/api/v1/playlists/$PL_ID/items" '{"mediaContentId":"'"$PUBLIC_ID"'","durationSeconds":10}')
+  eq "a plain document CAN be added to a playlist (201)" "$ADD_PUBLIC" "201"
+  eq "and a document on a playlist cannot then be made shareable (400)" \
+     "$(code "$AD" PUT "/api/v1/media/$PUBLIC_ID/publishing" '{"isShareable":true}')" "400"
+  eq "its raw path still serves the public (200)" "$(raw "$PUBLIC_URL")" "200"
+  curl -s -o /dev/null -X DELETE "$API/api/v1/playlists/$PL_ID" -H "Authorization: Bearer $AD"
+else
+  bad "a probe playlist is created" "an id" "$(echo "$PL" | head -c 200)"
+fi
+
+# The tenant caps link lifetime, so a link with no expiry is refused. EXP is defined further down
+# for the pre-existing blocks; these run earlier and need their own. Seven days, not thirty: a
+# Confidential document caps its links at 30 days, and an end-of-day stamp 30 days out is past it —
+# which is the cap working, and cost one debugging round the first time this was written.
+EXP_EARLY=$(date -u -d '+7 days' +%Y-%m-%dT23:59:59Z 2>/dev/null || date -u -v+7d +%Y-%m-%dT23:59:59Z)
+
+# --- 12a3. Classification narrows what a link may do (plan D7) -------------------------------
+eq "an unknown classification is refused (400)" \
+   "$(code "$AD" PUT "/api/v1/media/$SHARED_ID/classification" '{"classification":99}')" "400"
+eq "raising to Confidential is allowed for a publisher (200)" \
+   "$(code "$AD" PUT "/api/v1/media/$SHARED_ID/classification" '{"classification":2}')" "200"
+eq "lowering WITHOUT a reason is refused (400)" \
+   "$(code "$AD" PUT "/api/v1/media/$SHARED_ID/classification" '{"classification":0}')" "400"
+CONF_SHARE=$(body "$AD" POST "/api/v1/media/$SHARED_ID/shares" '{"label":"E2E confidential link","expiresAt":"'"$EXP_EARLY"'","allowDownload":true,"requireEmail":false,"notifyOnFirstOpen":false}')
+echo "$CONF_SHARE" | grep -q '"allowDownload":false' && ok "a Confidential document's link has download withheld, whatever was asked for" \
+  || bad "classification forces allowDownload off" '"allowDownload":false' "$(echo "$CONF_SHARE" | grep -o '"allowDownload":[a-z]*')"
+echo "$CONF_SHARE" | grep -q '"requireEmail":true' && ok "...and forces email verification on" \
+  || bad "classification forces requireEmail on" '"requireEmail":true' "$(echo "$CONF_SHARE" | grep -o '"requireEmail":[a-z]*')"
+eq "lowering WITH a reason is allowed for a share manager (200)" \
+   "$(code "$AD" PUT "/api/v1/media/$SHARED_ID/classification" '{"classification":0,"reason":"Superseded by the published policy; no longer names anyone."}')" "200"
+echo "$(body "$AD" GET "/api/v1/organizations/$ORG_ID/media")" | grep -q '"classificationReason":"Superseded' \
+  && ok "the reason for lowering is kept with the document" \
+  || bad "classification reason kept" "the reason on the row" "absent"
+
+# --- 12a4. Deleting a document must not erase who opened it (plan §14 finding 1) -------------
+# document_shares cascades from media_content and document_share_events from that, so a hard delete
+# used to take the whole access log with it — on content.delete, which Manager holds, by someone who
+# may not hold documents.share.audit. NIST SP 800-53 AU-9 is exactly this. A document with share
+# history is now RETIRED: bytes gone, links dead, rows kept.
+DOOMED=$(upload "$AD" true)
+DOOMED_ID=$(jget "$DOOMED" id)
+DOOMED_SHARE=$(body "$AD" POST "/api/v1/media/$DOOMED_ID/shares" '{"label":"E2E delete-audit probe","expiresAt":"'"$EXP_EARLY"'","notifyOnFirstOpen":false}')
+DOOMED_SLUG=$(jget "$DOOMED_SHARE" slug)
+[ -n "$DOOMED_SLUG" ] && ok "a document is shared before being deleted" || bad "probe share" "a slug" "$(echo "$DOOMED_SHARE" | head -c 200)"
+eq "the document is deleted (204)" "$(code "$AD" DELETE "/api/v1/media/$DOOMED_ID")" "204"
+ACT_AFTER=$(body "$AD" GET "/api/v1/media/$DOOMED_ID/activity")
+echo "$ACT_AFTER" | grep -q '"linksTotal":1' && ok "AU-9: the share audit trail survives the delete" \
+  || bad "audit survives delete" '"linksTotal":1' "$(echo "$ACT_AFTER" | head -c 200)"
+GATE_AFTER=$(curl -s "$API/api/v1/public/shares/$DOOMED_SLUG")
+echo "$GATE_AFTER" | grep -qi 'no longer available\|not available' && ok "...and every link to it refuses, fail-closed" \
+  || bad "deleted document's link refuses" "an unavailable message" "$(echo "$GATE_AFTER" | head -c 200)"
 
 # --- 12b. Welfare evidence follows the record's own rules ---------------------------------
 REC=$(body "$AD" POST "$B/welfare-records" \

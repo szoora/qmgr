@@ -87,14 +87,7 @@
         </div>
     }
 
-    <div class="filter-bar">
-        @foreach (var tab in filterTabs)
-        {
-            <button class="filter-tab @(activeFilter == tab.Key ? "active" : "")" @onclick="@(() => ApplyFilter(tab.Key))">
-                @tab.Value
-            </button>
-        }
-    </div>
+    <QTabs Tabs="@(filterTabs.Select(t => new QTab(t.Key, t.Value)).ToList())" ActiveKey="@activeFilter" ActiveKeyChanged="@ApplyFilter" AriaLabel="Which visitors" />
 
     @if (isLoading)
     {
@@ -476,23 +469,11 @@
                                  OnClick="@(() => reportingSettingsModel.Subscriptions.Remove(sub))" />
                     </div>
                     <div class="subscription-grid">
-                        <label>
-                            Report
-                            <select @bind="sub.Kind" disabled="@(!canExportReports)">
-                                <option value="@ReportSubscriptionKind.Exceptions">Exceptions — needs attention</option>
-                                <option value="@ReportSubscriptionKind.Summary">Summary — headline figures</option>
-                                <option value="@ReportSubscriptionKind.VisitorLog">Visitor log</option>
-                                <option value="@ReportSubscriptionKind.Compliance">Compliance</option>
-                            </select>
-                        </label>
-                        <label>
-                            How often
-                            <select @bind="sub.Cadence" disabled="@(!canExportReports)">
-                                <option value="@ReportSubscriptionCadence.Daily">Daily</option>
-                                <option value="@ReportSubscriptionCadence.Weekly">Weekly</option>
-                                <option value="@ReportSubscriptionCadence.Monthly">Monthly</option>
-                            </select>
-                        </label>
+                        <QSelect TValue="ReportSubscriptionKind" TItem="(ReportSubscriptionKind Value, string Text)" @bind-Value="sub.Kind"
+                                 Items="@SubscriptionKindOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" Label="Report" Disabled="@(!canExportReports)" />
+                        <QSelect TValue="ReportSubscriptionCadence" TItem="ReportSubscriptionCadence" @bind-Value="sub.Cadence"
+                                 Items="@(new[] { ReportSubscriptionCadence.Daily, ReportSubscriptionCadence.Weekly, ReportSubscriptionCadence.Monthly })"
+                                 TextSelector="@(x => x.ToString())" Label="How often" Disabled="@(!canExportReports)" />
                         <label>
                             Send at (branch time)
                             <input type="number" min="0" max="23" @bind="sub.SendAtHour" disabled="@(!canExportReports)" />
@@ -602,9 +583,8 @@
     .admin-page { padding: 0; }
 
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-    .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
     .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
     .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
@@ -637,9 +617,6 @@
         background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px;
     }
 
-    .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-    .filter-tab { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--qm-border); background: var(--qm-bg-card); color: var(--qm-text-muted); font-size: 13px; cursor: pointer; }
-    .filter-tab.active { background: var(--qm-primary); border-color: var(--qm-primary); color: var(--qm-text-on-primary); }
 
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
@@ -660,7 +637,7 @@
     .visitor-card.watchlisted { border-left-color: var(--qm-danger); }
     .visitor-main { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .visitor-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: 4px; }
+    .badge-code { font-family: monospace; font-size: 12px; color: var(--qm-text-muted); background: var(--qm-bg-secondary); padding: 2px 8px; border-radius: var(--qm-radius-md); }
     .visitor-name { font-weight: 600; color: var(--qm-text-primary); display: inline-flex; align-items: center; gap: 6px; }
     .watchlist-flag { color: var(--qm-danger); }
     .visitor-company { color: var(--qm-text-muted); font-size: 13px; }
@@ -731,6 +708,12 @@
 </style>
 
 @code {
+    private static readonly (ReportSubscriptionKind Value, string Text)[] SubscriptionKindOptions =
+    {
+        (ReportSubscriptionKind.Exceptions, "Exceptions — needs attention"), (ReportSubscriptionKind.Summary, "Summary — headline figures"),
+        (ReportSubscriptionKind.VisitorLog, "Visitor log"), (ReportSubscriptionKind.Compliance, "Compliance")
+    };
+
     // A guardian's roster card being checked in more than once on visiting day isn't inherently
     // wrong (morning drop-off + afternoon pick-up is a normal 2), but past this threshold it's
     // worth a front-desk glance rather than a silent auto-approve — see CheckInsToday on
@@ -928,7 +911,7 @@
         canExportReports = await PermissionService.HasPermissionAsync(Permissions.ReportsExport);
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.VisitorManagement))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
@@ -1739,7 +1722,7 @@
                 <style>
                     @page { size: 90mm 130mm; margin: 6mm; }
                     body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
-                    .badge { border: 2px solid #333; border-radius: 8px; padding: 16px; }
+                    .badge { border: 2px solid #333; border-radius: var(--qm-radius-md); padding: 16px; }
                     img { width: 180px; height: 180px; }
                     .name { font-size: 18px; font-weight: 700; margin-top: 10px; }
                     .code { font-size: 13px; color: #555; margin-top: 4px; }
@@ -1790,7 +1773,7 @@
                 <style>
                     @page { size: 90mm 130mm; margin: 6mm; }
                     body { font-family: Arial, sans-serif; text-align: center; margin: 0; }
-                    .badge { border: 2px solid #333; border-radius: 8px; padding: 16px; }
+                    .badge { border: 2px solid #333; border-radius: var(--qm-radius-md); padding: 16px; }
                     img { width: 180px; height: 180px; }
                     .name { font-size: 20px; font-weight: 700; margin-top: 10px; }
                     .code { font-family: monospace; font-size: 13px; color: #555; margin-top: 4px; }

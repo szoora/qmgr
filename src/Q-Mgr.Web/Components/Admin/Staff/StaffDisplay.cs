@@ -158,4 +158,31 @@ public static class StaffDisplay
     };
 
     public static string Composite(decimal? c) => c.HasValue ? c.Value.ToString("0.#") : "—";
+
+    // ---- Lessons (duty rota plan §7.3) ----
+
+    public static string LessonStatusLabel(LessonStatus s) => s switch
+    {
+        LessonStatus.Scheduled => "Scheduled",
+        LessonStatus.Unrecorded => "Unrecorded",
+        LessonStatus.Taught => "Taught",
+        LessonStatus.TaughtSelfReported => "Taught (self-reported)",
+        LessonStatus.NotTaughtSelfReported => "Not taught (self-reported)",
+        LessonStatus.MissedWithPermission => "Missed, with permission",
+        LessonStatus.MissedWithoutPermission => "Missed, without permission",
+        LessonStatus.RecoveryScheduled => "Recovery scheduled",
+        LessonStatus.Recovered => "Recovered",
+        LessonStatus.NotRecovered => "Not recovered",
+        LessonStatus.Cancelled => "Cancelled",
+        _ => s.ToString()
+    };
+
+    public static string LessonStatusVariant(LessonStatus s) => s switch
+    {
+        LessonStatus.Taught or LessonStatus.Recovered => "success",
+        LessonStatus.TaughtSelfReported or LessonStatus.RecoveryScheduled => "info",
+        LessonStatus.Unrecorded or LessonStatus.NotTaughtSelfReported or LessonStatus.MissedWithPermission => "warning",
+        LessonStatus.MissedWithoutPermission or LessonStatus.NotRecovered => "danger",
+        _ => "muted"
+    };
 }

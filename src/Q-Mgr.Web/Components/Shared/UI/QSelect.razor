@@ -22,7 +22,7 @@
                 class="q-select"
                 disabled="@Disabled"
                 @onclick="ToggleDropdown"
-                @onfocus="() => HasFocus = true"
+                @onfocus="HandleFocus"
                 @onblur="HandleBlur">
             @if (!string.IsNullOrEmpty(IconLeft))
             {
@@ -36,10 +36,11 @@
 
         @if (isOpen)
         {
-            <div class="q-select__dropdown" style="@dropdownStyle">
+            @* mousedown inside the open list must not move focus: see HandleBlur. The search box opts back out. *@
+            <div class="q-select__dropdown" style="@dropdownStyle" @onmousedown:preventDefault="true">
                 @if (Items != null && Items.Count() > SearchThreshold)
                 {
-                    <div class="q-select__search">
+                    <div class="q-select__search" @onmousedown:stopPropagation="true">
                         <i class="bi bi-search q-select__search-icon"></i>
                         <input @ref="searchInputRef"
                                type="text"
@@ -47,6 +48,7 @@
                                placeholder="Search..."
                                @bind="searchQuery"
                                @bind:event="oninput"
+                               @onfocus="HandleFocus"
                                @onblur="HandleBlur" />
                     </div>
                 }
@@ -109,8 +111,8 @@
     private string searchQuery = "";
     private bool shouldFocusSearch;
 
-    /// <summary>Swallows the single blur caused by focus moving from the trigger into our own search box — see HandleBlur.</summary>
-    private bool suppressNextBlurClose;
+    /// <summary>Bumped whenever a pending close must not happen (the list opened again, or focus came back to this component).</summary>
+    private int closeGeneration;
 
     /// <summary>
     /// Below this many items, the search box adds clutter without helping (e.g. a
@@ -250,6 +252,7 @@
 
         isOpen = !isOpen;
         searchQuery = "";
+        closeGeneration++;
 
         if (isOpen)
         {
@@ -283,7 +286,6 @@
             }
 
             shouldFocusSearch = Items != null && Items.Count() > SearchThreshold;
-            if (shouldFocusSearch) suppressNextBlurClose = true;
         }
     }
 
@@ -305,35 +307,38 @@
     }
 
     /// <summary>
-    /// BUG FOUND LIVE (2026-09-04): a select with more than <see cref="SearchThreshold"/> items
-    /// renders a search box and focuses it as soon as the dropdown opens. That focus BLURS the
-    /// trigger button, which fired this handler, which closed the dropdown 200ms later — so the
-    /// list appeared, sat there for a fifth of a second, and vanished before anyone could pick
-    /// anything. Clicks then landed on whatever field happened to be underneath.
+    /// Closing on blur, and the two bugs it has had.
     ///
-    /// It went unnoticed because until a 29-country picker was added, no select in the app had
-    /// more than six options and so none of them ever rendered a search box.
+    /// 2026-09-04: focusing the search box blurred the trigger, which closed the list 200ms after it opened.
     ///
-    /// The blur that moves focus into this component's OWN search box is not a real blur, so it
-    /// is swallowed once. Closing on an outside click still works because the search input carries
-    /// this same handler (see its @@onblur) — whichever of the two elements holds focus, losing it
-    /// closes the dropdown.
+    /// 2026-09-17, reported as "dropdowns do not fire select": pressing an option moved focus off the trigger (a div
+    /// takes no focus, so focus went to the page), and that blur closed the list 200ms later. A click is mousedown then
+    /// mouseup; when the button was held longer than 200ms, or the round trip to the server took longer, the option was
+    /// gone before mouseup and the click selected nothing. Measured with real mouse input: 60ms and 150ms presses
+    /// selected, a 300ms press did not, on every select tried. A scripted element.click() fires no mousedown and so never
+    /// showed it.
+    ///
+    /// Now a mousedown inside the open list is prevented by default, so focus never leaves and no blur happens; the
+    /// search box stops that from reaching the list so the caret can still be placed. A focus event on this component's
+    /// own trigger or search box cancels any close still pending (focus moving between them fires blur then focus, in
+    /// order, on the server). What closes the list is a real blur: a click elsewhere, or Tab.
     /// </summary>
+    private void HandleFocus()
+    {
+        HasFocus = true;
+        closeGeneration++;
+    }
+
     private void HandleBlur()
     {
         HasFocus = false;
+        var generation = closeGeneration;
 
-        if (suppressNextBlurClose)
-        {
-            suppressNextBlurClose = false;
-            return;
-        }
-
-        // Delay closing to allow click on dropdown item
-        _ = Task.Delay(200).ContinueWith(_ =>
+        _ = Task.Delay(150).ContinueWith(_ =>
         {
             InvokeAsync(() =>
             {
+                if (generation != closeGeneration || !isOpen) return;
                 isOpen = false;
                 StateHasChanged();
             });

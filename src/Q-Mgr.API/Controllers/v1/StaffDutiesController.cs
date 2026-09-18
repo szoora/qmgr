@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -44,6 +45,7 @@ public class StaffDutiesController : ControllerBase
     private readonly IStaffAlertService _alerts;
     private readonly IActivityLogger _activity;
     private readonly IStaffPerformancePolicyService _policy;
+    private readonly QMgr.Application.Interfaces.INotificationService _notifications;
     private readonly ILogger<StaffDutiesController> _logger;
 
     private const int MaxRangeDays = 400;
@@ -55,9 +57,11 @@ public class StaffDutiesController : ControllerBase
         IStaffAlertService alerts,
         IActivityLogger activity,
         IStaffPerformancePolicyService policy,
+        QMgr.Application.Interfaces.INotificationService notifications,
         ILogger<StaffDutiesController> logger)
     {
         _policy = policy;
+        _notifications = notifications;
         _context = context;
         _tenantAccessor = tenantAccessor;
         _scope = scope;
@@ -128,7 +132,7 @@ public class StaffDutiesController : ControllerBase
     /// </summary>
     [HttpGet("branches/{branchId:guid}/staff/duties")]
     [ProducesResponseType(typeof(List<StaffDutyDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetDuties(Guid branchId, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] bool includeCancelled = false)
+    public async Task<IActionResult> GetDuties(Guid branchId, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] bool includeCancelled = false, [FromQuery] DutyKind? kind = null)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
@@ -148,6 +152,7 @@ public class StaffDutiesController : ControllerBase
             .Where(d => d.OrganizationId == organizationId && d.BranchId == branchId
                         && d.StartsAt < end && d.EndsAt >= start);
         if (!includeCancelled || !canManage) query = query.Where(d => d.IsActive);
+        if (kind is { } k) query = query.Where(d => d.Kind == k);
 
         var duties = await query.OrderBy(d => d.StartsAt).ToListAsync();
 
@@ -156,13 +161,18 @@ public class StaffDutiesController : ControllerBase
             var visible = await _scope.GetVisibleUserIdsAsync(branchId);
             if (visible != null)
                 duties = duties.Where(d => d.ExpectedUserIds == null
+                                           || d.Kind == DutyKind.Rota
                                            || d.ExpectedUserIds.Any(visible.Contains)
                                            || d.RecorderUserIds.Contains(me)
+                                           || d.SupervisorUserIds.Contains(me)
                                            || d.CreatedByUserId == me).ToList();
         }
         else
         {
-            duties = duties.Where(d => d.ExpectedUserIds == null || d.ExpectedUserIds.Contains(me) || d.RecorderUserIds.Contains(me)).ToList();
+            // The duty rota is a displayed school record (MoES BRMS: "a displayed duty roster"), so every member of
+            // the branch sees who is on duty when: names and dates only; reports and acknowledgements stay gated.
+            duties = duties.Where(d => d.ExpectedUserIds == null || d.Kind == DutyKind.Rota || d.ExpectedUserIds.Contains(me)
+                                       || d.RecorderUserIds.Contains(me) || d.SupervisorUserIds.Contains(me)).ToList();
         }
 
         return Ok(await MapManyAsync(duties, organizationId, branchId, me, canManage));
@@ -188,8 +198,11 @@ public class StaffDutiesController : ControllerBase
         _context.StaffDuties.Add(duty);
         await _context.SaveChangesAsync();
 
+        if (duty.Kind == DutyKind.Rota)
+            await NotifyRotaChangesAsync(duty, Array.Empty<Guid>(), Array.Empty<Guid>());
+
         await _activity.RecordAsync(ActivityActions.DutyCreated, nameof(StaffDuty), duty.Id, null,
-            $"Duty \"{duty.Title}\" created for {duty.StartsAt:dd MMM yyyy HH:mm} UTC ({(duty.ExpectedUserIds == null ? "everyone" : $"{duty.ExpectedUserIds.Length} expected")}, {duty.RecorderUserIds.Length} recorder(s))",
+            string.Create(CultureInfo.InvariantCulture, $"Duty \"{duty.Title}\" created for {duty.StartsAt:dd MMM yyyy HH:mm} UTC ({(duty.ExpectedUserIds == null ? "everyone" : $"{duty.ExpectedUserIds.Length} expected")}, {duty.RecorderUserIds.Length} recorder(s))"),
             new { duty.ParameterId, duty.StartsAt, duty.EndsAt, Expected = duty.ExpectedUserIds?.Length, Recorders = duty.RecorderUserIds.Length }, branchId, organizationId);
 
         var dto = await MapOneAsync(duty.Id, organizationId, branchId);
@@ -213,12 +226,17 @@ public class StaffDutiesController : ControllerBase
             return Problem400("This duty's register is closed", "A duty cannot be edited once its register has been closed. Reopen the register first, or duplicate the duty.");
 
         var before = new { duty.Title, duty.StartsAt, duty.EndsAt, duty.ParameterId, Expected = duty.ExpectedUserIds?.Length, Recorders = duty.RecorderUserIds.Length };
+        var expectedBefore = duty.ExpectedUserIds?.ToArray() ?? Array.Empty<Guid>();
+        var supervisorsBefore = duty.SupervisorUserIds.ToArray();
         var error = await ApplyAsync(duty, request, organizationId);
         if (error != null) return error;
 
         duty.UpdatedAt = DateTime.UtcNow;
         duty.UpdatedBy = CurrentUserId();
         await _context.SaveChangesAsync();
+
+        if (duty.Kind == DutyKind.Rota)
+            await NotifyRotaChangesAsync(duty, expectedBefore, supervisorsBefore);
 
         await _activity.RecordAsync(ActivityActions.DutyUpdated, nameof(StaffDuty), duty.Id, null,
             $"Duty \"{duty.Title}\" updated",
@@ -251,7 +269,7 @@ public class StaffDutiesController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _activity.RecordAsync(ActivityActions.DutyCancelled, nameof(StaffDuty), duty.Id, null,
-            $"Duty \"{duty.Title}\" on {duty.StartsAt:dd MMM yyyy} cancelled", null, branchId, organizationId);
+            string.Create(CultureInfo.InvariantCulture, $"Duty \"{duty.Title}\" on {duty.StartsAt:dd MMM yyyy} cancelled"), null, branchId, organizationId);
 
         return NoContent();
     }
@@ -283,17 +301,59 @@ public class StaffDutiesController : ControllerBase
             EndsAt = newStart + (source.EndsAt - source.StartsAt),
             ExpectedUserIds = source.ExpectedUserIds?.ToArray(),
             RecorderUserIds = source.RecorderUserIds.ToArray(),
+            Kind = source.Kind == DutyKind.Lesson ? DutyKind.Session : source.Kind,
+            SupervisorUserIds = source.SupervisorUserIds.ToArray(),
+            ReportCadence = source.ReportCadence,
+            ReportDueLocalTime = source.ReportDueLocalTime,
             CreatedByUserId = CurrentUserId(),
             CreatedBy = CurrentUserId()
         };
         _context.StaffDuties.Add(duty);
         await _context.SaveChangesAsync();
 
+        if (duty.Kind == DutyKind.Rota)
+            await NotifyRotaChangesAsync(duty, Array.Empty<Guid>(), Array.Empty<Guid>());
+
         await _activity.RecordAsync(ActivityActions.DutyCreated, nameof(StaffDuty), duty.Id, null,
-            $"Duty \"{duty.Title}\" duplicated to {duty.StartsAt:dd MMM yyyy HH:mm} UTC",
+            string.Create(CultureInfo.InvariantCulture, $"Duty \"{duty.Title}\" duplicated to {duty.StartsAt:dd MMM yyyy HH:mm} UTC"),
             new { DuplicatedFrom = source.Id, duty.StartsAt, duty.EndsAt }, branchId, organizationId);
 
         return CreatedAtAction(nameof(GetDuties), new { branchId }, await MapOneAsync(duty.Id, organizationId, branchId));
+    }
+
+    // ---- Acknowledgement (plan §4.2) ------------------------------------------------------------------
+
+    /// <summary>
+    /// "Seen, I'm on duty". Only a person the rota slot names may acknowledge it, and only for themselves; anyone else
+    /// gets 404. The first timestamp stands, and the write is one atomic jsonb merge guarded by jsonb_exists (the
+    /// notice acknowledgement race, found by the e2e on 2026-09-16). Acknowledging stops the pre-duty ladder for them.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/staff/duties/{dutyId:guid}/acknowledge")]
+    [ProducesResponseType(typeof(StaffDutyDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AcknowledgeDuty(Guid branchId, Guid dutyId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var me = CurrentUserId();
+        var duty = await _context.StaffDuties.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == dutyId && d.BranchId == branchId && d.OrganizationId == organizationId && d.IsActive);
+        if (duty == null || duty.Kind != DutyKind.Rota || duty.ExpectedUserIds == null || !duty.ExpectedUserIds.Contains(me))
+            return NotFoundDuty();
+
+        var key = me.ToString();
+        var stamp = DateTime.UtcNow.ToString("O");
+        // Raw SQL: the table is schema-qualified explicitly (CLAUDE.md, "Raw SQL must schema-qualify").
+        var written = await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE qmgr.\"StaffDuties\" SET \"Acknowledgements\" = COALESCE(\"Acknowledgements\", '{{}}'::jsonb) || jsonb_build_object({key}::text, {stamp}::text) WHERE \"Id\" = {duty.Id} AND NOT jsonb_exists(COALESCE(\"Acknowledgements\", '{{}}'::jsonb), {key}::text)");
+
+        if (written > 0)
+            await _activity.RecordAsync(ActivityActions.DutyAcknowledged, nameof(StaffDuty), duty.Id, me,
+                $"Duty \"{duty.Title}\" acknowledged", null, branchId, organizationId);
+
+        return Ok(await MapOneAsync(duty.Id, organizationId, branchId));
     }
 
     // ---- The register -------------------------------------------------------------------------------
@@ -372,6 +432,11 @@ public class StaffDutiesController : ControllerBase
                 return Problem400($"{(names[entry.UserId] is { Length: > 0 } n ? n : "That person")} is not expected at this duty", "A register can only mark the people the duty expects.");
             if (entry.Outcome == DutyOutcome.NotApplicable)
                 return Problem400("Choose an outcome for every entry", "Present, Late, Absent, Excused, Recovered, Completed or Not completed.");
+            // Plan §4.4: a rota slot is closed out Completed or Not completed "with a reason", per person.
+            if (duty.Kind == DutyKind.Rota && entry.Outcome is not (DutyOutcome.Completed or DutyOutcome.NotCompleted or DutyOutcome.Excused))
+                return Problem400("A rota slot is closed out as Completed, Not completed or Excused");
+            if (duty.Kind == DutyKind.Rota && entry.Outcome == DutyOutcome.NotCompleted && string.IsNullOrWhiteSpace(entry.Note))
+                return Problem400($"Say why {(names[entry.UserId] is { Length: > 0 } who ? who : "this person")} did not complete the duty", "Not completed needs a reason.");
             // INTEGRITY (duty rota plan §7.3, §13.8): nobody marks their own attendance — a register is somebody
             // else's account of who was there. The one exception is a Lesson duty, where the teacher's own
             // "taught" is recorded as a SELF-REPORT for a lesson supervisor to confirm or override.
@@ -549,16 +614,40 @@ public class StaffDutiesController : ControllerBase
         if (parameter.Kind is not (ParameterKind.Attendance or ParameterKind.Duty))
             return Problem400("A duty needs an Attendance or Duty parameter", $"\"{parameter.Name}\" is a {parameter.Kind} parameter; its records are logged directly, not through a register.");
 
+        // Kinds (plan §3.1). A lesson is materialised from the published timetable, never typed in; a duty keeps the
+        // kind it was created with, because its reminders, register and reports all follow from it.
+        if (request.Kind == DutyKind.Lesson)
+            return Problem400("Lessons come from the timetable", "Publish a timetable to schedule lessons; they cannot be created as duties by hand.");
+        var existing = _context.Entry(duty).State is EntityState.Unchanged or EntityState.Modified;
+        if (existing && duty.Kind != request.Kind)
+            return Problem400("A duty's kind cannot be changed", "Cancel it and create the other kind instead.");
+        var isRota = request.Kind == DutyKind.Rota;
+
         var startsAt = DateTime.SpecifyKind(request.StartsAt, DateTimeKind.Utc);
         var endsAt = DateTime.SpecifyKind(request.EndsAt, DateTimeKind.Utc);
         if (endsAt <= startsAt) return Problem400("The duty must end after it starts");
-        if ((endsAt - startsAt).TotalDays > 14) return Problem400("A single duty cannot span more than 14 days", "Create one duty per session.");
+        if (!isRota && (endsAt - startsAt).TotalDays > 14) return Problem400("A single duty cannot span more than 14 days", "Create one duty per session, or make it a rota slot.");
+        if (isRota && (endsAt - startsAt).TotalDays > 92) return Problem400("A rota slot cannot span more than 92 days", "Generate a rota of shorter slots instead.");
 
         var title = request.Title?.Trim();
         if (string.IsNullOrWhiteSpace(title)) return Problem400("A title is required");
 
         var expected = request.ExpectedUserIds is { Count: > 0 } ? request.ExpectedUserIds.Distinct().ToList() : null;
-        var recorders = (request.RecorderUserIds ?? new List<Guid>()).Distinct().ToList();
+        var supervisors = isRota ? (request.SupervisorUserIds ?? new List<Guid>()).Distinct().ToList() : new List<Guid>();
+        // The administrators on duty take the slot's close-out register (plan §4.4), so they are its recorders too.
+        var recorders = (request.RecorderUserIds ?? new List<Guid>()).Concat(supervisors).Distinct().ToList();
+        if (isRota && expected == null)
+            return Problem400("Name the people on duty", "A rota slot is a named person's duty; it cannot expect everyone.");
+        if (!isRota && request.SupervisorUserIds is { Count: > 0 })
+            return Problem400("Only a rota slot has administrators on duty");
+
+        TimeOnly? dueTime = null;
+        if (isRota && !string.IsNullOrWhiteSpace(request.ReportDueLocalTime))
+        {
+            dueTime = StaffRota.ParseLocalTime(request.ReportDueLocalTime);
+            if (dueTime == null) return Problem400("The report due time must be a 24-hour time such as 18:00");
+        }
+        if (request.ReportCadence is { } cadence && !Enum.IsDefined(cadence)) return Problem400("Unrecognised report cadence");
 
         var referenced = (expected ?? new List<Guid>()).Concat(recorders).Distinct().ToList();
         if (referenced.Count > 0)
@@ -582,12 +671,31 @@ public class StaffDutiesController : ControllerBase
         duty.EndsAt = endsAt;
         duty.ExpectedUserIds = expected?.ToArray();
         duty.RecorderUserIds = recorders.ToArray();
+        duty.Kind = request.Kind;
+        duty.SupervisorUserIds = supervisors.ToArray();
+        if (isRota)
+        {
+            var policy = await _policy.GetAsync(organizationId);
+            duty.ReportCadence = request.ReportCadence ?? StaffRota.DefaultCadence(policy, startsAt, endsAt);
+            duty.ReportDueLocalTime = dueTime;
+            // Somebody taken off the slot no longer has an acknowledgement on it.
+            var acks = StaffPerformanceMapping.ParseAcknowledgements(duty.Acknowledgements);
+            if (acks.Keys.Any(id => !expected!.Contains(id)))
+                duty.Acknowledgements = StaffPerformanceMapping.SerializeAcknowledgements(acks.Where(a => expected!.Contains(a.Key)).ToDictionary(a => a.Key, a => a.Value));
+        }
+        else
+        {
+            duty.ReportCadence = ReportCadence.None;
+            duty.ReportDueLocalTime = null;
+        }
         // A rescheduled duty deserves a fresh reminder ladder (duty rota plan §4.2: rescheduling resets); a chase
         // for a register on the old end time is moot. Only a real move resets — editing a title must not re-page.
         if (moved && startsAt > DateTime.UtcNow)
         {
             duty.ReminderSentAt = null;
             duty.ReminderStage = 0;
+            // Plan §4.2: rescheduling resets the ladder AND the acknowledgements; "seen" was for the old dates.
+            duty.Acknowledgements = "{}";
         }
         if (endMoved && endsAt > DateTime.UtcNow) duty.RegisterChaseSentAt = null;
         return null;
@@ -598,6 +706,22 @@ public class StaffDutiesController : ControllerBase
     /// half of dp rounded toward zero (never below 0), Absent/NotCompleted −dp, Excused 0. The
     /// magnitude is capped by MaxPointsPerEntry like every other record.
     /// </summary>
+    /// <summary>Tells the people newly placed on a rota slot, and its new supervisors. Never fails the save.</summary>
+    private async Task NotifyRotaChangesAsync(StaffDuty duty, IReadOnlyCollection<Guid> expectedBefore, IReadOnlyCollection<Guid> supervisorsBefore)
+    {
+        try
+        {
+            if (duty.EndsAt < DateTime.UtcNow) return;
+            var zone = AppointmentScheduling.ResolveTimeZone(await _context.Branches.Where(b => b.Id == duty.BranchId).Select(b => b.Timezone).FirstOrDefaultAsync());
+            await StaffRota.NotifyAssignedAsync(_notifications, _logger, duty, (duty.ExpectedUserIds ?? Array.Empty<Guid>()).Except(expectedBefore), zone, supervising: false);
+            await StaffRota.NotifyAssignedAsync(_notifications, _logger, duty, duty.SupervisorUserIds.Except(supervisorsBefore), zone, supervising: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Rota assignment notices failed for duty {DutyId}", duty.Id);
+        }
+    }
+
     internal static int? PointsFor(PerformanceParameter parameter, DutyOutcome outcome)
     {
         var dp = Math.Abs(parameter.DefaultPoints ?? 0);
@@ -684,7 +808,11 @@ public class StaffDutiesController : ControllerBase
                 .Where(m => mediaIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.FileUrl);
 
         var names = await StaffLookups.LoadNamesAsync(_context,
-            duties.SelectMany(d => d.RecorderUserIds.Select(id => (Guid?)id)).Concat(duties.Select(d => d.RegisterClosedByUserId)), default);
+            duties.SelectMany(d => d.RecorderUserIds.Select(id => (Guid?)id))
+                .Concat(duties.Select(d => d.RegisterClosedByUserId))
+                .Concat(duties.SelectMany(d => d.SupervisorUserIds.Select(id => (Guid?)id)))
+                // Rota slots name their people; a Session duty's expected list can be the whole branch and is counted, not named.
+                .Concat(duties.Where(d => d.Kind == DutyKind.Rota).SelectMany(d => (d.ExpectedUserIds ?? Array.Empty<Guid>()).Select(id => (Guid?)id))), default);
 
         return duties.Select(d =>
         {

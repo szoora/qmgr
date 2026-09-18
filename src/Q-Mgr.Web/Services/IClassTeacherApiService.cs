@@ -26,6 +26,15 @@ public interface IClassTeacherApiService
 
     Task<ClassTeacherDto> AssignAsync(Guid branchId, AssignClassTeacherRequest request);
 
+    /// <summary>A subject teacher: the Teaching tier for that class (roster basics, never welfare).</summary>
+    Task<ClassTeacherDto> AssignSubjectTeacherAsync(Guid branchId, AssignSubjectTeacherRequest request);
+
+    /// <summary>Changes the planned periods a week on a live subject-teacher assignment. Everything else is end-and-reassign.</summary>
+    Task<ClassTeacherDto> UpdatePeriodsAsync(Guid branchId, ClassTeacherDto assignment, int? periodsPerWeek);
+
+    /// <summary>What a teacher teaches, grouped by subject. Null <paramref name="userId"/> is the caller. Somebody out of scope is a 404, thrown.</summary>
+    Task<List<TeachingSummaryDto>> GetTeachingAsync(Guid branchId, Guid? userId = null);
+
     /// <summary>Ends an assignment. Never deletes it — the history of who could see a child's file is the audit answer.</summary>
     Task<ClassTeacherDto> EndAsync(Guid branchId, Guid assignmentId, EndClassTeacherRequest request);
 
@@ -107,6 +116,30 @@ public class ClassTeacherApiService : IClassTeacherApiService
         var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/class-teachers", request, _jsonOptions);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
         return (await response.Content.ReadFromJsonAsync<ClassTeacherDto>(_jsonOptions))!;
+    }
+
+    public async Task<ClassTeacherDto> AssignSubjectTeacherAsync(Guid branchId, AssignSubjectTeacherRequest request)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/v1/branches/{branchId}/class-teachers/subject-teachers", request, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<ClassTeacherDto>(_jsonOptions))!;
+    }
+
+    public async Task<ClassTeacherDto> UpdatePeriodsAsync(Guid branchId, ClassTeacherDto assignment, int? periodsPerWeek)
+    {
+        var response = await _httpClient.PatchAsJsonAsync($"api/v1/branches/{branchId}/class-teachers/{assignment.Id}/periods",
+            new UpdateSubjectPeriodsRequest { PeriodsPerWeek = periodsPerWeek }, _jsonOptions);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return (await response.Content.ReadFromJsonAsync<ClassTeacherDto>(_jsonOptions))!;
+    }
+
+    public async Task<List<TeachingSummaryDto>> GetTeachingAsync(Guid branchId, Guid? userId = null)
+    {
+        var url = $"api/v1/branches/{branchId}/class-teachers/teaching";
+        if (userId is { } id) url += $"?userId={id}";
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ApiErrorService.GetErrorMessageAsync(response));
+        return await response.Content.ReadFromJsonAsync<List<TeachingSummaryDto>>(_jsonOptions) ?? new();
     }
 
     public async Task<ClassTeacherDto> EndAsync(Guid branchId, Guid assignmentId, EndClassTeacherRequest request)

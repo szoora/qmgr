@@ -1,3 +1,4 @@
+using System.Globalization;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Application.Services;
@@ -195,20 +196,20 @@ public class VisitorReportSubscriptionJob
                     VisitorsController.ReadRetentionSettings(orgSettings),
                     VisitorsController.ReadRetentionEvidence(orgSettings));
 
-                subject = $"Visitor compliance — {scope.Name} — {from:d MMM} to {to:d MMM}";
+                subject = string.Create(CultureInfo.InvariantCulture, $"Visitor compliance — {scope.Name} — {from:d MMM} to {to:d MMM}");
                 html = VisitorReportEmail.RenderCompliance(compliance);
                 break;
 
             case ReportSubscriptionKind.VisitorLog:
                 var logReport = await _reporting.BuildReportAsync(scope, filter);
                 var csv = await _reporting.BuildLogCsvAsync(scope, filter);
-                subject = $"Visitor log — {scope.Name} — {from:d MMM} to {to:d MMM}";
+                subject = string.Create(CultureInfo.InvariantCulture, $"Visitor log — {scope.Name} — {from:d MMM} to {to:d MMM}");
                 html = VisitorReportEmail.RenderVisitorLog(logReport, csv);
                 break;
 
             default:
                 var summary = await _reporting.BuildReportAsync(scope, filter);
-                subject = $"Visitor summary — {scope.Name} — {from:d MMM} to {to:d MMM}";
+                subject = string.Create(CultureInfo.InvariantCulture, $"Visitor summary — {scope.Name} — {from:d MMM} to {to:d MMM}");
                 html = VisitorReportEmail.RenderSummary(summary);
                 break;
         }

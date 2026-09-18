@@ -82,6 +82,11 @@ public class QMgrDbContext : DbContext
     public DbSet<QMgr.Domain.Entities.Staff.Subject> Subjects => Set<QMgr.Domain.Entities.Staff.Subject>();
     public DbSet<QMgr.Domain.Entities.Staff.PerformanceParameter> PerformanceParameters => Set<QMgr.Domain.Entities.Staff.PerformanceParameter>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffDuty> StaffDuties => Set<QMgr.Domain.Entities.Staff.StaffDuty>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReport> StaffDutyReports => Set<QMgr.Domain.Entities.Staff.StaffDutyReport>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportNote> StaffDutyReportNotes => Set<QMgr.Domain.Entities.Staff.StaffDutyReportNote>();
+    public DbSet<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment> StaffDutyReportAttachments => Set<QMgr.Domain.Entities.Staff.StaffDutyReportAttachment>();
+    public DbSet<QMgr.Domain.Entities.Staff.Timetable> Timetables => Set<QMgr.Domain.Entities.Staff.Timetable>();
+    public DbSet<QMgr.Domain.Entities.Staff.TimetableLesson> TimetableLessons => Set<QMgr.Domain.Entities.Staff.TimetableLesson>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceRecord> StaffPerformanceRecords => Set<QMgr.Domain.Entities.Staff.StaffPerformanceRecord>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceNote> StaffPerformanceNotes => Set<QMgr.Domain.Entities.Staff.StaffPerformanceNote>();
     public DbSet<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment> StaffPerformanceAttachments => Set<QMgr.Domain.Entities.Staff.StaffPerformanceAttachment>();

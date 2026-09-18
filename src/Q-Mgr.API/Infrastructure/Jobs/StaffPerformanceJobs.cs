@@ -56,6 +56,8 @@ public class StaffPerformanceJobs
         return _moduleActive[organizationId] = await _modules.IsModuleActiveAsync(organizationId, ModuleCodes.StudentWelfare);
     }
 
+    private readonly ITimetableSettingsService _timetableSettings;
+
     public StaffPerformanceJobs(
         QMgrDbContext context,
         INotificationService notifications,
@@ -63,8 +65,10 @@ public class StaffPerformanceJobs
         IStaffScoringService scoring,
         INotificationPreferenceResolver preferences,
         IModuleAccessService modules,
-        ILogger<StaffPerformanceJobs> logger)
+        ILogger<StaffPerformanceJobs> logger,
+        ITimetableSettingsService timetableSettings)
     {
+        _timetableSettings = timetableSettings;
         _context = context;
         _notifications = notifications;
         _policy = policy;
@@ -127,7 +131,7 @@ public class StaffPerformanceJobs
                             approversByOrg[a.OrganizationId] = approvers = await StaffLookups.UsersWithPermissionAsync(_context, a.OrganizationId, Permissions.StaffAppraisalsApprove);
                         foreach (var approver in approvers)
                             recipients.Add((approver, a.Stage == AppraisalStage.Appealed ? $"{subjectName}'s appeal awaits moderation" : $"{subjectName}'s appraisal awaits moderation and signing",
-                                $"{a.PeriodKey}: waiting since {(a.UpdatedAt ?? a.CreatedAt):dd MMM yyyy}.",
+                                string.Create(CultureInfo.InvariantCulture, $"{a.PeriodKey}: waiting since {(a.UpdatedAt ?? a.CreatedAt):dd MMM yyyy}."),
                                 "/admin/staff/appraisals"));
                         break;
                 }
@@ -270,7 +274,7 @@ public class StaffPerformanceJobs
                                 Priority = NotificationPriority.Low,
                                 Channels = NotificationChannel.InApp | NotificationChannel.Email,
                                 EventKey = NotificationEventKeys.StaffWeeklyDigest,
-                                EmailSubject = $"Your weekly digest — {branch.Name}, week of {local:dd MMM yyyy}",
+                                EmailSubject = string.Create(CultureInfo.InvariantCulture, $"Your weekly digest — {branch.Name}, week of {local:dd MMM yyyy}"),
                                 EmailHtmlBody = html.Html,
                                 ActionUrl = "/portal",
                                 IconClass = "envelope-paper"
@@ -322,7 +326,7 @@ public class StaffPerformanceJobs
             .Include(d => d.Parameter)
             .Where(d => d.OrganizationId == organizationId && d.BranchId == branchId && d.IsActive
                         && d.StartsAt >= now && d.StartsAt < now.AddDays(7)
-                        && (d.ExpectedUserIds == null || d.ExpectedUserIds.Contains(userId) || d.RecorderUserIds.Contains(userId)))
+                        && (d.ExpectedUserIds == null || d.ExpectedUserIds.Contains(userId) || d.RecorderUserIds.Contains(userId) || d.SupervisorUserIds.Contains(userId)))
             .OrderBy(d => d.StartsAt)
             .Take(15)
             .ToListAsync();
@@ -383,7 +387,7 @@ public class StaffPerformanceJobs
                     EmailTemplates.P(local.ToString("ddd dd MMM HH:mm", CultureInfo.InvariantCulture)),
                     $"<strong>{EmailTemplates.P(d.Title)}</strong><br><span style=\"color:{EmailTemplates.ReportMuted}\">{EmailTemplates.P(d.Parameter?.Name ?? "")}</span>",
                     EmailTemplates.P(d.Location ?? ""),
-                    EmailTemplates.P(d.RecorderUserIds.Contains(userId) ? "Take the register" : "Expected")
+                    EmailTemplates.P(d.Kind == DutyKind.Rota ? (d.SupervisorUserIds.Contains(userId) ? "Supervising" : "On duty") : d.RecorderUserIds.Contains(userId) ? "Take the register" : "Expected")
                 };
             }), upcoming.Count, "Nothing scheduled for you this week."));
 
@@ -396,7 +400,7 @@ public class StaffPerformanceJobs
 
         var html = EmailTemplates.ReportShell(
             $"Your weekly digest — {branchName}",
-            $"{orgName} · {period.Name} · {(string.IsNullOrWhiteSpace(firstName) ? "" : $"for {firstName} · ")}sent {TimeZoneInfo.ConvertTimeFromUtc(now, zone):dd MMM yyyy}",
+            string.Create(CultureInfo.InvariantCulture, $"{orgName} · {period.Name} · {(string.IsNullOrWhiteSpace(firstName) ? "" : $"for {firstName} · ")}sent {TimeZoneInfo.ConvertTimeFromUtc(now, zone):dd MMM yyyy}"),
             body.ToString(),
             "Sent by Q-Mgr Staff Performance. Turn this digest off under Notification preferences. Times are shown in the branch's local timezone.");
 
@@ -463,9 +467,9 @@ public class StaffPerformanceJobs
                     body.Append(RenderBranchSummary(branch.Name, report));
                 }
 
-                var subject = $"Staff performance — {org.BrandName ?? org.Name} — {lastMonth:MMMM yyyy}";
+                var subject = string.Create(CultureInfo.InvariantCulture, $"Staff performance — {org.BrandName ?? org.Name} — {lastMonth:MMMM yyyy}");
                 var html = EmailTemplates.ReportShell(
-                    $"Staff performance summary — {lastMonth:MMMM yyyy}",
+                    string.Create(CultureInfo.InvariantCulture, $"Staff performance summary — {lastMonth:MMMM yyyy}"),
                     $"{org.BrandName ?? org.Name} · {period.Name} to date · {branches.Count} branch(es)",
                     body.ToString(),
                     "Sent by Q-Mgr Staff Performance to holders of staff.reports.view on the first business day of each month.");
@@ -480,7 +484,7 @@ public class StaffPerformanceJobs
                             UserId = userId,
                             OrganizationId = org.Id,
                             BranchId = branches[0].Id,
-                            Title = $"Monthly staff performance summary — {lastMonth:MMMM yyyy}",
+                            Title = string.Create(CultureInfo.InvariantCulture, $"Monthly staff performance summary — {lastMonth:MMMM yyyy}"),
                             Message = $"Band distribution, attendance by department, registers not taken, appraisals by stage, observer dispersion and coverage for {period.Name}.",
                             Type = NotificationType.StaffPerformance,
                             Priority = NotificationPriority.Normal,
@@ -511,6 +515,125 @@ public class StaffPerformanceJobs
         }
 
         _logger.LogInformation("Staff monthly summary sweep: {Sent} organization(s) sent", sentOrgs);
+    }
+
+    // ---- The weekly lesson analysis (duty rota plan §11) -------------------------------------------------
+
+    /// <summary>
+    /// MoES's deputy-analyses-weekly step, on Monday at the policy's digest hour (branch-local): last week's lessons for each
+    /// holder of <c>timetable.lessons.flag</c> or <c>staff.reports.view</c>, IN THAT PERSON'S STAFF SCOPE — a head of
+    /// Mathematics reads Mathematics, computed with the same scope rule a request uses. Nobody is sent a sheet with
+    /// nothing on it. Once a week: skipped for anyone who already has this week's.
+    /// </summary>
+    [AutomaticRetry(Attempts = 1)]
+    [DisableConcurrentExecution(timeoutInSeconds: 1800)]
+    /// <param name="force">
+    /// Skips the Monday-and-after-the-digest-hour gate, so the analysis can be exercised end to end on any day.
+    /// The recurring registration passes false; only the Development-only trigger on TeachingReportsController
+    /// passes true. It does NOT skip the once-a-week check, so a forced run still cannot double-send.
+    /// </param>
+    /// <param name="weekStartOverride">
+    /// With <paramref name="force"/>, the Monday to report the week BEFORE. Development only, and only so the
+    /// analysis can be exercised against a week that actually has lessons — the content and the delivery are
+    /// what went unexercised, not the date arithmetic. Null keeps the real behaviour (last week).
+    /// </param>
+    public async Task SendWeeklyLessonAnalysisAsync(bool force = false, DateOnly? weekStartOverride = null)
+    {
+        var now = DateTime.UtcNow;
+        var branches = await _context.Timetables.IgnoreQueryFilters().AsNoTracking()
+            .Where(t => t.Status == TimetableStatus.Published)
+            .Select(t => new { t.BranchId, t.OrganizationId }).Distinct().ToListAsync();
+
+        foreach (var b in branches)
+        {
+            try
+            {
+                if (!await ModuleActiveAsync(b.OrganizationId)) continue;
+                var branch = await _context.Branches.IgnoreQueryFilters().AsNoTracking().Where(x => x.Id == b.BranchId && x.IsActive).Select(x => new { x.Name, x.Timezone }).FirstOrDefaultAsync();
+                if (branch == null) continue;
+                var policy = await _policy.GetAsync(b.OrganizationId);
+                var zone = AppointmentScheduling.ResolveTimeZone(branch.Timezone);
+                var local = TimeZoneInfo.ConvertTimeFromUtc(now, zone);
+                if (!force && (local.DayOfWeek != DayOfWeek.Monday || local.Hour < policy.DigestHour)) continue;
+
+                // The Monday of the local week, never "today". On the scheduled run the gate above already
+                // guarantees today IS Monday and this is the same date; on a forced run it is what keeps
+                // "last week" meaning Monday-to-Sunday rather than a window ending on whatever day it ran.
+                var anchorMonday = DateOnly.FromDateTime(local.Date.AddDays(-(((int)local.DayOfWeek + 6) % 7)));
+                var thisMonday = force && weekStartOverride is { } w ? w : anchorMonday;
+                // The once-a-week window is anchored to the REAL current week, never to an override: the
+                // override chooses which week is reported, not when this person last heard from us. Anchoring
+                // it to an overridden (future) Monday would exclude the messages the run had just sent, and
+                // the guard would let a second run send again.
+                var weekStartUtc = TimeZoneInfo.ConvertTimeToUtc(anchorMonday.ToDateTime(TimeOnly.MinValue), zone);
+                var lastWeek = new PerformancePeriodDto { Key = "last-week", Name = "Last week", Start = thisMonday.AddDays(-7), End = thisMonday.AddDays(-1) };
+
+                var flaggers = await StaffLookups.UsersWithPermissionAsync(_context, b.OrganizationId, Permissions.TimetableLessonsFlag);
+                var readers = await StaffLookups.UsersWithPermissionAsync(_context, b.OrganizationId, Permissions.StaffReportsView);
+                var candidates = flaggers.Concat(readers).Distinct().ToList();
+                var recipients = await StaffLookups.BranchStaff(_context, b.OrganizationId, b.BranchId).Where(u => candidates.Contains(u.Id)).Select(u => u.Id).ToListAsync();
+                var already = (await _context.Notifications.IgnoreQueryFilters().AsNoTracking()
+                    .Where(n => n.UserId != null && recipients.Contains(n.UserId.Value) && n.EventKey == NotificationEventKeys.StaffLessonAnalysis && n.CreatedAt >= weekStartUtc)
+                    .Select(n => n.UserId!.Value).ToListAsync()).ToHashSet();
+                var departments = await StaffLookups.LoadDepartmentNamesAsync(_context, b.OrganizationId);
+
+                foreach (var userId in recipients.Where(r => !already.Contains(r)))
+                {
+                    var visible = await StaffScopeService.VisibleUserIdsForAsync(_context, userId);
+                    var scopedNames = visible == null ? new List<string>() : await _context.Departments.IgnoreQueryFilters().AsNoTracking()
+                        .Where(d => d.IsActive && (d.HeadUserId == userId || d.DeputyHeadUserId == userId)).Select(d => d.Name).ToListAsync();
+                    var report = await TeachingReportBuilder.BuildAsync(_context, _timetableSettings, b.OrganizationId, b.BranchId, lastWeek, policy, visible, scopedNames,
+                        includeTimetableHealth: false, zone, now);
+                    var t = report.LessonsTotal;
+                    // A teacher never reads their own lessons back as an "analysis": a scope of only themselves is not oversight.
+                    if (t.Scheduled == 0 || (visible != null && visible.Count <= 1)) continue;
+
+                    var body = new System.Text.StringBuilder();
+                    if (report.ScopedToDepartments.Count > 0)
+                        body.Append(EmailTemplates.ReportCallout($"These figures cover {string.Join(", ", report.ScopedToDepartments)} only."));
+                    body.Append(EmailTemplates.ReportSection("Lessons"));
+                    body.Append(EmailTemplates.ReportStat("Scheduled", t.Scheduled.ToString(CultureInfo.InvariantCulture)));
+                    body.Append(EmailTemplates.ReportStat("Taught", t.Taught.ToString(CultureInfo.InvariantCulture)));
+                    body.Append(EmailTemplates.ReportStat("Taught %", t.TaughtPercent is { } pct ? pct.ToString("0.#", CultureInfo.InvariantCulture) + "%" : "—", alert: t.TaughtPercent is < 90));
+                    body.Append(EmailTemplates.ReportStat("Missed, no permission", t.MissedWithoutPermission.ToString(CultureInfo.InvariantCulture), alert: t.MissedWithoutPermission > 0));
+                    body.Append(EmailTemplates.ReportStat("Recovered", t.Recovered.ToString(CultureInfo.InvariantCulture)));
+                    body.Append(EmailTemplates.ReportStat("Unrecorded", t.Unrecorded.ToString(CultureInfo.InvariantCulture), alert: t.Unrecorded > 0));
+                    body.Append(EmailTemplates.ReportSection("By teacher"));
+                    var rows = report.LessonsByTeacher.Where(r => r.Scheduled > 0).ToList();
+                    body.Append(EmailTemplates.ReportTable(new[] { "Teacher", "Scheduled", "Taught", "Missed", "Recovered", "Unrecorded", "Taught %" },
+                        rows.Take(25).Select(r => new[]
+                        {
+                            EmailTemplates.P(r.Name), r.Scheduled.ToString(CultureInfo.InvariantCulture), r.Taught.ToString(CultureInfo.InvariantCulture),
+                            (r.MissedWithPermission + r.MissedWithoutPermission).ToString(CultureInfo.InvariantCulture), r.Recovered.ToString(CultureInfo.InvariantCulture),
+                            r.Unrecorded.ToString(CultureInfo.InvariantCulture), r.TaughtPercent is { } p ? p.ToString("0.#", CultureInfo.InvariantCulture) + "%" : "—"
+                        }), rows.Count));
+                    if (report.RecoverySchedule.Any(r => r.Status is LessonStatus.NotRecovered or LessonStatus.MissedWithoutPermission or LessonStatus.MissedWithPermission or LessonStatus.NotTaughtSelfReported))
+                        body.Append(EmailTemplates.ReportCallout($"{report.RecoverySchedule.Count(r => r.RecoveryAt == null)} missed lesson(s) have no recovery scheduled.", danger: true));
+
+                    var range = string.Create(CultureInfo.InvariantCulture, $"{lastWeek.Start:dd MMM} – {lastWeek.End:dd MMM yyyy}");
+                    var html = EmailTemplates.ReportShell($"Weekly lesson analysis — {range}", $"{branch.Name}", body.ToString(),
+                        "Sent on Mondays by Q-Mgr to lesson supervisors and staff report readers, for the staff each one oversees.");
+                    try
+                    {
+                        await _notifications.CreateInAppNotificationAsync(new CreateNotificationRequest
+                        {
+                            UserId = userId, OrganizationId = b.OrganizationId, BranchId = b.BranchId,
+                            Title = $"Weekly lesson analysis — {range}",
+                            Message = string.Create(CultureInfo.InvariantCulture, $"{t.Scheduled} lessons, {(t.TaughtPercent is { } tp ? tp.ToString("0.#", CultureInfo.InvariantCulture) + "% taught" : "none recorded")}, {t.Unrecorded} unrecorded."),
+                            Type = NotificationType.StaffPerformance, Priority = NotificationPriority.Low,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Email, EventKey = NotificationEventKeys.StaffLessonAnalysis,
+                            EmailSubject = $"Weekly lesson analysis — {branch.Name} — {range}", EmailHtmlBody = html,
+                            ActionUrl = "/admin/timetable/reports?tab=lessons", IconClass = "journal-check"
+                        });
+                    }
+                    catch (Exception ex) { _logger.LogError(ex, "Weekly lesson analysis could not reach {UserId}", userId); }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Weekly lesson analysis failed for branch {BranchId}", b.BranchId);
+            }
+        }
     }
 
     private static string RenderBranchSummary(string branchName, StaffReportsDto r)
@@ -640,6 +763,9 @@ public static class StaffPerformanceJobsRegistration
 
         // Hourly: first business day after the policy hour, branch-local; LastSummarySentAt in the org policy is the gate.
         RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-monthly-summary", job => job.SendMonthlySummaryAsync(), "0 * * * *");
+
+        // Hourly: Monday after the policy digest hour, branch-local; one per recipient per week (plan §11).
+        RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-weekly-lesson-analysis", job => job.SendWeeklyLessonAnalysisAsync(false, null), "20 * * * *");
 
         // 03:30 UTC, alongside the share-link attribution purge.
         RecurringJob.AddOrUpdate<StaffPerformanceJobs>("staff-activity-attribution-purge", job => job.PurgeActivityAttributionAsync(), "30 3 * * *");

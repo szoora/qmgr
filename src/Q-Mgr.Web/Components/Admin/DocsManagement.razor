@@ -87,15 +87,8 @@
                 <QInput TValue="string" @bind-Value="@formData.Slug" Label="URL Slug" Placeholder="auto-generated from title if left blank" />
             </div>
             <div class="form-group">
-                <label>Industry</label>
-                <select class="form-control" @bind="formData.IndustryValue">
-                    <option value="">General (all industries)</option>
-                    <option value="Service">Retail, Hospitality &amp; General Service</option>
-                    <option value="Business">Business (Banking, Government &amp; Offices)</option>
-                    <option value="Health">Health</option>
-                    <option value="Education">Education</option>
-                    <option value="Communications">Communications</option>
-                </select>
+                <QSelect TValue="string" TItem="(string Value, string Text)" @bind-Value="formData.IndustryValue"
+                         Items="@IndustryOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" Label="Industry" />
             </div>
         </div>
         <div class="form-group">
@@ -122,11 +115,8 @@
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label>Status</label>
-                <select class="form-control" @bind="formData.Status">
-                    <option value="@DocArticleStatus.Draft">Draft</option>
-                    <option value="@DocArticleStatus.Published">Published</option>
-                </select>
+                <QSelect TValue="DocArticleStatus" TItem="DocArticleStatus" @bind-Value="formData.Status"
+                         Items="@(new[] { DocArticleStatus.Draft, DocArticleStatus.Published })" TextSelector="@(x => x.ToString())" Label="Status" />
             </div>
             <div class="form-group">
                 <QInput TValue="int" @bind-Value="@formData.DisplayOrder" Type="number" Label="Display Order" Min="0" />
@@ -142,7 +132,7 @@
 <style>
     .admin-page { padding: 0; }
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
 
     .loading-container, .empty-state {
@@ -187,6 +177,12 @@
 </style>
 
 @code {
+    private static readonly (string Value, string Text)[] IndustryOptions =
+    {
+        ("", "General (all industries)"), ("Service", "Retail, Hospitality & General Service"), ("Business", "Business (Banking, Government & Offices)"),
+        ("Health", "Health"), ("Education", "Education"), ("Communications", "Communications")
+    };
+
     private List<DocArticleDto> articles = new();
     private bool isLoading = true;
     private bool showDialog = false;

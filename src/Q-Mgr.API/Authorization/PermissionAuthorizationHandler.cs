@@ -92,16 +92,17 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         if (context.User.FindFirst("auth_method")?.Value == "api_key")
         {
             var grantedByScopes = context.User.FindAll("scope")
-                .SelectMany(c => ScopeToPermissions.TryGetValue(c.Value, out var perms) ? perms : Array.Empty<string>());
+                .SelectMany(c => ScopeToPermissions.TryGetValue(c.Value, out var perms) ? perms : Array.Empty<string>())
+                .ToHashSet();
 
-            if (grantedByScopes.Contains(requirement.Permission))
+            if (requirement.Accepts(grantedByScopes))
             {
-                _logger.LogDebug("API key granted permission {Permission} via scope claim", requirement.Permission);
+                _logger.LogDebug("API key granted permission {Permission} via scope claim", requirement.Describe());
                 context.Succeed(requirement);
             }
             else
             {
-                _logger.LogDebug("API key denied permission {Permission} — no matching scope", requirement.Permission);
+                _logger.LogDebug("API key denied permission {Permission} — no matching scope", requirement.Describe());
             }
             return;
         }
@@ -131,14 +132,14 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
         // Get user's permissions (with caching)
         var permissions = await GetUserPermissionsAsync(userId);
 
-        if (permissions.Contains(requirement.Permission))
+        if (requirement.Accepts(permissions))
         {
-            _logger.LogDebug("User {UserId} has permission {Permission}", userId, requirement.Permission);
+            _logger.LogDebug("User {UserId} has permission {Permission}", userId, requirement.Describe());
             context.Succeed(requirement);
         }
         else
         {
-            _logger.LogDebug("User {UserId} denied permission {Permission}", userId, requirement.Permission);
+            _logger.LogDebug("User {UserId} denied permission {Permission}", userId, requirement.Describe());
         }
     }
 

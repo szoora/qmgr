@@ -251,6 +251,10 @@ public class ClassTeachersController : ControllerBase
             .Select(u => new { u.Id, u.FirstName, u.LastName, u.Email })
             .ToListAsync();
 
+        var placed = await TimetableChecker.PlacedPerWeekAsync(_context, branchId);
+        var subjectTeachers = mapped.Where(a => a.Role == ClassTeacherRole.SubjectTeacher && a.SubjectId != null).ToList();
+        decimal PlacedFor(ClassTeacherDto a) => placed.GetValueOrDefault((a.UserId, NormalizeClassName(a.ClassName), a.SubjectId!.Value));
+
         return Ok(new ClassTeacherCoverageReportDto
         {
             Classes = classes,
@@ -265,7 +269,13 @@ public class ClassTeachersController : ControllerBase
                 })
                 .ToList(),
             UnknownStudentClasses = unknown,
-            SubjectGaps = SubjectGaps(classes)
+            SubjectGaps = SubjectGaps(classes),
+            // Filled from the published timetable in force today (duty rota plan §5.2); both stay empty until one is.
+            SubjectTeachersWithNoLessons = placed.Count == 0 ? new() : subjectTeachers.Where(a => PlacedFor(a) == 0).ToList(),
+            PlannedPeriodMismatches = placed.Count == 0 ? new() : subjectTeachers
+                .Where(a => a.PeriodsPerWeek is > 0 && PlacedFor(a) != a.PeriodsPerWeek)
+                .Select(a => new PlannedPeriodsMismatchDto { Assignment = a, Planned = a.PeriodsPerWeek ?? 0, Timetabled = (int)Math.Round(PlacedFor(a)) })
+                .ToList()
         });
     }
 
@@ -439,7 +449,7 @@ public class ClassTeachersController : ControllerBase
     [RequirePermission(Permissions.ClassTeachersManage)]
     [ProducesResponseType(typeof(ClassTeacherDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdatePeriods(Guid branchId, Guid assignmentId, [FromBody] AssignSubjectTeacherRequest request)
+    public async Task<IActionResult> UpdatePeriods(Guid branchId, Guid assignmentId, [FromBody] UpdateSubjectPeriodsRequest request)
     {
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;

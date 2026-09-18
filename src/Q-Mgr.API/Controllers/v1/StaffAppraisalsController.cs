@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -468,7 +469,7 @@ public class StaffAppraisalsController : ControllerBase
                 return new ConflictObjectResult(new ProblemDetails
                 {
                     Title = "Waiting for the self-assessment",
-                    Detail = $"{SubjectName(a)} has not submitted a self-assessment. You may proceed without one from {graceEnd:dd MMM yyyy}.",
+                    Detail = string.Create(CultureInfo.InvariantCulture, $"{SubjectName(a)} has not submitted a self-assessment. You may proceed without one from {graceEnd:dd MMM yyyy}."),
                     Status = StatusCodes.Status409Conflict
                 });
         }

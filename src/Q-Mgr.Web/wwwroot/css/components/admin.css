@@ -48,7 +48,7 @@
     gap: 24px;
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -108,7 +108,7 @@
     align-items: center;
     padding: 16px;
     background: var(--qm-bg-elevated);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     border: 1px solid var(--qm-border);
 }
 
@@ -284,7 +284,7 @@
 .qm-admin-branch-selector {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px 24px;
     margin-bottom: 24px;
 }
@@ -304,7 +304,7 @@
     border: 1px solid var(--qm-border);
     color: var(--qm-text-primary);
     padding: 12px 16px;
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     font-size: 15px;
     max-width: 400px;
 }
@@ -324,7 +324,7 @@
 .qm-admin-link-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     transition: all 0.3s ease;
 }
@@ -337,7 +337,7 @@
 .qm-admin-link-card-icon {
     width: 56px;
     height: 56px;
-    border-radius: 14px;
+    border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -381,7 +381,7 @@
 
 .qm-admin-link-preview {
     background: var(--qm-bg-elevated);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     padding: 10px 14px;
     margin-bottom: 16px;
     overflow-x: auto;
@@ -407,7 +407,7 @@
     justify-content: center;
     gap: 8px;
     padding: 12px 16px;
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -440,7 +440,7 @@
 .qm-admin-quick-actions {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
 }
 
@@ -464,7 +464,7 @@
     padding: 14px 20px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 14px;
     font-weight: 500;
@@ -494,7 +494,7 @@
 .qm-admin-branch-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     transition: all 0.3s ease;
 }
@@ -514,7 +514,7 @@
 .qm-admin-users-table {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -536,7 +536,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 12px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 12px;
     font-weight: 500;
 }
@@ -568,7 +568,7 @@
 .qm-admin-service-type-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
     display: flex;
     align-items: center;
@@ -578,7 +578,7 @@
 .qm-admin-service-type-icon {
     width: 48px;
     height: 48px;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -597,7 +597,7 @@
 .qm-admin-counter-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
 }
 
@@ -606,7 +606,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -637,7 +637,7 @@
 .qm-admin-printer-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     margin-bottom: 20px;
 }
@@ -645,7 +645,7 @@
 .qm-admin-printer-preview {
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
     font-family: monospace;
     text-align: center;
@@ -663,7 +663,7 @@
 .qm-admin-industry-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -685,7 +685,7 @@
 .qm-admin-integration-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     display: flex;
     align-items: center;
@@ -695,7 +695,7 @@
 .qm-admin-integration-logo {
     width: 64px;
     height: 64px;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -708,7 +708,7 @@
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 12px;
     font-weight: 500;
 }
@@ -729,13 +729,13 @@
 .qm-admin-api-client-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
 }
 
 .qm-admin-api-key-display {
     background: var(--qm-bg-elevated);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     padding: 12px 16px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
@@ -751,7 +751,7 @@
 .qm-admin-feedback-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
 }
 

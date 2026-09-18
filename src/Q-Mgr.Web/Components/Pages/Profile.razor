@@ -414,11 +414,14 @@
         margin: 8px 0;
     }
 
+    /* A tappable row, sized off the shared control scale (--q-control-h-lg is the
+       44px touch target) rather than a height of its own. */
     .action-item {
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 12px;
+        min-height: var(--q-control-h-lg);
+        padding: 0 12px;
         background: var(--qm-bg-elevated);
         border: 1px solid transparent;
         border-radius: var(--qm-radius-lg);
@@ -428,7 +431,7 @@
         transition: all 0.2s ease;
         width: 100%;
         text-align: left;
-        font-size: 14px;
+        font-size: var(--q-control-font);
     }
 
     .action-item:hover {
@@ -437,7 +440,7 @@
     }
 
     .action-item i:first-child {
-        font-size: 18px;
+        font-size: 16px;
         color: var(--qm-text-muted);
     }
 
@@ -446,7 +449,7 @@
     }
 
     .action-item i:last-child {
-        font-size: 14px;
+        font-size: var(--q-control-font);
         color: var(--qm-text-muted);
     }
 

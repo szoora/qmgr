@@ -164,7 +164,6 @@
 
     .header-content h1 {
         margin: 0 0 4px;
-        font-size: 28px;
         color: var(--qm-text-primary);
     }
 
@@ -255,7 +254,7 @@
 
     .category-actions {
         display: flex;
-        gap: 4px;
+        gap: var(--q-row-gap, 8px);
     }
 
     .category-body {
@@ -405,7 +404,7 @@
             }
 
             await ModuleState.LoadAsync(ModuleApi);
-            if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+            if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
             {
                 Navigation.NavigateTo("/billing/modules", forceLoad: false);
                 return;

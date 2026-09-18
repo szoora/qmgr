@@ -176,6 +176,7 @@ public class RbacSeeder
         new("welfare.restricted.view", "View Restricted Welfare Information", "View and set administrator-only restricted records, flags, and student notes", "Student Welfare", 6, true),
         new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7, true),
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8, true),
+        new("welfare.reports.own", "View Own Class Reports", "The same welfare reports, narrowed to the classes this user holds — revoke it to withhold the page from class teachers", "Student Welfare", 9, true),
 
         // ============================================
         // STAFF PERFORMANCE MONITOR (2026-09-16) — mirrored in Permissions.All and the Web copy
@@ -406,8 +407,10 @@ public class RbacSeeder
                 // Scoped to the caller's own classes by StudentScopeService.
                 "students.view",
                 "welfare.view", "welfare.create", "welfare.edit", "welfare.notify",
-                // Scoped too, so this answers "how is my class doing" and nothing wider.
-                "welfare.reports.view",
+                // Scoped too, so this answers "how is my class doing" and nothing wider. The OWN code, not
+                // the branch-wide one, so a school can withhold the page from a custom class-teacher role
+                // without touching what a manager reads (user decision, 2026-09-18).
+                "welfare.reports.own",
                 // The staff portal needs no permission; recognition does.
                 "staff.recognition.give",
             },
@@ -719,6 +722,53 @@ public class RbacSeeder
             _context.RolePermissions.AddRange(mappingsToAdd);
             await _context.SaveChangesAsync();
             _logger.LogInformation("Seeded {Count} new role-permission mappings", mappingsToAdd.Count);
+        }
+
+        await RetireReplacedGrantsAsync(permissionLookup, roleLookup);
+    }
+
+    /// <summary>
+    /// This seeder only ever ADDS a mapping, which is right — a tenant's own extra grant on a system role
+    /// must survive a restart. But a code that has been REPLACED has to go, or the replacement is pointless:
+    /// the old grant still opens the endpoint and revoking the new one changes nothing.
+    ///
+    /// One entry so far. <c>welfare.reports.view</c> was split on 2026-09-18 so a school can withhold the
+    /// Welfare Reports page from a class-teacher role without touching what a manager reads; the class
+    /// teacher now holds <c>welfare.reports.own</c>, which opens the same three reports and nothing wider.
+    /// Existing tenants seeded before that date hold both, and the broad one is what has to be retired.
+    ///
+    /// **Only add a pair here when one code genuinely replaces another for that role.** It removes a real
+    /// grant from a real tenant, so it is not the place for "this role probably should not have that".
+    /// </summary>
+    private static readonly (string RoleCode, string Retire, string ReplacedBy)[] ReplacedGrants =
+    {
+        ("class-teacher", "welfare.reports.view", "welfare.reports.own"),
+    };
+
+    private async Task RetireReplacedGrantsAsync(
+        Dictionary<string, Guid> permissionLookup, Dictionary<string, Guid> roleLookup)
+    {
+        foreach (var (roleCode, retire, replacedBy) in ReplacedGrants)
+        {
+            if (!roleLookup.TryGetValue(roleCode, out var roleId)) continue;
+            if (!permissionLookup.TryGetValue(retire, out var retireId)) continue;
+            // Never strip the old grant until the replacement is actually in place for that role,
+            // or a half-applied startup leaves the role unable to read its own reports.
+            if (!permissionLookup.TryGetValue(replacedBy, out var replacementId)) continue;
+
+            var hasReplacement = await _context.RolePermissions
+                .AnyAsync(rp => rp.RoleId == roleId && rp.PermissionId == replacementId);
+            if (!hasReplacement) continue;
+
+            var stale = await _context.RolePermissions
+                .Where(rp => rp.RoleId == roleId && rp.PermissionId == retireId)
+                .ToListAsync();
+            if (stale.Count == 0) continue;
+
+            _context.RolePermissions.RemoveRange(stale);
+            await _context.SaveChangesAsync();
+            _logger.LogWarning("Retired '{Retire}' from system role '{RoleCode}' — replaced by '{ReplacedBy}'",
+                retire, roleCode, replacedBy);
         }
     }
 

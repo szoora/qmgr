@@ -15,6 +15,8 @@
 @inject IJSRuntime JS
 @inject IDocumentShareApiService DocShareApi
 @inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 
 @*
     The MoES-style termly appraisal form on A4: performance plan (targets), the evidence (frozen
@@ -299,7 +301,7 @@ else if (loadError != null)
             var user = await AuthService.GetCurrentUserAsync();
             generatedBy = user?.FullName;
             organizationId = user?.OrganizationId ?? Guid.Empty;
-            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
             if (organizationId != Guid.Empty)
                 branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
 
@@ -336,41 +338,61 @@ else if (loadError != null)
             var stamp = QDateFormat.D(DateTime.UtcNow);
             var signed = a.Stage == AppraisalStage.Signed;
             var name = $"Appraisal — {a.SubjectName} ({a.PeriodKey}){(signed ? "" : " — draft")}";
-            var fileName = $"appraisal-{a.PeriodKey}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
 
-            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "ap-sheet", fileName);
-            if (bytes == null || bytes.Length == 0)
-                throw new InvalidOperationException("The report rendered to an empty file.");
-
-            using var stream = new MemoryStream(bytes);
-            var doc = await DocShareApi.UploadDocumentAsync(
-                organizationId, stream, fileName,
-                name,
-                summary: $"Staff appraisal for {a.SubjectName}, {a.PeriodKey} ({StaffDisplay.StageLabel(a.Stage)}). Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
-                publishedFrom: $"Staff appraisal — {a.SubjectName}, {a.PeriodKey}, {StaffDisplay.StageLabel(a.Stage)}, generated {stamp}",
-                shareable: true);
-
-            try
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
             {
-                await StaffApi.AttachAppraisalReportAsync(branchId, Id, new AttachAppraisalReportRequest { MediaContentId = doc.Id });
-            }
-            catch (Exception ex)
-            {
-                // The document exists either way; only the back-reference failed.
-                Toast.Notify(ToastSeverity.Warning, "Published, but not linked", $"The PDF is in the Library but the appraisal could not record it: {ex.Message}");
-            }
-
-            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
-                signed ? "The signed appraisal is attached to the record and can be shared from the Library." : "A snapshot as of now. Publish again once the appraisal is signed.");
-            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
-        }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+                SheetElementId = "ap-sheet",
+                OrganizationId = organizationId,
+                FileName = $"appraisal-{a.PeriodKey}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
+                DocumentName = name,
+                Summary = $"Staff appraisal for {a.SubjectName}, {a.PeriodKey} ({StaffDisplay.StageLabel(a.Stage)}). Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Staff appraisal — {a.SubjectName}, {a.PeriodKey}, {StaffDisplay.StageLabel(a.Stage)}, generated {stamp}",
+                ExtraDetail = signed
+                    ? "The signed appraisal is attached to the record."
+                    : "Publish again once the appraisal is signed.",
+                Audit = doc => RecordPublishAsync(doc, name)
+            }, JS, DocShareApi, Toast, Navigation);
         }
         finally
         {
             isPublishing = false;
         }
+    }
+
+    /// <summary>
+    /// Two records of one publish, because they answer different questions. The back-reference on
+    /// the appraisal is how a later reader finds the signed PDF from the record; the activity row is
+    /// how anyone reading the log learns the document left the record at all — the attach event is
+    /// Confidential and written only when the attach itself succeeds, so on its own a published
+    /// appraisal could sit in the Library with nothing in the export trail to say who put it there.
+    /// </summary>
+    /// <remarks>
+    /// <c>StaffExportKinds</c> has no appraisal member: <c>Timeline</c> is the closest existing kind
+    /// (the staff file of one named person, gated on the same <c>staff.records.view</c>), and the
+    /// document name carries what it actually is. Adding a kind is an API and Shared change.
+    /// </remarks>
+    private async Task RecordPublishAsync(MediaContentDto doc, string name)
+    {
+        try
+        {
+            await StaffApi.AttachAppraisalReportAsync(branchId, Id, new AttachAppraisalReportRequest { MediaContentId = doc.Id });
+        }
+        catch (Exception ex)
+        {
+            // The document exists either way; only the back-reference failed.
+            Toast.Notify(ToastSeverity.Warning, "Published, but not linked", $"The PDF is in the Library but the appraisal could not record it: {ex.Message}");
+        }
+
+        // The activity log carries the publish (plan §11); RecordExportAsync never throws.
+        await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+        {
+            Kind = StaffExportKinds.Appraisal,
+            SubjectUserId = a!.SubjectUserId,
+            Published = true,
+            MediaContentId = doc.Id,
+            DocumentName = name,
+            Format = "PDF",
+            PeriodKey = a.PeriodKey
+        });
     }
 }

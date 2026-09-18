@@ -16,6 +16,8 @@
 @inject IJSRuntime JS
 @inject IDocumentShareApiService DocShareApi
 @inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 
 @*
     The A4 welfare report.
@@ -432,7 +434,7 @@ else if (loadError != null)
             var user = await AuthService.GetCurrentUserAsync();
             generatedBy = user?.FullName;
             organizationId = user?.OrganizationId ?? Guid.Empty;
-            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
 
             if (user != null && user.OrganizationId != Guid.Empty)
                 branding = await OrganizationApi.GetOrganizationBrandingAsync(user.OrganizationId);
@@ -493,28 +495,22 @@ else if (loadError != null)
         try
         {
             var stamp = QDateFormat.D(DateTime.UtcNow);
-            var name = $"Welfare report — {SubjectName} ({PeriodCaption})";
-            var fileName = $"welfare-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
 
-            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "wr-sheet", fileName);
-            if (bytes == null || bytes.Length == 0)
-                throw new InvalidOperationException("The report rendered to an empty file.");
-
-            using var stream = new MemoryStream(bytes);
-            var doc = await DocShareApi.UploadDocumentAsync(
-                organizationId, stream, fileName,
-                name,
-                summary: $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
-                publishedFrom: $"Welfare timeline — {SubjectName} ({context?.StudentCode ?? "no code"}), {PeriodCaption}, generated {stamp}",
-                shareable: true);
-
-            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
-                "The report is a snapshot as of now. Create a share link from the Library when you are ready.");
-            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
-        }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+            // No Audit callback, and that is a gap rather than a decision: the only export-log
+            // endpoint in this app is the STAFF one (branches/{b}/staff/activity/exports), whose
+            // kinds and per-kind permission gate are all about a member of staff, and WelfareController
+            // has no activity logger of any kind. So a published welfare report is in the Library and
+            // in no log. Closing it needs a welfare-side endpoint, not a staff export row about a
+            // child — see SECURE_DOCUMENT_SHARING.md §13 "Already drifted" item 3.
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
+            {
+                SheetElementId = "wr-sheet",
+                OrganizationId = organizationId,
+                FileName = $"welfare-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
+                DocumentName = $"Welfare report — {SubjectName} ({PeriodCaption})",
+                Summary = $"Student welfare report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Welfare timeline — {SubjectName} ({context?.StudentCode ?? "no code"}), {PeriodCaption}, generated {stamp}"
+            }, JS, DocShareApi, Toast, Navigation);
         }
         finally
         {

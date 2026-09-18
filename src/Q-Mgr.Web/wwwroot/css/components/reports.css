@@ -22,7 +22,7 @@
 .qm-reports-stats-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     border-left: 4px solid;
     transition: all 0.2s ease;
@@ -120,7 +120,7 @@
 .qm-reports-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -135,7 +135,7 @@
 .qm-reports-card-icon {
     width: 56px;
     height: 56px;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -206,7 +206,7 @@
 .qm-reports-filter-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
 }
 
@@ -261,7 +261,7 @@
 .qm-reports-chart-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
 }
 
@@ -293,7 +293,7 @@
 .qm-reports-hour-block {
     text-align: center;
     padding: 8px 4px;
-    border-radius: 6px;
+    border-radius: var(--qm-radius-md);
     background: var(--qm-bg-elevated);
     transition: all 0.2s;
 }
@@ -343,7 +343,7 @@
 .qm-reports-counter-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
     transition: all 0.2s ease;
 }
@@ -369,7 +369,7 @@
     width: 40px;
     height: 40px;
     background: var(--qm-gradient-primary);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -395,7 +395,7 @@
 
 .qm-reports-counter-status {
     padding: 4px 10px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -425,7 +425,7 @@
 .qm-reports-counter-stat {
     background: var(--qm-bg-elevated);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     text-align: center;
 }
 
@@ -467,13 +467,13 @@
 .qm-reports-efficiency-track {
     height: 8px;
     background: var(--qm-bg-elevated);
-    border-radius: 4px;
+    border-radius: var(--qm-radius-md);
     overflow: hidden;
 }
 
 .qm-reports-efficiency-fill {
     height: 100%;
-    border-radius: 4px;
+    border-radius: var(--qm-radius-md);
     transition: width 0.5s ease;
 }
 
@@ -503,7 +503,7 @@
 .qm-reports-satisfaction-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     text-align: center;
 }
@@ -570,14 +570,14 @@
     flex: 1;
     height: 12px;
     background: var(--qm-bg-elevated);
-    border-radius: 6px;
+    border-radius: var(--qm-radius-md);
     overflow: hidden;
 }
 
 .qm-reports-rating-fill {
     height: 100%;
     background: var(--qm-gradient-primary);
-    border-radius: 6px;
+    border-radius: var(--qm-radius-md);
     transition: width 0.5s ease;
 }
 
@@ -599,7 +599,7 @@
 .qm-reports-feedback-item {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 16px 20px;
 }
 
@@ -683,7 +683,7 @@
 .qm-reports-table-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -743,7 +743,7 @@
     padding: 16px;
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
 }
 
 .qm-reports-export-btn {
@@ -753,7 +753,7 @@
     padding: 10px 16px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 13px;
     font-weight: 500;
@@ -783,7 +783,7 @@
     padding: 8px 16px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
 }
 
 .qm-reports-date-range label {

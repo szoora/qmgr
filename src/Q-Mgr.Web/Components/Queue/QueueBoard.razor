@@ -26,9 +26,7 @@
             {
                 @* Selection is an explicit mode, not always-on: this board refreshes itself over
                    SignalR, and stray checkboxes on a moving list invite the wrong ticket. *@
-                <button type="button" class="qb-select-toggle @(selectionMode ? "on" : "")" @onclick="ToggleSelectionMode">
-                    @(selectionMode ? "Done" : "Clear tickets")
-                </button>
+                <QButton Text="@(selectionMode ? "Done" : "Clear tickets")" Variant="@(selectionMode ? "primary" : "secondary")" Size="sm" OnClick="@ToggleSelectionMode" />
             }
             <span class="qb-current-time">@QDateFormat.TS(currentTime)</span>
             <span class="qb-current-date">@QDateFormat.Long(currentTime)</span>
@@ -140,8 +138,6 @@
 </div>
 
 <style>
-    .qb-select-toggle { padding: 6px 14px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
-    .qb-select-toggle.on { border-color: var(--qm-primary); background: var(--qm-primary); color: #fff; }
     .qb-batch-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-primary-light); }
     .qb-select-all { background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-primary); text-decoration: underline; }
     .qb-batch-count { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -168,8 +164,6 @@
 
     .qb-board-header h1 {
         margin: 0;
-        font-size: 28px;
-        font-weight: 600;
         color: var(--qm-text-primary);
     }
 

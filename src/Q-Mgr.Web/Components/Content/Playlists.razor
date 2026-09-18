@@ -169,7 +169,7 @@
 
     .toolbar-left, .toolbar-right {
         display: flex;
-        gap: 12px;
+        gap: var(--q-row-gap, 8px);
     }
 
     .loading-container, .empty-state {
@@ -335,7 +335,6 @@
     .dialog-actions {
         display: flex;
         justify-content: flex-end;
-        gap: 12px;
         margin-top: 24px;
     }
 </style>
@@ -378,7 +377,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;

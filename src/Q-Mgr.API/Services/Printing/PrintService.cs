@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
 using QMgr.Domain.Enums;
@@ -468,7 +469,7 @@ public class PrintService : IPrintService
         </div>
 
         <div class=""datetime"">
-            {ticketData.IssuedAt:dddd, MMMM dd, yyyy}
+            {ticketData.IssuedAt.ToString("dddd, MMMM dd, yyyy", CultureInfo.InvariantCulture)}
         </div>
     </div>
 

@@ -75,6 +75,48 @@ public class StaffDuty : BaseAuditableEntity
 
     public Guid CreatedByUserId { get; set; }
 
+    // ---- Duty rota (plan §3.2, Phase 1 migration AddDutyRota) -------------------------------------------
+
+    /// <summary>
+    /// The slots one "Generate a rota" wrote share this id. The rotation pattern itself is not stored — a pattern is
+    /// an action, not a thing — so "Extend" reads the order back from the series and "Cancel the series" finds it here.
+    /// </summary>
+    public Guid? SeriesId { get; set; }
+
+    /// <summary>
+    /// The administrator(s) on duty: they supervise the people on duty, take the close-out register, read the
+    /// on-duty reports and write their own (plan §4.3). Empty on a Session duty.
+    /// </summary>
+    public Guid[] SupervisorUserIds { get; set; } = Array.Empty<Guid>();
+
+    /// <summary>How often the people on a rota slot write a report (plan §4.3). None on a Session duty.</summary>
+    public ReportCadence ReportCadence { get; set; } = ReportCadence.None;
+
+    /// <summary>Branch-local due time of each report period ("18:00"). Null uses the policy default.</summary>
+    public TimeOnly? ReportDueLocalTime { get; set; }
+
+    // ---- Lessons (plan §3.2, §7): set only on a Kind = Lesson duty. -------------------------------------------
+
+    /// <summary>The timetable lesson this occurrence was materialised from; null for a recovery lesson scheduled by hand.</summary>
+    public Guid? TimetableLessonId { get; set; }
+
+    /// <summary>The class (or "S5A + S5B" for a joint lesson), copied so a later rename or re-publish cannot rewrite history.</summary>
+    public string? ClassName { get; set; }
+
+    public Guid? SubjectId { get; set; }
+
+    public string? Room { get; set; }
+
+    /// <summary>A recovery lesson names the missed lesson it makes up for (MoES's Lesson Recovery Schedule).</summary>
+    public Guid? RecoversDutyId { get; set; }
+
+    /// <summary>
+    /// jsonb: { "userId": "2026-09-22T05:12:00Z", … } — "Seen — I'm on duty" (plan §4.2). Stops the pre-duty ladder
+    /// for that person. Written only by one atomic <c>||</c> UPDATE guarded by <c>jsonb_exists</c>, never
+    /// read-modify-write (the notice acknowledgement race, found 2026-09-16). Reset when the slot is rescheduled.
+    /// </summary>
+    public string Acknowledgements { get; set; } = "{}";
+
     public virtual Organization.Organization? Organization { get; set; }
     public virtual Organization.Branch? Branch { get; set; }
     public virtual PerformanceParameter? Parameter { get; set; }

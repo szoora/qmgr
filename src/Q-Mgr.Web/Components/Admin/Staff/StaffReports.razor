@@ -33,6 +33,7 @@
         <div class="header-actions">
             <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
                      TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
+            <QButton Text="Teaching reports" Icon="journal-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/reports"))" />
             <QButton Text="Print / publish" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/reports/report?period={Uri.EscapeDataString(period)}"))" Disabled="@(reports == null)" />
         </div>
     </div>
@@ -301,7 +302,6 @@
 </div>
 
 <style>
-    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .rp-period { min-width: 220px; }
     .report-columns { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }

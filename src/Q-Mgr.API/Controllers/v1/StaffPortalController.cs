@@ -35,6 +35,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
 {
     private readonly IStaffPerformancePolicyService _policy;
     private readonly IStaffScoringService _scoring;
+    private readonly ILogger<StaffPortalController> _logger;
     private const int MaxPageSize = 200;
 
     public StaffPortalController(
@@ -44,9 +45,11 @@ public class StaffPortalController : StaffPerformanceControllerBase
         IActivityLogger activity,
         IStaffPerformancePolicyService policy,
         IStaffScoringService scoring,
-        IStaffOnboardingPolicyService onboarding)
+        IStaffOnboardingPolicyService onboarding,
+        ILogger<StaffPortalController> logger)
         : base(db, tenantAccessor, staffScope, activity)
     {
+        _logger = logger;
         _policy = policy;
         _scoring = scoring;
         _onboarding = onboarding;
@@ -109,19 +112,48 @@ public class StaffPortalController : StaffPerformanceControllerBase
         var myGroup = _policy.GroupFor(myRole);
 
         // ---- Coming up: duties I am expected at or record, not yet over ----
+        // Rota slots have their own card and lessons have My Day, so Coming up is sessions only.
         var upcoming = await Db.StaffDuties.AsNoTracking().Include(d => d.Parameter)
-            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt >= now
+            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt >= now && d.Kind == DutyKind.Session
                         && (d.ExpectedUserIds == null || d.ExpectedUserIds.Contains(me.Id) || d.RecorderUserIds.Contains(me.Id)))
             .OrderBy(d => d.StartsAt)
             .Take(10)
             .ToListAsync();
         var comingUp = await MapDutiesAsync(upcoming, me.Id, organizationId, branchId, mayManageDuties);
 
+        // ---- On duty (plan §4.2, §10): rota slots I am on or supervise, now or within two weeks ----
+        var rotaHorizon = now.AddDays(14);
+        var rotaSlots = await Db.StaffDuties.AsNoTracking().Include(d => d.Parameter)
+            .Where(d => d.BranchId == branchId && d.IsActive && d.Kind == DutyKind.Rota && d.EndsAt >= now && d.StartsAt <= rotaHorizon
+                        && ((d.ExpectedUserIds != null && d.ExpectedUserIds.Contains(me.Id)) || d.SupervisorUserIds.Contains(me.Id)))
+            .OrderBy(d => d.StartsAt)
+            .Take(8)
+            .ToListAsync();
+        var onDuty = await MapDutiesAsync(rotaSlots, me.Id, organizationId, branchId, mayManageDuties);
+
+        // ---- Reports to write (plan §4.3): my started, unwritten duty reports on slots under way or recently over ----
+        var myRotaSlots = await Db.StaffDuties.AsNoTracking()
+            .Where(d => d.BranchId == branchId && d.IsActive && d.Kind == DutyKind.Rota && d.ReportCadence != ReportCadence.None
+                        && d.StartsAt <= now && d.EndsAt >= now.AddDays(-31)
+                        && ((d.ExpectedUserIds != null && d.ExpectedUserIds.Contains(me.Id)) || d.SupervisorUserIds.Contains(me.Id)))
+            .ToListAsync();
+        if (myRotaSlots.Count > 0)
+        {
+            var zone = AppointmentScheduling.ResolveTimeZone(await Db.Branches.Where(b => b.Id == branchId).Select(b => b.Timezone).FirstOrDefaultAsync());
+            foreach (var slot in myRotaSlots) await StaffDutyReports.EnsureRowsAsync(Db, slot, policy, zone, now, _logger);
+        }
+        var toWrite = await Db.StaffDutyReports.AsNoTracking().Include(r => r.Duty)
+            .Where(r => r.BranchId == branchId && r.AuthorUserId == me.Id && r.Duty!.IsActive
+                        && (r.Status == DutyReportStatus.Draft || r.Status == DutyReportStatus.Returned) && r.DueAt >= now.AddDays(-31))
+            .OrderBy(r => r.DueAt).Take(10).ToListAsync();
+        var reportNames = await BuildNamesAsync(new Guid?[] { me.Id });
+        var reportsToWrite = toWrite.Select(r => StaffDutyReports.ToSummary(r, r.Duty!, reportNames, 0, now)).ToList();
+
         // ---- Open items ----
         var openItems = new List<PortalItemDto>();
 
         var registersDue = await Db.StaffDuties.AsNoTracking()
-            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt < now && d.RegisterClosedAt == null && d.RecorderUserIds.Contains(me.Id))
+            .Where(d => d.BranchId == branchId && d.IsActive && d.EndsAt < now && d.RegisterClosedAt == null && d.RecorderUserIds.Contains(me.Id) && d.Kind != DutyKind.Lesson)
             .OrderBy(d => d.EndsAt)
             .Take(10)
             .ToListAsync();
@@ -146,6 +178,61 @@ public class StaffPortalController : StaffPerformanceControllerBase
             IsOverdue = true,
             Url = $"/admin/staff/duties/{d.Id}/register"
         }));
+
+        // Lessons still unrecorded (plan §7.3): ONE line with the count, linking to My Day — never a line per lesson.
+        var lessonWindow = now.AddDays(-Math.Max(policy.UnrecordedLessonWindowDays, 1) - 7);
+        var unrecordedLessons = await Db.StaffDuties.AsNoTracking()
+            .Where(d => d.BranchId == branchId && d.IsActive && d.Kind == DutyKind.Lesson && d.EndsAt < now && d.StartsAt >= lessonWindow
+                        && d.ExpectedUserIds != null && d.ExpectedUserIds.Contains(me.Id)
+                        && !Db.StaffPerformanceRecords.Any(r => r.DutyId == d.Id && r.Status == StaffRecordStatus.Final))
+            .Select(d => d.EndsAt).ToListAsync();
+        if (unrecordedLessons.Count > 0)
+            openItems.Add(new PortalItemDto
+            {
+                Kind = "lessons-unrecorded",
+                Title = unrecordedLessons.Count == 1 ? "1 lesson of yours is unrecorded" : $"{unrecordedLessons.Count} lessons of yours are unrecorded",
+                Detail = "Mark each one taught or not taught.",
+                DueAt = unrecordedLessons.Min(),
+                IsOverdue = unrecordedLessons.Min() < now.AddDays(-Math.Max(policy.UnrecordedLessonWindowDays, 1)),
+                Url = "/my-day"
+            });
+
+        // A slot I supervise that has reached its final pre-duty stage with somebody still unacknowledged (plan §4.2:
+        // the PagerDuty-style escalation lands on the supervisor's to-do, by name, behind the login).
+        foreach (var slot in onDuty.Where(d => d.IsSupervisedByMe && d.StartsAt > now && d.StartsAt <= now.AddHours(24)))
+        {
+            var unacked = (slot.ExpectedUserIds ?? new List<Guid>()).Where(id => slot.Acknowledgements == null || !slot.Acknowledgements.ContainsKey(id)).ToList();
+            if (unacked.Count == 0) continue;
+            var who = await BuildNamesAsync(unacked.Select(id => (Guid?)id));
+            openItems.Add(new PortalItemDto
+            {
+                Kind = "rota-unacknowledged",
+                Title = $"{string.Join(", ", unacked.Select(id => who[id]))} {(unacked.Count == 1 ? "has" : "have")} not acknowledged {slot.Title}",
+                Detail = "You are the administrator on duty for this slot.",
+                DueAt = slot.StartsAt,
+                IsOverdue = slot.StartsAt <= now.AddHours(2),
+                Url = "/admin/staff/rota"
+            });
+        }
+
+        // Plan §4.4 stage 3: a report a day overdue on a slot I supervise is a line on my to-do (names behind the login).
+        var supervisedOverdue = await Db.StaffDutyReports.AsNoTracking().Include(r => r.Duty)
+            .Where(r => r.BranchId == branchId && r.Duty!.IsActive && r.Duty.SupervisorUserIds.Contains(me.Id) && r.AuthorUserId != me.Id
+                        && (r.Status == DutyReportStatus.Draft || r.Status == DutyReportStatus.Returned) && r.DueAt <= now.AddHours(-24) && r.DueAt >= now.AddDays(-31))
+            .OrderBy(r => r.DueAt).Take(10).ToListAsync();
+        if (supervisedOverdue.Count > 0)
+        {
+            var authors = await BuildNamesAsync(supervisedOverdue.Select(r => (Guid?)r.AuthorUserId));
+            openItems.AddRange(supervisedOverdue.Select(r => new PortalItemDto
+            {
+                Kind = "duty-report-overdue",
+                Title = $"{authors[r.AuthorUserId]}'s duty report is overdue: {r.Duty!.Title}",
+                Detail = $"For {StaffDutyReports.PeriodText(r.PeriodStart, r.PeriodEnd)}. You are the administrator on duty.",
+                DueAt = r.DueAt,
+                IsOverdue = true,
+                Url = "/admin/staff/duty-reports"
+            }));
+        }
 
         var appraisal = await Db.StaffAppraisals.AsNoTracking().Include(a => a.Subject).Include(a => a.Appraiser)
             .FirstOrDefaultAsync(a => a.SubjectUserId == me.Id && a.PeriodKey == period.Key);
@@ -280,6 +367,8 @@ public class StaffPortalController : StaffPerformanceControllerBase
             BranchId = branchId,
             Score = score,
             ComingUp = comingUp,
+            OnDuty = onDuty,
+            ReportsToWrite = reportsToWrite,
             OpenItems = openItems.OrderBy(i => !i.IsOverdue).ThenBy(i => i.DueAt ?? DateTime.MaxValue).ToList(),
             Notices = noticeDtos,
             RecognitionReceived = received.Select(r => StaffPerformanceMapping.ToDto(r, names, policy.LateEntryThresholdDays, includeNotesAndAttachments: false)).ToList(),
@@ -620,7 +709,10 @@ public class StaffPortalController : StaffPerformanceControllerBase
             ? new Dictionary<Guid, string?>()
             : await Db.MediaContents.AsNoTracking().Where(m => minutesIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.FileUrl);
 
-        var names = await BuildNamesAsync(duties.SelectMany(d => d.RecorderUserIds.Select(id => (Guid?)id)).Concat(duties.Select(d => d.RegisterClosedByUserId)));
+        var names = await BuildNamesAsync(duties.SelectMany(d => d.RecorderUserIds.Select(id => (Guid?)id))
+            .Concat(duties.Select(d => d.RegisterClosedByUserId))
+            .Concat(duties.SelectMany(d => d.SupervisorUserIds.Select(id => (Guid?)id)))
+            .Concat(duties.Where(d => d.Kind == DutyKind.Rota).SelectMany(d => (d.ExpectedUserIds ?? Array.Empty<Guid>()).Select(id => (Guid?)id))));
 
         return duties.Select(d => StaffPerformanceMapping.ToDto(d, names, me, mayManage,
             expectedCount: d.ExpectedUserIds?.Length ?? branchStaffCount,

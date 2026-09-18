@@ -53,7 +53,7 @@
     padding: 80px 20px;
     text-align: center;
     background: var(--qm-bg-card);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     border: 1px solid var(--qm-border);
 }
 
@@ -85,7 +85,7 @@
 .qm-content-media-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -125,7 +125,7 @@
     padding: 4px 8px;
     background: rgba(0, 0, 0, 0.6);
     color: white;
-    border-radius: 4px;
+    border-radius: var(--qm-radius-md);
     font-size: 11px;
     text-transform: uppercase;
     font-weight: 500;
@@ -156,7 +156,7 @@
     margin-top: 4px;
     padding: 2px 6px;
     background: var(--qm-bg-elevated);
-    border-radius: 4px;
+    border-radius: var(--qm-radius-md);
     font-size: 11px;
     color: var(--qm-text-secondary);
 }
@@ -201,7 +201,7 @@
 
 .qm-content-upload-area {
     border: 2px dashed var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 40px 20px;
     text-align: center;
     transition: all 0.3s ease;
@@ -248,7 +248,7 @@
     padding: 12px 28px;
     background: var(--qm-gradient-primary);
     color: var(--qm-text-on-primary);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -277,7 +277,7 @@
     gap: 12px;
     padding: 12px 16px;
     background: var(--qm-bg-card);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     margin-bottom: 10px;
     border: 1px solid var(--qm-border);
 }
@@ -320,7 +320,7 @@
     padding: 10px 20px;
     background: var(--qm-bg-card);
     border: 1px dashed var(--qm-border);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
@@ -379,7 +379,7 @@
 .qm-content-preview-body {
     flex: 1;
     overflow: hidden;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     min-height: 300px;
     background: #000;
 }
@@ -452,7 +452,7 @@
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
     color: var(--qm-text-primary);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     padding: 10px 14px;
     font-size: 14px;
     width: 100%;
@@ -488,7 +488,7 @@
     top: 50%;
     transform: translateY(-50%);
     padding: 4px 10px;
-    border-radius: 6px;
+    border-radius: var(--qm-radius-md);
     font-size: 11px;
     font-weight: 600;
     display: flex;
@@ -530,7 +530,7 @@
 .qm-content-url-preview {
     margin: 16px 0;
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -574,7 +574,7 @@
     align-items: center;
     padding: 12px;
     background: var(--qm-bg-elevated);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     margin-bottom: 20px;
     font-size: 11px;
 }
@@ -590,7 +590,7 @@
     gap: 4px;
     padding: 3px 8px;
     background: var(--qm-bg-elevated);
-    border-radius: 4px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-secondary);
 }
 
@@ -613,7 +613,7 @@
 .qm-content-playlist-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
     display: flex;
     gap: 16px;
@@ -631,7 +631,7 @@
     width: 56px;
     height: 56px;
     background: var(--qm-gradient-primary);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -707,7 +707,7 @@
 .qm-content-zone-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 20px;
     transition: all 0.2s ease;
 }
@@ -744,7 +744,7 @@
 
 .qm-content-zone-status {
     padding: 4px 10px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -762,7 +762,7 @@
 
 .qm-content-zone-preview {
     background: var(--qm-bg-elevated);
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     padding: 16px;
     margin-bottom: 16px;
     aspect-ratio: 16/9;
@@ -812,7 +812,7 @@
 .qm-content-schedule-item {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     padding: 16px 20px;
     display: flex;
     align-items: center;
@@ -830,7 +830,7 @@
     align-items: center;
     padding: 12px 16px;
     background: var(--qm-bg-elevated);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     min-width: 100px;
 }
 
@@ -913,7 +913,7 @@
 .qm-content-dialog {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     width: 90%;
     max-width: 500px;

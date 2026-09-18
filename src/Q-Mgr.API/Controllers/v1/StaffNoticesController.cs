@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -214,7 +215,7 @@ public class StaffNoticesController : ControllerBase
 
         var scheduled = notice.PublishAt > DateTime.UtcNow;
         await _activity.RecordAsync(ActivityActions.NoticePublished, nameof(StaffNotice), notice.Id, null,
-            scheduled ? $"Notice \"{notice.Title}\" scheduled for {notice.PublishAt:dd MMM yyyy HH:mm} UTC" : $"Notice \"{notice.Title}\" published",
+            scheduled ? string.Create(CultureInfo.InvariantCulture, $"Notice \"{notice.Title}\" scheduled for {notice.PublishAt:dd MMM yyyy HH:mm} UTC") : $"Notice \"{notice.Title}\" published",
             new { notice.BranchId, Departments = notice.AudienceDepartmentIds?.Length, Roles = notice.AudienceRoleCodes, notice.AudienceStaffGroup, notice.IsPinned, notice.RequiresAcknowledgement, notice.PublishAt },
             branchId, organizationId);
 

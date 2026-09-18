@@ -21,14 +21,7 @@
         </div>
     </div>
 
-    <div class="tabs">
-        <button class="tab @(activeTab == "broadcasts" ? "active" : "")" @onclick='@(() => activeTab = "broadcasts")'>
-            <QIcon Name="send-fill" /> Broadcasts
-        </button>
-        <button class="tab @(activeTab == "contacts" ? "active" : "")" @onclick='@(() => activeTab = "contacts")'>
-            <QIcon Name="person-lines-fill" /> Contacts (@contacts.Count(c => !c.OptedOut) subscribed)
-        </button>
-    </div>
+    <QTabs Tabs="@MarketingTabs" ActiveKey="@activeTab" ActiveKeyChanged="@(k => activeTab = k)" AriaLabel="Marketing sections" />
 
     @if (activeTab == "broadcasts")
     {
@@ -186,14 +179,8 @@
     <ChildContent>
         <div class="form-grid">
             <label>Name *<input @bind="broadcastModel.Name" placeholder="August newsletter" /></label>
-            <label>Channel *
-                <select @bind="broadcastModel.Channel">
-                    <option value="@BroadcastChannel.Email">Email</option>
-                    <option value="@BroadcastChannel.Sms">SMS</option>
-                    <option value="@BroadcastChannel.Telegram">Telegram</option>
-                    <option value="@BroadcastChannel.WhatsApp">WhatsApp</option>
-                </select>
-            </label>
+            <QSelect TValue="BroadcastChannel" TItem="(BroadcastChannel Value, string Text)" @bind-Value="broadcastModel.Channel"
+                     Items="@ChannelOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" Label="Channel" Required="true" />
             @if (broadcastModel.Channel == BroadcastChannel.Email)
             {
                 <label class="full-width">Subject *<input @bind="broadcastModel.Subject" placeholder="What's new this month" /></label>
@@ -256,12 +243,9 @@
 <style>
     .admin-page { padding: 0; }
     .page-header { margin-bottom: 20px; }
-    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
 
-    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--qm-border); margin-bottom: 20px; }
-    .tab { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border: none; background: none; color: var(--qm-text-muted); font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; }
-    .tab.active { color: var(--qm-primary); border-bottom-color: var(--qm-primary); font-weight: 600; }
 
     .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 16px; }
 
@@ -313,6 +297,17 @@
 </style>
 
 @code {
+    private IReadOnlyList<QTab> MarketingTabs => new[]
+    {
+        new QTab("broadcasts", "Broadcasts", "send-fill"),
+        new QTab("contacts", "Contacts", "person-lines-fill", contacts.Count(c => !c.OptedOut))
+    };
+
+    private static readonly (BroadcastChannel Value, string Text)[] ChannelOptions =
+    {
+        (BroadcastChannel.Email, "Email"), (BroadcastChannel.Sms, "SMS"), (BroadcastChannel.Telegram, "Telegram"), (BroadcastChannel.WhatsApp, "WhatsApp")
+    };
+
     private string activeTab = "broadcasts";
     private List<BroadcastDto> broadcasts = new();
     private List<ContactDto> contacts = new();
@@ -343,7 +338,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;

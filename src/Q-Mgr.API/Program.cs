@@ -405,6 +405,8 @@ AppointmentJobsRegistration.RegisterRecurringJobs();
 DocumentShareJobsRegistration.RegisterRecurringJobs();
 StaffPerformanceJobsRegistration.RegisterRecurringJobs();
 ReminderLadderJobRegistration.RegisterRecurringJobs();
+TimetableIntegrityJobRegistration.RegisterRecurringJobs();
+LessonGenerationJobRegistration.RegisterRecurringJobs();
 StaffOnboardingJobsRegistration.RegisterRecurringJobs();
 
 app.Run();

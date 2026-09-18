@@ -264,8 +264,7 @@
 <style>
     .notices-page { max-width: 1100px; margin: 0 auto; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
-    .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .notice-list { display: flex; flex-direction: column; gap: 10px; }
     .notice-card--pinned { border-left: 3px solid var(--qm-primary); }
@@ -277,10 +276,10 @@
     .notice-card__facts span { display: inline-flex; align-items: center; gap: 4px; }
     .notice-card__ack { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .notice-card__ack-text { font-size: 13px; color: var(--qm-text-secondary); }
-    .notice-progress { flex: 1 1 160px; max-width: 320px; height: 8px; border-radius: 4px; background: var(--qm-bg-secondary); overflow: hidden; }
-    .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: 4px; transition: width var(--qm-transition-base, 0.2s); }
+    .notice-progress { flex: 1 1 160px; max-width: 320px; height: 8px; border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); overflow: hidden; }
+    .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: var(--qm-radius-md); transition: width var(--qm-transition-base, 0.2s); }
     .notice-progress__fill--done { background: var(--qm-success); }
-    .notice-card__actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .notice-card__actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; justify-content: flex-end; }
     .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
     .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }

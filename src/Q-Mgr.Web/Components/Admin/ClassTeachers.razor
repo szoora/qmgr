@@ -8,6 +8,7 @@
 @inject NavigationManager Navigation
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject IStaffPerformanceApiService StaffApi
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -19,13 +20,14 @@
     <div class="page-header">
         <div class="header-content">
             <h1>Class Teachers</h1>
-            <p class="subtitle">Who holds pastoral responsibility for each class. A class teacher sees only the students in their own classes, and is alerted when one of them has a record logged.</p>
+            <p class="subtitle">Who holds pastoral responsibility for each class, and who teaches it which subject. A class teacher sees their own classes' students and their welfare, and is alerted about them. A subject teacher sees only the students they teach, with no guardians, welfare or discipline.</p>
         </div>
         <div class="header-actions">
             @if (canManage)
             {
                 <QButton Text="History" Icon="clock-history" Variant="secondary" OnClick="@(() => ShowHistoryDialog(null))"
                          Title="Who held each class before — the audit answer to who could see a child's file last term" />
+                <QButton Text="Assign a Subject Teacher" Icon="book" Variant="secondary" OnClick="@(() => ShowSubjectDialog(null))" />
                 <QButton Text="Assign a Class Teacher" Icon="person-plus" Variant="primary" OnClick="@(() => ShowAssignDialog(null))" />
             }
         </div>
@@ -44,7 +46,7 @@
            Every one of these is a state where the app looks configured and quietly does
            nothing: a class nobody is told about, a teacher who sees an empty app, a child
            whose class name matches no configured class and so never reaches their teacher. *@
-        @if (coverage.ClassesWithNoTeacher.Any() || coverage.ScopedUsersWithNoClass.Any() || coverage.UnknownStudentClasses.Any())
+        @if (coverage.ClassesWithNoTeacher.Any() || coverage.ScopedUsersWithNoClass.Any() || coverage.UnknownStudentClasses.Any() || coverage.SubjectGaps.Any())
         {
             <div class="ct-warnings">
                 @if (coverage.ClassesWithNoTeacher.Any())
@@ -62,8 +64,13 @@
                     <div class="ct-warn">
                         <QIcon Name="person-x-fill" />
                         <div>
-                            <strong>@coverage.ScopedUsersWithNoClass.Count class teacher account@(coverage.ScopedUsersWithNoClass.Count == 1 ? "" : "s") with no class</strong>
-                            <p>@(coverage.ScopedUsersWithNoClass.Count == 1 ? "This account sees" : "These accounts see") no students at all until assigned: @string.Join(", ", coverage.ScopedUsersWithNoClass.Select(u => u.FullName))</p>
+                            <strong>@coverage.ScopedUsersWithNoClass.Count teaching account@(coverage.ScopedUsersWithNoClass.Count == 1 ? "" : "s") with no class</strong>
+                            @* Capped: every Teacher has a class scope since the duty rota build, so before subjects are
+                               assigned this is the whole teaching staff, and a paragraph of fifty names reads as noise. *@
+                            <p>
+                                @(coverage.ScopedUsersWithNoClass.Count == 1 ? "This account sees" : "These accounts see") no students at all until assigned a class or a subject:
+                                @string.Join(", ", coverage.ScopedUsersWithNoClass.OrderBy(u => u.FullName).Take(OrphanNamesShown).Select(u => u.FullName))@(coverage.ScopedUsersWithNoClass.Count > OrphanNamesShown ? $", and {coverage.ScopedUsersWithNoClass.Count - OrphanNamesShown} more" : "")
+                            </p>
                         </div>
                     </div>
                 }
@@ -81,7 +88,32 @@
                         </div>
                     </div>
                 }
+                @if (coverage.SubjectGaps.Any())
+                {
+                    @* A stream's curriculum is what its level teaches anywhere: S2B with no Physics teacher
+                       while S2A has one would never be timetabled, and nothing else would say so. *@
+                    <div class="ct-warn">
+                        <QIcon Name="book-half" />
+                        <div>
+                            <strong>@coverage.SubjectGaps.Count stream@(coverage.SubjectGaps.Count == 1 ? "" : "s") missing a subject its level teaches</strong>
+                            <ul class="ct-gap-list">
+                                @foreach (var g in coverage.SubjectGaps)
+                                {
+                                    <li><span class="ct-gap-class">@g.ClassName</span> (@g.Level): @string.Join(", ", g.MissingSubjects)</li>
+                                }
+                            </ul>
+                        </div>
+                    </div>
+                }
             </div>
+        }
+
+        @if (canManage && coverage.Classes.Any() && coverage.Classes.All(c => string.IsNullOrWhiteSpace(c.Level)))
+        {
+            <p class="ct-level-hint">
+                <QIcon Name="info-circle" />
+                Give each class a <strong>level</strong> (S2 for S2A, S2B…) under <em>Student Roster → Lists</em> to group streams and to find a stream missing a subject its level teaches.
+            </p>
         }
 
         @if (!coverage.Classes.Any())
@@ -103,6 +135,10 @@
                             <div class="ct-class">
                                 <span class="ct-swatch" style="background:@(row.Color ?? "var(--qm-border)")"></span>
                                 <h3>@row.ClassName</h3>
+                                @if (!string.IsNullOrWhiteSpace(row.Level))
+                                {
+                                    <QChip Text="@row.Level" Size="sm" Title="Level: groups this class with its other streams" />
+                                }
                             </div>
                             <span class="ct-count">@row.StudentCount student@(row.StudentCount == 1 ? "" : "s")</span>
                         </div>
@@ -128,6 +164,51 @@
                             @RenderTeacher(a, isPrimary: false)
                         }
 
+                        @* Subject teachers: the Teaching tier. Compact rows — the contact card belongs to the
+                           pastoral lead, the person a parent or the front desk actually calls. *@
+                        <div class="ct-subjects">
+                            <div class="ct-subjects-head">
+                                <span>Subject teachers</span>
+                                @if (row.SubjectTeachers.Any())
+                                {
+                                    <span class="ct-count">@row.SubjectTeachers.Sum(t => t.PeriodsPerWeek ?? 0) periods a week</span>
+                                }
+                            </div>
+                            @if (!row.SubjectTeachers.Any())
+                            {
+                                <div class="ct-subjects-none">None assigned</div>
+                            }
+                            else
+                            {
+                                <ul class="ct-subject-list">
+                                    @foreach (var st in row.SubjectTeachers)
+                                    {
+                                        <li class="ct-subject">
+                                            <div class="ct-subject-main">
+                                                <QChip Text="@(st.SubjectCode ?? st.SubjectName)" Size="sm" Class="q-chip--mono" Title="@st.SubjectName" />
+                                                <span class="ct-subject-name">@st.SubjectName</span>
+                                                <span class="ct-subject-teacher">
+                                                    @st.FullName
+                                                    @if (!st.UserIsActive)
+                                                    {
+                                                        <QBadge Text="Account inactive" Variant="danger" />
+                                                    }
+                                                </span>
+                                            </div>
+                                            <div class="ct-subject-side">
+                                                <span class="ct-periods" title="Planned periods a week">@(st.PeriodsPerWeek?.ToString() ?? "—") / wk</span>
+                                                @if (canManage)
+                                                {
+                                                    <QButton Icon="pencil" Variant="ghost" Size="sm" Title="Change periods a week" OnClick="@(() => ShowPeriodsDialog(st))" />
+                                                    <QButton Icon="person-dash" Variant="ghost" Size="sm" Title="End this assignment" OnClick="@(() => ShowEndDialog(st))" />
+                                                }
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+
                         @if (canManage)
                         {
                             <div class="ct-card-foot">
@@ -135,6 +216,7 @@
                                 {
                                     <QButton Text="Add assistant" Icon="plus" Variant="ghost" Size="sm" OnClick="@(() => ShowAssignDialog(row.ClassName, ClassTeacherRole.Assistant))" />
                                 }
+                                <QButton Text="Add subject teacher" Icon="book" Variant="ghost" Size="sm" OnClick="@(() => ShowSubjectDialog(row.ClassName))" />
                                 <QButton Text="History" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => ShowHistoryDialog(row.ClassName))" />
                             </div>
                         }
@@ -196,15 +278,102 @@
     </FooterContent>
 </QModal>
 
+@* ── Assign a subject teacher ───────────────────────────────────────────────────────────── *@
+<QModal @bind-Visible="showSubject" Title="Assign a subject teacher" Icon="book" Size="md" ShowDefaultFooter="false">
+    <ChildContent>
+    <div class="form-grid">
+        <QSelect TValue="string" TItem="ClassTeacherCoverageDto"
+                 Label="Class"
+                 Value="@subjectForm.ClassName"
+                 ValueChanged="@(v => subjectForm.ClassName = v ?? string.Empty)"
+                 Items="@coverage.Classes"
+                 ValueSelector="@(c => c.ClassName)"
+                 TextSelector="@(c => string.IsNullOrWhiteSpace(c.Level) ? c.ClassName : $"{c.ClassName} ({c.Level})")"
+                 Placeholder="Choose a class" />
+
+        <QSelect TValue="Guid" TItem="SubjectDto"
+                 Label="Subject"
+                 Value="@subjectForm.SubjectId"
+                 ValueChanged="@(v => subjectForm.SubjectId = v)"
+                 Items="@subjects"
+                 ValueSelector="@(s => s.Id)"
+                 TextSelector="@(s => $"{s.Name} ({s.Code})")"
+                 Placeholder="@(subjects.Count == 0 ? "No subjects — add them on the Subjects page" : "Choose a subject")" />
+
+        <QSelect TValue="Guid" TItem="StaffOption"
+                 Label="Teacher"
+                 Value="@subjectForm.UserId"
+                 ValueChanged="@(v => subjectForm.UserId = v)"
+                 Items="@staff"
+                 ValueSelector="@(s => s.Id)"
+                 TextSelector="@(s => s.Label)"
+                 Placeholder="Choose a member of staff" />
+
+        <QInput TValue="int?" Label="Periods a week" Type="number" Min="0" Max="60" @bind-Value="subjectForm.PeriodsPerWeek"
+                HelperText="The planned load. The timetable compares what it places against this." />
+
+        @if (SubjectStaffRoleCode() is { } rc && rc != RoleCodes.Teacher && rc != RoleCodes.ClassTeacher)
+        {
+            <div class="ct-inline-warn">
+                <QIcon Name="info-circle-fill" />
+                <span>
+                    This person's role is <strong>@rc</strong>, not Teacher. A subject assignment narrows what a
+                    Teacher sees to the students they teach; on this role their visibility is whatever the role already gives them.
+                </span>
+            </div>
+        }
+        @if (DuplicateSubjectAssignment())
+        {
+            <div class="ct-inline-warn">
+                <QIcon Name="exclamation-circle-fill" />
+                <span>This person already teaches that subject in this class.</span>
+            </div>
+        }
+    </div>
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showSubject = false)" />
+        <QButton Text="Assign" Icon="check-lg" Variant="primary" OnClick="@SaveSubjectAssignment"
+                 Disabled="@(saving || subjectForm.UserId == Guid.Empty || subjectForm.SubjectId == Guid.Empty || string.IsNullOrWhiteSpace(subjectForm.ClassName) || DuplicateSubjectAssignment())" />
+    </FooterContent>
+</QModal>
+
+@* ── Periods a week ──────────────────────────────────────────────────────────────────────── *@
+<QModal @bind-Visible="showPeriods" Title="Periods a week" Icon="pencil" Size="sm" ShowDefaultFooter="false">
+    <ChildContent>
+    @if (periodsTarget is { } pt)
+    {
+        <p class="ct-end-lead"><strong>@pt.FullName</strong> — @pt.SubjectName in <strong>@pt.ClassName</strong>.</p>
+        <QInput TValue="int?" Label="Periods a week" Type="number" Min="0" Max="60" @bind-Value="periodsValue"
+                HelperText="Leave blank if not planned yet. To change the teacher, subject or class, end this assignment and assign again, so the history stays true." />
+    }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showPeriods = false)" />
+        <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="@SavePeriods" Disabled="@(saving || periodsValue is < 0 or > 60)" />
+    </FooterContent>
+</QModal>
+
 @* ── End an assignment ─────────────────────────────────────────────────────────────────── *@
 <QModal @bind-Visible="showEnd" Title="End this assignment" Icon="person-dash" Size="sm" ShowDefaultFooter="false">
     <ChildContent>
     @if (ending is { } e)
     {
-        <p class="ct-end-lead">
-            <strong>@e.FullName</strong> will immediately stop seeing students in <strong>@e.ClassName</strong>,
-            and stop being alerted about them. The assignment is kept in the history, not deleted.
-        </p>
+        @if (e.Role == ClassTeacherRole.SubjectTeacher)
+        {
+            <p class="ct-end-lead">
+                <strong>@e.FullName</strong> will no longer teach <strong>@e.SubjectName</strong> in <strong>@e.ClassName</strong>,
+                and from their next request stops seeing those students unless they teach them another subject.
+                The assignment is kept in the history, not deleted.
+            </p>
+        }
+        else
+        {
+            <p class="ct-end-lead">
+                <strong>@e.FullName</strong> will immediately stop seeing students in <strong>@e.ClassName</strong>,
+                and stop being alerted about them. The assignment is kept in the history, not deleted.
+            </p>
+        }
         <QInput TValue="string" Label="Reason (optional)" @bind-Value="endReason" Placeholder="e.g. End of term, class handover" />
     }
     </ChildContent>
@@ -281,7 +450,7 @@
                                     <span class="ct-hist-sub">account inactive</span>
                                 }
                             </td>
-                            <td>@(h.Role == ClassTeacherRole.ClassTeacher ? "Class teacher" : "Assistant")</td>
+                            <td>@RoleLabel(h)</td>
                             <td class="ct-hist-when">
                                 @QDateFormat.LocalDT(h.AssignedAt)
                                 @if (h.EndedAt == null)
@@ -342,6 +511,14 @@
     private ClassTeacherDto? contactTarget;
     private UpdateStaffContactRequest contactForm = new();
 
+    private const int OrphanNamesShown = 10;
+    private List<SubjectDto> subjects = new();
+    private bool showSubject;
+    private AssignSubjectTeacherRequest subjectForm = new();
+    private bool showPeriods;
+    private ClassTeacherDto? periodsTarget;
+    private int? periodsValue;
+
     private bool showHistory;
     private bool isLoadingHistory;
     private string? historyClass;
@@ -371,7 +548,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
@@ -396,6 +573,13 @@
             }
 
             coverage = await ClassTeacherApi.GetCoverageAsync(branchId);
+
+            if (canManage)
+            {
+                // Only live subjects are offered: a retired one cannot be newly assigned.
+                try { subjects = await StaffApi.GetSubjectsAsync(branchId); }
+                catch { subjects = new(); }
+            }
 
             // The staff picker. Anyone in the organization can hold a class — a head of year on a
             // custom role is a legitimate assistant — so this is not filtered to the class-teacher
@@ -448,6 +632,77 @@
         }
     }
 
+    private string? SubjectStaffRoleCode()
+        => staff.FirstOrDefault(s => s.Id == subjectForm.UserId)?.RoleCode is { Length: > 0 } rc ? rc : null;
+
+    private bool DuplicateSubjectAssignment()
+        => subjectForm.UserId != Guid.Empty && subjectForm.SubjectId != Guid.Empty
+           && coverage.Classes.FirstOrDefault(c => string.Equals(c.ClassName, subjectForm.ClassName, StringComparison.OrdinalIgnoreCase)) is { } row
+           && row.SubjectTeachers.Any(t => t.UserId == subjectForm.UserId && t.SubjectId == subjectForm.SubjectId);
+
+    private void ShowSubjectDialog(string? className)
+    {
+        subjectForm = new AssignSubjectTeacherRequest { ClassName = className ?? string.Empty };
+        showSubject = true;
+    }
+
+    private async Task SaveSubjectAssignment()
+    {
+        saving = true;
+        try
+        {
+            var dto = await ClassTeacherApi.AssignSubjectTeacherAsync(BranchState.CurrentBranchId, subjectForm);
+            NotificationService.Notify(ToastSeverity.Success, "Assigned", $"{dto.FullName} now teaches {dto.SubjectName} in {dto.ClassName}.");
+            showSubject = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not assign", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void ShowPeriodsDialog(ClassTeacherDto assignment)
+    {
+        periodsTarget = assignment;
+        periodsValue = assignment.PeriodsPerWeek;
+        showPeriods = true;
+    }
+
+    private async Task SavePeriods()
+    {
+        if (periodsTarget == null) return;
+        saving = true;
+        try
+        {
+            await ClassTeacherApi.UpdatePeriodsAsync(BranchState.CurrentBranchId, periodsTarget, periodsValue);
+            NotificationService.Notify(ToastSeverity.Success, "Saved", $"{periodsTarget.SubjectName} in {periodsTarget.ClassName}: {(periodsValue?.ToString() ?? "no")} periods a week.");
+            showPeriods = false;
+            periodsTarget = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            NotificationService.Notify(ToastSeverity.Error, "Could not save", ex.Message);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static string RoleLabel(ClassTeacherDto a) => a.Role switch
+    {
+        ClassTeacherRole.ClassTeacher => "Class teacher",
+        ClassTeacherRole.Assistant => "Assistant",
+        ClassTeacherRole.SubjectTeacher => $"Subject teacher — {a.SubjectName ?? "unknown subject"}",
+        _ => a.Role.ToString()
+    };
+
     private void ShowEndDialog(ClassTeacherDto assignment)
     {
         ending = assignment;
@@ -462,7 +717,10 @@
         try
         {
             await ClassTeacherApi.EndAsync(BranchState.CurrentBranchId, ending.Id, new EndClassTeacherRequest { Reason = endReason });
-            NotificationService.Notify(ToastSeverity.Success, "Assignment ended", $"{ending.FullName} no longer holds {ending.ClassName}.");
+            NotificationService.Notify(ToastSeverity.Success, "Assignment ended",
+                ending.Role == ClassTeacherRole.SubjectTeacher
+                    ? $"{ending.FullName} no longer teaches {ending.SubjectName} in {ending.ClassName}."
+                    : $"{ending.FullName} no longer holds {ending.ClassName}.");
             showEnd = false;
             ending = null;
             await LoadAsync();
@@ -647,7 +905,7 @@
     }
     .ct-class { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .ct-class h3 { margin: 0; font-family: var(--qm-font-display); font-size: 17px; font-weight: 700; color: var(--qm-text-primary); }
-    .ct-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .ct-swatch { width: 10px; height: 10px; border-radius: var(--qm-radius-sm); flex-shrink: 0; }
     .ct-count { font-size: 12px; color: var(--qm-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
     .ct-person { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px; }
@@ -674,8 +932,8 @@
     .ct-none { display: flex; align-items: center; gap: 10px; padding: 16px; color: var(--qm-text-muted); font-size: 13.5px; }
     /* flex-wrap at source: two buttons on a narrow card is exactly the *-footer shape that
        widened the document and made the whole page scroll sideways. */
-    .ct-card-foot { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px; }
-    .ct-person-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .ct-card-foot { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); padding: 0 16px 12px; }
+    .ct-person-actions { display: flex; flex-shrink: 0; }
 
     /* The table scrolls; the page never does. */
     .ct-hist-wrap { overflow-x: auto; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); }
@@ -708,4 +966,24 @@
     .ct-end-lead { font-size: 13.5px; color: var(--qm-text-secondary); line-height: 1.6; margin-bottom: 14px; }
 
     .form-grid { display: flex; flex-direction: column; gap: 14px; }
+
+    .ct-gap-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--qm-text-secondary); line-height: 1.5; }
+    .ct-gap-class { font-weight: 600; color: var(--qm-text-primary); }
+    .ct-level-hint { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--qm-text-muted); margin: -8px 0 16px; line-height: 1.5; }
+
+    .ct-subjects { border-top: 1px solid var(--qm-border); padding: 10px 16px 12px; }
+    .ct-subjects-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--qm-text-muted); margin-bottom: 6px; }
+    .ct-subjects-none { font-size: 13px; color: var(--qm-text-muted); }
+    .ct-subject-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+    .ct-subject { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--qm-border); min-width: 0; }
+    .ct-subject:last-child { border-bottom: none; }
+    .ct-subject-main { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; font-size: 13px; }
+    .ct-subject-name { font-weight: 600; color: var(--qm-text-primary); }
+    .ct-subject-teacher { color: var(--qm-text-secondary); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ct-subject-side { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+    .ct-periods { font-size: 12px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; margin-right: 4px; white-space: nowrap; }
+
+    @@media (max-width: 480px) {
+        .ct-grid { grid-template-columns: minmax(0, 1fr); }
+    }
 </style>

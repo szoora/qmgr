@@ -132,10 +132,17 @@ public class StaffActivityController : StaffPerformanceControllerBase
             StaffExportKinds.Reports => (Permissions.StaffReportsView, "the staff performance reports"),
             StaffExportKinds.NoticeAcknowledgements => (Permissions.StaffNoticesManage, "a notice's acknowledgements"),
             StaffExportKinds.Activity => (Permissions.StaffRecordsView, "the activity log"),
+            StaffExportKinds.DutyReports => (Permissions.StaffDutyReportsView, "a duty report pack"),
+            // A published timetable is readable by all branch staff (plan §13.5); the print is logged all the same.
+            StaffExportKinds.Timetable => (string.Empty, "a timetable"),
+            StaffExportKinds.TeachingReports => (string.Empty, "the lessons report"),
+            // An appraisal is read by its subject, appraiser, moderator or a confidential-rung holder;
+            // publishing one is staff-records work, so it is gated like a timeline.
+            StaffExportKinds.Appraisal => (Permissions.StaffRecordsView, "an appraisal report"),
             _ => (null, null)
         };
         if (permission == null) return BadRequestProblem("Unrecognised export kind");
-        if (!await HasPermissionAsync(permission)) return Forbid();
+        if (permission.Length > 0 && !await HasPermissionAsync(permission)) return Forbid();
 
         string? subjectName = null;
         if (request.SubjectUserId is { } subjectId)

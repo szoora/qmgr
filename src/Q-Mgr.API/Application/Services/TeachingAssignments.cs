@@ -135,6 +135,7 @@ public static class TeachingAssignments
             .Select(a => new { a.SubjectId, a.Subject!.Name, a.Subject.Code, a.Subject.SortOrder, a.ClassName, a.PeriodsPerWeek })
             .ToListAsync(ct);
 
+        var placed = await TimetableChecker.PlacedPerWeekAsync(db, branchId, ct);
         return rows
             .GroupBy(r => r.SubjectId!.Value)
             .Select(g => new TeachingSummaryDto
@@ -144,6 +145,7 @@ public static class TeachingAssignments
                 SubjectCode = g.First().Code,
                 Classes = g.Select(r => r.ClassName).OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList(),
                 PlannedPeriodsPerWeek = g.Sum(r => r.PeriodsPerWeek ?? 0),
+                TimetabledPeriodsPerWeek = (int)Math.Round(g.Sum(r => placed.GetValueOrDefault((userId, TimetableCycle.Normalize(r.ClassName), g.Key)))),
                 SortOrder = g.First().SortOrder
             })
             .OrderBy(t => t.SortOrder).ThenBy(t => t.SubjectName)

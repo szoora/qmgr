@@ -110,10 +110,14 @@ public static class ServiceExtensions
         // general "100 a minute" rule would black out a signage screen. Whitelisted here in code
         // rather than in appsettings, because the DB "RateLimiting" row above replaces the config
         // section wholesale and an administrator's edit must not be able to reintroduce this.
+        //
+        // get:/api/v1/health for the same reason (2026-09-17): every open page asks it on start and every 30 seconds, on the
+        // viewer's own rate-limit key, and a 429 there raised the Web's full-page "Reconnecting..." overlay, which swallows
+        // every click. A school behind one NAT address shares one key. Only the bare check: /system and /database stay limited.
         services.PostConfigure<IpRateLimitOptions>(options =>
         {
             options.EndpointWhitelist ??= new List<string>();
-            foreach (var entry in new[] { "get:/uploads/*", "head:/uploads/*" })
+            foreach (var entry in new[] { "get:/uploads/*", "head:/uploads/*", "get:/api/v1/health" })
             {
                 if (!options.EndpointWhitelist.Contains(entry, StringComparer.OrdinalIgnoreCase))
                     options.EndpointWhitelist.Add(entry);

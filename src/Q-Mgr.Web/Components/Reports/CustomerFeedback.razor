@@ -379,7 +379,7 @@
     .filter-item {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: var(--q-row-gap, 8px);
     }
 
     .range-caption {
@@ -668,7 +668,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;

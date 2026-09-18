@@ -128,12 +128,15 @@ public static class ActivityActions
 
     // ---- Timetable and lessons (plan §6, §7). ----
     public const string TimetableSettingsSaved = "timetable.settings-saved";
+    public const string TimetableRoomsSaved = "timetable.rooms-saved";
     public const string TimetableCreated = "timetable.created";
     public const string TimetableLessonPlaced = "timetable.lesson-placed";
     public const string TimetableLessonRemoved = "timetable.lesson-removed";
     public const string TimetablePublished = "timetable.published";
     public const string TimetableArchived = "timetable.archived";
     public const string TimetableImported = "timetable.imported";
+    /// <summary>The integrity sweep's daily count of a published timetable's clashes — the timetable health trend (plan §11).</summary>
+    public const string TimetableChecked = "timetable.checked";
     public const string LessonFlagged = "staff.lesson.flagged";
     public const string LessonFlagOverridden = "staff.lesson.flag-overridden";
     public const string LessonCancelled = "staff.lesson.cancelled";
@@ -149,6 +152,18 @@ public static class StaffExportKinds
     public const string Reports = "reports";
     public const string NoticeAcknowledgements = "notice-acknowledgements";
     public const string Activity = "activity";
+    /// <summary>A printed or published pack of duty reports (duty rota plan §4.3).</summary>
+    public const string DutyReports = "duty-reports";
+    /// <summary>A printed or published timetable (duty rota plan §6, §13.13).</summary>
+    public const string Timetable = "timetable";
+    /// <summary>A printed or published lessons report (Annex 4 and 5, duty rota plan §11).</summary>
+    public const string TeachingReports = "teaching-reports";
+    /// <summary>
+    /// A published appraisal report — one named person's ratings, comments and moderation. Its own
+    /// kind since 2026-09-18: it used to be recorded as a "timeline", which read wrong in the
+    /// activity log and made a published appraisal indistinguishable from a performance file.
+    /// </summary>
+    public const string Appraisal = "appraisal";
 }
 
 public record RecordStaffExportRequest

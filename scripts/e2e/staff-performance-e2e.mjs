@@ -20,6 +20,10 @@ const ORG = process.env.ORG || "ef0305f3-40c6-456f-8f9a-48a1f0e3223c";
 const SA_USER = process.env.SA_USER || "superadmin";
 const SA_PASS = process.env.SA_PASS || "admin";
 const PW = "E2eTeacher!2026";
+// Accounts THIS suite creates get a password the blocklist accepts (duty rota plan §12.2, Phase 0A, 2026-09-17):
+// "E2eTeacher!2026" is essentially the word "teacher" plus a year, the shape the blocklist exists to refuse, so a
+// new account can no longer be given it. Accounts created before the blocklist keep PW; sign-in tries both.
+const NEW_PW = "Rwenzori#Peaks-2026";
 const RUN = Date.now().toString(36);
 
 if (!BRANCH) { console.error("set BRANCH to the branch guid"); process.exit(2); }
@@ -56,7 +60,12 @@ const del = (t, p, b) => call(t, "DELETE", p, b);
 
 async function login(id, pw) {
   const r = await call(null, "POST", "/api/v1/auth/login", { email: id, password: pw });
+  if (!r.json?.accessToken && pw === PW) return (await call(null, "POST", "/api/v1/auth/login", { email: id, password: NEW_PW })).json?.accessToken ?? null;
   return r.json?.accessToken ?? null;
+}
+/** The password an e2e account actually has (see NEW_PW). */
+async function passwordOf(id) {
+  return (await call(null, "POST", "/api/v1/auth/login", { email: id, password: PW })).json?.accessToken ? PW : NEW_PW;
 }
 
 const iso = (d) => new Date(d).toISOString();
@@ -119,7 +128,7 @@ for (const p of PEOPLE) {
   let u = usersArray().find((x) => x.username === p.username);
   if (!u) {
     const r = await post(AD, "/api/v1/users", {
-      username: p.username, email: `${p.username}@qmgr.local`, password: PW,
+      username: p.username, email: `${p.username}@qmgr.local`, password: NEW_PW,
       firstName: p.first, lastName: p.last, roleId: roleId(p.role), assignedBranchId: BRANCH,
     });
     if (r.status >= 300) { bad(`create ${p.username}`, "201", `${r.status} ${r.text}`); continue; }
@@ -464,6 +473,12 @@ eq("DELEGATION: a teacher who is not the recorder gets 404 on the register", (aw
   // as not taken, and its recorder's to-do says how far it got.
   const openReg = (await get(U.lang1.token, `${B}/staff/duties/${D}/register`)).json;
   truthy("SAVE WITHOUT CLOSING: the marks are recorded and the register is still open", openReg?.duty?.registerClosedAt == null && (openReg?.rows ?? []).filter((r) => r.outcome).length === 4, JSON.stringify({ closed: openReg?.duty?.registerClosedAt, marked: (openReg?.rows ?? []).filter((r) => r.outcome).length }));
+  // The to-do lists a recorder's ten oldest open registers. Earlier runs leave this recorder's E2E registers open, so
+  // close THOSE (never this run's) first, or after ten runs this run's register falls off the list (found 2026-09-17).
+  for (const item of ((await get(U.lang1.token, "/api/v1/staff/portal")).json?.openItems ?? []).filter((i) => i.kind === "register-due" && i.title.startsWith("E2E ") && !i.title.includes(RUN))) {
+    const staleId = item.url.split("/duties/")[1]?.split("/")[0];
+    if (staleId) await post(U.lang1.token, `${B}/staff/duties/${staleId}/register`, { close: true, entries: [] });
+  }
   const recorderPortal = (await get(U.lang1.token, "/api/v1/staff/portal")).json;
   const due = (recorderPortal?.openItems ?? []).find((i) => i.kind === "register-due" && i.title === dutyBody().title);
   truthy("SAVE WITHOUT CLOSING: the recorder's to-do still lists it, saying four are marked and recorded", !!due && /4 marked and recorded/.test(due.detail ?? ""), JSON.stringify(due));
@@ -541,7 +556,7 @@ hdr("14.7 NOTICES — audience, sanitising, scheduling, acknowledgements under c
 
 // ---------------------------------------------------------------------------------------------------
 hdr("14.8 APPRAISALS — the workflow, concurrency, the frozen score, the appeal");
-const fresh = await post(AD, "/api/v1/users", { username: `e2e.sp.appr.${RUN}`, email: `e2e.sp.appr.${RUN}@qmgr.local`, password: PW, firstName: "Ann", lastName: `Appraisee ${RUN}`, roleId: roleId("teacher"), assignedBranchId: BRANCH });
+const fresh = await post(AD, "/api/v1/users", { username: `e2e.sp.appr.${RUN}`, email: `e2e.sp.appr.${RUN}@qmgr.local`, password: NEW_PW, firstName: "Ann", lastName: `Appraisee ${RUN}`, roleId: roleId("teacher"), assignedBranchId: BRANCH });
 eq("a fresh teacher is created for this run's appraisal", fresh.status < 300, true);
 userList = await allUsers();
 const T = { id: usersArray().find((x) => x.username === `e2e.sp.appr.${RUN}`)?.id };
@@ -684,10 +699,12 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
     ],
   });
   eq("IMPORT: the Tenant Admin starts a three-row import (202)", imp.status, 202);
-  let job = imp.json;
+  // Since Phase 0A the start answers { job, temporaryPasswords } (the slips are shown once, with the job).
+  let job = imp.json?.job ?? imp.json;
+  const jobId = job?.id;
   for (let i = 0; i < 40 && job && !["Completed", "CompletedWithErrors", "Failed"].includes(job.status); i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    job = (await get(AD, `${B}/staff/import-jobs/${imp.json.id}`)).json;
+    job = (await get(AD, `${B}/staff/import-jobs/${jobId}`)).json;
   }
   truthy("IMPORT: the job finishes", ["Completed", "CompletedWithErrors"].includes(job?.status), JSON.stringify(job));
   eq("IMPORT: one account created", job?.createdCount, 1);
@@ -722,7 +739,7 @@ hdr("14.10 IMPORT, CUSTOM ROLE SCOPE, SIGN-OUT");
 }
 {
   const t = await login(`${U.support.username}@qmgr.local`, PW);
-  const loginRes = await call(null, "POST", "/api/v1/auth/login", { email: `${U.support.username}@qmgr.local`, password: PW });
+  const loginRes = await call(null, "POST", "/api/v1/auth/login", { email: `${U.support.username}@qmgr.local`, password: await passwordOf(`${U.support.username}@qmgr.local`) });
   const refresh = loginRes.json?.refreshToken;
   eq("SIGN-OUT: the logout endpoint answers 204", (await post(loginRes.json?.accessToken, "/api/v1/auth/logout")).status, 204);
   const rr = await call(null, "POST", "/api/v1/auth/refresh", { refreshToken: refresh });

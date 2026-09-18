@@ -108,13 +108,8 @@ else
                 Usage Trends
             </h2>
             <div class="trends-filters">
-                <select class="form-select form-select-sm" @bind="selectedMetric">
-                    <option value="tokens">Tokens</option>
-                    <option value="apiCalls">API Calls</option>
-                    <option value="users">Active Users</option>
-                    <option value="branches">Branches</option>
-                    <option value="storage">Storage</option>
-                </select>
+                <QSelect TValue="string" TItem="(string Value, string Text)" @bind-Value="selectedMetric"
+                         Items="@MetricOptions" ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Text)" />
             </div>
         </div>
 
@@ -607,6 +602,11 @@ else
 </style>
 
 @code {
+    private static readonly (string Value, string Text)[] MetricOptions =
+    {
+        ("tokens", "Tokens"), ("apiCalls", "API Calls"), ("users", "Active Users"), ("branches", "Branches"), ("storage", "Storage")
+    };
+
     private bool isLoading = true;
     private bool hasError = false;
     private string errorMessage = "";

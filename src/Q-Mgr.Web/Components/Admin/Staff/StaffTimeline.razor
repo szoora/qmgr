@@ -229,6 +229,7 @@
                         </dl>
                     }
                 </QCard>
+                <TeachingSummaryCard BranchId="@branchId" UserId="@UserId" Title="Teaching" HideWhenEmpty="false" />
             </aside>
         </div>
     }
@@ -302,16 +303,15 @@
 
 <style>
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
-    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .st-head { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
     .st-head__text { min-width: 0; }
-    .st-head__text h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .st-head__text h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .st-head__text .subtitle { margin: 0 0 8px; color: var(--qm-text-muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .st-head__score { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .st-head__points { font-size: 13px; color: var(--qm-text-secondary); }
     .st-columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
     .st-main { flex: 1 1 520px; min-width: 0; }
-    .st-side { flex: 0 1 320px; min-width: 260px; }
+    .st-side { flex: 0 1 320px; min-width: 260px; display: flex; flex-direction: column; gap: 16px; }
     .st-desc { margin: 6px 0; white-space: pre-wrap; color: var(--qm-text-primary); }
     .st-purpose { margin: 0 0 6px; font-size: 12px; color: var(--qm-text-muted); display: flex; gap: 6px; align-items: flex-start; }
     .st-activity-item .q-timeline__card { padding: 6px 12px; background: transparent; border-style: dashed; box-shadow: none; }

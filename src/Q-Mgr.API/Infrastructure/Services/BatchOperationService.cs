@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QMgr.API.Controllers.v1;
@@ -301,7 +302,7 @@ public class BatchOperationService : IBatchOperationService
                 case BatchOperation.SetWelfareReviewDate:
                     rows.Add(Row(r.Id, label, sub, RosterImportRowOutcome.Updated,
                         r.ActionDueDate?.ToString("yyyy-MM-dd"), request.DateValue?.ToString("yyyy-MM-dd"),
-                        $"Review by {request.DateValue:d MMM yyyy}"));
+                        string.Create(CultureInfo.InvariantCulture, $"Review by {request.DateValue:d MMM yyyy}")));
                     break;
 
                 default:
@@ -323,7 +324,7 @@ public class BatchOperationService : IBatchOperationService
         var summary = request.Operation switch
         {
             BatchOperation.AssignWelfareAction => $"Assign {changing:N0} welfare record{(changing == 1 ? "" : "s")} to {targetName}",
-            BatchOperation.SetWelfareReviewDate => $"Set a review date of {request.DateValue:d MMM yyyy} on {changing:N0} record{(changing == 1 ? "" : "s")}",
+            BatchOperation.SetWelfareReviewDate => string.Create(CultureInfo.InvariantCulture, $"Set a review date of {request.DateValue:d MMM yyyy} on {changing:N0} record{(changing == 1 ? "" : "s")}"),
             _ => $"Move {changing:N0} record{(changing == 1 ? "" : "s")} to {status}"
         };
 
@@ -414,7 +415,7 @@ public class BatchOperationService : IBatchOperationService
 
             rows.Add(Row(a.Id, a.CustomerName ?? a.ReferenceCode, a.ReferenceCode, RosterImportRowOutcome.Updated,
                 a.Status.ToString(), nameof(AppointmentStatus.Cancelled),
-                $"{a.ScheduledAt.ToLocalTime():d MMM, HH:mm} — cancelled"));
+                string.Create(CultureInfo.InvariantCulture, $"{a.ScheduledAt.ToLocalTime():d MMM, HH:mm} — cancelled")));
         }
 
         AddMissing(rows, appts.Select(a => a.Id), request.Ids, "That booking no longer exists.");

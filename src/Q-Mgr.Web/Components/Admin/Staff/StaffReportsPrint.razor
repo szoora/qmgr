@@ -15,6 +15,8 @@
 @inject IJSRuntime JS
 @inject IDocumentShareApiService DocShareApi
 @inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 
 @*
     The branch's staff performance summary for a period, on A4. Tables only — a bar chart prints as
@@ -295,7 +297,7 @@ else if (loadError != null)
             var user = await AuthService.GetCurrentUserAsync();
             generatedBy = user?.FullName;
             organizationId = user?.OrganizationId ?? Guid.Empty;
-            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
             if (organizationId != Guid.Empty)
                 branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
 
@@ -325,38 +327,27 @@ else if (loadError != null)
         {
             var stamp = QDateFormat.D(DateTime.UtcNow);
             var name = $"Staff performance summary — {BranchState.CurrentBranchName} ({PeriodName})";
-            var fileName = $"staff-summary-{r.Period.Key}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
 
-            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "rpp-sheet", fileName);
-            if (bytes == null || bytes.Length == 0)
-                throw new InvalidOperationException("The report rendered to an empty file.");
-
-            using var stream = new MemoryStream(bytes);
-            var doc = await DocShareApi.UploadDocumentAsync(
-                organizationId, stream, fileName,
-                name,
-                summary: $"Staff performance summary for {BranchState.CurrentBranchName}, {PeriodName}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
-                publishedFrom: $"Staff reports — {BranchState.CurrentBranchName}, {PeriodName}{(r.ScopedToDepartments.Any() ? $" (scoped to {string.Join(", ", r.ScopedToDepartments)})" : "")}, generated {stamp}",
-                shareable: true);
-
-            // The activity log carries the publish (plan §11). RecordExportAsync never throws: the document
-            // exists either way, and a missing log line is not a reason to tell the user it failed.
-            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
             {
-                Kind = StaffExportKinds.Reports,
-                Published = true,
-                MediaContentId = doc.Id,
+                SheetElementId = "rpp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"staff-summary-{r.Period.Key}-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = name,
-                Format = "PDF",
-                PeriodKey = r.Period.Key
-            });
-
-            Toast.Notify(ToastSeverity.Success, "Published to the Document Library", "A snapshot as of now. Create a share link from the Library when you are ready.");
-            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
-        }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+                Summary = $"Staff performance summary for {BranchState.CurrentBranchName}, {PeriodName}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Staff reports — {BranchState.CurrentBranchName}, {PeriodName}{(r.ScopedToDepartments.Any() ? $" (scoped to {string.Join(", ", r.ScopedToDepartments)})" : "")}, generated {stamp}",
+                // The activity log carries the publish (plan §11). RecordExportAsync never throws: the document
+                // exists either way, and a missing log line is not a reason to tell the user it failed.
+                Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+                {
+                    Kind = StaffExportKinds.Reports,
+                    Published = true,
+                    MediaContentId = doc.Id,
+                    DocumentName = name,
+                    Format = "PDF",
+                    PeriodKey = r.Period.Key
+                })
+            }, JS, DocShareApi, Toast, Navigation);
         }
         finally
         {

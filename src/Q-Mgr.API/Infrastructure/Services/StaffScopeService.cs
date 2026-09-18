@@ -166,7 +166,32 @@ public class StaffScopeService : IStaffScopeService
 
         if (_visibleByBranch.TryGetValue(branchId, out var cached)) return cached;
 
-        var me = CurrentUserId;
+        var visible = await ComputeVisibleAsync(_context, CurrentUserId, scope, await GetHeadedDepartmentIdsAsync());
+        return _visibleByBranch[branchId] = visible!;
+    }
+
+    /// <summary>
+    /// The visible set for a user who is NOT the current request's caller — a background job's recipient (the weekly lesson
+    /// analysis). The same rule as <see cref="GetVisibleUserIdsAsync"/>, computed without an HTTP context: there is one
+    /// rule, not two. Null = unscoped. Fails closed: an inactive or unknown user sees nobody.
+    /// </summary>
+    public static async Task<HashSet<Guid>?> VisibleUserIdsForAsync(QMgrDbContext db, Guid userId, CancellationToken ct = default)
+    {
+        var scope = await db.Users.IgnoreQueryFilters().AsNoTracking()
+            .Where(u => u.Id == userId && u.IsActive)
+            .Select(u => (StaffDataScope?)u.Role.StaffScope)
+            .FirstOrDefaultAsync(ct);
+        if (scope == null) return new HashSet<Guid>();
+        if (scope == StaffDataScope.Organization) return null;
+        var headed = await db.Departments.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.IsActive && (d.HeadUserId == userId || d.DeputyHeadUserId == userId))
+            .Select(d => d.Id).ToListAsync(ct);
+        return await ComputeVisibleAsync(db, userId, scope.Value, headed, ct);
+    }
+
+    private static async Task<HashSet<Guid>?> ComputeVisibleAsync(QMgrDbContext db, Guid me, StaffDataScope scope, IReadOnlyList<Guid> headedDepartments, CancellationToken ct = default)
+    {
+        if (scope == StaffDataScope.Organization) return null;
         var visible = new HashSet<Guid>();
         if (me != Guid.Empty) visible.Add(me);
 
@@ -174,29 +199,28 @@ public class StaffScopeService : IStaffScopeService
         {
             case StaffDataScope.AssignedDepartments:
             {
-                var departments = await GetHeadedDepartmentIdsAsync();
                 // FAIL CLOSED: a head with no department sees nobody but themselves.
-                if (departments.Count == 0) break;
+                if (headedDepartments.Count == 0) break;
 
-                var deptArray = departments.ToArray();
+                var deptArray = headedDepartments.ToArray();
                 // Inactive staff INCLUDED, as inactive students are on the student axis: someone
                 // who has left still has a file, and a head's view of it must not silently differ.
-                var ids = await _context.Users
+                var ids = await db.Users
                     .AsNoTracking()
                     .Where(u => u.DepartmentIds != null && u.DepartmentIds.Any(id => deptArray.Contains(id)))
                     .Select(u => u.Id)
-                    .ToListAsync();
+                    .ToListAsync(ct);
                 foreach (var id in ids) visible.Add(id);
                 break;
             }
             case StaffDataScope.DirectReports:
             {
                 if (me == Guid.Empty) break;
-                var ids = await _context.Users
+                var ids = await db.Users
                     .AsNoTracking()
                     .Where(u => u.LineManagerUserId == me)
                     .Select(u => u.Id)
-                    .ToListAsync();
+                    .ToListAsync(ct);
                 foreach (var id in ids) visible.Add(id);
                 break;
             }
@@ -204,8 +228,7 @@ public class StaffScopeService : IStaffScopeService
             default:
                 break;
         }
-
-        return _visibleByBranch[branchId] = visible;
+        return visible;
     }
 
     public async Task<IQueryable<StaffPerformanceRecord>> ApplyAsync(IQueryable<StaffPerformanceRecord> query, Guid branchId)

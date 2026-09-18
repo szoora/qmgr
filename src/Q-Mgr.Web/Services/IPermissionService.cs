@@ -275,6 +275,12 @@ public static class Permissions
     public const string WelfareCategoriesManage = "welfare.categories.manage";
     public const string WelfareReportsView = "welfare.reports.view";
 
+    /// <summary>
+    /// The same three welfare reports, held separately so a school can withhold the page from a class
+    /// teacher without touching a manager's (2026-09-18). A page guard accepts EITHER code.
+    /// </summary>
+    public const string WelfareReportsOwn = "welfare.reports.own";
+
     // Staff Performance Monitor (2026-09-16) — mirrors Permissions.cs and RbacSeeder.AllPermissions
     public const string StaffRecordsView = "staff.records.view";
     public const string StaffRecordsCreate = "staff.records.create";

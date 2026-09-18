@@ -12,28 +12,28 @@
     --q-btn-padding-x: 1rem;
     --q-btn-font-size: 0.875rem;
     --q-btn-font-weight: 500;
-    --q-btn-border-radius: 0.5rem;
+    --q-btn-border-radius: var(--qm-radius-md);
     --q-btn-transition: all 0.2s ease;
 
     /* Card */
     --q-card-padding: 1.25rem;
-    --q-card-border-radius: 0.75rem;
+    --q-card-border-radius: var(--qm-radius-lg);
     --q-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     --q-card-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.15);
 
     /* Input */
     --q-input-padding-y: 0.625rem;
     --q-input-padding-x: 0.875rem;
-    --q-input-border-radius: 0.5rem;
+    --q-input-border-radius: var(--qm-radius-md);
     --q-input-font-size: 0.875rem;
 
     /* Modal */
     --q-modal-backdrop-bg: rgba(0, 0, 0, 0.5);
-    --q-modal-border-radius: 0.75rem;
+    --q-modal-border-radius: var(--qm-radius-lg);
     --q-modal-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 
     /* Toast */
-    --q-toast-border-radius: 0.5rem;
+    --q-toast-border-radius: var(--qm-radius-md);
     --q-toast-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
@@ -404,7 +404,7 @@
     height: 2rem;
     background: transparent;
     border: none;
-    border-radius: 0.375rem;
+    border-radius: var(--qm-radius-sm);
     color: var(--qm-text-muted);
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
@@ -531,7 +531,7 @@
     height: 1.75rem;
     background: transparent;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--qm-radius-sm);
     color: var(--qm-text-muted);
     cursor: pointer;
 }
@@ -795,7 +795,7 @@
     padding: 2px 8px;
     background: rgba(var(--qm-primary-rgb), 0.1);
     color: var(--qm-primary);
-    border-radius: 4px;
+    border-radius: var(--qm-radius-sm);
     font-size: 0.8125rem;
     max-width: 150px;
     overflow: hidden;
@@ -855,7 +855,7 @@
     width: 18px;
     height: 18px;
     border: 2px solid var(--qm-border);
-    border-radius: 4px;
+    border-radius: var(--qm-radius-sm);
     margin-right: 10px;
     flex-shrink: 0;
     transition: all 0.15s ease;
@@ -919,7 +919,7 @@
     height: 1.25rem;
     background: var(--qm-bg-card);
     border: 2px solid var(--qm-border);
-    border-radius: 0.25rem;
+    border-radius: var(--qm-radius-sm);
     transition: all 0.15s ease;
     flex-shrink: 0;
 }
@@ -986,7 +986,7 @@
 }
 
 .q-badge:not(.q-badge--pill) {
-    border-radius: 0.25rem;
+    border-radius: var(--qm-radius-sm);
 }
 
 .q-badge--dot {
@@ -1243,7 +1243,7 @@
     height: 1.5rem;
     background: transparent;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--qm-radius-sm);
     color: var(--qm-text-muted);
     cursor: pointer;
     transition: background 0.15s ease;
@@ -2555,6 +2555,11 @@
     .q-filter-bar.filter-bar > [class*="search"] {
         flex-basis: 100% !important;
     }
+    /* A tab strip sharing a bar with a select was squeezed to half a phone ("By t…", found on the timetable
+       2026-09-17): the tabs take their own row, and still scroll inside it when there are more. */
+    .q-filter-bar.filter-bar > .q-tabs {
+        flex-basis: 100% !important;
+    }
 
     .q-daterange__fields { flex-wrap: wrap; }
     .q-daterange__presets {
@@ -2593,3 +2598,211 @@
    (PickDay keeps the time, HandleTimeChanged keeps the date). Found 2026-09-17: five Staff Performance
    fields used ShowTime alone, so a duty could only be scheduled today and a record never backdated. */
 .q-datetime-pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; align-items: end; min-width: 0; }
+
+/* ==========================================================================
+   QWeekGrid — rows × columns (duty rota plan §9)
+   The grid scrolls inside its own box with the day header and period column sticky; below 640px the
+   table is hidden and the per-day list shown. State is a border plus an icon as well as a tint, so a
+   conflict still reads on a mono printer.
+   ========================================================================== */
+.q-weekgrid { min-width: 0; }
+.q-weekgrid__scroll {
+    overflow: auto;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-md);
+    background: var(--qm-bg-card);
+    max-width: 100%;
+}
+.q-weekgrid__table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; font-size: 13px; }
+.q-weekgrid__table th, .q-weekgrid__table td { border-right: 1px solid var(--qm-border); border-bottom: 1px solid var(--qm-border); }
+.q-weekgrid__table tr > :last-child { border-right: none; }
+.q-weekgrid__table tbody tr:last-child > * { border-bottom: none; }
+
+.q-weekgrid__colhead, .q-weekgrid__corner {
+    position: sticky; top: 0; z-index: 2;
+    background: var(--qm-bg-elevated);
+    padding: 8px 10px; text-align: left; white-space: nowrap;
+    font-family: var(--qm-font-display); font-size: 12.5px; font-weight: 600; color: var(--qm-text-primary);
+}
+.q-weekgrid__corner { left: 0; z-index: 3; color: var(--qm-text-muted); font-weight: 500; }
+.q-weekgrid__colhead--today { box-shadow: inset 0 -2px 0 var(--qm-primary); color: var(--qm-primary); }
+.q-weekgrid__rowhead {
+    position: sticky; left: 0; z-index: 1;
+    background: var(--qm-bg-elevated);
+    padding: 6px 10px; text-align: left; white-space: nowrap; vertical-align: top;
+    font-size: 12.5px; font-weight: 600; color: var(--qm-text-primary);
+}
+.q-weekgrid__head-label { display: block; }
+.q-weekgrid__head-sub { display: block; font-size: 11px; font-weight: 400; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
+
+.q-weekgrid__cell {
+    position: relative;
+    min-width: 120px; height: 56px; padding: 5px 7px;
+    vertical-align: top;
+    background: var(--qm-bg-card);
+}
+.q-weekgrid__cell--today { background: rgba(var(--qm-primary-rgb), .03); }
+.q-weekgrid__cell--interactive { cursor: pointer; }
+.q-weekgrid__cell--interactive:hover { background: var(--qm-bg-elevated); }
+.q-weekgrid__cell:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: -2px; }
+.q-weekgrid__cell--selected { box-shadow: inset 0 0 0 2px var(--qm-primary); }
+
+.q-weekgrid--highlight { background: rgba(var(--qm-primary-rgb), .08); }
+.q-weekgrid--warning { background: rgba(var(--qm-warning-rgb), .10); box-shadow: inset 3px 0 0 var(--qm-warning); }
+.q-weekgrid--conflict { background: rgba(var(--qm-danger-rgb), .10); box-shadow: inset 3px 0 0 var(--qm-danger); }
+.q-weekgrid--unavailable {
+    background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(var(--qm-primary-rgb), .06) 6px 12px);
+    color: var(--qm-text-muted);
+}
+.q-weekgrid__cell--selected.q-weekgrid--conflict { box-shadow: inset 0 0 0 2px var(--qm-primary), inset 5px 0 0 var(--qm-danger); }
+.q-weekgrid__state-icon { float: right; margin-left: 4px; font-size: 12px; line-height: 1; }
+.q-weekgrid--warning .q-weekgrid__state-icon { color: var(--qm-warning); }
+.q-weekgrid--conflict .q-weekgrid__state-icon { color: var(--qm-danger); }
+.q-weekgrid--unavailable .q-weekgrid__state-icon { color: var(--qm-text-muted); }
+.q-weekgrid__count { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.q-weekgrid__break .q-weekgrid__rowhead { font-weight: 500; color: var(--qm-text-muted); }
+.q-weekgrid__break-band {
+    padding: 4px 10px; height: auto;
+    background: var(--qm-bg-elevated);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--qm-text-muted); text-align: center;
+}
+
+/* The phone: a list per day. */
+.q-weekgrid__list { display: none; }
+.q-weekgrid__day { margin-bottom: 14px; }
+.q-weekgrid__day-head {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px;
+    margin: 0 0 6px; font-family: var(--qm-font-display); font-size: 14px; color: var(--qm-text-primary);
+}
+.q-weekgrid__day-head .q-weekgrid__head-sub { display: inline; }
+.q-weekgrid__today-tag { font-size: 11px; font-weight: 600; color: var(--qm-primary); text-transform: uppercase; letter-spacing: .05em; }
+.q-weekgrid__day-empty { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+.q-weekgrid__day-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.q-weekgrid__item {
+    display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 44px;
+    padding: 8px 10px; text-align: left;
+    border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+    background: var(--qm-bg-card); color: var(--qm-text-primary); font: inherit;
+}
+.q-weekgrid__item--selected { box-shadow: inset 0 0 0 2px var(--qm-primary); }
+.q-weekgrid__item:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
+.q-weekgrid__item-when { flex: 0 0 64px; display: flex; flex-direction: column; font-size: 12px; font-variant-numeric: tabular-nums; }
+.q-weekgrid__item-when span { color: var(--qm-text-muted); font-size: 11px; }
+.q-weekgrid__item-body { flex: 1 1 auto; min-width: 0; font-size: 13px; }
+
+@media (max-width: 640px) {
+    .q-weekgrid__scroll { display: none; }
+    .q-weekgrid__list { display: block; }
+}
+
+@media print {
+    /* On paper the whole week, never the phone list, and no scroll box to clip it. */
+    .q-weekgrid__scroll { display: block !important; overflow: visible; max-height: none !important; border-color: #000; }
+    .q-weekgrid__list { display: none !important; }
+    .q-weekgrid__colhead, .q-weekgrid__corner, .q-weekgrid__rowhead { position: static; background: none; }
+    .q-weekgrid--conflict { box-shadow: inset 3px 0 0 #000; background: none; }
+    .q-weekgrid__table tr { break-inside: avoid; }
+}
+
+/* ==========================================================================
+   QMonthList — a month as a list of Monday-to-Sunday weeks (duty rota plan §9)
+   ========================================================================== */
+.q-monthlist { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.q-monthlist__week { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); padding: 10px 12px; min-width: 0; }
+.q-monthlist__week--current { border-left: 3px solid var(--qm-primary); }
+.q-monthlist__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font: 600 13px var(--qm-font-display); color: var(--qm-text-primary); }
+.q-monthlist__tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-primary); }
+.q-monthlist__empty { margin: 0; font-size: 13px; color: var(--qm-text-muted); }
+.q-monthlist__items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+
+/* =====================================================================================================
+   ONE control scale (2026-09-17). An audit of 80 pages measured buttons at 34 and 39px, dropdowns at 44px
+   and text and date inputs at 48px, so a filter bar showed three heights in one row. Every button, input,
+   dropdown and date picker is now one of three heights, and text in a control is 14px (13px small).
+   Change the tokens, never a page: a page rule that sets a control's height, padding or font-size puts
+   the drift back.
+   ===================================================================================================== */
+:root {
+    --q-control-h: 36px;
+    --q-control-h-sm: 30px;
+    --q-control-h-lg: 44px;
+    --q-control-font: 14px;
+    --q-control-font-sm: 13px;
+    --q-control-pad-x: 12px;
+    --q-row-gap: 8px;
+}
+
+.q-btn {
+    min-height: var(--q-control-h);
+    padding: 0 14px;
+    font-size: var(--q-control-font);
+    line-height: 1.2;
+}
+
+.q-btn--sm {
+    min-height: var(--q-control-h-sm);
+    padding: 0 10px;
+    font-size: var(--q-control-font-sm);
+}
+
+.q-btn--lg {
+    min-height: var(--q-control-h-lg);
+    padding: 0 20px;
+    font-size: 15px;
+}
+
+/* An icon-only button is square. */
+.q-btn:has(> .q-btn__icon:only-child) { padding: 0; width: var(--q-control-h); }
+.q-btn--sm:has(> .q-btn__icon:only-child) { width: var(--q-control-h-sm); }
+
+input.q-input {
+    height: var(--q-control-h);
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: var(--q-control-pad-x);
+    padding-right: var(--q-control-pad-x);
+    font-size: var(--q-control-font);
+}
+
+textarea.q-input { font-size: var(--q-control-font); padding: 8px var(--q-control-pad-x); }
+
+.q-select,
+.q-datepicker__trigger {
+    min-height: var(--q-control-h);
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: var(--q-control-pad-x);
+    padding-right: var(--q-control-pad-x);
+    font-size: var(--q-control-font);
+}
+
+/* Chips can wrap, so a multi-select grows by its own padding rather than clipping. */
+.q-multiselect { padding-top: 3px; padding-bottom: 3px; }
+
+.q-daterange__presets { gap: var(--q-row-gap); }
+
+@media (max-width: 640px) {
+    /* A phone keeps a 40px tap target on every control. */
+    .qm-main .q-btn,
+    .qm-main .q-select,
+    .qm-main .q-datepicker__trigger { min-height: 40px; }
+    .qm-main input.q-input { height: 40px; }
+    .qm-main .q-btn:has(> .q-btn__icon:only-child) { width: 40px; }
+}
+
+/* The one Radzen grid left (Users) paginates with Radzen's own buttons: same small control size as QPager. */
+.rz-pager .rz-pager-page,
+.rz-pager .rz-pager-element {
+    min-width: var(--q-control-h-sm);
+    min-height: 0;
+    min-block-size: 0;
+    block-size: var(--q-control-h-sm);
+    height: var(--q-control-h-sm);
+    line-height: var(--q-control-h-sm);
+    font-size: var(--q-control-font-sm);
+    padding: 0 8px;
+}
+
+/* Date-range preset chips are small controls. */
+.q-daterange__preset { min-height: var(--q-control-h-sm); padding: 0 11px; font-size: var(--q-control-font-sm); }

@@ -101,14 +101,9 @@
                 @if (info.Branches.Count > 1)
                 {
                     <div class="form-group">
-                        <label for="branch"><span>Where you work</span></label>
-                        <select id="branch" class="form-control" @bind="branchValue" disabled="@(busy || codeSent)">
-                            <option value="">Choose…</option>
-                            @foreach (var b in info.Branches)
-                            {
-                                <option value="@b.Id">@b.Name</option>
-                            }
-                        </select>
+                        <QSelect TValue="Guid?" TItem="JoinBranchOptionDto" @bind-Value="form.BranchId" Items="@info.Branches"
+                                 ValueSelector="@(b => (Guid?)b.Id)" TextSelector="@(b => b.Name)" Label="Where you work" Placeholder="Choose…"
+                                 Disabled="@(busy || codeSent)" />
                     </div>
                 }
 
@@ -169,12 +164,6 @@
     private readonly JoinApplicationRequest form = new();
     private bool loading = true, busy, codeSent, done;
     private string? errorMessage, infoMessage, doneMessage;
-
-    private string branchValue
-    {
-        get => form.BranchId?.ToString() ?? string.Empty;
-        set => form.BranchId = Guid.TryParse(value, out var g) ? g : null;
-    }
 
     private bool DetailsComplete => !string.IsNullOrWhiteSpace(form.FirstName) && !string.IsNullOrWhiteSpace(form.LastName)
                                     && !string.IsNullOrWhiteSpace(form.Email) && form.Email.Contains('@')

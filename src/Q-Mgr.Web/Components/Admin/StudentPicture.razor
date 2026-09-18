@@ -16,6 +16,7 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 @inject IClassTeacherApiService ClassTeacherApi
+@implements IDisposable
 
 <PageTitle>Student Picture - Q-Mgr</PageTitle>
 
@@ -525,7 +526,7 @@
     .sp-trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
     .sp-trend-stack {
         width: 100%; max-width: 26px; display: flex; flex-direction: column;
-        border-radius: 3px 3px 0 0; overflow: hidden; min-height: 3px;
+        border-radius: var(--qm-radius-sm) var(--qm-radius-sm) 0 0; overflow: hidden; min-height: 3px;
         transform-origin: bottom;
         animation: spGrow .45s cubic-bezier(.2, .8, .3, 1) both;
     }
@@ -551,9 +552,9 @@
     .sp-trend-col:nth-child(11) .sp-trend-stack { animation-delay: .32s; }
     .sp-trend-col:nth-child(12) .sp-trend-stack { animation-delay: .35s; }
 
-    .sp-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--qm-text-muted); }
+    .sp-legend { display: flex; gap: 16px; margin-top: 12px; font-size: var(--q-control-font-sm); color: var(--qm-text-muted); }
     .sp-legend span { display: inline-flex; align-items: center; gap: 6px; }
-    .sp-legend .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+    .sp-legend .dot { width: 9px; height: 9px; border-radius: var(--qm-radius-sm); display: inline-block; }
     .sp-legend .dot.achievement { background: var(--qm-success); }
     .sp-legend .dot.behavior    { background: var(--qm-accent-orange); }
     .sp-legend .dot.concern     { background: var(--qm-danger); }
@@ -562,9 +563,9 @@
     .sp-ladder { display: flex; flex-direction: column; gap: 9px; }
     .sp-rung { display: grid; grid-template-columns: 92px 1fr 26px; align-items: center; gap: 10px; font-size: 12.5px; }
     .sp-rung-name { color: var(--qm-text-secondary); }
-    .sp-rung-bar { height: 7px; border-radius: 4px; background: var(--qm-bg-elevated); overflow: hidden; }
+    .sp-rung-bar { height: 7px; border-radius: var(--qm-radius-md); background: var(--qm-bg-elevated); overflow: hidden; }
     .sp-rung-fill {
-        display: block; height: 100%; border-radius: 4px; background: var(--qm-primary);
+        display: block; height: 100%; border-radius: var(--qm-radius-md); background: var(--qm-primary);
         transform-origin: left;
         animation: spFill .5s cubic-bezier(.2, .8, .3, 1) both;
     }
@@ -620,7 +621,7 @@
 
     .sp-g-tag {
         font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
-        padding: 2px 7px; border-radius: 3px;
+        padding: 2px 7px; border-radius: var(--qm-radius-sm);
         background: var(--qm-bg-elevated); color: var(--qm-text-muted);
     }
     .sp-g-tag.primary { background: var(--qm-primary-light); color: var(--qm-primary); }
@@ -685,8 +686,14 @@
         WelfareResponseStage.Referral
     };
 
-    protected override async Task OnInitializedAsync()
+    // Everything here runs on the first render, not OnInitialized: authentication state comes from
+    // localStorage over JS interop, which does not exist during prerendering, so a permission check
+    // made in OnInitialized reads every signed-in visitor as anonymous and bounces them to
+    // /unauthorized. Same order MainLayout and StudentWelfareTimeline established.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!firstRender) return;
+
         if (!await PermissionService.HasPermissionAsync(Permissions.WelfareView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
@@ -694,7 +701,7 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
-        if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
             return;
@@ -705,13 +712,56 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
 
+        // A SuperAdmin arrives with no organization chosen, so CurrentBranchId is empty and every
+        // branch-scoped request on this page 404s -- most visibly the Category list, which left the
+        // Raise Flag form with an empty dropdown. Picking an organization and a branch raises
+        // OnBranchChanged; without this subscription nothing re-read it and only a full page reload
+        // recovered the form.
+        BranchState.OnBranchChanged += HandleBranchChanged;
+
         await LoadAsync();
+        StateHasChanged();
+    }
+
+    private async void HandleBranchChanged()
+    {
+        await InvokeAsync(async () =>
+        {
+            var next = BranchState.CurrentBranchId;
+            if (next == branchId) return;
+
+            branchId = next;
+            if (branchId == Guid.Empty) return;
+
+            // categories is only fetched when it is needed and is never refetched otherwise, so it
+            // would keep the previous organization's list on the flag form -- and the API refuses a
+            // category id belonging to another branch.
+            categories.Clear();
+            classTeacher = null;
+            classTeachersLoaded = false;
+            await LoadAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        BranchState.OnBranchChanged -= HandleBranchChanged;
     }
 
     private async Task LoadAsync()
     {
         isLoading = true;
         StateHasChanged();
+
+        if (branchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+            isLoading = false;
+            StateHasChanged();
+            return;
+        }
+
         try
         {
             picture = await StudentApi.GetStudentPictureAsync(branchId, StudentId);
@@ -752,7 +802,7 @@
         var key = className.Trim().ToLowerInvariant();
         classTeacher = assignments.FirstOrDefault(t =>
                            t.Role == ClassTeacherRole.ClassTeacher && t.ClassName.Trim().ToLowerInvariant() == key)
-                       ?? assignments.FirstOrDefault(t => t.ClassName.Trim().ToLowerInvariant() == key);
+                       ?? assignments.FirstOrDefault(t => t.Role == ClassTeacherRole.Assistant && t.ClassName.Trim().ToLowerInvariant() == key);
         classTeachersLoaded = true;
     }
 
@@ -761,7 +811,15 @@
         try
         {
             var response = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode)
+            {
+                // Category is required to raise a flag, so an empty dropdown is not merely odd: it
+                // makes the form unsubmittable. The page still reads without it, but it must say so
+                // rather than presenting a control that can never be satisfied.
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+                return;
+            }
             var all = await response.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
             categories = all.Where(c => c.IsActive).OrderBy(c => c.SortOrder).ThenBy(c => c.Name).ToList();
         }

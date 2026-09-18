@@ -98,6 +98,14 @@ public static class Permissions
     public const string WelfareReportsView = "welfare.reports.view";
 
     /// <summary>
+    /// The same three welfare reports as <see cref="WelfareReportsView"/>, held separately so a school can
+    /// turn a class teacher's reports off without touching a manager's (user decision, 2026-09-18). It grants
+    /// nothing wider: every figure a scoped caller reads is already narrowed by IStudentScopeService to the
+    /// classes they hold, and the response says so. Revoke it on a custom role to withhold the page.
+    /// </summary>
+    public const string WelfareReportsOwn = "welfare.reports.own";
+
+    /// <summary>
     /// The rung above Confidential: administrator-only welfare records, student flags, and the
     /// student-level restricted note. Seeded to Tenant Admin and SuperAdmin ONLY — a tenant must
     /// consciously grant it to a custom role (a DSL, a counsellor). Grants both reading restricted
@@ -268,6 +276,7 @@ public static class Permissions
         new("welfare.restricted.view", "View Restricted Welfare Information", "View and set administrator-only restricted records, flags, and student notes", "Student Welfare", 6),
         new("welfare.categories.manage", "Manage Welfare Categories", "Define the achievement/behavior/welfare categories staff can log against", "Student Welfare", 7),
         new("welfare.reports.view", "View Welfare Reports", "View trend and process-consistency reports across welfare records", "Student Welfare", 8),
+        new("welfare.reports.own", "View Own Class Reports", "The same welfare reports, narrowed to the classes this user holds — revoke it to withhold the page from class teachers", "Student Welfare", 9),
 
         // Staff Performance Monitor
         new("staff.records.view", "View Staff Records", "Read performance records about other staff, within the role's staff scope", "Staff Performance", 1),
@@ -425,9 +434,11 @@ public static class Permissions
                 DashboardView,
                 NotificationsView,
                 StudentsView,
-                // Scoped by StudentScopeService to the caller's own classes, so
-                // welfare.reports.view answers "how is my class doing" and nothing wider.
-                WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsView,
+                // Scoped by StudentScopeService to the caller's own classes, so the reports answer
+                // "how is my class doing" and nothing wider. The class teacher holds the OWN code,
+                // not the branch-wide one, so a school can withhold the page from a custom
+                // class-teacher role without touching what a manager reads (user decision, 2026-09-18).
+                WelfareView, WelfareCreate, WelfareEdit, WelfareNotify, WelfareReportsOwn,
                 // The staff portal needs no permission; recognition does.
                 StaffRecognitionGive,
             },

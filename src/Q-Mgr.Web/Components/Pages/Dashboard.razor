@@ -367,6 +367,37 @@ else if (hasCoreQueue && queueStatus != null)
     </div>
 }
 
+@if (branchReady && hasStaffPerformance && teachingTiles != null && (teachingTiles.LessonsThisWeek > 0 || teachingTiles.DutyReportsOverdue > 0 || teachingTiles.HardClashes > 0))
+{
+    <div class="module-section">
+        <div class="module-section-head">
+            <h2><QIcon Name="journal-check" /> Teaching</h2>
+            <QButton Text="Open reports" Icon="arrow-right" Variant="ghost" Size="sm"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))" />
+        </div>
+        @* This week in the reader's staff scope (duty rota plan §11, Phase 5): the lessons behind these figures are on the
+           Lessons page; a head's tiles cover their departments only. *@
+        @if (teachingTiles.ScopedToDepartments.Any())
+        {
+            <p class="module-section-note">These figures cover @string.Join(", ", teachingTiles.ScopedToDepartments) only.</p>
+        }
+        <QStatRow>
+            <QStatTile Value="@(teachingTiles.TaughtPercentThisWeek.HasValue ? $"{teachingTiles.TaughtPercentThisWeek:0.#}%" : "—")" Label="Lessons taught this week" Icon="check-circle"
+                       Variant="@(teachingTiles.TaughtPercentThisWeek is < 90 ? "warning" : "success")" Href="/admin/timetable/reports?tab=lessons" Sub="@($"{teachingTiles.LessonsThisWeek} {(teachingTiles.LessonsThisWeek == 1 ? "lesson" : "lessons")} so far")" />
+            <QStatTile Value="@teachingTiles.UnrecordedThisWeek.ToString()" Label="Unrecorded this week" Icon="question-circle"
+                       Variant="@(teachingTiles.UnrecordedThisWeek > 0 ? "warning" : "success")" Href="/admin/timetable/lessons" />
+            <QStatTile Value="@teachingTiles.NotRecovered.ToString()" Label="Not recovered" Icon="exclamation-octagon"
+                       Variant="@(teachingTiles.NotRecovered > 0 ? "danger" : "success")" Href="/admin/timetable/lessons" />
+            <QStatTile Value="@teachingTiles.DutyReportsOverdue.ToString()" Label="Duty reports overdue" Icon="journal-x"
+                       Variant="@(teachingTiles.DutyReportsOverdue > 0 ? "danger" : "success")" Href="/admin/staff/duty-reports" />
+            @if (teachingTiles.HardClashes is { } clashes)
+            {
+                <QStatTile Value="@clashes.ToString()" Label="Timetable hard clashes" Icon="x-octagon" Variant="@(clashes > 0 ? "danger" : "success")" Href="/admin/timetable" />
+            }
+        </QStatRow>
+    </div>
+}
+
 @if (branchReady && hasVisitorManagement)
 {
     <div class="module-section">
@@ -430,6 +461,7 @@ else if (hasCoreQueue && queueStatus != null)
 <style>
     .module-section { margin-top: 28px; }
 
+    .module-section-note { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 8px; }
     .module-section-head {
         display: flex;
         align-items: center;
@@ -1074,7 +1106,8 @@ else if (hasCoreQueue && queueStatus != null)
         canViewReports = await PermissionService.HasPermissionAsync(Permissions.ReportsView);
         canViewQueue = await PermissionService.HasPermissionAsync(Permissions.QueueView);
         canViewStudents = await PermissionService.HasPermissionAsync(Permissions.StudentsView);
-        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView);
+        canViewWelfareReports = await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView)
+            || await PermissionService.HasPermissionAsync(Permissions.WelfareReportsOwn);
         canViewVisitors = await PermissionService.HasPermissionAsync(Permissions.VisitorsView);
         canViewFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackView);
         canRespondFeedback = await PermissionService.HasPermissionAsync(Permissions.FeedbackRespond);
@@ -1144,6 +1177,7 @@ else if (hasCoreQueue && queueStatus != null)
     private bool hasStudentWelfare;
     private bool hasStaffPerformance;
     private StructureCoverageDto? staffCoverage;
+    private TeachingDashboardDto? teachingTiles;
     private bool hasVisitorManagement;
     private bool hasEngagement;
 
@@ -1248,6 +1282,8 @@ else if (hasCoreQueue && queueStatus != null)
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
             await LoadStaffCoverageAsync();
+        await LoadTeachingTilesAsync();
+            await LoadTeachingTilesAsync();
             await LoadVisitorSummaryAsync();
             await LoadEngagementSummaryAsync();
 
@@ -1294,6 +1330,7 @@ else if (hasCoreQueue && queueStatus != null)
             await LoadQueueStatus();
             await LoadWelfareSummaryAsync();
             await LoadStaffCoverageAsync();
+            await LoadTeachingTilesAsync();
             await LoadVisitorSummaryAsync();
             await LoadEngagementSummaryAsync();
             try
@@ -1313,6 +1350,26 @@ else if (hasCoreQueue && queueStatus != null)
     /// Staff Performance structure coverage (plan Phase 6). Only for a staff.structure.manage
     /// holder — the endpoint is gated on it — and quiet on failure, like the other panels.
     /// </summary>
+    /// <summary>The Teaching tiles (duty rota plan §11): for a report reader, a lesson supervisor or a timetable master; quiet on failure.</summary>
+    private async Task LoadTeachingTilesAsync()
+    {
+        await EnsureModulesResolvedAsync();
+        if (!hasStaffPerformance || !branchReady
+            || !(await PermissionService.HasPermissionAsync(Permissions.StaffReportsView) || await PermissionService.HasPermissionAsync(Permissions.TimetableLessonsFlag) || await PermissionService.HasPermissionAsync(Permissions.TimetableManage)))
+        {
+            teachingTiles = null;
+            return;
+        }
+        try
+        {
+            teachingTiles = await Http.GetFromJsonAsync<TeachingDashboardDto>($"api/v1/branches/{BranchId}/staff/reports/teaching/dashboard", JsonOptions);
+        }
+        catch
+        {
+            teachingTiles = null;
+        }
+    }
+
     private async Task LoadStaffCoverageAsync()
     {
         await EnsureModulesResolvedAsync();

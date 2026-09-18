@@ -194,6 +194,8 @@ public static class StaffPerformanceMapping
     {
         var recorders = d.RecorderUserIds?.ToList() ?? new List<Guid>();
         var expected = d.ExpectedUserIds?.ToList();
+        var supervisors = d.SupervisorUserIds?.ToList() ?? new List<Guid>();
+        var acks = ParseAcknowledgements(d.Acknowledgements);
         return new StaffDutyDto
         {
             Id = d.Id,
@@ -220,7 +222,25 @@ public static class StaffPerformanceMapping
             IsActive = d.IsActive,
             IsExpectedOfMe = expected == null || expected.Contains(callerId),
             CanIRecord = callerMayManage || recorders.Contains(callerId),
-            MyOutcome = myOutcome
+            MyOutcome = myOutcome,
+            Kind = d.Kind,
+            SeriesId = d.SeriesId,
+            // Names only resolve for ids the caller put in the lookup; an expected list of "everyone" has none.
+            ExpectedNames = expected?.Select(id => names[id]).Where(n => n.Length > 0).ToList() ?? new List<string>(),
+            SupervisorUserIds = supervisors,
+            SupervisorNames = supervisors.Select(id => names[id]).Where(n => n.Length > 0).ToList(),
+            ReportCadence = d.ReportCadence,
+            ReportDueLocalTime = d.ReportDueLocalTime?.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+            IsSupervisedByMe = supervisors.Contains(callerId),
+            MyAcknowledgedAt = acks.TryGetValue(callerId, out var mine) ? mine : null,
+            AcknowledgedCount = acks.Keys.Count(k => expected?.Contains(k) ?? true),
+            // Who has and has not acknowledged is the supervisor's and the duty manager's business, not a colleague's.
+            Acknowledgements = callerMayManage || supervisors.Contains(callerId) ? acks : null,
+            TimetableLessonId = d.TimetableLessonId,
+            ClassName = d.ClassName,
+            SubjectId = d.SubjectId,
+            Room = d.Room,
+            RecoversDutyId = d.RecoversDutyId
         };
     }
 

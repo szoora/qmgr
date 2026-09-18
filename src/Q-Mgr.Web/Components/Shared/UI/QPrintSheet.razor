@@ -35,7 +35,7 @@
 
 @if (Ready && ChildContent != null)
 {
-    <article class="q-print__sheet @Class" id="@SheetId" aria-label="@Title" @attributes="AdditionalAttributes">
+    <article class="q-print__sheet @(Landscape ? "q-print__sheet--landscape" : "") @Class" id="@SheetId" aria-label="@Title" @attributes="AdditionalAttributes">
         @ChildContent
     </article>
 }
@@ -44,6 +44,8 @@
     .q-print__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--qm-bg-card); border-bottom: 1px solid var(--qm-border); position: sticky; top: 0; z-index: 10; }
     .q-print__toolbar-left, .q-print__toolbar-right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
     .q-print__hint { font-size: 12.5px; color: var(--qm-text-muted); }
+
+    .q-print__sheet.q-print__sheet--landscape { width: 297mm; }
 
     .q-print__sheet {
         width: 210mm;
@@ -67,6 +69,14 @@
             margin: 14mm;
         }
 
+        /* A named page: only a landscape sheet turns the paper, so a portrait report printed from the same app is untouched. */
+        @@page landscape {
+            size: A4 landscape;
+            margin: 10mm;
+        }
+
+        .q-print__sheet--landscape { page: landscape; }
+
         .q-print__sheet {
             width: auto;
             margin: 0;
@@ -77,14 +87,16 @@
     }
 
     @@media (max-width: 480px) {
-        .q-print__sheet { padding: 12px; margin: 8px; }
+        /* The side margins come out of max-width: a 100% sheet plus 8px either side overhung the
+           page by 8px on every print route (found on the duty report pack at 390px, 2026-09-17). */
+        .q-print__sheet { padding: 12px; margin: 8px auto; max-width: calc(100% - 16px); }
     }
 
     /* On a phone SCREEN the A4 sheet keeps its tables at print width and lets each one scroll
        inside itself, rather than pushing the whole page sideways (found by the UI sweep on the
        reports print route, 2026-09-16). Screen only: print is untouched. */
     @@media screen and (max-width: 640px) {
-        .q-print__sheet { max-width: 100%; overflow-x: hidden; }
+        .q-print__sheet { overflow-x: hidden; }
         .q-print__sheet table { display: block; max-width: 100%; overflow-x: auto; }
     }
 </style>
@@ -119,6 +131,9 @@
 
     [Parameter] public RenderFragment? ToolbarStart { get; set; }
     [Parameter] public RenderFragment? ToolbarEnd { get; set; }
+
+    /// <summary>A4 landscape (a timetable, a rota): a named @page, so only this sheet turns the paper.</summary>
+    [Parameter] public bool Landscape { get; set; }
 
     [Parameter] public string? Class { get; set; }
 

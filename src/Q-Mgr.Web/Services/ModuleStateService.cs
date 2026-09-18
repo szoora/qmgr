@@ -43,7 +43,9 @@ public class ModuleStateService : IModuleStateService
 
     public async Task LoadAsync(IModuleApiService moduleApi)
     {
-        if (_isLoaded) return;
+        // A failed load (the API restarting, a blip) is retried by the next page that asks, rather than leaving every
+        // module-gated page failing open, and every module nav item hidden, for the rest of the circuit.
+        if (_isLoaded && _loadSucceeded) return;
         await RefreshAsync(moduleApi);
     }
 

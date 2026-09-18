@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -343,7 +344,7 @@ public class StaffPolicyController : StaffPerformanceControllerBase
             {
                 if (periods[i].Start <= periods[i - 1].End)
                     return BadRequestProblem("Periods may not overlap",
-                        $"'{periods[i - 1].Name}' runs to {periods[i - 1].End:dd MMM yyyy} but '{periods[i].Name}' starts on {periods[i].Start:dd MMM yyyy}. A date in two periods would be scored twice.");
+                        string.Create(CultureInfo.InvariantCulture, $"'{periods[i - 1].Name}' runs to {periods[i - 1].End:dd MMM yyyy} but '{periods[i].Name}' starts on {periods[i].Start:dd MMM yyyy}. A date in two periods would be scored twice."));
             }
         }
 
@@ -365,6 +366,10 @@ public class StaffPolicyController : StaffPerformanceControllerBase
             {
                 if (Math.Abs(stage.OffsetMinutes) > 60 * 24 * 31)
                     return BadRequestProblem("A reminder stage may be at most 31 days from its start or due time");
+                // The sweep looks MaxLeadDays ahead for a start; a stage earlier than a fortnight would be accepted
+                // and then never sent, which is worse than refusing it.
+                if (stage.OffsetMinutes < -60 * 24 * 14)
+                    return BadRequestProblem("A reminder stage may be at most 14 days before a start");
                 if (stage.AtLocalHour is < 0 or > 23)
                     return BadRequestProblem("A stage's send hour must be between 0 and 23");
                 if (stage.Channels == ReminderChannels.None)

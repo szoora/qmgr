@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Infrastructure.Data;
@@ -686,7 +687,7 @@ public class BillingController : ControllerBase
             {
                 Type = "invoice",
                 Title = $"Invoice {invoice.InvoiceNumber} issued",
-                Description = $"{invoice.Currency} {invoice.Total:N2} due {invoice.DueDate:MMM dd, yyyy}",
+                Description = string.Create(CultureInfo.InvariantCulture, $"{invoice.Currency} {invoice.Total:N2} due {invoice.DueDate:MMM dd, yyyy}"),
                 Date = invoice.InvoiceDate
             });
 

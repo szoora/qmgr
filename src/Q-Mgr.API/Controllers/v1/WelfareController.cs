@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Hangfire;
 using Microsoft.AspNetCore.Authorization;
@@ -799,7 +800,7 @@ public class WelfareController : ControllerBase
 
         if (request.AssignedToUserId.HasValue && request.AssignedToUserId != previousAssignee && request.AssignedToUserId != CurrentUserId())
         {
-            var dueText = request.ActionDueDate.HasValue ? $" — due {request.ActionDueDate.Value:MMM d}" : "";
+            var dueText = request.ActionDueDate.HasValue ? string.Create(CultureInfo.InvariantCulture, $" — due {request.ActionDueDate.Value:MMM d}") : "";
             await _notificationService.CreateInAppNotificationAsync(new CreateNotificationRequest
             {
                 UserId = request.AssignedToUserId,
@@ -1052,7 +1053,7 @@ public class WelfareController : ControllerBase
     /// actually finds what needs review, not a separate escalation endpoint.
     /// </summary>
     [HttpGet("branches/{branchId:guid}/welfare-records")]
-    [RequirePermission(Permissions.WelfareReportsView)]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
     [ProducesResponseType(typeof(List<WelfareRecordDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> SearchRecords(
         Guid branchId,
@@ -1103,7 +1104,7 @@ public class WelfareController : ControllerBase
 
     /// <summary>The Welfare Dashboard's numbers — category mix and the per-staff category distribution the equity/consistency-audit case (welfare-plan §03) argues a school should be able to check on its own process. Same permission as SearchRecords, since it's the same audience and the same underlying data.</summary>
     [HttpGet("branches/{branchId:guid}/welfare/summary")]
-    [RequirePermission(Permissions.WelfareReportsView)]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
     [ProducesResponseType(typeof(WelfareSummaryDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetSummary(Guid branchId, [FromQuery] DateTime? dateFrom = null, [FromQuery] DateTime? dateTo = null)
     {
@@ -1510,7 +1511,8 @@ public class WelfareController : ControllerBase
             _ => "has a welfare note regarding"
         };
         var schoolName = record.Branch?.Name ?? "the school";
-        var message = $"Q-Mgr: {record.Student!.FullName} {verb} \"{record.Category!.Name}\" on {record.OccurredAt:MMM d} at {schoolName}. " +
+        var message = string.Create(CultureInfo.InvariantCulture,
+                          $"Q-Mgr: {record.Student!.FullName} {verb} \"{record.Category!.Name}\" on {record.OccurredAt:MMM d} at {schoolName}. ") +
                       "Please contact the school office if you have any questions.";
 
         return Ok(new WelfareNotificationDraftDto
@@ -1790,7 +1792,7 @@ public class WelfareController : ControllerBase
     /// not substitute for the gate.
     /// </summary>
     [HttpGet("branches/{branchId:guid}/welfare/cohorts")]
-    [RequirePermission(Permissions.WelfareReportsView)]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
     [ProducesResponseType(typeof(WelfareCohortReportDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCohortReport(Guid branchId, [FromQuery] int days = 90)
     {
@@ -1916,7 +1918,7 @@ public class WelfareController : ControllerBase
             {
                 Year = month.Year,
                 Month = month.Month,
-                Label = month.ToString("MMM"),
+                Label = month.ToString("MMM", CultureInfo.InvariantCulture),
                 Achievements = inMonth.Count(r => r.CaseType == WelfareCaseType.Achievement),
                 Behaviors = inMonth.Count(r => r.CaseType == WelfareCaseType.Behavior),
                 Concerns = inMonth.Count(r => r.CaseType == WelfareCaseType.Welfare)

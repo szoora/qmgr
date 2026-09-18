@@ -685,9 +685,8 @@
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     .header-content { min-width: 0; flex: 1 1 260px; }
     .header-content h1 { overflow-wrap: break-word; }
-    .header-content h1 { margin: 0 0 4px; font-size: 26px; color: var(--qm-text-primary); }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
     .points-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .points-summary__item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
@@ -931,7 +930,7 @@
             }
 
             await ModuleState.LoadAsync(ModuleApi);
-            if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+            if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
             {
                 Navigation.NavigateTo("/billing/modules", forceLoad: false);
                 return;
@@ -1007,6 +1006,17 @@
     private async Task LoadData()
     {
         isLoading = true;
+
+        // Nothing here is readable without a branch, and every request below would 404 on
+        // Guid.Empty. This is what the page shows while no organization is chosen; the
+        // OnBranchChanged subscription is what removes the need to reload once one is.
+        if (branchId == Guid.Empty)
+        {
+            NotificationService.Notify(ToastSeverity.Warning, "No Branch Selected", "Please select a branch from the header first.");
+            isLoading = false;
+            return;
+        }
+
         try
         {
             // Who the page is about, and the intervention suggestions — from the welfare-scoped
@@ -1035,7 +1045,17 @@
 
             var categoriesResponse = await Http.GetAsync($"api/v1/branches/{branchId}/welfare/categories");
             if (categoriesResponse.IsSuccessStatusCode)
+            {
                 categories = await categoriesResponse.Content.ReadFromJsonAsync<List<WelfareCategoryDto>>(JsonOptions) ?? new();
+            }
+            else
+            {
+                // Category is required on the create form, so an empty list makes it unsubmittable.
+                // It used to fail with no else at all, which is how an empty dropdown reached the
+                // user with nothing on screen saying why.
+                var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(categoriesResponse);
+                NotificationService.Notify(ToastSeverity.Error, title, detail);
+            }
 
             if (canEdit && !staffOptions.Any())
             {

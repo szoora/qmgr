@@ -113,6 +113,32 @@
                 @if (policy.LastSummarySentAt.HasValue) { <small class="pol-help">Last administrator summary sent @QDateFormat.LocalDT(policy.LastSummarySentAt).</small> }
             </QCard>
 
+            <StaffReminderLadders @ref="ladderEditor" Policy="@policy" />
+
+            <StaffDutyReportSettings Policy="@policy" DefaultTemplate="@DutyReportTemplateDefaults.Sections" />
+
+            <QCard Title="Teaching and lessons" Icon="grid-3x3-gap" Class="pol-card">
+                @{ policy.TeachingLoadNorms ??= new TeachingLoadNormsDto(); }
+                <div class="form-row">
+                    <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MinLessonsPerWeek" Type="number" Min="0" Max="80" Label="Lessons a week, at least" />
+                    <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MaxLessonsPerWeek" Type="number" Min="0" Max="80" Label="…and at most" />
+                </div>
+                <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MinLessonsPerWeekMixedLevel" Type="number" Min="0" Max="80" Label="At least, for a teacher on O- and A-Level" />
+                <div class="form-row">
+                    <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MaxPeriodsPerDay" Type="number" Min="1" Max="16" Label="Periods a day, at most" />
+                    <QInput TValue="int" @bind-Value="@policy.TeachingLoadNorms.MaxConsecutivePeriods" Type="number" Min="1" Max="16" Label="In a row, at most" />
+                </div>
+                <small class="pol-help">The MoES band is 20–24 lessons a week, 18 for a teacher on both levels. The timetable reports a teacher outside these as a soft clash; they never block publishing.</small>
+                <div class="form-row">
+                    <QInput TValue="string" @bind-Value="@policy.MyDayLocalTime" Type="time" Label="My Day digest at" HelperText="Branch-local: one message a morning per person." />
+                    <QInput TValue="int" @bind-Value="@policy.LessonReminderMinutes" Type="number" Min="0" Max="120" Label="Lesson reminder (minutes before)" />
+                </div>
+                <div class="form-row">
+                    <QInput TValue="int" @bind-Value="@policy.LessonRecoveryDeadlineDays" Type="number" Min="1" Max="60" Label="Recover a missed lesson within (days)" />
+                    <QInput TValue="int" @bind-Value="@policy.UnrecordedLessonWindowDays" Type="number" Min="1" Max="30" Label="Unrecorded goes to supervisors after (days)" />
+                </div>
+            </QCard>
+
             <QCard Title="Closed periods" Icon="lock" Class="pol-card">
                 <p class="form-hint">A closed period takes no new scored records, registers, recognition, automatic credit or appraisal openings. Periods are closed and reopened on the <a href="/admin/staff/appraisals">Appraisals board</a>, by an approver; this list is read-only.</p>
                 @if (!(policy.ClosedPeriods?.Any() ?? false))
@@ -152,7 +178,6 @@
 </div>
 
 <style>
-    .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .pol-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
     .pol-card { min-width: 0; }
@@ -180,6 +205,7 @@
     private List<PeriodDraft> periodDrafts = new();
     private List<BandDraft> bandDrafts = new();
     private string? bandError;
+    private StaffReminderLadders? ladderEditor;
 
     protected override async Task OnInitializedAsync()
     {
@@ -280,6 +306,12 @@
         if (periods.Select(p => p.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != periods.Count)
         {
             Toast.Notify(ToastSeverity.Warning, "Duplicate period key", "Each period key must be unique.");
+            return;
+        }
+
+        if (ladderEditor?.Apply() is { } ladderError)
+        {
+            Toast.Notify(ToastSeverity.Warning, "A reminder needs fixing", ladderError);
             return;
         }
 

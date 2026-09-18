@@ -31,7 +31,7 @@
 .qm-shared-share-dialog {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     width: 100%;
     max-width: 420px;
     max-height: 90vh;
@@ -71,7 +71,7 @@
     height: 36px;
     border: none;
     background: var(--qm-bg-elevated);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-muted);
     cursor: pointer;
     transition: all 0.2s;
@@ -100,7 +100,7 @@
     height: 200px;
     margin: 0 auto 12px;
     background: var(--qm-surface-white);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 16px;
     display: flex;
     align-items: center;
@@ -149,7 +149,7 @@
     padding: 12px 16px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 13px;
     font-family: monospace;
@@ -163,7 +163,7 @@
     padding: 12px 16px;
     background: var(--qm-primary);
     border: none;
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-on-primary);
     font-weight: 600;
     font-size: 13px;
@@ -200,7 +200,7 @@
     padding: 14px 8px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     color: var(--qm-text-primary);
     cursor: pointer;
     transition: all 0.2s;
@@ -240,7 +240,7 @@
     padding: 12px 24px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 14px;
     font-weight: 500;
@@ -262,7 +262,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 12px;
-    border-radius: 20px;
+    border-radius: var(--qm-radius-lg);
     font-size: 12px;
     font-weight: 500;
 }
@@ -361,7 +361,7 @@
 .qm-shared-confirm-dialog {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     max-width: 400px;
     width: 100%;
@@ -415,7 +415,7 @@
 .qm-shared-confirm-actions button {
     flex: 1;
     padding: 12px 16px;
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -450,7 +450,7 @@
     position: relative;
     width: 100%;
     background: #000;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -502,14 +502,14 @@
     flex: 1;
     height: 4px;
     background: rgba(255, 255, 255, 0.3);
-    border-radius: 2px;
+    border-radius: var(--qm-radius-sm);
     cursor: pointer;
 }
 
 .qm-shared-media-progress-fill {
     height: 100%;
     background: var(--qm-primary);
-    border-radius: 2px;
+    border-radius: var(--qm-radius-sm);
     transition: width 0.1s;
 }
 
@@ -519,7 +519,7 @@
 .qm-shared-playlist-player {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     overflow: hidden;
 }
 
@@ -567,7 +567,7 @@
 .qm-shared-playlist-thumb {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
     background: var(--qm-bg-elevated);
     display: flex;
     align-items: center;
@@ -608,7 +608,7 @@
     padding: 60px 20px;
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
 }
 
 .qm-shared-empty-state i:not(.q-btn__icon) {
@@ -661,7 +661,7 @@
 @media (max-width: 480px) {
     .qm-shared-share-dialog {
         max-height: 95vh;
-        border-radius: 20px 20px 0 0;
+        border-radius: var(--qm-radius-lg) var(--qm-radius-lg) 0 0;
         position: fixed;
         bottom: 0;
         left: 0;

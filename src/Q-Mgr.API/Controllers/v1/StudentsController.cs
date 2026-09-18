@@ -153,12 +153,22 @@ public class StudentsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
-        var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
-        if (branch == null) return NotFound();
-
-        branch.Settings = WriteClassColorSettings(branch.Settings, request);
-        branch.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        var found = true;
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            _context.ChangeTracker.Clear();
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            await BranchSettingsLock.AcquireAsync(_context, branchId);
+            var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
+            found = branch != null;
+            if (branch == null) return;
+            branch.Settings = WriteClassColorSettings(branch.Settings, request);
+            branch.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        });
+        if (!found) return NotFound();
 
         return Ok(request);
     }
@@ -1725,7 +1735,7 @@ public class StudentsController : ControllerBase
         return new BranchVocabulariesDto();
     }
 
-    private static string WriteVocabularies(string? branchSettingsJson, BranchVocabulariesDto vocab)
+    internal static string WriteVocabularies(string? branchSettingsJson, BranchVocabulariesDto vocab)
     {
         var merged = string.IsNullOrEmpty(branchSettingsJson)
             ? new Dictionary<string, object>()
@@ -1842,14 +1852,37 @@ public class StudentsController : ControllerBase
         var branchError = await VerifyBranchOwnership(branchId);
         if (branchError != null) return branchError;
 
+        // Branch.Settings holds the timetable's bell schedule too: every read-modify-write of the column runs under the
+        // branch-settings lock and re-reads the blob beneath it, or a timetable save at the same moment is lost.
+        IActionResult? result = null;
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            _context.ChangeTracker.Clear();
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            await BranchSettingsLock.AcquireAsync(_context, branchId);
+            result = await UpdateVocabulariesLockedAsync(branchId, request);
+            if (result is OkObjectResult) await tx.CommitAsync();
+        });
+        return result!;
+    }
+
+    private async Task<IActionResult> UpdateVocabulariesLockedAsync(Guid branchId, UpdateBranchVocabulariesRequest request)
+    {
         var branch = await _context.Branches.FirstOrDefaultAsync(b => b.Id == branchId);
         if (branch == null) return NotFound();
 
         var vocab = request.Vocabularies ?? new BranchVocabulariesDto();
 
+        // Rooms belong to the timetable (PUT …/timetable/rooms, gated on timetable.manage) and are not this editor's to
+        // write: whatever a client sends, the stored rooms are kept, so an older client or a dialog opened before a room
+        // was added cannot erase it.
+        vocab.Rooms = ReadVocabularies(branch.Settings).Rooms;
+
         var listError = ValidateList(vocab.Classes, "class")
                         ?? ValidateList(vocab.Houses, "house")
-                        ?? ValidateList(vocab.Dormitories, "dormitory");
+                        ?? ValidateList(vocab.Dormitories, "dormitory")
+                        ?? ValidateExtras(vocab);
         if (listError != null)
             return BadRequest(new ProblemDetails { Title = listError, Status = StatusCodes.Status400BadRequest });
 
@@ -1867,6 +1900,25 @@ public class StudentsController : ControllerBase
             .Where(a => a.BranchId == branchId && a.EndedAt == null)
             .ToListAsync();
         var assignmentsRenamed = ApplyAssignmentRenames(assignments, request.ClassRenames);
+
+        // Timetable lessons name their class too (duty rota plan §6.3): a draft or the published version follows the
+        // rename in the same save. An archived version is history and keeps the name it was taught under.
+        var lessonsRenamed = 0;
+        foreach (var (oldName, newName) in request.ClassRenames ?? new())
+        {
+            if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName) || string.Equals(oldName, newName, StringComparison.Ordinal)) continue;
+            var oldNorm = TimetableCycle.Normalize(oldName);
+            var lessons = await _context.TimetableLessons
+                .Where(l => l.ClassNameNormalized == oldNorm && l.Timetable.BranchId == branchId && l.Timetable.Status != TimetableStatus.Archived)
+                .ToListAsync();
+            foreach (var l in lessons)
+            {
+                l.ClassName = newName.Trim();
+                l.ClassNameNormalized = TimetableCycle.Normalize(newName);
+                l.UpdatedAt = DateTime.UtcNow;
+            }
+            lessonsRenamed += lessons.Count;
+        }
 
         // Guard AFTER renames: a value that was renamed is no longer held by anybody, so checking
         // first would refuse a perfectly ordinary rename-and-tidy in one save.
@@ -1887,8 +1939,8 @@ public class StudentsController : ControllerBase
         if (strandedClass != null)
             return BadRequest(new ProblemDetails
             {
-                Title = $"'{strandedClass}' still has a class teacher",
-                Detail = "End that class-teacher assignment before removing or renaming the class away.",
+                Title = $"'{strandedClass}' still has a teacher assigned",
+                Detail = "End that class's class-teacher or subject-teacher assignments before removing or renaming the class away.",
                 Status = StatusCodes.Status400BadRequest
             });
 
@@ -1905,6 +1957,8 @@ public class StudentsController : ControllerBase
             _logger.LogInformation("Branch {BranchId} vocabulary rename touched {Count} student row(s)", branchId, renamed);
         if (assignmentsRenamed > 0)
             _logger.LogInformation("Branch {BranchId} class rename moved {Count} class-teacher assignment(s)", branchId, assignmentsRenamed);
+        if (lessonsRenamed > 0)
+            _logger.LogInformation("Branch {BranchId} class rename moved {Count} timetable lesson(s)", branchId, lessonsRenamed);
 
         return Ok(new UpdateBranchVocabulariesResultDto
         {
@@ -1957,6 +2011,30 @@ public class StudentsController : ControllerBase
 
         var duplicate = items.GroupBy(i => i.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
         return duplicate != null ? $"'{duplicate.Key}' is listed twice" : null;
+    }
+
+    /// <summary>
+    /// The fields only one list uses (duty rota plan §3.1): a class's Level, a room's capacity and type. Blank
+    /// becomes null so "S2" and "" never read as two levels, and a level or room type is never stored on a
+    /// list that does not use it — the editor round-trips whatever it was given.
+    /// </summary>
+    private static string? ValidateExtras(BranchVocabulariesDto vocab)
+    {
+        foreach (var c in vocab.Classes)
+        {
+            c.Level = string.IsNullOrWhiteSpace(c.Level) ? null : c.Level.Trim();
+            if (c.Level is { Length: > 20 }) return $"The level of '{c.Name}' cannot exceed 20 characters";
+            c.Capacity = null;
+            c.RoomType = null;
+        }
+        foreach (var r in vocab.Rooms)
+        {
+            if (r.Capacity is < 0 or > 5000) return $"The capacity of '{r.Name}' must be between 0 and 5000";
+            r.RoomType = string.IsNullOrWhiteSpace(r.RoomType) ? null : r.RoomType.Trim();
+            if (r.RoomType is { Length: > 40 }) return $"The type of '{r.Name}' cannot exceed 40 characters";
+            r.Level = null;
+        }
+        return null;
     }
 
     private static bool IsHexColor(string value) =>

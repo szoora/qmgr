@@ -15,6 +15,8 @@
 @inject IJSRuntime JS
 @inject IDocumentShareApiService DocShareApi
 @inject IToastService Toast
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
 
 @*
     The A4 staff performance report — WelfareTimelineReport's structure applied to a member of
@@ -344,7 +346,7 @@ else if (loadError != null)
         {
             generatedBy = user?.FullName;
             organizationId = user?.OrganizationId ?? Guid.Empty;
-            canPublish = await PermissionService.HasPermissionAsync(Permissions.LibraryPublish);
+            canPublish = await ReportPublishing.CanPublishAsync(PermissionService, ModuleState, ModuleApi);
             if (organizationId != Guid.Empty)
                 branding = await OrganizationApi.GetOrganizationBrandingAsync(organizationId);
 
@@ -371,6 +373,7 @@ else if (loadError != null)
     /// <summary>
     /// Renders the sheet to PDF in the browser (reportPublish.js) and uploads it into the Document
     /// Library as a shareable snapshot, with what it was generated from and when recorded on the row.
+    /// The flow itself lives in ReportPublishing — only this report's own strings are here.
     /// </summary>
     private async Task PublishToLibrary()
     {
@@ -380,38 +383,25 @@ else if (loadError != null)
         {
             var stamp = QDateFormat.D(DateTime.UtcNow);
             var name = $"Staff performance report — {SubjectName} ({PeriodCaption})";
-            var fileName = $"staff-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf";
 
-            var bytes = await JS.InvokeAsync<byte[]>("reportPublish.render", "sp-sheet", fileName);
-            if (bytes == null || bytes.Length == 0)
-                throw new InvalidOperationException("The report rendered to an empty file.");
-
-            using var stream = new MemoryStream(bytes);
-            var doc = await DocShareApi.UploadDocumentAsync(
-                organizationId, stream, fileName,
-                name,
-                summary: $"Staff performance report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
-                publishedFrom: $"Staff timeline — {SubjectName} ({timeline?.Subject.EmployeeNumber ?? "no employee number"}), {PeriodCaption}, generated {stamp}",
-                shareable: true);
-
-            // The activity log carries the publish (plan §11); the server never saw the PDF itself.
-            await StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+            await ReportPublishing.PublishAsync(new ReportPublishRequest
             {
-                Kind = StaffExportKinds.Timeline,
-                SubjectUserId = UserId,
-                Published = true,
-                MediaContentId = doc.Id,
+                SheetElementId = "sp-sheet",
+                OrganizationId = organizationId,
+                FileName = $"staff-report-{QDateFormat.Iso8601(DateOnly.FromDateTime(DateTime.UtcNow))}.pdf",
                 DocumentName = name,
-                Format = "PDF"
-            });
-
-            Toast.Notify(ToastSeverity.Success, "Published to the Document Library",
-                "The report is a snapshot as of now. Create a share link from the Library when you are ready.");
-            Navigation.NavigateTo($"/content/documents?document={doc.Id}");
-        }
-        catch (Exception ex)
-        {
-            Toast.Notify(ToastSeverity.Error, "Could not publish", ex.Message);
+                Summary = $"Staff performance report for {SubjectName}, {PeriodCaption}. Generated {stamp} by {generatedBy ?? "Q-Mgr"}.",
+                PublishedFrom = $"Staff timeline — {SubjectName} ({timeline?.Subject.EmployeeNumber ?? "no employee number"}), {PeriodCaption}, generated {stamp}",
+                Audit = doc => StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest
+                {
+                    Kind = StaffExportKinds.Timeline,
+                    SubjectUserId = UserId,
+                    Published = true,
+                    MediaContentId = doc.Id,
+                    DocumentName = name,
+                    Format = "PDF"
+                })
+            }, JS, DocShareApi, Toast, Navigation);
         }
         finally
         {

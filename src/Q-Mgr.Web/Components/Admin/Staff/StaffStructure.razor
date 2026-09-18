@@ -364,7 +364,7 @@
     .ss-form { display: flex; flex-direction: column; gap: 14px; }
     .ss-import-input { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
     .ss-delivery { border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: 10px 14px; margin: 12px 0 0; display: grid; gap: 8px; }
-    .ss-delivery legend { font-size: 13px; font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
+    .ss-delivery legend { font-size: var(--q-control-font-sm); font-weight: 600; padding: 0 4px; width: auto; float: none; margin: 0; }
     .ss-radio { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
     .ss-radio input { margin-top: 3px; }
     .ss-warn { color: var(--qm-warning); }
@@ -629,7 +629,7 @@
         var lines = csvText.Replace("\r\n", "\n").Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
         if (lines.Count == 0) return;
 
-        var header = ParseCsvLine(lines[0]).Select(h => h.Trim().ToLowerInvariant()).ToList();
+        var header = CsvText.ParseLine(lines[0]).Select(h => h.Trim().ToLowerInvariant()).ToList();
         var hasHeader = header.Contains("email");
         int Col(string name, int fallback) { var i = header.IndexOf(name.ToLowerInvariant()); return hasHeader ? i : fallback; }
 
@@ -643,7 +643,7 @@
         foreach (var line in lines.Skip(hasHeader ? 1 : 0))
         {
             number++;
-            var cells = ParseCsvLine(line);
+            var cells = CsvText.ParseLine(line);
             string? Cell(int i) => i >= 0 && i < cells.Count && !string.IsNullOrWhiteSpace(cells[i]) ? cells[i].Trim() : null;
 
             var row = new StaffImportRow
@@ -673,29 +673,6 @@
 
             previewRows.Add(new PreviewRow(number, row, error));
         }
-    }
-
-    /// <summary>A small RFC-4180-ish splitter: commas, double-quoted fields, doubled quotes inside them.</summary>
-    private static List<string> ParseCsvLine(string line)
-    {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        var quoted = false;
-        for (var i = 0; i < line.Length; i++)
-        {
-            var c = line[i];
-            if (quoted)
-            {
-                if (c == '"' && i + 1 < line.Length && line[i + 1] == '"') { current.Append('"'); i++; }
-                else if (c == '"') quoted = false;
-                else current.Append(c);
-            }
-            else if (c == '"') quoted = true;
-            else if (c == ',') { result.Add(current.ToString()); current.Clear(); }
-            else current.Append(c);
-        }
-        result.Add(current.ToString());
-        return result;
     }
 
     private async Task StartImport()

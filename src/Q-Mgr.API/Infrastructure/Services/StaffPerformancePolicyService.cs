@@ -210,62 +210,11 @@ public class StaffPerformancePolicyService : IStaffPerformancePolicyService
         return ladder with { Stages = ladder.Stages.OrderBy(s => s.Stage).ToList() };
     }
 
-    public IReadOnlyList<ReminderLadderDto> DefaultLadders(StaffPerformancePolicyDto policy)
-    {
-        const int Hour = 60, Day = 24 * 60;
-        return new List<ReminderLadderDto>
-        {
-            // Plan §4.2: before a rota slot. Stage 4 may break quiet hours; SMS only where the tenant and the person allow it.
-            new() { Subject = ReminderSubject.RotaStart, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = -7 * Day, Channels = ReminderChannels.Digest },
-                new() { Stage = 2, OffsetMinutes = -3 * Day, Channels = ReminderChannels.Bell },
-                new() { Stage = 3, OffsetMinutes = -1 * Day, AtLocalHour = policy.QuietHours?.MorningHour ?? 7, Channels = ReminderChannels.Bell | ReminderChannels.Email },
-                new() { Stage = 4, OffsetMinutes = -2 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email | ReminderChannels.Sms, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor, Interruptive = true },
-            } },
-            // Plan §4.4: after a report's due time, escalating to the supervisor and then the heads' digest.
-            new() { Subject = ReminderSubject.ReportDue, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = 0, Channels = ReminderChannels.Bell },
-                new() { Stage = 2, OffsetMinutes = 12 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
-                new() { Stage = 3, OffsetMinutes = 24 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor },
-                new() { Stage = 4, OffsetMinutes = 48 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.Subject | ReminderAudience.Supervisor | ReminderAudience.Heads },
-            } },
-            // Plan §7.2: one in-app, time-sensitive reminder before each lesson; email and SMS off by default.
-            new() { Subject = ReminderSubject.LessonStart, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = -Math.Max(0, policy.LessonReminderMinutes), Channels = ReminderChannels.Bell, Interruptive = true },
-            } },
-            // Plan §6.3: a new clash in a published timetable, once, to the timetable masters.
-            new() { Subject = ReminderSubject.TimetableClash, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = 0, Channels = ReminderChannels.Bell | ReminderChannels.Email, Audience = ReminderAudience.TimetableMasters },
-            } },
-            // The single-shot reminder Session duties always had (DutyReminderLeadHours), now a one-stage ladder that
-            // also reaches recorders who are not expected (plan §2's first finding).
-            new() { Subject = ReminderSubject.SessionStart, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = -Math.Max(1, policy.DutyReminderLeadHours) * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
-            } },
-            // The register chase: an hour after a duty ends with its register not taken, to its recorders.
-            new() { Subject = ReminderSubject.RegisterChase, Stages = new()
-            {
-                new() { Stage = 1, OffsetMinutes = 1 * Hour, Channels = ReminderChannels.Bell | ReminderChannels.Email },
-            } },
-        };
-    }
+    /// <summary>One copy, in Shared, so the policy editor's "restore defaults" shows exactly what the sweep runs.</summary>
+    public IReadOnlyList<ReminderLadderDto> DefaultLadders(StaffPerformancePolicyDto policy) => ReminderLadderDefaults.For(policy);
 
     public IReadOnlyList<DutyReportSectionDto> ReportTemplate(StaffPerformancePolicyDto policy)
-        => policy.DutyReportTemplate is { Count: > 0 } own ? own : new List<DutyReportSectionDto>
-        {
-            new() { Key = "arrival", Title = "Arrival and assembly", Hint = "Punctuality of learners and staff, how assembly went.", Required = true },
-            new() { Key = "attendance", Title = "Attendance", Hint = "Learners and staff absent or late, and anything unusual." },
-            new() { Key = "meals", Title = "Meals", Hint = "Breakfast, lunch and supper: served on time, enough, any complaints." },
-            new() { Key = "cleanliness", Title = "Cleanliness", Kind = DutyReportSectionKind.Choice, Choices = new() { "Good", "Fair", "Poor" }, Hint = "Classrooms, compound, dormitories, latrines." },
-            new() { Key = "boarding", Title = "Boarding (if any)", Hint = "Prep, roll call, lights out, dormitory issues." },
-            new() { Key = "incidents", Title = "Incidents", Hint = "Link a welfare or discipline record for anything about a child — do not describe children here." },
-            new() { Key = "recommendations", Title = "Recommendations", Hint = "What the administration should act on." },
-        };
+        => policy.DutyReportTemplate is { Count: > 0 } own ? own : DutyReportTemplateDefaults.Sections;
 
     public IReadOnlyList<SaveSubjectRequest> DefaultSubjects() => QMgr.API.Application.Services.SubjectDefaults.Catalogue;
 

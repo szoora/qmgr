@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -421,7 +422,7 @@ public class VisitorsController : ControllerBase
         if (!p.InductionCompletedAt.HasValue)
             return $"{p.FullName} is checking in as a contractor with no recorded site induction.";
         if (!IsInductionValid(p))
-            return $"{p.FullName}'s site induction lapsed on {p.InductionCompletedAt.Value.AddDays(InductionValidityDays):MMM dd, yyyy} and needs renewing.";
+            return string.Create(CultureInfo.InvariantCulture, $"{p.FullName}'s site induction lapsed on {p.InductionCompletedAt.Value.AddDays(InductionValidityDays):MMM dd, yyyy} and needs renewing.");
         return null;
     }
 
@@ -443,7 +444,7 @@ public class VisitorsController : ControllerBase
         var isManager = RoleCodes.IsManagerOrAbove(_tenantAccessor.TenantContext!.UserRole);
         if (isManager && !string.IsNullOrWhiteSpace(overrideReason)) return null;
 
-        var since = profile.WatchlistAddedAt.HasValue ? $" (flagged {profile.WatchlistAddedAt.Value:MMM dd, yyyy})" : "";
+        var since = profile.WatchlistAddedAt.HasValue ? string.Create(CultureInfo.InvariantCulture, $" (flagged {profile.WatchlistAddedAt.Value:MMM dd, yyyy})") : "";
         var reason = string.IsNullOrWhiteSpace(profile.WatchlistReason) ? "No reason was recorded." : profile.WatchlistReason;
         return Conflict(new ProblemDetails
         {

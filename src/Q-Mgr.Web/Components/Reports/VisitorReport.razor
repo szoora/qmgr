@@ -50,26 +50,12 @@
                 <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" Disabled="@isLoading" ShowCaption="false" />
             </div>
             <div class="filter-item">
-                <label>Visitor type
-                    <select @bind="filterVisitorType">
-                        <option value="">All types</option>
-                        @foreach (var t in Enum.GetValues<VisitorType>())
-                        {
-                            <option value="@t">@t</option>
-                        }
-                    </select>
-                </label>
+                <QSelect TValue="VisitorType?" TItem="VisitorType" @bind-Value="filterVisitorType" Items="@(Enum.GetValues<VisitorType>())"
+                         ValueSelector="@(x => (VisitorType?)x)" TextSelector="@(x => x.ToString())" Label="Visitor type" Placeholder="All types" AllowClear="true" />
             </div>
             <div class="filter-item">
-                <label>Status
-                    <select @bind="filterStatus">
-                        <option value="">All statuses</option>
-                        @foreach (var st in Enum.GetValues<VisitorStatus>())
-                        {
-                            <option value="@st">@st</option>
-                        }
-                    </select>
-                </label>
+                <QSelect TValue="VisitorStatus?" TItem="VisitorStatus" @bind-Value="filterStatus" Items="@(Enum.GetValues<VisitorStatus>())"
+                         ValueSelector="@(x => (VisitorStatus?)x)" TextSelector="@(x => x.ToString())" Label="Status" Placeholder="All statuses" AllowClear="true" />
             </div>
             <div class="filter-item">
                 <label>Host<input type="text" @bind="filterHost" placeholder="Any host" /></label>
@@ -596,7 +582,7 @@
     }
     .filter-checks { display: flex; flex-direction: column; gap: 4px; }
     .inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--qm-text-primary); }
-    .filter-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .filter-actions { display: flex; align-items: center; flex-wrap: wrap; }
 
     .filter-item--range { flex: 1 1 100%; min-width: 0; }
     .range-caption { margin: 0; font-size: 12.5px; color: var(--qm-text-muted); }
@@ -642,7 +628,7 @@
     .heat-row { display: flex; gap: 3px; align-items: center; }
     .heat-day { width: 32px; flex-shrink: 0; font-size: 11px; color: var(--qm-text-muted); }
     .heat-hour-label { flex: 1; min-width: 12px; font-size: 9px; color: var(--qm-text-muted); text-align: center; }
-    .heat-cell { flex: 1; min-width: 12px; height: 15px; border-radius: 2px; background: var(--qm-bg-secondary); }
+    .heat-cell { flex: 1; min-width: 12px; height: 15px; border-radius: var(--qm-radius-sm); background: var(--qm-bg-secondary); }
     .heat-cell.on { background: var(--qm-primary); }
     .heat-legend { margin-top: 8px; }
 

@@ -321,6 +321,33 @@ public record StaffDutyDto
     public bool IsExpectedOfMe { get; init; }
     public bool CanIRecord { get; init; }
     public DutyOutcome? MyOutcome { get; init; }
+
+    // ---- Duty rota (plan §4) ----
+    public DutyKind Kind { get; init; }
+    public Guid? SeriesId { get; init; }
+    /// <summary>The people on duty, by name, in list order. Empty when the duty expects everyone.</summary>
+    public List<string> ExpectedNames { get; init; } = new();
+    public List<Guid> SupervisorUserIds { get; init; } = new();
+    public List<string> SupervisorNames { get; init; } = new();
+    public ReportCadence ReportCadence { get; init; }
+    /// <summary>"18:00", branch-local; null uses the policy default.</summary>
+    public string? ReportDueLocalTime { get; init; }
+    public bool IsSupervisedByMe { get; init; }
+    /// <summary>When the caller acknowledged this slot; null when they have not (or are not on it).</summary>
+    public DateTime? MyAcknowledgedAt { get; init; }
+    public int AcknowledgedCount { get; init; }
+    /// <summary>
+    /// Who has acknowledged, by user — only for a caller who manages duties or supervises the slot. A colleague on the
+    /// same slot sees the count, not the names.
+    /// </summary>
+    public Dictionary<Guid, DateTime>? Acknowledgements { get; init; }
+
+    // Lessons (duty rota plan §7). Null on a Session or Rota duty.
+    public Guid? TimetableLessonId { get; init; }
+    public string? ClassName { get; init; }
+    public Guid? SubjectId { get; init; }
+    public string? Room { get; init; }
+    public Guid? RecoversDutyId { get; init; }
 }
 
 public record SaveStaffDutyRequest
@@ -331,9 +358,18 @@ public record SaveStaffDutyRequest
     [MaxLength(200)] public string? Location { get; set; }
     public DateTime StartsAt { get; set; }
     public DateTime EndsAt { get; set; }
-    /// <summary>Null or empty = everyone active in the branch.</summary>
+    /// <summary>Null or empty = everyone active in the branch. A rota slot must name its people.</summary>
     public List<Guid>? ExpectedUserIds { get; set; }
     public List<Guid> RecorderUserIds { get; set; } = new();
+
+    /// <summary>Session (default) or Rota. Lessons come from the timetable and cannot be created here.</summary>
+    public DutyKind Kind { get; set; } = DutyKind.Session;
+    /// <summary>The administrator(s) on duty. Rota only; they are also the slot's recorders.</summary>
+    public List<Guid> SupervisorUserIds { get; set; } = new();
+    /// <summary>Null picks the policy default for the slot's length (plan §15 decision 1).</summary>
+    public ReportCadence? ReportCadence { get; set; }
+    /// <summary>"HH:mm"; null uses the policy default.</summary>
+    [MaxLength(5)] public string? ReportDueLocalTime { get; set; }
 }
 
 public record DuplicateStaffDutyRequest
@@ -871,6 +907,10 @@ public record StaffPortalDto
     public Guid BranchId { get; init; }
     public StaffScoreDto Score { get; init; } = new();
     public List<StaffDutyDto> ComingUp { get; init; } = new();
+    /// <summary>Rota slots I am on or supervise, under way or starting within a fortnight (plan §10 "On duty" card).</summary>
+    public List<StaffDutyDto> OnDuty { get; init; } = new();
+    /// <summary>My duty reports whose period has started and that are still mine to write: drafts and returned ones (plan §10).</summary>
+    public List<DutyReportSummaryDto> ReportsToWrite { get; init; } = new();
     public List<PortalItemDto> OpenItems { get; init; } = new();
     public List<StaffNoticeDto> Notices { get; init; } = new();
     public List<StaffPerformanceRecordDto> RecognitionReceived { get; init; } = new();

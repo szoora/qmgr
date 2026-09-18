@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using QMgr.Application.DTOs;
 using QMgr.Domain.Entities.Visitor;
@@ -468,7 +469,7 @@ public sealed class VisitorReportingService : IVisitorReportingService
             {
                 var latest = g.OrderByDescending(r => r.CreatedAt).First();
                 return ToException(latest, VisitorExceptionKind.FrequentVisitor, now, zone,
-                    $"{g.Count()} visits between {from:MMM dd} and {to:MMM dd}.");
+                    string.Create(CultureInfo.InvariantCulture, $"{g.Count()} visits between {from:MMM dd} and {to:MMM dd}."));
             })
             .Take(50)
             .ToList();
@@ -531,13 +532,13 @@ public sealed class VisitorReportingService : IVisitorReportingService
     private static string DescribeException(Row r, VisitorExceptionKind kind, double? hoursOnSite, TimeZoneInfo zone) => kind switch
     {
         VisitorExceptionKind.StillOnSite when r.CheckedInAt.HasValue =>
-            $"Checked in {ToLocal(r.CheckedInAt.Value, zone):MMM dd 'at' HH:mm} and never checked out — {hoursOnSite:0.#} hours ago.",
+            string.Create(CultureInfo.InvariantCulture, $"Checked in {ToLocal(r.CheckedInAt.Value, zone):MMM dd 'at' HH:mm} and never checked out — {hoursOnSite:0.#} hours ago."),
         VisitorExceptionKind.Overstayed =>
             $"On site {hoursOnSite:0.#} hours, longer than expected for a {r.VisitorType.ToString().ToLowerInvariant()} visit.",
         VisitorExceptionKind.NoHostRecorded =>
             "Admitted with no host recorded, so there is no member of staff accountable for this visit.",
         VisitorExceptionKind.InductionLapsed when r.InductionCompletedAt.HasValue =>
-            $"Contractor admitted on a site induction that expired {ToLocal(r.InductionCompletedAt.Value.AddDays(InductionValidityDays), zone):MMM dd, yyyy}.",
+            string.Create(CultureInfo.InvariantCulture, $"Contractor admitted on a site induction that expired {ToLocal(r.InductionCompletedAt.Value.AddDays(InductionValidityDays), zone):MMM dd, yyyy}."),
         VisitorExceptionKind.InductionLapsed =>
             "Contractor admitted with no site induction on record at all.",
         _ => ""

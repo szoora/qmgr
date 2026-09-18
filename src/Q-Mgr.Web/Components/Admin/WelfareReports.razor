@@ -498,7 +498,6 @@
 
     .admin-page { padding: 0; }
     .page-header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
-    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
     /* Import modal — same classes/tokens as StudentRoster.razor's Bulk Import so the two read as one feature. */
     .loading-container--inline { padding: 16px; flex-direction: row; gap: 10px; border: none; background: none; }
@@ -539,7 +538,7 @@
     .outcome-failed .import-log-outcome { color: var(--qm-danger, #d9534f); }
     .import-log-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .header-content h1 { margin: 0 0 4px; font-size: 28px; color: var(--qm-text-primary); }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
 
     /* Deliberately quiet — a standing fact about the caller's role, not a problem to fix. Tinted
@@ -792,14 +791,17 @@
     {
         if (firstRender)
         {
-            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView))
+            // Either code opens this page: the branch-wide grant, or the own-class grant a class teacher
+            // holds. What a scoped caller then sees is narrowed server-side and labelled as scoped.
+            if (!await PermissionService.HasPermissionAsync(Permissions.WelfareReportsView)
+                && !await PermissionService.HasPermissionAsync(Permissions.WelfareReportsOwn))
             {
                 Navigation.NavigateTo("/unauthorized", forceLoad: true);
                 return;
             }
 
             await ModuleState.LoadAsync(ModuleApi);
-            if (!ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
+            if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
             {
                 Navigation.NavigateTo("/billing/modules", forceLoad: false);
                 return;

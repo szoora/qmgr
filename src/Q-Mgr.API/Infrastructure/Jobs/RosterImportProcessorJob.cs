@@ -9,6 +9,7 @@ using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Visitor;
+using QMgr.Domain.Entities.Staff;
 using QMgr.Domain.Identity;
 using QMgr.Domain.Entities.Welfare;
 using QMgr.Domain.Enums;
@@ -91,6 +92,12 @@ public class RosterImportProcessorJob
         if (job.Kind == RosterImportKind.Staff)
         {
             await ProcessStaffJobAsync(job);
+            return;
+        }
+
+        if (job.Kind == RosterImportKind.Timetable)
+        {
+            await ProcessTimetableJobAsync(job);
             return;
         }
 
@@ -563,6 +570,154 @@ public class RosterImportProcessorJob
     /// the same file. The entry's StudentName column carries the person's name, StudentCode the
     /// employee number and GuardianName the email, so the per-row log reads without a join.
     /// </summary>
+    /// <summary>
+    /// A timetable export into a draft (duty rota plan §6.2, Phase 6). Each row resolves day, period, class, subject,
+    /// teacher and room the way a master placing it by hand would, and is refused for the same reasons: not a teaching
+    /// period that day, an unknown class, room or subject, a teacher who is not on the branch's staff, or a teacher
+    /// already teaching something else then. Rows with the same day, period, subject and teacher for different classes
+    /// become one joint lesson. Clashes a hand placement would allow (a class or room double-booked) are imported and
+    /// left for the draft's diagnosis. The per-row log carries the slot in StudentCode, the class in StudentName and the
+    /// teacher in GuardianName.
+    /// </summary>
+    private async Task ProcessTimetableJobAsync(RosterImportJob job)
+    {
+        TimetableImportPayload? payload;
+        try { payload = JsonSerializer.Deserialize<TimetableImportPayload>(job.RowsJson); }
+        catch (JsonException) { payload = null; }
+        if (payload == null) { await FailJobAsync(job, "Could not read the uploaded rows (corrupted payload)."); return; }
+
+        var timetable = await _context.Timetables.FirstOrDefaultAsync(t => t.Id == payload.TimetableId && t.BranchId == job.BranchId);
+        if (timetable == null || timetable.Status != TimetableStatus.Draft)
+        {
+            await FailJobAsync(job, "The timetable is no longer a draft, so nothing was imported into it.");
+            return;
+        }
+
+        var branchSettings = await _context.Branches.IgnoreQueryFilters().AsNoTracking().Where(b => b.Id == job.BranchId).Select(b => b.Settings).FirstOrDefaultAsync();
+        var settings = new QMgr.Infrastructure.Services.TimetableSettingsService(_context).Read(branchSettings);
+        var vocab = StudentsController.ReadVocabularies(branchSettings);
+        var classes = vocab.Classes.Where(c => c.IsActive).GroupBy(c => TimetableCycle.Normalize(c.Name)).ToDictionary(g => g.Key, g => g.First().Name);
+        var rooms = vocab.Rooms.Where(r => r.IsActive).GroupBy(r => TimetableCycle.Normalize(r.Name)).ToDictionary(g => g.Key, g => g.First().Name);
+        var subjectRows = await _context.Subjects.IgnoreQueryFilters().AsNoTracking().Where(x => x.OrganizationId == job.OrganizationId && x.IsActive).ToListAsync();
+        var staff = await StaffLookups.BranchStaff(_context, job.OrganizationId, job.BranchId)
+            .Select(u => new { u.Id, u.Email, u.Username, u.FirstName, u.LastName }).ToListAsync();
+
+        // Day names: the cycle's own labels ("mon", "mon a"), full weekday names in a one-week cycle, and the number.
+        var days = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var teachingDays = TimetableCycle.TeachingDays(settings);
+        for (var d = 1; d <= timetable.CycleDays; d++)
+        {
+            days[TimetableCycle.CycleDayLabel(settings, timetable.CycleDays, d)] = d;
+            days[d.ToString(CultureInfo.InvariantCulture)] = d;
+            if (TimetableCycle.WeekdayOf(settings, timetable.CycleDays, d) is { } w)
+            {
+                var full = w.Day.ToString();
+                if (timetable.CycleDays == teachingDays.Count) days.TryAdd(full, d);
+                days.TryAdd($"{full} {(char)('A' + w.Week)}", d);
+            }
+        }
+
+        if (payload.ReplaceExisting)
+        {
+            var removed = await _context.TimetableLessons.Where(l => l.TimetableId == timetable.Id).ExecuteDeleteAsync();
+            _logger.LogInformation("Timetable import {JobId}: removed {Count} existing lesson(s) from draft {TimetableId} first", job.Id, removed, timetable.Id);
+        }
+
+        var lessons = await _context.TimetableLessons.Where(l => l.TimetableId == timetable.Id).ToListAsync();
+        var creator = job.CreatedByUserId;
+
+        await RunRowsAsync(job, payload.Rows, async (row, rowNumber) =>
+        {
+            var entry = new RosterImportJobEntry
+            {
+                RosterImportJobId = job.Id, RowNumber = rowNumber,
+                StudentCode = Truncate($"{row.Day} {row.Period}".Trim(), 50), StudentName = Truncate(row.Class, 200), GuardianName = Truncate(row.Teacher, 200)
+            };
+            void Fail(string message)
+            {
+                entry.Outcome = RosterImportRowOutcome.Failed;
+                entry.Message = message;
+                job.FailedCount++;
+                _context.RosterImportJobEntries.Add(entry);
+            }
+
+            if (!days.TryGetValue((row.Day ?? "").Trim(), out var cycleDay)) { Fail($"Day '{row.Day}' is not a day of this timetable's cycle."); return; }
+            var periods = TimetableCycle.LessonPeriodsOf(settings, timetable.CycleDays, cycleDay);
+            var periodText = (row.Period ?? "").Trim();
+            var startText = TimetableCycle.ParseTime(periodText.Length == 4 && periodText[1] == ':' ? "0" + periodText : periodText)?.ToString("HH:mm", CultureInfo.InvariantCulture);
+            var period = periods.FirstOrDefault(p => string.Equals(p.Key, periodText, StringComparison.OrdinalIgnoreCase))
+                         ?? periods.FirstOrDefault(p => string.Equals(p.Label, periodText, StringComparison.OrdinalIgnoreCase))
+                         ?? (startText == null ? null : periods.FirstOrDefault(p => p.Start == startText));
+            if (period == null) { Fail($"'{row.Period}' is not a teaching period on {TimetableCycle.CycleDayLabel(settings, timetable.CycleDays, cycleDay)}."); return; }
+
+            if (!classes.TryGetValue(TimetableCycle.Normalize(row.Class), out var className)) { Fail($"'{row.Class}' is not a configured, active class."); return; }
+
+            var subjectText = (row.Subject ?? "").Trim();
+            var subject = subjectRows.FirstOrDefault(x => string.Equals(x.Code, subjectText, StringComparison.OrdinalIgnoreCase))
+                          ?? subjectRows.FirstOrDefault(x => string.Equals(x.Name, subjectText, StringComparison.OrdinalIgnoreCase));
+            if (subject == null) { Fail($"'{row.Subject}' is not an active subject (by code or name)."); return; }
+
+            var teacherText = (row.Teacher ?? "").Trim();
+            var byEmailOrUser = staff.Where(u => string.Equals(u.Email, teacherText, StringComparison.OrdinalIgnoreCase) || string.Equals(u.Username, teacherText, StringComparison.OrdinalIgnoreCase)).ToList();
+            var byName = staff.Where(u => string.Equals($"{u.FirstName} {u.LastName}".Trim(), teacherText, StringComparison.OrdinalIgnoreCase)).ToList();
+            var teachers = byEmailOrUser.Count > 0 ? byEmailOrUser : byName;
+            if (teachers.Count == 0) { Fail($"'{row.Teacher}' is not on this branch's staff (by email, username or full name)."); return; }
+            if (teachers.Count > 1) { Fail($"'{row.Teacher}' matches {teachers.Count} members of staff; use their email instead."); return; }
+            var teacherId = teachers[0].Id;
+
+            string? room = null;
+            if (!string.IsNullOrWhiteSpace(row.Room))
+            {
+                if (!rooms.TryGetValue(TimetableCycle.Normalize(row.Room), out var roomName)) { Fail($"'{row.Room}' is not a configured room."); return; }
+                room = roomName;
+            }
+
+            var inSlot = lessons.Where(l => l.CycleDay == cycleDay && string.Equals(l.PeriodKey, period.Key, StringComparison.OrdinalIgnoreCase)).ToList();
+            var classNorm = TimetableCycle.Normalize(className);
+            if (inSlot.Any(l => l.TeacherUserId == teacherId && l.ClassNameNormalized == classNorm && l.SubjectId == subject.Id))
+            {
+                entry.Outcome = RosterImportRowOutcome.DuplicateInFile;
+                entry.Message = "Already in the draft — skipped.";
+                job.DuplicateCount++;
+                _context.RosterImportJobEntries.Add(entry);
+                return;
+            }
+            var mine = inSlot.Where(l => l.TeacherUserId == teacherId).ToList();
+            if (mine.Any(l => l.SubjectId != subject.Id))
+            {
+                Fail($"{teachers[0].FirstName} {teachers[0].LastName} already teaches {mine[0].ClassName} then.");
+                return;
+            }
+
+            // The same teacher, subject and slot for another class: a joint lesson — one group, no clash with itself.
+            Guid? groupId = null;
+            if (mine.Count > 0)
+            {
+                groupId = mine.Select(l => l.GroupId).FirstOrDefault(g => g != null) ?? Guid.NewGuid();
+                foreach (var l in mine) l.GroupId = groupId;
+            }
+
+            var lesson = new TimetableLesson
+            {
+                TimetableId = timetable.Id, CycleDay = cycleDay, PeriodKey = period.Key, ClassName = className, ClassNameNormalized = classNorm,
+                SubjectId = subject.Id, TeacherUserId = teacherId, Room = room, RoomNormalized = room == null ? null : TimetableCycle.Normalize(room),
+                GroupId = groupId, CreatedBy = creator
+            };
+            _context.TimetableLessons.Add(lesson);
+            lessons.Add(lesson);
+            entry.Outcome = RosterImportRowOutcome.Created;
+            entry.Message = $"{TimetableCycle.CycleDayLabel(settings, timetable.CycleDays, cycleDay)} {period.Key}: {className} {subject.Code}{(groupId != null ? " (joint lesson)" : "")}{(room == null ? "" : $", {room}")}";
+            job.CreatedCount++;
+            _context.RosterImportJobEntries.Add(entry);
+        },
+        row => new RosterImportJobEntry { StudentCode = Truncate($"{row.Day} {row.Period}".Trim(), 50), StudentName = Truncate(row.Class, 200), GuardianName = Truncate(row.Teacher, 200) });
+
+        timetable.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+    }
+
+    private static string Truncate(string? value, int max) => string.IsNullOrEmpty(value) ? string.Empty : value.Length <= max ? value : value[..max];
+
     private async Task ProcessStaffJobAsync(RosterImportJob job)
     {
         if (!job.CreatedByUserId.HasValue)

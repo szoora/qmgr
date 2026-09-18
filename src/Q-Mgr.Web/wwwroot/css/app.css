@@ -563,7 +563,7 @@ html, body {
 
 /* Dashboard Cards */
 .dashboard-card {
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     transition: transform 0.2s, box-shadow 0.3s;
 }
 
@@ -575,7 +575,7 @@ html, body {
 .token-badge {
     font-size: 1.5rem;
     padding: 0.75rem 1.25rem;
-    border-radius: 12px;
+    border-radius: var(--qm-radius-md);
     font-family: 'Poppins', sans-serif;
     font-weight: 700;
 }
@@ -830,7 +830,7 @@ html, body {
 .content-card {
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
     padding: 24px;
     margin-bottom: 20px;
 }
@@ -838,7 +838,7 @@ html, body {
 @media (max-width: 576px) {
     .content-card {
         padding: 16px;
-        border-radius: 12px;
+        border-radius: var(--qm-radius-lg);
         margin-bottom: 12px;
     }
 }
@@ -864,7 +864,7 @@ html, body {
     padding: 12px 16px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 15px;
     transition: all 0.2s ease;
@@ -886,7 +886,7 @@ html, body {
     .form-group .form-select {
         padding: 14px 16px;
         font-size: 16px; /* Prevents iOS zoom on focus */
-        border-radius: 12px;
+        border-radius: var(--qm-radius-md);
     }
 }
 
@@ -898,7 +898,7 @@ html, body {
     justify-content: center;
     gap: 8px;
     padding: 12px 24px;
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
@@ -933,7 +933,7 @@ html, body {
     .btn-secondary {
         padding: 14px 20px;
         font-size: 15px;
-        border-radius: 12px;
+        border-radius: var(--qm-radius-md);
         min-height: 48px;
     }
 
@@ -1032,7 +1032,7 @@ html, body {
     padding: 60px 20px;
     background: var(--qm-bg-card);
     border: 1px solid var(--qm-border);
-    border-radius: 16px;
+    border-radius: var(--qm-radius-lg);
 }
 
 /* :not(.q-btn__icon) — this selector is meant for the big decorative icon
@@ -1061,7 +1061,7 @@ html, body {
 @media (max-width: 576px) {
     .empty-state {
         padding: 40px 16px;
-        border-radius: 12px;
+        border-radius: var(--qm-radius-lg);
     }
 
     .empty-state i:not(.q-btn__icon) {
@@ -1126,7 +1126,7 @@ html, body {
     padding: 12px 16px 12px 44px;
     background: var(--qm-bg-elevated);
     border: 1px solid var(--qm-border);
-    border-radius: 10px;
+    border-radius: var(--qm-radius-md);
     color: var(--qm-text-primary);
     font-size: 14px;
 }
@@ -1147,7 +1147,7 @@ html, body {
     .search-input-group input {
         padding: 14px 16px 14px 44px;
         font-size: 16px; /* Prevents iOS zoom */
-        border-radius: 12px;
+        border-radius: var(--qm-radius-md);
     }
 }
 
@@ -1206,7 +1206,7 @@ html, body {
         var(--qm-bg-elevated) 75%);
     background-size: 200% 100%;
     animation: skeleton-loading 1.5s infinite;
-    border-radius: 8px;
+    border-radius: var(--qm-radius-md);
 }
 
 @keyframes skeleton-loading {
@@ -1223,7 +1223,7 @@ html, body {
         right: 0;
         background: var(--qm-bg-card);
         border-top: 1px solid var(--qm-border);
-        border-radius: 20px 20px 0 0;
+        border-radius: var(--qm-radius-lg) var(--qm-radius-lg) 0 0;
         padding: 20px;
         padding-bottom: max(20px, env(safe-area-inset-bottom));
         z-index: 1000;
@@ -1239,7 +1239,7 @@ html, body {
         width: 40px;
         height: 4px;
         background: var(--qm-border);
-        border-radius: 2px;
+        border-radius: var(--qm-radius-full);
         margin: 0 auto 16px;
     }
 }

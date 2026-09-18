@@ -96,7 +96,9 @@ public class ConnectionMonitorService : IConnectionMonitorService
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 var response = await _httpClient.GetAsync("api/v1/health", cts.Token);
 
-                if (response.IsSuccessStatusCode)
+                // A 429 is the server answering: it is reachable, only busy. Treating it as lost put a full-page overlay over
+                // a working app and swallowed every click under it (found 2026-09-17 while testing dropdowns).
+                if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 {
                     _lastConnectedAt = DateTime.Now;
                     _reconnectAttempts = 0;

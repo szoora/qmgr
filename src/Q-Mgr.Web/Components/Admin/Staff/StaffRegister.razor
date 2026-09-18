@@ -168,8 +168,7 @@
     .reg-page--editing { padding-bottom: 96px; }
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
     .header-content { min-width: 0; }
-    .header-content h1 { margin: 0 0 4px; font-size: 22px; color: var(--qm-text-primary); overflow-wrap: anywhere; }
-    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); overflow-wrap: anywhere; }
     .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 13px; }
     .reg-back { margin-left: -8px; margin-bottom: 4px; }
 
@@ -177,7 +176,7 @@
     .reg-note--muted { background: var(--qm-bg-secondary); color: var(--qm-text-secondary); }
     .reg-note--warn { background: rgba(var(--qm-warning-rgb), 0.12); color: var(--qm-text-primary); border: 1px solid var(--qm-warning); }
 
-    .reg-legend { display: flex; gap: 8px 14px; flex-wrap: wrap; font-size: 12px; color: var(--qm-text-muted); margin-bottom: 10px; }
+    .reg-legend { display: flex; gap: 8px 14px; flex-wrap: wrap; font-size: var(--q-control-font-sm); color: var(--qm-text-muted); margin-bottom: 10px; }
     .reg-legend span { display: inline-flex; align-items: center; gap: 4px; }
     .reg-key { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: var(--qm-radius-sm); font-size: 11px; font-weight: 700; color: var(--qm-text-on-primary); }
 
@@ -241,7 +240,10 @@
     private static readonly DutyOutcome[] AttendanceOptions = { DutyOutcome.Present, DutyOutcome.Late, DutyOutcome.Absent, DutyOutcome.Excused, DutyOutcome.Recovered };
 
     /// <summary>R = Recovered offsets an Absent (the Lesson Recovery Schedule) and only makes sense on an Attendance-kind duty.</summary>
-    private DutyOutcome[] Options => register?.Duty.ParameterKind == ParameterKind.Attendance ? AttendanceOptions : BaseOptions;
+    /// <summary>A rota slot is closed out by its supervisor: completed or not completed, per person (duty rota plan §4.4).</summary>
+    private static readonly DutyOutcome[] RotaOptions = { DutyOutcome.Completed, DutyOutcome.NotCompleted, DutyOutcome.Excused };
+
+    private DutyOutcome[] Options => register?.Duty.Kind == DutyKind.Rota ? RotaOptions : register?.Duty.ParameterKind == ParameterKind.Attendance ? AttendanceOptions : BaseOptions;
 
     private static string Key(DutyOutcome o) => o switch
     {

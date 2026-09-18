@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -253,8 +254,8 @@ public class StaffRecordsController : StaffPerformanceControllerBase
         if (isObservation && (request.PreObservationMeetingAt.HasValue || request.FeedbackSessionAt.HasValue))
         {
             var parts = new List<string>();
-            if (request.PreObservationMeetingAt is { } pre) parts.Add($"Pre-observation meeting on {pre.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
-            if (request.FeedbackSessionAt is { } fb) parts.Add($"Feedback session on {fb.ToUniversalTime():dd MMM yyyy HH:mm} UTC.");
+            if (request.PreObservationMeetingAt is { } pre) parts.Add(string.Create(CultureInfo.InvariantCulture, $"Pre-observation meeting on {pre.ToUniversalTime():dd MMM yyyy HH:mm} UTC."));
+            if (request.FeedbackSessionAt is { } fb) parts.Add(string.Create(CultureInfo.InvariantCulture, $"Feedback session on {fb.ToUniversalTime():dd MMM yyyy HH:mm} UTC."));
 
             // "Schedules the feedback session" (plan §6.3), not just remembers it: a future feedback session
             // becomes a duty on the roster, expecting the observed teacher and the observer, with the observer
@@ -301,7 +302,7 @@ public class StaffRecordsController : StaffPerformanceControllerBase
             branchId, organizationId, visibility: record.Visibility);
         if (feedbackDuty != null)
             await Activity.RecordAsync(ActivityActions.DutyCreated, nameof(StaffDuty), feedbackDuty.Id, null,
-                $"Observation feedback session scheduled for {feedbackDuty.StartsAt:dd MMM yyyy HH:mm} UTC",
+                string.Create(CultureInfo.InvariantCulture, $"Observation feedback session scheduled for {feedbackDuty.StartsAt:dd MMM yyyy HH:mm} UTC"),
                 new { feedbackDuty.StartsAt, FromRecord = record.Id }, branchId, organizationId);
 
         // A committed record's fan-out must not fail the request; the service never throws.
