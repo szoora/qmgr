@@ -1,5 +1,6 @@
 @page "/admin/staff"
 @implements IDisposable
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -38,7 +39,7 @@
             @if (canImportStaff)
             {
                 <QButton Text="Import a list" Icon="upload" Variant="secondary"
-                         OnClick="@(() => Navigation.NavigateTo("/admin/staff/structure?tab=import"))" />
+                         OnClick="@(() => hubTab = "import")" />
             }
             <QDataExport TItem="StaffMemberDto" Title="Staff directory" FileStem="staff-directory" Subtitle="@ExportSubtitle"
                          Columns="@ExportColumns" RowProvider="@ProvideExportRowsAsync" OnExported="@OnExported"
@@ -48,6 +49,18 @@
 
     <StaffScopeNote Departments="@(directory?.ScopedToDepartments)" Noun="people" />
 
+    @* The Staff hub (2026-09-18). Departments & Structure used to be its own sidebar entry with its
+       own list of people — the same Name/Role/Departments/Line manager this page already shows,
+       minus Band and Last record. One page, four tabs, one sidebar entry. *@
+    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="sd" />
+
+    @if (hubTab != "people")
+    {
+        <StaffStructure Embedded="true" EmbeddedTab="@hubTab" EditMemberId="@structureEditId"
+                        EditMemberHandled="@(() => structureEditId = null)" />
+    }
+    else
+    {
     <QFilterBar Wrap="true">
         <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, email or job title" IconLeft="search" Clearable="true" Class="sd-search" />
         <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" Items="@DepartmentOptions" TextSelector="@(d => d)" ValueSelector="@(d => d)"
@@ -58,6 +71,8 @@
                  Placeholder="All bands" AllowClear="true" Class="sd-filter" />
         <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@PeriodOptions" TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)"
                  Placeholder="Period" Class="sd-filter" />
+        @* Carried over from the Departments & Structure Staff tab, which this page replaced. *@
+        <QCheckbox @bind-Value="@onlyGaps" Label="Only people missing a department or line manager" />
     </QFilterBar>
 
     @if (isLoading)
@@ -119,6 +134,15 @@
                                 <td>
                                     <div class="sd-actions">
                                         <QButton Text="Timeline" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/{m.UserId}/timeline"))" />
+                                        @if (canEditStructure)
+                                        {
+                                            @* The department / line-manager editor moved here with the
+                                               duplicate Staff tab's removal; the dialog itself still lives
+                                               in the Departments section, so this opens that section on
+                                               this person rather than duplicating the form. *@
+                                            <QButton Text="Structure" Icon="diagram-3" Variant="ghost" Size="sm"
+                                                     OnClick="@(() => { structureEditId = m.UserId; hubTab = "departments"; })" />
+                                        }
                                         @if (canCreate)
                                         {
                                             <QButton Text="Log record" Icon="journal-plus" Variant="ghost" Size="sm" OnClick="@(() => OpenRecordFor(m))" />
@@ -132,6 +156,7 @@
             </div>
         </QCard>
         <QPager Count="@Visible.Count" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@(i => pageIndex = i)" ItemLabel="people" />
+    }
     }
 </div>
 
@@ -167,6 +192,29 @@
     private Guid branchId;
     private bool isLoading = true;
     private bool canCreate;
+    /// <summary>
+    /// The Staff hub's tabs. People is this page's own directory; the other three are rendered by
+    /// StaffStructure, embedded. Before 2026-09-18 those lived on a separate sidebar entry whose
+    /// Staff tab listed the same people this page already lists, with fewer columns.
+    /// </summary>
+    private static readonly IReadOnlyList<QTab> HubTabs = new List<QTab>
+    {
+        new("people", "People", "people"),
+        new("departments", "Departments", "diagram-3"),
+        new("coverage", "Coverage", "shield-check"),
+        new("import", "Import", "upload"),
+    };
+
+    private string hubTab = "people";
+
+    /// <summary>Set when People asks the Departments section to open one person's editor.</summary>
+    private Guid? structureEditId;
+
+    /// <summary>The gaps view the removed Staff tab offered: who has no department or no line manager.</summary>
+    private bool onlyGaps;
+
+    private bool canEditStructure;
+
     private bool canAddStaff;
     private bool canImportStaff;
     private StaffDirectoryDto? directory;
@@ -207,6 +255,7 @@
                 .Where(m => departmentFilter == null || m.DepartmentNames.Contains(departmentFilter))
                 .Where(m => roleFilter == null || m.RoleCode == roleFilter)
                 .Where(m => bandFilter == null || (bandFilter == 0 ? m.CurrentBand == null : m.CurrentBand == bandFilter))
+                .Where(m => !onlyGaps || !m.DepartmentNames.Any() || m.LineManagerUserId == null)
                 .OrderBy(m => m.FullName)
                 .ToList();
         }
@@ -254,7 +303,17 @@
         // permission, which is the same pair StaffImportController enforces — so a button that
         // appears is a button that works.
         canAddStaff = await PermissionService.HasPermissionAsync(Permissions.UsersCreate);
+
+        // The hub owns the URL: /admin/staff?tab=departments is the one link to that section, and
+        // the sections themselves no longer carry routes. Anything unrecognised falls back to People
+        // rather than showing an empty shell.
+        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
+        {
+            var t = wantedTab.ToString().Trim().ToLowerInvariant();
+            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
+        }
         canImportStaff = canAddStaff && await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
+        canEditStructure = await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
 
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;

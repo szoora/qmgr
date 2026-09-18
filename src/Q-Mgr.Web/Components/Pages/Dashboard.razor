@@ -349,20 +349,20 @@ else if (hasCoreQueue && queueStatus != null)
         <div class="module-section-head">
             <h2><QIcon Name="people" /> Staff Performance</h2>
             <QButton Text="Open structure" Icon="arrow-right" Variant="ghost" Size="sm"
-                     OnClick="@(() => Navigation.NavigateTo("/admin/staff/structure"))" />
+                     OnClick="@(() => Navigation.NavigateTo("/admin/staff?tab=departments"))" />
         </div>
         @* The structure's silent failures, on the dashboard (plan Phase 6). Every figure should be
            zero; each tile links to the page that fixes it. Shown only to staff.structure.manage
            holders, because the coverage endpoint is gated on it. *@
         <QStatRow>
             <QStatTile Value="@staffCoverage.DepartmentsWithoutHead.Count.ToString()" Label="Departments without a head" Icon="diagram-3"
-                       Variant="@(staffCoverage.DepartmentsWithoutHead.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+                       Variant="@(staffCoverage.DepartmentsWithoutHead.Count > 0 ? "warning" : "success")" Href="/admin/staff?tab=departments" />
             <QStatTile Value="@staffCoverage.StaffWithoutLineManager.Count.ToString()" Label="Staff without a line manager" Icon="person-x"
-                       Variant="@(staffCoverage.StaffWithoutLineManager.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+                       Variant="@(staffCoverage.StaffWithoutLineManager.Count > 0 ? "warning" : "success")" Href="/admin/staff?tab=departments" />
             <QStatTile Value="@staffCoverage.StaffWithoutAppraiserThisPeriod.Count.ToString()" Label="No appraisal this period" Icon="clipboard-x"
                        Variant="@(staffCoverage.StaffWithoutAppraiserThisPeriod.Count > 0 ? "danger" : "success")" Href="/admin/staff/appraisals" Sub="@staffCoverage.PeriodKey" />
             <QStatTile Value="@staffCoverage.StaffWithoutObservationThisPeriod.Count.ToString()" Label="Not observed this period" Icon="eye-slash"
-                       Variant="@(staffCoverage.StaffWithoutObservationThisPeriod.Count > 0 ? "warning" : "success")" Href="/admin/staff/structure" />
+                       Variant="@(staffCoverage.StaffWithoutObservationThisPeriod.Count > 0 ? "warning" : "success")" Href="/admin/staff?tab=departments" />
         </QStatRow>
     </div>
 }

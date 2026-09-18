@@ -254,7 +254,7 @@
                     @if (!c.DepartmentsWithoutHead.Any()) { <p class="rp-muted">Every active department has a head.</p> }
                     else
                     {
-                        <ul class="rp-list">@foreach (var d in c.DepartmentsWithoutHead) { <li><a href="/admin/staff/structure">@d.Name</a> <span class="rp-muted">· @d.MemberCount member@(d.MemberCount == 1 ? "" : "s")</span></li> }</ul>
+                        <ul class="rp-list">@foreach (var d in c.DepartmentsWithoutHead) { <li><a href="/admin/staff?tab=departments">@d.Name</a> <span class="rp-muted">· @d.MemberCount member@(d.MemberCount == 1 ? "" : "s")</span></li> }</ul>
                     }
                 </QCard>
                 <QCard Title="@($"Staff without a department ({c.StaffWithoutDepartment.Count})")" Icon="person-dash" Class="rp-card">
@@ -262,7 +262,7 @@
                     else
                     {
                         <ul class="rp-list">@foreach (var m in c.StaffWithoutDepartment) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a> <span class="rp-muted">· @m.RoleName</span></li> }</ul>
-                        <a class="rp-link" href="/admin/staff/structure">Fix under Structure → Staff</a>
+                        <a class="rp-link" href="/admin/staff?tab=departments">Fix under Structure → Staff</a>
                     }
                 </QCard>
                 <QCard Title="@($"Staff without a line manager ({c.StaffWithoutLineManager.Count})")" Icon="person-x" Class="rp-card">
@@ -270,7 +270,7 @@
                     else
                     {
                         <ul class="rp-list">@foreach (var m in c.StaffWithoutLineManager) { <li><a href="/admin/staff/@m.UserId/timeline">@m.FullName</a> <span class="rp-muted">· @(m.DepartmentNames.Any() ? string.Join(", ", m.DepartmentNames) : m.RoleName)</span></li> }</ul>
-                        <a class="rp-link" href="/admin/staff/structure">Fix under Structure → Staff</a>
+                        <a class="rp-link" href="/admin/staff?tab=departments">Fix under Structure → Staff</a>
                     }
                 </QCard>
                 <QCard Title="@($"No appraisal this period ({c.StaffWithoutAppraiserThisPeriod.Count})")" Icon="clipboard-x" Class="rp-card">

@@ -1831,6 +1831,16 @@ than a patch to one screen.
 - **A `wwwroot` change needs a REBUILD, not a restart** (`@Assets[]` fingerprints at build time).
   This cost a wrong measurement once in this very session: the first run reported h1 still at 28px,
   which read as "the rule did not apply" when the rule was in the losing stylesheet.
+
+- **A data page uses the width it has; a document page keeps a reading width (2026-09-18).** Reported
+  as *"why is this page not spreading to page width?"* against Duties & Registers, which sat in an
+  1100px column on a 1900px screen. Ten pages were capping and centring their own content with
+  `max-width` plus `margin: 0 auto`. The cap is **removed** where the page is a TABLE or a grid of
+  data — `StaffDuties`, `StaffNotices`, `Portal` — and **kept** where the page is one document a
+  person reads: `PortalNotice`, `PortalRecord`, `PortalAppraisal`, `StaffRegister`, `Notifications`.
+  Long lines of prose are genuinely harder to read; a table is not prose. The public and kiosk pages
+  (`FeedbackPage`, `JoinQueue`, `TicketStatus`) centre deliberately and are outside this, the same
+  set every other scale rule excludes.
 ## Duty rota build: the rules Phase 0 left (2026-09-17)
 
 The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.

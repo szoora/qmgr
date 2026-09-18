@@ -300,7 +300,6 @@ else
                             }
                             @if (canManageStaffStructure)
                             {
-                                <li><a href="admin/staff/structure" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/staff/structure") ? "active" : "")"><i class="bi bi-diagram-3"></i>Departments & Structure</a></li>
                                 <li><a href="admin/subjects" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/subjects") ? "active" : "")"><i class="bi bi-book"></i>Subjects</a></li>
                             }
                             @if (canViewStaffRecords)

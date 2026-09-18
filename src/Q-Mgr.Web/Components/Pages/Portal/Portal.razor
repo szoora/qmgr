@@ -642,7 +642,9 @@
 </QModal>
 
 <style>
-    .portal-page { max-width: 1200px; margin: 0 auto; }
+    /* No width cap here: this page is a TABLE of data, and a data-driven page uses the width it
+       has. Reported 2026-09-18 with Duties & Registers sitting in an 1100px column on a 1900px
+       screen. A page that shows ONE document keeps a reading width — see CLAUDE.md. */
     .portal-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
     .portal-greeting { display: flex; align-items: center; gap: 16px; min-width: 0; }
     .portal-greeting h1 { margin: 0 0 4px; color: var(--qm-text-primary); }

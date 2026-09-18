@@ -1,4 +1,6 @@
-@page "/admin/staff/structure"
+@* No @page: this is a SECTION of the Staff hub (StaffDirectory), not a page of its own. It had a
+   route until 2026-09-18, which meant two URLs rendering the same screen — one link per thing, or
+   the two drift and a reader cannot tell which is canonical. Deep-link with /admin/staff?tab=. *@
 @implements IDisposable
 @using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.Import
@@ -18,17 +20,27 @@
 @inject IJSRuntime JS
 @inject IAuthService AuthService
 
-<PageTitle>Departments &amp; Structure - Q-Mgr</PageTitle>
+@* Since 2026-09-18 this is normally EMBEDDED in the Staff hub (StaffDirectory), which owns the
+   page header and the tab strip — the sidebar had 16 Staff Performance entries against Student
+   Welfare's 5, and this page duplicated the directory's own list of people. It keeps its route so
+   old links still work; standalone it renders its own shell. *@
+@if (!Embedded)
+{
+    <PageTitle>Departments &amp; Structure - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
-    <div class="page-header">
-        <div class="header-content">
-            <h1>Departments &amp; Structure</h1>
-            <p class="subtitle">Who belongs to which department, who heads it, and who each person reports to. A head of department sees only the people in the departments they head; a head with no department sees nobody.</p>
+    @if (!Embedded)
+    {
+        <div class="page-header">
+            <div class="header-content">
+                <h1>Departments &amp; Structure</h1>
+                <p class="subtitle">Who belongs to which department, who heads it, and who each person reports to.</p>
+            </div>
         </div>
-    </div>
 
-    <QTabs Tabs="@Tabs" @bind-ActiveKey="activeTab" IdPrefix="ss" />
+        <QTabs Tabs="@Tabs" @bind-ActiveKey="activeTab" IdPrefix="ss" />
+    }
 
     @if (isLoading)
     {
@@ -338,10 +350,46 @@
     private string? staffSearch;
     private int staffPage;
 
+    /// <summary>
+    /// True when the Staff hub (StaffDirectory) is hosting this page inside its own tab strip. The
+    /// host then owns the page header, the title and the tabs; this component renders only the
+    /// section named by <see cref="EmbeddedTab"/>. The route stays so older links still resolve.
+    /// </summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>Which section to show when embedded: departments, coverage or import.</summary>
+    [Parameter] public string? EmbeddedTab { get; set; }
+
+    /// <summary>
+    /// Set by the hub's People tab to open one person's department / line-manager editor straight
+    /// away. Without it that editor became unreachable when the duplicate Staff tab was removed —
+    /// the dialog lives here, but the list that opened it lives on People now.
+    /// </summary>
+    [Parameter] public Guid? EditMemberId { get; set; }
+
+    [Parameter] public EventCallback EditMemberHandled { get; set; }
+
+    /// <summary>When embedded, the host's tab is the source of truth for which section shows.</summary>
+    protected override void OnParametersSet()
+    {
+        if (Embedded && !string.IsNullOrWhiteSpace(EmbeddedTab)) activeTab = EmbeddedTab!;
+
+        // The hub asked for one person's editor. Only act once the list is loaded, and tell the host
+        // so it clears the request rather than reopening on every render.
+        if (EditMemberId is { } id && !showMemberModal)
+        {
+            var m = staff.FirstOrDefault(x => x.UserId == id);
+            if (m != null)
+            {
+                OpenMember(m);
+                _ = EditMemberHandled.InvokeAsync();
+            }
+        }
+    }
+
     private static readonly IReadOnlyList<QTab> Tabs = new List<QTab>
     {
         new("departments", "Departments", "diagram-3"),
-        new("staff", "Staff", "people"),
         new("coverage", "Coverage", "shield-check"),
         new("import", "Import", "upload"),
     };
@@ -399,14 +447,6 @@
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
-
-        // Arriving from Staff Directory's "Import a list" button, which links straight to the tab
-        // rather than dropping the reader on Departments and leaving them to find it.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wanted))
-        {
-            var t = wanted.ToString().Trim().ToLowerInvariant();
-            if (t is "departments" or "staff" or "coverage" or "import") activeTab = t;
-        }
 
         await LoadAllAsync();
     }

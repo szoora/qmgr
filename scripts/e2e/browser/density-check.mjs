@@ -12,7 +12,7 @@ import { login } from './login.mjs';
 const BASE = 'http://127.0.0.1:5003';
 const PAGES = [
   ['/admin/timetable/settings', 'School Day'],
-  ['/admin/staff/structure', 'Departments & Structure'],
+  ['/admin/staff?tab=departments', 'Staff hub — Departments'],
   ['/admin/students/roster', 'Student Roster'],
   ['/admin/users', 'Users & Roles'],
   ['/admin/staff', 'Staff Directory'],
