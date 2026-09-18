@@ -9,12 +9,14 @@ using Microsoft.EntityFrameworkCore;
 using QMgr.API.Extensions;
 using QMgr.API.Hubs;
 using QMgr.API.Middleware;
+using QMgr.API.Authorization;
 using QMgr.API.Services;
 using QMgr.Application;
 using QMgr.Application.Interfaces;
 using QMgr.Hubs;
 using QMgr.Infrastructure;
 using QMgr.Infrastructure.Jobs;
+using QMgr.Domain.Constants;
 using QMgr.Middleware;
 using Scalar.AspNetCore;
 using Serilog;
@@ -222,29 +224,32 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Scalar API Documentation - Modern API reference. Available in every environment (not just
-// Development) since real customers/integrators are meant to reach this in production, gated by
-// login - see the .RequireAuthorization() calls below.
+// Scalar API Documentation. Mapped in every environment, not just Development, but **PLATFORM
+// ADMINS ONLY** (user decision, 2026-09-18: "the api documentation should be only accessible to
+// platform admins. it is a platform gated feature. user has nothing to do with it").
 //
-// BUG FIX (path/host): this used to map at Scalar's own default "/scalar" prefix while every
-// Web-app link pointed at a relative "/api/docs" - broken on two counts, since that path resolves
-// against the Web app's own origin (a different process/port entirely), not the API's, and even
-// on the API host "/api/docs" was never actually mapped to anything. Mapping it here at the exact
-// path the Web app links to (combined with making those links absolute against the API's real
-// *public* origin, not its internal loopback address - see MainLayout.razor/appsettings'
-// ApiPublicUrl) closes both gaps.
+// It used to be .RequireAuthorization() — ANY authenticated user. That is not a gate worth the
+// name here: a class teacher, a front-desk operator or a viewer could read the complete endpoint
+// inventory of the whole product, platform and admin routes included, across every tenant. The
+// three links that offered it (the user menu beside My Profile, the footer on every page, and the
+// Support page's integrations tile) were themselves ungated, so it was not merely reachable — it
+// was advertised.
 //
-// SECURITY: gated to authenticated users, per explicit request - this was previously wide open to
-// anyone who found the link. A plain browser navigation to these routes carries no Authorization
-// header (this app's auth is JWT-in-localStorage, not cookies), so the caller passes the JWT as
-// an ?access_token= query parameter - the exact same mechanism already used for the SignalR hub
-// negotiation, extended in AddJwtAuthentication (ServiceExtensions.cs) to also cover these two
-// route prefixes. The per-HttpContext options overload below reads that same query token back out
-// and bakes it into the OpenApiRoutePattern Scalar's own page embeds, so the browser's *follow-up*
-// fetch of the OpenAPI document (a separate request Scalar's JS makes after the page loads) is
-// authenticated too - without this, the page would load but the actual API reference content
-// would fail to fetch.
-app.MapOpenApi().RequireAuthorization();
+// The policy is platform.admin, which no tenant role can hold: RbacSeeder excludes platform
+// permissions from tenant roles by IsVisible, and PermissionAuthorizationHandler short-circuits
+// SuperAdmin. Hiding the three links is NOT the fix — it is the tidy-up. This line is the fix.
+//
+// The path is /api/docs because that is what the Web app links to; the OpenAPI document Scalar's
+// own page fetches afterwards is served from /openapi/, a separate top-level path with its own
+// nginx block. Both carry the same policy, or the page would load and its content would not.
+//
+// A browser navigation carries no Authorization header (this app's auth is JWT-in-localStorage,
+// not cookies), so the token arrives as ?access_token= — the same mechanism as the SignalR hub
+// negotiation, extended in AddJwtAuthentication to cover these two route prefixes. The
+// per-HttpContext overload reads it back out and bakes it into the OpenApiRoutePattern so the
+// follow-up fetch is authenticated too.
+const string DocsPolicy = RequirePermissionAttribute.PolicyPrefix + Permissions.PlatformAdmin;
+app.MapOpenApi().RequireAuthorization(DocsPolicy);
 app.MapScalarApiReference("/api/docs", (options, httpContext) =>
 {
     var token = httpContext.Request.Query["access_token"].ToString();
@@ -252,7 +257,7 @@ app.MapScalarApiReference("/api/docs", (options, httpContext) =>
     {
         options.OpenApiRoutePattern = $"/openapi/v1.json?access_token={Uri.EscapeDataString(token)}";
     }
-}).RequireAuthorization();
+}).RequireAuthorization(DocsPolicy);
 
 app.UseHttpsRedirection();
 app.UseSerilogRequestLogging();

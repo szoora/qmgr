@@ -863,6 +863,21 @@ else
   ok "a scoped caller does not see another user's whole-branch export rows"
 fi
 
+
+# --- 13e. The API reference is PLATFORM-gated, not merely authenticated (2026-09-18) -----------
+# Reported by the user: "every user is having api documentation, even under profile", then
+# "it should be only accessible to platform admins. it is a platform gated feature."
+# It was .RequireAuthorization() — ANY signed-in user could read the complete endpoint inventory
+# of the whole product, platform and admin routes included. Now the platform.admin policy, which
+# no tenant role can hold.
+eq "API reference refuses an anonymous caller (401)"        "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/docs/")" "401"
+eq "OpenAPI document refuses an anonymous caller (401)"     "$(curl -s -o /dev/null -w '%{http_code}' "$API/openapi/v1.json")" "401"
+eq "a class teacher cannot open the API reference (403)"    "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/docs/?access_token=$T4")" "403"
+eq "a tenant admin cannot open the API reference (403)"     "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/docs/?access_token=$AD")" "403"
+eq "a tenant admin cannot fetch the OpenAPI document (403)" "$(curl -s -o /dev/null -w '%{http_code}' "$API/openapi/v1.json?access_token=$AD")" "403"
+eq "a platform admin CAN open the API reference (200)"      "$(curl -s -o /dev/null -w '%{http_code}' "$API/api/docs/?access_token=$SA")" "200"
+eq "a platform admin CAN fetch the OpenAPI document (200)"  "$(curl -s -o /dev/null -w '%{http_code}' "$API/openapi/v1.json?access_token=$SA")" "200"
+
 # --- Cleanup: the media rows go; the welfare record stays (append-only, labelled dummy) --------
 eq "cleanup: shared document deleted" "$(code "$AD" DELETE "/api/v1/media/$SHARED_ID")" "204"
 eq "cleanup: public document deleted" "$(code "$AD" DELETE "/api/v1/media/$PUBLIC_ID")" "204"

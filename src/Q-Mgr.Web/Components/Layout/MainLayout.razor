@@ -117,7 +117,13 @@ else
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item" href="profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
                     <li><a class="dropdown-item" href="admin/settings"><i class="bi bi-gear me-2"></i>Settings</a></li>
-                    <li><a class="dropdown-item" href="@ApiDocsUrl" target="_blank"><i class="bi bi-book me-2"></i>API Documentation</a></li>
+                    @* Platform-gated: the API reference is for platform operators, not tenant
+                       users (user decision 2026-09-18). The server refuses it on the
+                       platform.admin policy — this only stops advertising a door that 403s. *@
+                    @if (isSuperAdmin)
+                    {
+                        <li><a class="dropdown-item" href="@ApiDocsUrl" target="_blank"><i class="bi bi-book me-2"></i>API Documentation</a></li>
+                    }
                     <li><hr class="dropdown-divider"></li>
                     <li><a class="dropdown-item text-danger" href="#" @onclick="Logout" @onclick:preventDefault><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
                 </ul>
@@ -542,7 +548,10 @@ else
         <footer class="qm-footer">
             <span>&copy; @DateTime.Now.Year Q-Mgr Front-Office Platform</span>
             <div class="footer-links">
-                <a href="@ApiDocsUrl" target="_blank">API Docs</a>
+                @if (isSuperAdmin)
+                {
+                    <a href="@ApiDocsUrl" target="_blank">API Docs</a>
+                }
                 <span class="version">v1.0.0</span>
             </div>
         </footer>

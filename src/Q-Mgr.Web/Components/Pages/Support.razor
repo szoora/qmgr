@@ -3,8 +3,6 @@
 @using Microsoft.AspNetCore.Authorization
 @using QMgr.Web.Components.Shared
 @attribute [AllowAnonymous]
-@inject HttpClient Http
-@inject IConfiguration Configuration
 
 <PageTitle>Support - Q-Mgr</PageTitle>
 
@@ -45,14 +43,11 @@
                 </ul>
             </div>
 
-            <div class="doc-contact-grid">
-                <div class="doc-contact-tile">
-                    <div class="doc-contact-icon"><QIcon Name="code-slash" /></div>
-                    <h3>API &amp; Integrations</h3>
-                    <p>Building on top of Q-Mgr, or connecting an external system.</p>
-                    <a href="@ApiDocsUrl" target="_blank">View API documentation</a>
-                </div>
-            </div>
+            @* The "API & Integrations" tile that pointed at /api/docs was REMOVED 2026-09-18.
+               The API reference is platform-gated now (user decision: "it is a platform gated
+               feature. user has nothing to do with it"), and this page is anonymous — there is
+               no user to check, so an integrator link here could only ever lead to a 403.
+               Integration questions go through the support mailbox above. *@
 
             <h2>Frequently asked</h2>
 
@@ -132,12 +127,6 @@
 </div>
 
 @code {
-    // BUG FIX: this used to be a bare relative "/api/docs", which resolves against the Web
-    // app's own origin - a different process/port than the API that actually serves API docs.
-    // ApiPublicUrl (distinct from ApiBaseUrl, which is an internal-only loopback address in
-    // production - see MainLayout.razor/build-linux.ps1) is the real public API origin.
-    // This page is anonymous, so there's no access token to attach - the docs route now requires
-    // login (Program.cs), so an anonymous visitor clicking this correctly gets turned away rather
-    // than reaching internal API documentation before signing in.
-    private string ApiDocsUrl => new Uri(new Uri(Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString()), "/api/docs/").ToString();
+    // The ApiDocsUrl property that lived here is gone with the tile above: the API reference is
+    // platform-gated (Program.cs, the platform.admin policy) and this page is anonymous.
 }
