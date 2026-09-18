@@ -5,6 +5,7 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 @using Microsoft.AspNetCore.WebUtilities
+@inject IAppInitializationService AppInit
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 @inject IContentApiService ContentApi
@@ -542,13 +543,23 @@
                     || (d.Summary?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
                     || (d.PublishedFrom?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // The guards every sibling content page has and this one did not (plan §14 finding 3). Without
-        // them a tenant that does not hold the module could open /content/documents directly — the nav
-        // link is hidden, but every successful publish navigates straight here — and got a toast-storm
-        // of API refusals instead of the billing page. A FAILED module load must not redirect: an API
-        // blip is not an absent module, and the next LoadAsync retries.
+        if (!firstRender) return;
+
+        // The guards every sibling content page has and this one did not (plan §14 finding 3): a tenant
+        // without the module could open /content/documents directly — the nav link is hidden, but every
+        // successful publish navigates straight here — and got a toast-storm of API refusals instead of
+        // the billing page.
+        //
+        // In OnAfterRenderAsync, and behind AppInit, ON PURPOSE. Auth state lives in localStorage and is
+        // read over JS interop, which does not exist during prerendering and races an uninitialised store
+        // on a cold navigation — so deciding in OnInitializedAsync sent a signed-in administrator with
+        // content.view straight to /unauthorized. Found by opening the page directly rather than through
+        // the nav. (MediaLibrary still decides in OnInitializedAsync and has the same latent race; it is
+        // masked because it is normally reached after MainLayout has already initialised.)
+        await AppInit.InitializeAsync();
+
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
@@ -556,6 +567,8 @@
         }
 
         await ModuleState.LoadAsync(ModuleApi);
+        // A FAILED module load must not redirect: an API blip is not an absent module, and the next
+        // LoadAsync retries.
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
         {
             Navigation.NavigateTo("/billing/modules", forceLoad: false);
@@ -571,6 +584,9 @@
         canAudit = await PermissionService.HasPermissionAsync(Permissions.DocumentsShareAudit);
         canDelete = await PermissionService.HasPermissionAsync(Permissions.ContentDelete);
         await LoadAsync();
+        // OnAfterRenderAsync schedules no render of its own, so the permission flags and the list set
+        // above would otherwise sit in fields nothing has drawn.
+        StateHasChanged();
     }
 
     private async Task LoadAsync()
