@@ -28,6 +28,19 @@ public class ActivityEvent : BaseEntity
     /// <summary>Whom it was about, when the entity is about a person (a staff record's subject).</summary>
     public Guid? SubjectUserId { get; set; }
 
+    /// <summary>
+    /// Whom it was about when the subject is a STUDENT rather than a member of staff — a welfare
+    /// report published to the Library, a welfare export. Nullable and additive (2026-09-18): this
+    /// table was built for the Staff Performance module, where every subject is a user, and welfare
+    /// exports were consequently logged nowhere at all.
+    ///
+    /// <para>Exactly one of <see cref="SubjectUserId"/> and this is set on a subject-bearing event.
+    /// A welfare reader is gated on <c>welfare.reports.view</c> AND <c>IStudentScopeService</c>, so a
+    /// class teacher sees only events about students in their own classes — the staff log's own
+    /// <c>staff.records.view</c> + staff scope would be the wrong gate entirely.</para>
+    /// </summary>
+    public Guid? SubjectStudentId { get; set; }
+
     /// <summary>A constant from ActivityActions. Wire format; never renamed.</summary>
     [MaxLength(80)]
     public string Action { get; set; } = string.Empty;

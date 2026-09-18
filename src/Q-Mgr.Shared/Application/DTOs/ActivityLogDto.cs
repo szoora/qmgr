@@ -180,3 +180,58 @@ public record RecordStaffExportRequest
     public string? DocumentName { get; set; }
     public string? PeriodKey { get; set; }
 }
+
+// ---- Welfare (2026-09-18) ---------------------------------------------------------------------
+// The staff constants above are all "staff.*" and every one of their permission gates is about a
+// member of staff, so a published welfare report could not be recorded through them without writing
+// an activity row about a CHILD into the staff log. These are the welfare-side equivalents.
+
+/// <summary>
+/// Welfare activity actions. Persisted on <c>ActivityEvent.Action</c>, so a wire format: never rename one.
+/// </summary>
+public static class WelfareActivityActions
+{
+    /// <summary>A welfare report rendered in the browser and published into the Document Library.</summary>
+    public const string ReportPublished = "welfare.report.published";
+
+    /// <summary>A welfare list (the records search) exported as CSV/XLSX/PDF.</summary>
+    public const string ListExported = "welfare.list.exported";
+
+    /// <summary>One named student's welfare chronology exported or printed.</summary>
+    public const string TimelineExported = "welfare.timeline.exported";
+}
+
+/// <summary>The things a welfare page can report it exported or published. Wire format.</summary>
+public static class WelfareExportKinds
+{
+    /// <summary>The welfare records search on Welfare Reports.</summary>
+    public const string Records = "records";
+
+    /// <summary>One student's welfare chronology — the A4 report route.</summary>
+    public const string Timeline = "timeline";
+
+    /// <summary>The open-actions list.</summary>
+    public const string OpenActions = "open-actions";
+}
+
+/// <summary>
+/// What a welfare page reports after producing a file in the browser. Mirrors
+/// <see cref="RecordStaffExportRequest"/>, but its subject is a STUDENT: the endpoint checks that
+/// student against <c>IStudentScopeService</c>, so a class teacher cannot write a line about a child
+/// they could not have exported in the first place.
+/// </summary>
+public record RecordWelfareExportRequest
+{
+    public string Kind { get; set; } = string.Empty;
+    /// <summary>The student the export is about (a timeline), checked against the caller's class scope.</summary>
+    public Guid? SubjectStudentId { get; set; }
+    /// <summary>CSV, XLSX, PDF.</summary>
+    public string? Format { get; set; }
+    public int? RowCount { get; set; }
+    /// <summary>True for Publish to Library, with the new document's id and name.</summary>
+    public bool Published { get; set; }
+    public Guid? MediaContentId { get; set; }
+    public string? DocumentName { get; set; }
+    /// <summary>The period the export covered, as the page captioned it.</summary>
+    public string? PeriodCaption { get; set; }
+}

@@ -33,7 +33,8 @@ public interface IActivityLogger
         Guid? organizationId = null,
         Guid? actorUserId = null,
         CancellationToken cancellationToken = default,
-        WelfareVisibility visibility = WelfareVisibility.Standard);
+        WelfareVisibility visibility = WelfareVisibility.Standard,
+        Guid? subjectStudentId = null);
 }
 
 public class ActivityLogger : IActivityLogger
@@ -59,7 +60,8 @@ public class ActivityLogger : IActivityLogger
         string action, string entityType, Guid? entityId, Guid? subjectUserId, string summary,
         object? detail = null, Guid? branchId = null, Guid? organizationId = null, Guid? actorUserId = null,
         CancellationToken cancellationToken = default,
-        WelfareVisibility visibility = WelfareVisibility.Standard)
+        WelfareVisibility visibility = WelfareVisibility.Standard,
+        Guid? subjectStudentId = null)
     {
         try
         {
@@ -97,6 +99,7 @@ public class ActivityLogger : IActivityLogger
                 BranchId = branchId ?? tenant?.BranchId,
                 ActorUserId = actor,
                 SubjectUserId = subjectUserId,
+                SubjectStudentId = subjectStudentId,
                 Action = action.Length > 80 ? action[..80] : action,
                 EntityType = entityType.Length > 60 ? entityType[..60] : entityType,
                 EntityId = entityId,

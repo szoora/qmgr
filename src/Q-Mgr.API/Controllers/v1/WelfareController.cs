@@ -41,6 +41,7 @@ public class WelfareController : ControllerBase
     private readonly IWelfareAlertService _alerts;
     private readonly IStaffSystemAwards _systemAwards;
     private readonly IStaffPerformancePolicyService _staffPolicy;
+    private readonly IActivityLogger _activity;
     private readonly ILogger<WelfareController> _logger;
 
     // 25MB — bumped from the original 10MB to admit short video/audio evidence clips. Deliberately
@@ -68,8 +69,10 @@ public class WelfareController : ControllerBase
         IWelfareAlertService alerts,
         IStaffSystemAwards systemAwards,
         IStaffPerformancePolicyService staffPolicy,
+        IActivityLogger activity,
         ILogger<WelfareController> logger)
     {
+        _activity = activity;
         _staffPolicy = staffPolicy;
         _context = context;
         _tenantAccessor = tenantAccessor;
@@ -2018,4 +2021,201 @@ public class WelfareController : ControllerBase
 
         return patterns;
     }
+
+    // ---- Welfare activity log (2026-09-18) -----------------------------------------------------
+    // WelfareController had no IActivityLogger at all, so publishing a named child's full welfare
+    // chronology to the Document Library as a shareable PDF, and every CSV/XLSX export of the
+    // records search, happened with nothing anywhere recording that it had. The MediaContent row
+    // carries PublishedAt/PublishedByUserId, so the DOCUMENT is traceable — but nothing on the
+    // welfare side said a child's file had left the ledger.
+    //
+    // Deliberately NOT routed through POST …/staff/activity/exports: that endpoint resolves every
+    // Kind to a staff.* permission and writes an event about a MEMBER OF STAFF. The subject here is
+    // a student, which is why ActivityEvent gained a nullable SubjectStudentId.
+
+    /// <summary>
+    /// Records an export or a Publish to Library that happened in the browser. The file is produced
+    /// client-side (QDataExport, and reportPublish.js for the PDF), so the server never sees it — the
+    /// page reports it here straight afterwards.
+    ///
+    /// The caller must hold the permission the exported thing itself needs, and a named student must
+    /// be in their scope, so this cannot be used to write a line about a child the caller could not
+    /// have exported. Out of scope answers 404, never 403 — a 403 confirms the student exists.
+    /// </summary>
+    [HttpPost("branches/{branchId:guid}/welfare/activity/exports")]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RecordWelfareExport(Guid branchId, [FromBody] RecordWelfareExportRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+
+        var label = request.Kind switch
+        {
+            WelfareExportKinds.Records => "a welfare records search",
+            WelfareExportKinds.Timeline => "a student welfare report",
+            WelfareExportKinds.OpenActions => "the open welfare actions",
+            _ => null
+        };
+        if (label == null)
+            return BadRequest(new ProblemDetails { Title = "Unrecognised export kind", Status = StatusCodes.Status400BadRequest });
+
+        // A student-specific export is checked against the class scope, not just the branch.
+        string? subjectName = null;
+        var visibility = WelfareVisibility.Standard;
+        if (request.SubjectStudentId is { } studentId)
+        {
+            var scopeError = await VerifyStudentAccess(branchId, studentId);
+            if (scopeError != null) return scopeError;
+
+            var student = await _context.Students
+                .Where(s => s.Id == studentId)
+                .Select(s => new { s.FullName, s.RestrictedNotes })
+                .FirstOrDefaultAsync();
+            if (student == null)
+                return NotFound(new ProblemDetails { Title = "Student not found", Status = StatusCodes.Status404NotFound });
+
+            subjectName = student.FullName.Trim();
+
+            // The rung of the thing the event is about, per the standing rule that any new event
+            // about a record passes its rung. A chronology of a student who carries restricted notes
+            // is itself confidential: a reader of the log should not learn from it what the export
+            // contained.
+            if (!string.IsNullOrWhiteSpace(student.RestrictedNotes)) visibility = WelfareVisibility.Confidential;
+        }
+
+        var format = string.IsNullOrWhiteSpace(request.Format) ? null : request.Format.Trim().ToUpperInvariant();
+        var what = subjectName != null ? label + " for " + subjectName : label;
+        var period = string.IsNullOrWhiteSpace(request.PeriodCaption) ? null : request.PeriodCaption.Trim();
+
+        string summary;
+        if (request.Published)
+        {
+            summary = "Published " + what + " to the Library";
+            if (!string.IsNullOrWhiteSpace(request.DocumentName))
+                summary += " as \"" + TruncateText(request.DocumentName.Trim(), 120) + "\"";
+        }
+        else
+        {
+            summary = "Exported " + what;
+            if (format != null) summary += " as " + format;
+            if (request.RowCount is { } rows) summary += " (" + rows + " row(s))";
+        }
+        if (period != null) summary += ", " + period;
+
+        var action = request.Published
+            ? WelfareActivityActions.ReportPublished
+            : request.Kind == WelfareExportKinds.Timeline
+                ? WelfareActivityActions.TimelineExported
+                : WelfareActivityActions.ListExported;
+
+        await _activity.RecordAsync(action, request.Kind, request.MediaContentId, null, summary,
+            new { request.Kind, Format = format, request.RowCount, request.Published, request.MediaContentId, Period = period },
+            branchId, organizationId, visibility: visibility, subjectStudentId: request.SubjectStudentId);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// The welfare activity log: who exported or published what, about which child.
+    ///
+    /// Gated on <c>welfare.reports.view</c> or <c>welfare.reports.own</c> AND the class scope — a
+    /// scoped caller sees only events about students in their own classes, plus their own
+    /// subject-less actions. The staff log's gate (staff.records.view plus the staff scope) would be
+    /// the wrong one entirely: this is a log about children.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/welfare/activity")]
+    [RequirePermissionAny(Permissions.WelfareReportsView, Permissions.WelfareReportsOwn)]
+    [ProducesResponseType(typeof(ActivityLogPageDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetWelfareActivity(
+        Guid branchId, [FromQuery] int page = 1, [FromQuery] int pageSize = 50,
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > 200 ? 50 : pageSize;
+
+        var welfareActions = new[]
+        {
+            WelfareActivityActions.ReportPublished,
+            WelfareActivityActions.ListExported,
+            WelfareActivityActions.TimelineExported
+        };
+
+        var query = _context.ActivityEvents
+            .Where(e => e.BranchId == branchId && welfareActions.Contains(e.Action));
+
+        if (from.HasValue) query = query.Where(e => e.OccurredAt >= from.Value);
+        if (to.HasValue) query = query.Where(e => e.OccurredAt <= to.Value);
+
+        // The row scope. A scoped caller sees an event about a student only when that student is one
+        // of theirs; an event with no student subject (a records-search export) is admitted only when
+        // they are the actor, so a class teacher cannot read the whole school's export history.
+        var allStudents = _context.Students.Where(s => s.BranchId == branchId);
+        var scopedStudents = await _scope.ApplyAsync(allStudents, branchId);
+        var isScoped = !ReferenceEquals(scopedStudents, allStudents);
+        if (isScoped)
+        {
+            var me = CurrentUserId();
+            var allowedIds = await scopedStudents.Select(s => s.Id).ToListAsync();
+            query = query.Where(e => (e.SubjectStudentId != null && allowedIds.Contains(e.SubjectStudentId.Value))
+                                     || (e.SubjectStudentId == null && e.ActorUserId == me));
+        }
+
+        var total = await query.CountAsync();
+        var rows = await query
+            .OrderByDescending(e => e.OccurredAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(e => new
+            {
+                e.Id, e.ActorUserId, e.SubjectStudentId, e.Action, e.EntityType, e.EntityId,
+                e.Summary, e.Visibility, e.IpAddress, e.UserAgent, e.OccurredAt
+            })
+            .ToListAsync();
+
+        var actorIds = rows.Where(r => r.ActorUserId != null).Select(r => r.ActorUserId!.Value).Distinct().ToList();
+        var actorNames = await _context.Users
+            .Where(u => actorIds.Contains(u.Id))
+            .Select(u => new { u.Id, Name = (u.FirstName + " " + u.LastName).Trim() })
+            .ToDictionaryAsync(u => u.Id, u => u.Name);
+
+        var studentIds = rows.Where(r => r.SubjectStudentId != null).Select(r => r.SubjectStudentId!.Value).Distinct().ToList();
+        var studentNames = await _context.Students
+            .Where(s => studentIds.Contains(s.Id))
+            .Select(s => new { s.Id, Name = s.FullName })
+            .ToDictionaryAsync(s => s.Id, s => s.Name);
+
+        return Ok(new ActivityLogPageDto
+        {
+            Items = rows.Select(r => new ActivityEventDto
+            {
+                Id = r.Id,
+                ActorUserId = r.ActorUserId,
+                ActorName = r.ActorUserId != null && actorNames.ContainsKey(r.ActorUserId.Value) ? actorNames[r.ActorUserId.Value] : null,
+                SubjectUserId = r.SubjectStudentId,
+                SubjectName = r.SubjectStudentId != null && studentNames.ContainsKey(r.SubjectStudentId.Value) ? studentNames[r.SubjectStudentId.Value] : null,
+                Action = r.Action,
+                EntityType = r.EntityType,
+                EntityId = r.EntityId,
+                Summary = r.Summary,
+                Visibility = r.Visibility,
+                IpAddress = r.IpAddress,
+                UserAgent = r.UserAgent,
+                OccurredAt = r.OccurredAt
+            }).ToList(),
+            TotalCount = total,
+            Page = page,
+            PageSize = pageSize,
+            CountsByAction = rows.GroupBy(r => r.Action).ToDictionary(g => g.Key, g => g.Count())
+        });
+    }
+
+    /// <summary>Same shape as the staff controller's Truncate — a summary must fit its column.</summary>
+    private static string TruncateText(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 }
