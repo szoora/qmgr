@@ -5,40 +5,366 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶ NEXT SESSION — start here (written 2026-09-17, late evening)
+## ▶ NEXT SESSION — start here (written 2026-09-18)
 
-**Resume Phase 89 — the duty rota build — at "Phase 0, remaining" below.** The user asked for
-`docs/plans/DUTY_ROTA_AND_TIMETABLE.md` to be built *"fully, word to word"*, with e2e at the end.
-Phase 0A is done; Phase 0's API is done and live-verified; Phase 0's Web screens and Phases 1–6 remain.
-Read the plan's §3 (model), §8 (reminders), §13 (security) and §14 (phases) before writing anything.
+**State: the open list was emptied on 2026-09-18 (Phase 90), then the document-sharing audit (Phase 91) opened six new items — see §2.** The user asked to *"close all open issues fully"*, and every item the
+2026-09-17 handover carried — plus every stale carry-over below it — is now closed and verified live.
+**Nothing is committed yet:** the user chose "commit and push to origin", two commits (duty rota Phases
+1–6, then the UI fixes and this session's work), and that is the next action. See Phase 90 for what this
+session did and Phase 91 for the audit that followed it.
 
-**Branch and tree:** `phase-85-staff-performance`, committed and pushed as `ec384eb` (Phases 86–89 so far).
-Both projects build. The dev database has migrations up to
-`20260917114532_AddSubjectsAndTieredAssignments` applied.
+**Branch:** `phase-85-staff-performance`, pushed to `origin`.
+**Dev database:** migrations applied up to `20260917154944_AddLessonDutyColumns`; this session added none.
 
-**How it was verified, and how to show it again:** the user wanted to SEE the tests, so they ran in the
-user's own Chrome as a live pass/fail panel injected into `http://127.0.0.1:5003/login` with
-`javascript_tool` (fetches go to the API on 5001, allowed by `Cors__AllowedOrigins__4`). Expect the user to
-want the same for later phases. The Node e2e (`class-teacher-e2e.sh`, 470) has NOT been re-run since
-Phase 0 changed the teacher role's scope and the reminder jobs — run it before trusting section 14.
+### 1. Verification, and how to reproduce it
 
-Deployment is the user's own decision and is **not** tracked here as a task (user instruction,
-2026-09-17).
+| Check | Result |
+|---|---|
+| `class-teacher-e2e.sh` sections 0–14 | **477 / 0** (final build, with the `welfare.reports.own` split) |
+| `duty-rota-e2e.mjs` section 15, incl. new 15.9 | **263 / 0** (run three times, including one with the teacher's periods deliberately blocked) |
+| Weekly lesson analysis, first ever end-to-end exercise | 11 / 0, now e2e section 15.9 |
+| Onboarding (Phase 0A) driven in the user's Chrome | slip → temporary sign-in → blocklist refusal → change → portal |
+| Refresh token rotated by another tab, adopted not refused | reproduced live; `adopted its session` in the Web log |
 
-### Open
+    # both apps, then the suites
+    Cors__AllowedOrigins__4=http://127.0.0.1:5003 dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
+    ApiBaseUrl=http://127.0.0.1:5001 ApiPublicUrl=http://127.0.0.1:5001 dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build
+    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin bash scripts/e2e/class-teacher-e2e.sh
+    API=http://127.0.0.1:5001 BRANCH=a805ba99-ef62-4685-a1ad-b11b2ea7747f SA_USER=superadmin SA_PASS=admin node scripts/e2e/duty-rota-e2e.mjs
 
-1. `[~]` **Phase 89 — duty rota plan build**, see below.
-2. `[x]` **Committed and pushed** 2026-09-17 as `ec384eb` on `phase-85-staff-performance` (Phases 86–89 so far).
-3. `[!]` Merge `phase-82-…` and `phase-85-…` into `master`; the dev-tenant images in public history.
+**The user watches runs.** `node scripts/e2e/browser/viewer.mjs` serves a live results page on
+http://127.0.0.1:5010; pipe any suite through `node scripts/e2e/browser/tee-to-viewer.mjs <tag>` and it
+streams there. Both are new this session and are test harness only — nothing in the app touches them.
+
+### 2. Open
+
+**All six items the document-sharing audit opened (Phase 91) were implemented the same day — see
+Phase 92. They are struck through below rather than deleted, because the reasoning is the record.**
+Sections 0–14 are **494 / 0** and section 15 **263 / 0** with the new assertions in place.
+
+~~Added 2026-09-18 by the document-sharing audit (Phase 91). These are real and were not open
+before, because nobody had asked the question:~~
+
+1. `[x]` **D5 (done, Phase 92) — a shareable document on a playlist is served anonymously.** Gate it (the corrected
+   invariant in the plan's §1) or refuse the combination. One rule, one place, plus the assertion §12
+   never had.
+2. `[x]` **D6 (done, Phase 92) — `DELETE media/{id}` cascades away the share audit trail**, on `content.delete`, which
+   Manager holds. Restrict the delete, soft-delete the document, or re-parent the events.
+3. `[x]` **`ActiveShareCount` (done, Phase 92) should come from `EvaluateState`**, not its own SQL predicate — the
+   Library card currently over-counts live links on a document whose sharing is off.
+4. `[x]` **D7 (done, Phase 92) — should a document carry a classification that constrains sharing?** The biggest gap
+   against Purview/Drive, and the prerequisite for differentiated retention. If yes, lock it against
+   downgrade in the same change.
+5. `[x]` **`S3MediaStorageService` (done, Phase 92) never got the 2026-09-15 upload-type fix** — no allow-list, no PDF
+   magic check, and a `FilePath` shape the classifier cannot match. Dormant behind one config key.
+6. `[x]` **`Organization.Settings` (done, Phase 92) has six read-modify-write paths, four unlocked** — the sharing
+   policy among them. `Branch.Settings` already solved this with `BranchSettingsLock`.
+
+Then the standing decisions that are the user's alone, unchanged:
+
+1. `[!]` **Merge** `phase-82-…` and `phase-85-…` into `master` — the user declined this session
+   (they chose commit and push, not merge). Do not merge without asking again.
+2. `[!]` **Deployment** is never a task here. The user decides when to deploy.
+
+One thing was deliberately NOT done and needs the user's word before anyone starts it:
+
+3. `[!]` **`BranchAwareComponentBase`.** 24 components hand-roll the `OnBranchChanged` subscribe /
+   clear / reload / dispose triple and **47 read the branch once and never re-read it**. The three that
+   mattered (the welfare create forms) are fixed; the rest are latent. A shared base class would give
+   this the one home the codebase gives every other repeated rule, but it touches ~70 files and is a
+   refactor, not a bug fix. The full list is in Phase 90 below.
+
+### 3. Test data left on the dev tenant
+
+Everything from Phase 89, plus from this session: the onboarded account **`e2e.sp.import.mu4gb109`**
+(Irene Importmu4gb109) now has a real password rather than a temporary one — it was driven through the
+onboarding flow in the browser; a handful of archived `E2E … WeeklyAnalysis` / `TrendCheck` timetables
+(a published version is never deleted, and the drafts were discarded); and the subject-teacher
+assignments those runs created were ended. Section 14's seeded Session duties for Martin Kato
+("E2E … Staff meeting", "S3/S4 maths lesson") **cannot be deleted** — the API refuses, they carry
+registers — which is why e2e 15.9 must pick a period that does not overlap them.
+
+**Do not re-plan:** everything in the 2026-09-17 "do not re-plan" list still stands (a test project,
+per-display theme, PPTX rendering, pg extensions, the ten Staff Performance decisions, the Confidential
+question, registers recording on every save, API metering, Staff Performance inside the Student Welfare
+module, push and SSO, the duty rota plan's fourteen §15 decisions, rooms on Bell Schedule, the one size
+scale), and add to it: **the flat radius family** and **the four scale gaps**, both decided 2026-09-18.
+
+
+### Phase 92 (2026-09-18) — Document sharing: every audit recommendation implemented
+
+User: *"implement all recommendations on document sharing"*, then *"implement the plan fully, word per
+word, before running any tests"*. The plan is now **Revision 4**.
+
+- [x] **D5 — the signage/share leak closed, both halves.** `MediaServing` is the ONE home for the
+      serving rule and reads `IsShareable` alone; `UploadAuthorizer` no longer reads playlist
+      membership at all. Both write paths refuse the combination (`AddPlaylistItem`,
+      `UpdatePublishing`) with one shared wording. The refusal is necessary, not belt-and-braces:
+      gating alone would have made a shared document silently stop rendering on a public display,
+      because the display fetches anonymously.
+- [x] **D6 — deleting a document no longer erases its audit trail (NIST SP 800-53 AU-9).** A document
+      with share history is RETIRED — `IsActive` and `IsShareable` cleared, bytes deleted, every link
+      dead by `EvaluateState`, all rows kept. One nobody ever shared is still deleted outright.
+- [x] **D7 — document classification, most restrictive wins, locked against downgrade.**
+      `General / Internal / Confidential` on `MediaContent`. Per-classification caps on link lifetime,
+      download and email verification narrow the tenant policy and can never widen it. Raising needs
+      `library.publish`; **lowering needs `documents.share.manage` and a ten-character reason**, kept
+      on the row with who and when. Differentiated attribution retention (§14 finding 5) rides on the
+      same rule — 730 days for Confidential against the tenant's 180.
+- [x] **`ActiveShareCount` now comes from `EvaluateState`** — one rule, two entry points — instead of
+      the second SQL predicate that had already drifted and made the Library card disagree with the
+      activity modal on the same page.
+- [x] **`Organization.Settings` concurrency:** new `OrganizationSettingsLock`, and the sharing-policy
+      write takes it inside a transaction and re-reads the blob under it.
+- [x] **`S3MediaStorageService` brought to parity** with the 2026-09-15 upload-type fix (allow-list
+      extension, `%PDF-` magic bytes, content type from the stored key) and its `FilePath` shape fixed
+      so an S3 row would classify at all rather than as an orphan. Recorded honestly in the class doc:
+      serving still reads the local disk, so a bucket needs the gate taught to stream from it before
+      `MediaStorage:Provider` is flipped.
+- [x] **Seven `PublishToLibrary` blocks → one helper** (`Web/Services/ReportPublishing.cs`), one
+      success wording, and the MODULE checked alongside the permission so the button is **absent**
+      rather than refused on a tenant without Engagement & Communications. `DocumentLibrary.razor`
+      gained the `ContentView` and module guards every sibling content page already had.
+- [x] **`StaffExportKinds.Appraisal`** added, so a published appraisal stops being logged as a
+      "timeline" — and the appraisal publish now writes an export row at all.
+- [x] **Expiry warning** (`warn-document-share-expiry`, 07:00 UTC, seven days ahead, claimed once per
+      link — Box's default), a **reason on share creation** carried into the Issued event
+      (ISO 23081-1's "why"), **referrer hygiene** on the share page (`no-referrer` meta plus
+      `rel="noopener noreferrer"`), the **brand colour tokenised** there, and **one byte formatter**
+      (`QFileSize`) replacing three that disagreed.
+- [!] **Device-binding deliberately NOT built**, against §14 finding 6. DocSend binds its verification
+      *link* to a device because the link itself grants access. Here the emailed six-digit code is
+      useless without the challenge token, which is returned only to the browser that asked for it and
+      must be posted back with the code — so forwarding the code already achieves nothing. A device
+      heuristic would add false negatives on a network switch and no security. Written into the plan
+      rather than cargo-culted.
+- **A bug the new assertions caught in the new code, same session:** the first cut of `EffectiveFor`
+  folded the tenant's `AllowDownloadByDefault` and `RequireEmailByDefault` into the classification
+  rule, so a **General** document asking for `allowDownload: true` came back with download withheld.
+  Those two are defaults for a NEW link, not constraints; only the classification rule constrains.
+- **Dev-tenant note, expect it again:** the `student-welfare` trial expired at 10:59 UTC today and
+  `BillingJobs` suspended the organization, which surfaces as `ACCOUNT_SUSPENDED` on every call and
+  looks exactly like a code fault. `POST …/reactivate` sets Trialing and the job re-suspends on its
+  next run, so the fix is to push `Organizations.TrialEndsAt` out (done: +90 days, so ~17 Dec 2026).
+- **Verified:** sections 0–14 **494 / 0** (six new assertions — the combination §12 never tested, the
+  classification rules, and AU-9's audit survival), section 15 **263 / 0**. Migration
+  `20260918110418_AddDocumentClassificationAndShareReason`: six columns and one index, **additive
+  only**, `Classification` defaulting to 0 so every existing document stays General and behaviour is
+  unchanged until something is classified.
+
+### Phase 91 (2026-09-18) — Document sharing: SSoT audit, sourced comparison, plan Revision 3
+
+User: *"confirm that document management and sharing is having SSoT, and no duplication, run a more
+comprehensive audit, make reference to credible sources and comparison with modern systems having
+similar functionality, update the plan."*
+
+- [x] **SSoT confirmed where it matters; "no duplication" could not be.** Every DTO in the feature is
+      defined once in `Q-Mgr.Shared` (17 types checked, no second definition) — the codebase's recurring
+      DTO-duplication bug class is absent here. One home each for slug/hashing, all four token purposes,
+      `EvaluateState`, window validation, policy read/write, IP truncation, origin allow-listing,
+      `ClassifyAsync`, `UploadLinks`, `UploadFileTypes` and the DTO mapper; the four permission codes are
+      byte-identical across all three catalogues. **Three copies have already drifted** —
+      `ActiveShareCount` vs `EvaluateState`; `S3MediaStorageService` missing the 2026-09-15 upload-type
+      fix the local one got; seven `PublishToLibrary` blocks of which 5 log an export and 2 do not.
+      Latent: the "is this file public" predicate in two places, `Organization.Settings` read-modify-written
+      by six paths on two locking protocols (sharing is on the unlocked one), two Web upload clients,
+      three byte formatters, the brand colour hardcoded five times in the public share page.
+- [!] **The plan contradicted itself, and the build followed the unsafe half.** §1 said a document could
+      be both signage and shareable "without leaking from one into the other"; §5 defined only two
+      exclusive categories; §12's assertions tested them separately ("on **no** playlist"); the code
+      resolved it as `IsPublic: !IsShareable || OnSignage`. **A shareable document on any playlist is
+      served anonymously at its raw path.** Adding a playlist item needs only `content.edit`. Decision D5.
+- [!] **`DELETE media/{id}` cascades away the share audit trail** on `content.delete` (Manager holds it),
+      contradicting the controller's "never deletes" and NIST AU-9. Decision D6.
+- [x] **Plan updated to Revision 3** (341 → 647 lines): correction in §1, re-grounded §3 prior art against
+      primary vendor docs, §8 rewritten on Uganda's Data Protection and Privacy Act 2019 (s.18(4)–(5)
+      de-identification, s.24(1)(c), reg. 39(7)) plus NIST AU-3/AU-3(3)/AU-9/AU-11, five missing assertions
+      added to §12, new §13 (SSoT audit) and §14 (findings), three decisions added to §11, and a primary-source
+      bibliography with an explicit "deliberately not cited" list.
+- **Where the product beats the comparators, on their own documentation:** Microsoft says of its anonymous
+  links that "their access can't be audited"; Google shows external actions as anonymous; this product's
+  email-verification gate attributes a view to a person. Expiry-by-default is ahead of Google (indefinite)
+  and of SharePoint's 2024–2026 additions. Arbor states portal publication sends no notification at all.
+  **Where practice goes further:** a sensitivity label on the document that constrains the share (Purview
+  `DefaultSharingScope` per label, "the more restrictive" wins; Google locks DLP labels against downgrade)
+  — the biggest architectural gap, and the prerequisite for differentiated retention.
+- Design notes published: **The Publishing Boundary** (staff features × sharing) and **Circulating the
+  Minutes** (how minutes should reach staff: one nullable `StaffNotice.AudienceDutyId`, no second copy).
+- e2e after the permission split: **sections 0–14: 477 / 0** (six new assertions for `welfare.reports.own`);
+  **section 15: 263 / 0**.
+
+
+### Phase 90 (2026-09-18) — "close all open issues fully": the carried list emptied
+
+User: *"read handover document for any pending tasks and unimplemented recommendations"*, then
+*"close all open issues fully"*. Four items were the user's own call and were put to them first; the
+answers were **the flat radius family**, **all four scale gaps**, and **commit and push, do not merge**.
+
+**Checked before planning, per [[feedback-verify-stale-notes]]: most of the carried list was already
+done.** The Phase 77 leftovers (four endpoints with no UI, three unbuilt UI items, the achievement
+response-stage nag) and the duplicated `WelfareStatusColor()` were all closed in code and stale on the
+page; `[ ] e2e section 15` was stale too. They are struck through where they sit rather than deleted.
+
+- [x] **Sections 0–14 re-run against the night's build: 471 / 0**, twice (the first run of the session
+      and again on the final build). This was the item gating the commit.
+- [x] **Radius unified on the flat tokens** (user decision). `q-components.css`'s five own radius
+      tokens now resolve to `--qm-radius-md`/`-lg`, and 122 page-level literals across 17 files were
+      mapped by value (≤3px → sm, 4–10px → md, ≥11px → lg); pills and `0` left alone. The kiosk,
+      public display, signage, feedback, booking, ticket status, shared documents and print sheets were
+      excluded, the same set the size scale excludes. Rule written into CLAUDE.md.
+- [x] **The four scale gaps pulled on** (user chose all four): Profile's action rows, the notification
+      rows in the panel and `/notifications`, Branding's swatch and theme-tile labels and gaps (the
+      previews themselves left alone — they are a picture of a theme, not a control), and the chart and
+      fieldset legends. On `.notif-row`, `font-size` had to move AFTER its `font: inherit` shorthand.
+- [x] **A REGRESSION from the night's size sweep, found by driving the app in a browser.** The portal
+      was rendering a component's CSS as visible text. Cause: the sweep inserted `.header-actions {`
+      between `.q-card > *,` and that rule's declarations, so (a) `min-width: 0` — the root-cause layer
+      of the never-scroll-sideways fix — was **deleted outright**, and (b) `display: flex; flex-wrap:
+      wrap` landed on **every direct child of every `.admin-page` and every `.q-card`**, which is what
+      made a `<style>` element visible. Both rules restored as separate blocks with a comment saying
+      why they must stay separate. **A CSS audit that measures fonts and heights cannot see this; only
+      opening the page can** — the night's audit passed 70 pages with this live.
+- [x] **34 user-facing date renderings in 14 API files pinned to InvariantCulture.** The 17 known sites
+      plus 17 siblings the widened sweep found, including every date in the visitor report emails, the
+      appointment reminder **SMS and email subject** (customer-facing), the three scheduled-report
+      subjects, batch row notes and the queue ticket's printed date. Left alone: log lines, cache and
+      lock keys, generated identifiers, download file names, CSV cells and ISO API-contract values.
+      Two person-facing `yyyy-MM-dd` strings (`RosterImportProcessorJob:498`, `BatchController:217`)
+      were left: ISO cannot show the Sept/Sep ambiguity this class exists to fix.
+- [x] **"A SuperAdmin sees an empty Category list" — investigated, and it is a CLASS, not an instance.**
+      The reported page (`StudentWelfareTimeline`) was already fixed in `fe5053b`. The same shape was
+      live on two other welfare create forms and is latent on 45 more. Fixed: `StudentPicture` (moved
+      to `OnAfterRenderAsync` per the prerendering rule, subscribes, clears `categories`, and its
+      silent `if (!response.IsSuccessStatusCode) return;` now says why), `StudentRoster` (subscribes,
+      clears `quickLogCategories` — its `.Any()` guard meant a branch switch offered the PREVIOUS
+      organization's categories and the API refused the post — and **`JoinBranchAsync` no longer joins
+      the group for `Guid.Empty`**, which had silently stopped roster-import progress pushes), and
+      `StudentWelfareTimeline`'s category fetch gained the missing `else`. All three now guard
+      `Guid.Empty` with the toast `WelfareCategoriesSetup` already used. The rule is in CLAUDE.md.
+- [x] **The Monday lesson-analysis email exercised end to end for the first time** — it fires only on a
+      Monday, so it had shipped unexercised. A Development-only trigger
+      (`POST …/staff/reports/teaching/weekly-analysis/run?weekStart=`, 404 elsewhere, unscoped
+      `timetable.manage`) makes it reachable. Two real defects fell out: the reported Monday was
+      `DateOnly.FromDateTime(local)` — "today", correct only because the day gate guaranteed Monday —
+      and the once-a-week dedupe window followed the overridden week into the future, so a forced run
+      could send twice. Both fixed; the dedupe is anchored to the real current week. Live: the master
+      and the head of Mathematics each receive one in their own scope, a teacher receives none, a
+      second run sends nothing. Now **e2e section 15.9** (11 assertions).
+- [x] **The Phase 0A onboarding flow driven in the user's Chrome**: slips issued from Staff Onboarding
+      → the printed slip → sign-in with the temporary password → `/set-password` → the blocklist
+      refusing a password built on the school's name → a strong one → the portal checklist.
+- [x] **A refresh token rotated by another tab is adopted, not treated as a refusal** — written but
+      never exercised, because it needs an access token to expire mid-circuit. Reproduced by setting
+      the platform JWT lifetime to its 5-minute floor, rotating the token out of band so the live
+      circuit's copy went stale, and letting it expire: the Web log recorded *"Refresh token was
+      rotated by another tab; adopted its session"* and the session survived. The setting was put back
+      to 60 minutes.
+- [x] **e2e 15.7's trend assertion no longer waits a fixed 5 seconds** — it polls with `waitFor`. It
+      failed once on a cold API purely because the Hangfire sweep had not finished; the assertion is
+      about the sweep recording a trend, not about how fast.
+- [x] **A live results viewer for e2e runs** (`scripts/e2e/browser/viewer.mjs` +
+      `tee-to-viewer.mjs`), because the user watches runs. Loopback only, no app dependency.
+
+**Not done, deliberately, and needing the user's word:** `BranchAwareComponentBase`. The 47 components
+that read the branch once and never re-read it are: `WelfareOpenActions`, `WelfareReports`,
+`WelfareCategoriesSetup`, `ClassTeachers`, `UsersSetup`, `ServiceTypesSetup`, `CountersSetup`,
+`Appointments`, `ExpectedVisitors`, `VisitorManagement`, `VisitorScanner`, `VisitorAuditLog`,
+`VisitorDisplayBoard`, `FeedbackManagement`, `EvacuationReport`, `KioskSettings`, `PrinterSettings`,
+`BrandingSettings`, `SystemSettings`, `Playlists`, `Schedules`, `Campaigns`, `MediaLibrary`,
+`DisplayZones`, the five `Reports/*` pages, the Staff print routes and the Portal pages.
+
+### Superseded handover, written 2026-09-17 night — kept for history
+
+Its ranked open list is the one Phase 90 emptied; its running instructions and test-data notes still
+apply. Read Phase 90 first for what changed.
+
+#### (was: NEXT SESSION — start here, 2026-09-17 night)
+
+**State: the duty rota plan (Phase 89, all phases 0A–6) is BUILT and VERIFIED, and an evening of user-reported
+UI fixes landed on top of it. NOTHING since `ec384eb` is committed** — 111 modified files plus the new
+Phase 1–6 files (controllers, services, jobs, four migrations, pages, `scripts/e2e/duty-rota-e2e.mjs`,
+`scripts/e2e/browser/`). The user commits when they ask. Deployment is the user's own decision and is
+not a task here.
+
+**Branch:** `phase-85-staff-performance`, HEAD `e47edc9` = `origin` (only Phases 0A and 0 API are in it).
+**Dev database:** migrations applied up to `20260917154944_AddLessonDutyColumns`; tonight's work added no migration.
+
+### 1. What this session did
+
+- **Phase 89, the duty rota plan, finished** — Phases 2 (duty reports), 3 (timetable builder), 4 (lessons live),
+  5 (teaching reports), 6 (timetable import, Schedules on `QWeekGrid`). Per-phase detail, decisions and test data
+  are in the Phase 89 section below; the rules are in CLAUDE.md "Duty rota build".
+- **"Dropdowns do not fire select"** — real and app-wide. `QSelect`/`QMultiSelect` closed 200ms after blur, so a
+  press held longer lost its option. Fixed (mousedown inside the list is prevented; a focus cancels a pending close);
+  `QMultiSelect` now stays open while ticking; the 13 native `<select>`s moved onto `QSelect` (none left).
+- **Health-check overlay** — a 429 from `api/v1/health` raised the click-swallowing "Reconnecting…" overlay. A 429
+  now counts as reachable and the route is whitelisted from IP rate limiting.
+- **Rooms** — were linked to Student Roster; now a card on Bell Schedule with `GET/PUT …/timetable/rooms`
+  (`timetable.manage`, renames move lessons, rooms in use can only be retired). The student lists save keeps the
+  stored rooms whatever it is sent: one writer.
+- **"/billing/modules" after an API restart** — 19 pages redirected on a failed module load. All guard on
+  `ModuleState.LoadSucceeded`, and a failed load is retried.
+- **One size scale** (user: *"spacing, size and font should be uniform across the project"*) — controls 36/30/44px,
+  control text 14/13px, button-row gap 8px, titles 28px/700 (22px phone), body 14px; 77 page overrides removed;
+  hand-styled buttons moved onto `QButton`/`QTabs`. Kiosk, public and print pages deliberately keep their own sizes.
+  Rules in CLAUDE.md "One size scale for controls, rows and titles".
+
+### 2. Verification, and what is now STALE
+
+| Check | Result | When |
+|---|---|---|
+| `class-teacher-e2e.sh` sections 0–14 | 471 / 0 | **before** tonight's fixes — re-run first |
+| `duty-rota-e2e.mjs` section 15 (incl. 10 rooms checks) | 252 / 0 | after the rooms change, before the UI scale (CSS/Razor only) |
+| Dropdowns, real mouse input (`scripts/e2e/browser/select-verify.mjs`) | 26 / 0 | after the UI scale |
+| Rooms page (`rooms-ui.mjs`) + in-use lock | 9 / 0 | after the rooms change |
+| Uniform scale spot check (`uniform-check.mjs`) | 28 / 0 | final build |
+| Full page audit (`ui-audit.mjs` + `ui-audit-sum.mjs`) | 70 titles 28px/700, body 14px, controls 36px | final build |
+
+### 3. Open, ranked
+
+1. `[ ]` **Re-run sections 0–14** (`class-teacher-e2e.sh`) against tonight's build before anything is committed:
+   the vocabularies save, the health route, module redirects and dropdowns all changed after its last green run.
+2. `[!]` **Commit** — user's call. Suggest two commits: the duty rota Phases 1–6, then the night's UI fixes.
+3. `[!]` **Merge** `phase-82-…` and `phase-85-…` into `master` — user's call (unchanged).
+4. `[ ]` **Border radius is not unified** and was not asked for: `QButton`/`QInput`/`QSelect` are 8px
+   (`--q-btn-border-radius`), cards 12px, several pickers 3–6px, while CLAUDE.md's radius tokens are 3/4/6/8px.
+   Ask before changing — it alters every control's look.
+5. `[ ]` **Left outside the scale on purpose; confirm with the user if they meant everything:** Profile's action menu
+   rows (55px), Branding's palette swatches and theme tiles, notification list rows, chart legends.
+6. `[ ]` **Not exercised end to end:** the Monday lesson-analysis email (`staff-weekly-lesson-analysis`, fires only on a
+   Monday); the Phase 0A onboarding flow in a browser; a refresh token adopted from another tab (older note).
+7. `[ ]` Older carry-overs still true: API-built text with bare `{x:dd MMM}` dates (use `string.Create(InvariantCulture…)`);
+   `WelfareStatusColor()` in two pages; the SuperAdmin empty Category list on welfare create.
+
+### 4. Running and watching it
+
+- API: `Cors__AllowedOrigins__4=http://127.0.0.1:5003 dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build`
+- Web: `ApiBaseUrl=http://127.0.0.1:5001 ApiPublicUrl=http://127.0.0.1:5001 dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build`
+- Stop both before a build; a `wwwroot` CSS change needs a rebuild (fingerprinted). Restarting the API mid-session is
+  what produced the "/billing/modules" report — say so if the user has tabs open.
+- **Browser checks** (`scripts/e2e/browser/`): start a headless Chrome on 9333 (recipe in CLAUDE.md "When the connected
+  Chrome is on another machine"), then `node select-verify.mjs` etc. from that folder. They sign in as
+  `e2e.admin.ct@qmgr.local`. They also POST PASS/FAIL lines to a local viewer on 5010 when one is running and ignore it
+  otherwise. **Dropdowns and the audit need modules the dev tenant has cancelled**: grant `core-queue`,
+  `visitor-management` (and `integrations-api` for the audit) as SuperAdmin with
+  `PUT /api/v1/admin/tenants/ef0305f3-40c6-456f-8f9a-48a1f0e3223c/modules/{code}`, and **revoke them afterwards**
+  (`DELETE`) — they were restored to Cancelled after every run tonight.
+- The user wants to **watch** e2e runs; tonight they streamed to a viewer page in the user's Chrome. Expect the same.
+
+### 5. Test data on the dev tenant
+
+Everything listed per phase in the Phase 89 section below, plus from tonight: rooms "E2E Room 047527" and
+"E2E Chrome Room 05465" (unused, removable on Bell Schedule). The rooms e2e renames Physics Lab and renames it back;
+if a run is interrupted mid-block the room may be left as "Physics Lab <run>".
 
 **Do not re-plan:** a test project, per-display theme, PPTX rendering, pg extensions, the ten Staff
 Performance decisions, the Confidential question (subject reads the record, notification title-only),
-registers recording on every save, API metering (only X-API-Key traffic), and Staff Performance as
-part of the Student Welfare module ("Welfare & Performance") rather than a module of its own, and push
-notifications and SSO (both removed as stubs 2026-09-17; each would be its own plan) — all
-decided 2026-09-17. **Nor the duty rota plan's fourteen §15 decisions** — all taken as proposed.
+registers recording on every save, API metering (only X-API-Key traffic), Staff Performance as part of the
+Student Welfare module ("Welfare & Performance"), push notifications and SSO (removed as stubs), the duty
+rota plan's fourteen §15 decisions (all taken as proposed), **rooms edited on Bell Schedule only, and the one
+size scale** (all decided 2026-09-17).
 
-### Phase 89 (started 2026-09-17, evening) — Duty rota, duty reports, subject teachers, timetable, onboarding: BUILD IN PROGRESS
+### Phase 89 (2026-09-17) — Duty rota, duty reports, subject teachers, timetable, onboarding: COMPLETE
 
 User: *"implement the duty rota plan fully, word to word. we shall perform e2e at the end."* The plan is
 `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`. **All fourteen §15 decisions taken as proposed** (the precedent
@@ -58,8 +384,8 @@ phase order; each phase is ticked here as it lands so an interrupted session can
       profile photo; classified as `UploadOwnerKind.StaffPhoto`). Pending requests no longer count as seats.
       In Development only, the email code is also written to the API log so the e2e can join. Test rows left:
       `e2e.ob.smoke` and `e2e.join.smoke*` (safe to delete). Not yet driven in a browser.
-- [~] Phase 0 — Foundations and the security core (migration `20260917114532_AddSubjectsAndTieredAssignments`).
-      **API DONE and verified live; Web screens NOT started.**
+- [x] Phase 0 — Foundations and the security core (migration `20260917114532_AddSubjectsAndTieredAssignments`).
+      **API and Web DONE and verified (e2e 471/0, browser checks).**
 
       **Built (API):**
       - Tiered `IStudentScopeService`: `StudentAccessTier {None, Teaching, Pastoral, Unscoped}`.
@@ -127,31 +453,345 @@ phase order; each phase is ticked here as it lands so an interrupted session can
       meeting"; users `e2e.dr.temp.*` and `e2e.dr.reset.*`. The 21 subjects on the dev tenant are intended. The
       test subject-teacher assignments were ended.
 
-      **Phase 0, remaining — resume HERE:**
-      - [ ] `/admin/subjects` page (nav Staff Performance → Structure, label **Subjects**) and Web API service
-            methods (list, create, update, toggle).
-      - [ ] Class-teachers page: each class shows class teacher, assistants and **subject teachers** (subject →
-            teacher, periods a week; assign, change periods, end); coverage panel shows `SubjectGaps`.
-      - [ ] "My teaching" on the portal and on a staff member's profile (`GET …/class-teachers/teaching`).
-      - [ ] Class vocabulary editor: **Level** per class with auto-fill ("S2A" → "S2") and a **Rooms** editor (name,
-            capacity, type). `VocabularyItemDto.Level/Capacity/RoomType` and `BranchVocabulariesDto.Rooms` exist;
-            confirm `UpdateVocabularies` round-trips them.
-      - [ ] Student roster / student page: explain a Teaching-tier row ("You teach this student Mathematics —
-            welfare and guardians are with their class teacher"), hide pastoral actions on it, and a **Log a
-            concern** entry point that opens the welfare create dialog for a Teaching-tier student.
-      - [ ] `QWeekGrid` component (plan §9: rows × columns, cell template, conflict and highlight states, click and
-            keyboard selection, sticky headers, per-day list below 640px, scrolls inside its card).
-      - [ ] Policy editor UI for quiet hours and the ladders (lesson reminder and My Day fields can wait for Phase 4).
-      - [ ] Re-run `class-teacher-e2e.sh` (470): the teacher role's new scope and the moved sweeps may break section
-            14 assertions that assumed a teacher reads the roster, or a recorder marking themselves.
-      - [ ] Browser pass of the new pages at desktop and 390px, then tick Phase 0 and start Phase 1.
-- [ ] Phase 1 — Duty rota (migration `AddDutyRota`)
-- [ ] Phase 2 — Duty reports (migration `AddDutyReports`)
-- [ ] Phase 3 — Timetable builder (migration `AddTimetable`)
-- [ ] Phase 4 — Lessons live (migration `AddLessonDutyColumns`)
-- [ ] Phase 5 — Reports and analysis
-- [ ] Phase 6 — Import and polish
-- [ ] e2e section 15 (at the end, per the user)
+      **Phase 0 Web — DONE 2026-09-17 (evening, second session) and verified. Phase 0 is complete.**
+      - [x] `/admin/subjects` (`StaffSubjects.razor`, nav Staff Performance → **Subjects**, route in `ModuleRouteMap`);
+            `IStaffPerformanceApiService` subject methods.
+      - [x] Class-teachers page: subject teachers per class (subject → teacher, periods a week; assign, change periods,
+            end), level chip, `SubjectGaps` warning, history labels a subject teacher. The "accounts with no class"
+            warning is capped at ten names (every Teacher is class-scoped now, so it was the whole staff).
+      - [x] "My teaching": `TeachingSummaryCard` on the portal (hidden when empty) and on the staff timeline.
+      - [x] Lists editor: **Level** per class (auto-filled from the name, "S3 Blue" → S3) and a **Rooms** tab (seats,
+            type). **Bug found and fixed:** the editor's `Clone` copied only name/colour/order/active and never copied
+            `Rooms`, so any save of the Lists dialog would have erased every level and every room. API now validates
+            rooms (capacity 0–5000, duplicates) and trims/clears the per-list fields (`ValidateExtras`).
+      - [x] Roster Teaching-tier rows: "You teach: …" chip, "With their class teacher", tier note, no pastoral menu or
+            picture link, **Log a concern** (Behavior/Welfare only) for a holder of `welfare.create` when the policy
+            allows. `ClassTeacherFor` (roster and Student Picture) no longer falls back to a subject teacher.
+            Import History moved inside the `students.manage` guard (a teacher saw a permanently empty modal).
+      - [x] `QWeekGrid` (+ `QWeekGrid.cs` records, styles in `q-components.css`). **Built, not yet used on a page** —
+            its first consumer is the Phase 1 rota view, where it gets its browser check.
+      - [x] Reminders editor (`StaffReminderLadders.razor` in Scoring Policy): quiet hours, each live ladder read-only
+            from `ReminderLadderDefaults` (moved to Shared: ONE copy for the sweep and the editor), Customise / Add stage /
+            Use defaults. Only customised ladders are written. API refuses a stage more than 14 days before a start
+            (the sweep looks 15 days ahead; a 20-day stage was accepted and never sent).
+      - [x] **Bug found and fixed:** `PATCH …/class-teachers/{id}/periods` bound `AssignSubjectTeacherRequest`, whose
+            `[Required] ClassName` made a body of just the periods a 400. Now `UpdateSubjectPeriodsRequest`.
+      - [x] e2e: **471 passed, 0 failed** (section 14: 298). The first rerun after Phase 0 was 441/30: every failure
+            was the suite — (1) the Phase 0A blocklist refuses its password `E2eTeacher!2026` for NEW accounts
+            ("teacher" + a year), so accounts the suite creates now get `NEW_PW` and sign-in tries both; (2) the staff
+            import start now answers `{ job, temporaryPasswords }`; (3) the register-due to-do lists a recorder's ten
+            oldest open registers, so old runs pushed this run's off the list — the suite closes its stale E2E ones.
+      - [x] Browser: headless Chrome 47 checks at 1440 and 390px (0 sideways scroll), then **55 checks driven in the
+            user's Chrome** ("old computer") with a live results viewer: administrator, subject teacher (Teaching tier,
+            welfare 404) and a class teacher who also teaches S2A (mixed roster, a concern logged from the roster).
+            One FAIL there was the harness (wrong localStorage key → 401) and passed on rerun.
+      - Test data left: classes S2A, S2B (level S2) and P7 (retired, for the pre-existing P7 student); rooms
+        "Physics Lab" and "E2E Room …/E2E Chrome Room …"; student "E2E Stream Student S2A"; subjects "E2E Browser
+        Subject …/E2E Chrome Subject …" (retired); subject assignments on S2A (Martin Kato Maths/Physics, Grace Nakato
+        Maths); two Confidential "Dummy record - Phase 0 … check" concerns on the S2A student (append-only).
+- [x] Phase 1 — Duty rota (migration `20260917134714_AddDutyRota`: `StaffDuty.SeriesId`, `SupervisorUserIds uuid[]`,
+      `ReportCadence`, `ReportDueLocalTime`, `Acknowledgements jsonb`; index on SeriesId; nothing dropped).
+      **Built and verified 2026-09-17 (evening, second session).**
+      - `StaffRota` (Application/Services) is the one home for the rota rules: default cadence by slot length, the
+        warnings (overlapping rota, overlapping session, inactive, supervises self, over the term's fairness limit,
+        outside term), the by-name "Teacher on Duty" Duty parameter, and the content-free assignment notice.
+      - `StaffDutiesController`: kinds (a Lesson cannot be created by hand; a kind never changes; Rota ≤ 92 days and
+        must name its people; only Rota has supervisors, who are also its recorders); `?kind=` filter; the rota is
+        readable by all branch staff (a displayed MoES record) but the acknowledgement map only by duty managers and
+        the slot's supervisors; `POST …/acknowledge` (atomic jsonb `||` guarded by `jsonb_exists`); a reschedule
+        clears acknowledgements; newly placed people and supervisors are told (`staff.rota-assigned`). The register
+        closes a rota slot as Completed / Not completed (reason required) / Excused.
+      - `StaffRotaController` (`api/v1/branches/{b}/staff/rota`): defaults, generate (preview writes nothing),
+        extend (rotation read back from the series), cancel series (upcoming, un-closed slots only), swap (one
+        transaction under `staff-rota:{branch}` advisory lock, one activity event, both people and supervisors told),
+        check, fairness (scoped). Scoped callers may place only people in their staff scope (404-shaped refusal).
+      - `ReminderLadderJob.RotaStartAsync`: stage claimed on the row, sent only to people who have not acknowledged;
+        a stage with the Supervisor audience tells the supervisor a COUNT; the supervisor's portal to-do names them.
+      - Portal: **On duty** card (acknowledge, close out); Coming up no longer lists rota slots. Weekly digest reads
+        "On duty"/"Supervising".
+      - Web: `/admin/staff/rota` (`StaffRota.razor`, nav **Duty Rota**): `QWeekGrid` week (its first consumer),
+        `QMonthList` month (new), fairness strip, generator with ordered rotation lists and preview, slot details,
+        slot editor with check-then-"Save anyway", swap, extend, cancel rota. Duties & Registers now lists sessions
+        only. Reminders editor shows the rota ladder.
+      - **Found and fixed:** API notices formatted dates in the SERVER culture ("Mon 21 Sept") — the dev machine is
+        en-GB; CLAUDE.md requires invariant. Fixed in the rota, ladder and duty code (`string.Create(InvariantCulture…)`).
+        **The same pattern remains in older API code** (WelfareController SMS/alerts, AppointmentJobs, VisitorsController,
+        VisitorReportingService, BillingController, StaffNoticesController, StaffAppraisalsController, PrintService) —
+        not changed; a one-line `CultureInfo.DefaultThreadCurrentCulture = InvariantCulture` in the API would close it
+        but touches number formatting too, so it is left for a decision.
+      - e2e section 15 (`scripts/e2e/duty-rota-e2e.mjs`, Node): **62 passed, 0 failed** (first run 61/1: the test
+        looked for the close-out record on the first page of a busy subject's records). Browser in the user's Chrome:
+        Duty Rota page generate → preview → create → week grid → slot details → extend preview → month view; Martin
+        Kato acknowledges from the portal; admin cancels the rota; plus 390px and keyboard in headless Chrome.
+        Two browser FAILs were the harness (CSS-uppercased chip text), rechecked and passing; one was the real
+        "Sept" bug above, fixed and rechecked.
+      - Test data left: closed-out "E2E … Finished duty" slots (records are history), their Completed records.
+- [x] Phase 2 — Duty reports (migration `20260917141656_AddDutyReports`: `StaffDutyReports`, `StaffDutyReportNotes`,
+      `StaffDutyReportAttachments`; unique DutyId + AuthorUserId + PeriodStart; nothing dropped).
+      **Built and verified 2026-09-17 (late).**
+      - `StaffDutyReports` (Application/Services) is the one home: report periods per cadence, due time, authors (the
+        people on duty, plus each supervisor), `EnsureRowsAsync` (rows appear when a period starts, idempotent under the
+        unique index), and `AccessForAsync` — the ONE read rule, used by the controller AND `UploadAuthorizer`: the author
+        always; a draft's text nobody else; a submitted report its slot's supervisors and holders of
+        `staff.dutyreports.view` with the author in staff scope; the supervisor's own report NOT the teacher on duty unless
+        the policy's `OnDutyMayReadSupervisorReport`. Out of reach is 404.
+      - `StaffDutyReportsController` (`api/v1/branches/{b}/staff/duty-reports`): mine, queue (figures: on-time %, overdue,
+        awaiting, returned; scoped departments named), read (logged `staff.duty-report.viewed`, no text in the summary),
+        save, submit (conditional claim; required sections enforced; late marked), comment, return (the note keeps a
+        SNAPSHOT of the returned version), review, no-duty (supervisor), reopen, evidence attachments, and the welfare
+        records the author may link (pastoral scope; a link the reader cannot see is counted, never named).
+      - `ReminderLadderJob.ReportDueAsync`: author from the due time, then the supervisor (content-free, a count), then
+        the heads' digest; the supervisor's portal to-do lists overdue reports.
+      - `UploadOwnerKind.DutyReportAttachment = 9`, classified before student photos, decided by `AccessForAsync`.
+      - Policy: report template (default seven sections; keys locked once saved), cadence per slot length, due time,
+        fairness limit, the supervisor-report switch — `StaffDutyReportSettings.razor` in Scoring Policy; the Reminders
+        card shows the "Duty report overdue" ladder.
+      - Web: `/admin/staff/duty-reports/{id}` (write / read / review / respond), `/admin/staff/duty-reports` (queue, nav
+        **Duty Reports**), `/admin/staff/duty-reports/print` (pack on `QPrintSheet`, export logged as `DutyReports`),
+        portal **Reports to write** card, rota slot modal lists the slot's reports.
+      - **Found and fixed by section 15:** review endpoints answered 400 instead of 403 to a non-reviewer (`[Required] Body`
+        on the note request ran before the permission check); the queue let a teacher in because they supervised a
+        CANCELLED slot (guard now requires an active supervised slot).
+      - **Found and fixed in the browser:** `QPrintSheet`'s phone rule added 8px margins to a 100%-wide sheet, so EVERY
+        print route (welfare report, staff reports, the pack) scrolled sideways by 8px at 390px; portal duty action buttons
+        were 40px on a phone, now 44px under 640px.
+      - e2e section 15: **110 passed, 0 failed** (15.4 adds 48). Browser in the user's Chrome: Martin Kato writes, saves and
+        submits late; Moses Ssempala (HoD) reads it in the queue, comments, returns it; Martin corrects and resubmits from
+        the portal's Correct button (the return note keeps the returned version); Moses filters Awaiting review and marks it
+        reviewed; the print pack; the policy card customised, saved, reloaded (key locked) and put back to defaults. One
+        FAIL was the harness (matched a CSS-uppercased label) and passed on recheck. 390px headless: portal, editable
+        report, queue (q-stack cards), reviewed report and print pack — no sideways scroll after the fix.
+      - Test data left: slot "E2E Chrome reported duty" (Martin Kato on duty, Moses Ssempala supervising) with its reviewed
+        report, and "E2E … Reported duty" slots from section 15 runs with their reports and notes.
+- [x] Phase 3 — Timetable builder (migration `20260917150200_AddTimetable`: tables `Timetables`, `TimetableLessons`; nothing
+      dropped). **Built and verified 2026-09-17 (late).**
+      - **Settings** live in `Branch.Settings["Timetable"]` behind `ITimetableSettingsService` (the one reader and writer):
+        day types with periods (Lesson / Break / Assembly), a one- or two-week (A/B) cycle, default period length, declared
+        unavailability per teacher, cycle day and period. Validation and all cycle arithmetic are in Shared
+        `TimetableCycle` (rows, cycle-day labels "Mon" / "Mon A", the cycle day of a date, the day's lesson periods).
+      - **`BranchSettingsLock`**: `Branch.Settings` is one JSON column holding vocabularies, class colours and now the
+        timetable, and the vocabulary and class-colour saves were unlocked read-modify-writes. All three writers now take
+        `pg_advisory_xact_lock('branch-settings:{branch}')` inside their transaction and re-read under it.
+      - **Schema decisions beyond the plan's field list:** `Timetable.ReportedIssueKeys text[]` instead of a single stored
+        hash — the sweep must say how many clashes are NEW, which one hash cannot. The "one Published per overlapping date
+        range" index is `(BranchId, EffectiveFrom) WHERE Status = Published`, not per term: the first cut was per term and
+        would have refused a legitimate mid-term replacement; overlap itself is checked under the publish lock (a gist
+        exclusion constraint needs an extension). Teacher double-booking is a unique index
+        `(TimetableId, CycleDay, PeriodKey, TeacherUserId) WHERE GroupId IS NULL` plus one including the class.
+      - **`TimetableChecker`** (Application/Services) is the one diagnosis for the editor, publish and the sweep. Hard:
+        teacher / class / room double-booked, teacher unavailable, teacher on a Session duty within the 14-day
+        materialisation window, outside the bell schedule, teacher inactive, teacher not assigned the subject in that
+        class, unknown class, unknown room, subject retired. Soft: over / under the weekly norm (the mixed O/A-Level
+        minimum), over the daily maximum, too many in a row, the same subject in two separate sittings a day (a double
+        period is one sitting), an idle gap of 3+ free periods, planned against placed. Every issue has a short stable key.
+      - **`TimetableController`** (`api/v1/branches/{b}/timetable`): settings (GET open, unavailability only to a master;
+        PUT manage), versions (drafts only for a master), `current`, create (term default, copy from a version), discard
+        draft, place / move / remove lessons (every write under `pg_advisory_xact_lock('timetable:{id}')`; teacher busy →
+        409 naming the lesson; a joint lesson moves and is removed as one group), publish (hard → 409 HARD_CLASHES; soft →
+        409 SOFT_CLASHES until acknowledged with a note; archives overlapping published versions; tells each teacher with a
+        link, never the lessons), archive. **Every write refuses a scoped caller (403)** even holding `timetable.manage`:
+        publishing is whole-school work a job carries out (§13.7). A draft is 404 to a non-master.
+      - **`TimetableIntegrityJob`** (`timetable-integrity`, 05:00 UTC daily): re-diagnoses published versions in force,
+        claims the new key set with a conditional update against the old one, tells unscoped timetable masters "N new
+        timetable clash(es)" once; an unchanged clash is not re-announced.
+      - A class rename in the Lists editor moves Draft and Published lessons in the same save (Archived keeps history).
+        Coverage fills `SubjectTeachersWithNoLessons` / `PlannedPeriodMismatches`, and "My teaching" fills
+        `TimetabledPeriodsPerWeek`, from the version in force today (`TimetableChecker.PlacedPerWeekAsync`).
+      - Print and publish of a timetable are logged (`StaffExportKinds.Timetable`, no permission beyond branch membership).
+      - **Web:** `/admin/timetable` (Class / Teacher / Room / School views on `QWeekGrid`; a teacher opens on their own
+        week; the draft editor places, moves and removes in a period modal, with "taught together with" for joint lessons;
+        Checks and Load to place beside the grid; New draft / from this, Publish with the soft-clash note, Discard, Archive),
+        `/admin/timetable/settings` (Bell Schedule), `/admin/timetable/{id}/print` (A4 landscape, one page per class /
+        teacher / room, Publish to Library). `QPrintSheet` gained `Landscape` (a named `@page landscape`, so only that
+        sheet turns the paper). The Scoring Policy page gained a **Teaching load** card (the norms had no editor). Nav:
+        Timetable under Staff Performance, and beside My Portal for anybody without that group (a teacher).
+      - **Found and fixed on the way:** the shared phone rule for filter bars forced every child to half width with
+        `!important`, so a tab strip beside a select was squeezed ("By t…") on the timetable AND Duty Reports; tabs in a
+        filter bar now take their own row (`q-components.css`). In the class view a joint lesson did not say another
+        stream shared it ("· with S2A" now). Diagnosis wording: "1 lessons", a room clash naming "S2B and S2B" (now class
+        and subject), and a cell tooltip carrying week-level soft issues (now period-level only).
+      - e2e section 15.5: **53 checks; section 15 now 163 passed, 0 failed.** The first run was 154/7, all one test error
+        (the suite assumed a Phase 0 assignment was still live, so the joint lesson was correctly a hard clash and the rest
+        cascaded). Covered: settings validation, a timetable save racing a vocabulary save x5 with nothing lost, HoD 403, a
+        department-scoped role holding `timetable.manage` 403, a draft 404 to a teacher, placement refusals, six concurrent
+        placements of one teacher → one 201 and five 409, class / room / unavailability / unassigned clashes, publish
+        refused on hard, soft needs acknowledgement and a note, the teacher's notification is a link, a published version is
+        immutable, the print is logged, the publication is in the activity log, a Session duty over a lesson, coverage
+        mismatch and no-lesson lists, My teaching, copy, replace archives the old version, the integrity sweep announces
+        once, a class rename moves lessons and back.
+      - Browser, in the user's Chrome: the admin builds a draft (place with a room; a deliberate class+room clash drawn as a
+        conflict with its toast; move it out; the teacher-busy refusal; a joint S2A + S2B lesson), publishes through the
+        soft-clash note, the School and Room views, the landscape print, the Bell Schedule with an unavailability line;
+        Martin Kato opens his notification link onto his own read-only week. Four harness FAILs, each rechecked and passing
+        (an options container clicked instead of the option, "Publish" matched inside "Published", a room default, a wrong
+        "interactive" assertion). Headless 390px and 1440px: timetable, School view, Bell Schedule, print — no sideways
+        scroll, 44px lesson targets, Checks beside the grid on desktop.
+      - Test data left: timetables "E2E … Future / Today / Today v2" and "E2E Chrome Term 3" (archived; a published version
+        is never deleted), Martin Kato's S2B and S2A Physics assignments; the bell schedule is saved (the defaults, no
+        unavailability).
+- [x] Phase 4 — Lessons live (migration `20260917154944_AddLessonDutyColumns`: `StaffDuty.TimetableLessonId`, `ClassName`,
+      `SubjectId`, `Room`, `RecoversDutyId`; unique `(TimetableLessonId, StartsAt)` where set; nothing dropped).
+      **Built and verified 2026-09-17 (late).**
+      - **`StaffLessons`** (Application/Services) is the one home. `MaterialiseAsync` writes the next 14 days of Lesson
+        duties from the published version in force on each date (skipping days outside every term), one duty per teacher
+        per lesson (a joint lesson is one duty naming "S5A + S5B"), under `pg_advisory_xact_lock('lesson-generation:{branch}')`
+        plus the unique index. A future, unflagged lesson no longer on the timetable is cancelled ("No longer on the
+        published timetable."), never deleted. `StatusOf` derives Scheduled / Unrecorded / Taught / Taught (self-reported)
+        / Not taught (self-reported) / Missed with or without permission / Recovery scheduled / Recovered / Not recovered /
+        Cancelled — never stored. `WriteFlagAsync` annuls and rewrites under the register's own lock
+        (`staff-register:{duty}`), so a self-report and a supervisor's override at once leave one Final record.
+      - **Found while writing the e2e and fixed before it ran:** a re-published version is a COPY with new lesson ids, so
+        materialisation would have cancelled and recreated every future lesson — teachers told "moved from 10:20 to
+        10:20", reminder stages lost. An unchanged lesson now keeps its row and is re-pointed at the new lesson. The same
+        pass would have revived a lesson cancelled for a school event; a hand cancellation ("Cancelled: …") now survives a
+        re-publish.
+      - **`LessonGenerationJob`** (`staff-lesson-generation`, 01:00 UTC nightly) and one run per publish (enqueued by
+        `TimetableController.Publish`); `POST …/staff/lessons/generate` runs it now (unscoped `timetable.manage`).
+      - **`StaffLessonsController`** (`api/v1/branches/{b}/staff/lessons`): `my-day` (own; no permission code), the list
+        (the teacher sees their own; holders of `timetable.lessons.flag` or `staff.records.view` see their staff scope,
+        told it is scoped; a peer asking for a colleague → 404), `{id}/flag` (teacher: Taught / Late / Not taught with a
+        reason, a SelfReport, never over a supervisor's mark (409); supervisor in scope, never on their own lesson: also
+        Missed with permission, a reason required for either miss), `confirm` (bulk ≤200, synchronous, only taught
+        self-reports), `{id}/recovery` (a missed lesson; one live recovery, under a lock; a Lesson duty on Lesson
+        Recovery naming the missed one, which offsets it in scoring once taught), `{id}/cancel` (timetable.manage or
+        staff.duties.manage in scope, a reason; the teacher is told without it).
+      - **Reminders** (`ReminderLadderJob`): `LessonStartAsync` — the LessonStart ladder (10 minutes, bell, interruptive),
+        claimed on the row; `MyDayAsync` — one "Today: 6 lessons, on duty, 1 report due" per person at the policy's My Day
+        time (branch-local, within four hours of it), earlier unrecorded lessons as one line, once a day. A lesson moved
+        or removed today after the digest hour sends one `staff.lesson-changed` bell item.
+      - Portal: Coming up is sessions only; register-due to-dos exclude lessons; ONE "N lessons of yours are unrecorded"
+        to-do → /my-day.
+      - **Web:** `/my-day` (nav **My Day**; next-lesson countdown, Taught / Not taught, Still owed, Schedule recovery, the day's
+        sessions, rota, reports due and welfare actions; day navigation), `/admin/timetable/lessons` (nav **Lessons**; scope
+        banner, tiles, status tabs, teacher filter, Confirm / bulk confirm, Record, Recovery, Cancel), portal **My Day** and
+        **My timetable** cards (`MyTimetableCard`), the Reminders editor shows Before a lesson and New timetable clash, and
+        the policy card is now **Teaching and lessons** (My Day time, lesson reminder minutes, recovery deadline, unrecorded
+        window). `QDateFormat.LocalT` added; lesson status labels live in `StaffDisplay`.
+      - e2e section 15.6: **48 checks; section 15 now 209 passed, 0 failed.** 15.6 builds a temporary bell schedule around the
+        branch-local time and creates two teachers of its own — the first run failed at publish, correctly: a section-14
+        "Staff meeting" today expected Martin Kato, a real hard clash. Covered: generation 403 to a head, three concurrent
+        runs, idempotent re-run, one duty per lesson, statuses, My Day order and next start, peers 404, scoped list, the
+        self-report rules, confirm, a supervisor's record the teacher cannot replace, four concurrent overrides → one Final
+        record, the override logged, recovery (refused for a lesson not missed, one only, Recovered once taught), cancel
+        (403 to a teacher, the teacher told without the reason, cannot be flagged), the lesson reminder once, the My Day
+        digest once, a re-publish that moves one lesson and keeps a hand-cancelled one cancelled. One FAIL on a rerun was a
+        race in the test (the publish's own run had already moved the lesson).
+      - Browser, in the user's Chrome: Martin Kato's portal My Day and My timetable cards, My Day with the countdown,
+        Taught → Taught (self-reported); Moses Ssempala's Lessons page (scoped, To confirm, Confirm → Taught, Record → Missed
+        with permission with a reason, Recovery scheduled, Cancel with a reason); back as Martin: Recovery scheduled, the
+        cancellation with its reason, both notices, tomorrow's recovery lesson. Found and fixed: "S2B Physics" without its
+        "·" on My Day's banner, "1 lesson(s)". Four harness FAILs rechecked (flex-row innerText, a To-confirm count that
+        rightly included the e2e teachers, a head of department rightly offered Cancel, a 40px check under a 44px label —
+        the buttons were then made 44px). Headless 390 / 1440: My Day, portal, Lessons — no sideways scroll.
+      - Test data left: timetable "E2E Chrome Lessons" (archived), Martin Kato's flagged 18:41 lesson and tomorrow's recovery
+        lesson, section 15.6's deactivated teachers "Tina / Tom Lessons <run>" with their lessons.
+- [x] Phase 5 — Reports and analysis (no migration: `timetable.checked` activity events carry the health trend).
+      **Built and verified 2026-09-17 (late).**
+      - **`TeachingReportBuilder`** (Application/Services) is the one builder for the page, the print, the dashboard tiles and
+        the weekly email: teaching load per teacher (planned, timetabled, the norm band — Under / Within / Over; the
+        mixed O/A-Level minimum; timetabled is the measure when a version is in force, planned otherwise) and by
+        department, subject and level; lessons taught per teacher, department, subject, class, level and week, from
+        `StaffLessons` statuses; the recovery schedule; rota and report compliance per person (slots, acknowledged
+        before the start, reports due / on time / late / overdue / reviewed / returned, supervisors' review turnaround);
+        timetable health (clashes now, load still to place, room use, and the daily trend). **Taught % =
+        (taught + recovered) ÷ (taught + missed without permission + recovered + not recovered)**: missed with
+        permission is outside it (MoES), unrecorded is shown and never counted either way.
+      - **`TeachingReportsController`** (`api/v1/branches/{b}/staff/reports/teaching` and `/dashboard`): readable by
+        `staff.reports.view`, `timetable.lessons.flag` or `timetable.manage`; every row in the caller's staff scope, said
+        so; timetable health and the clash tile only for an unscoped master.
+      - **`StaffScopeService.VisibleUserIdsForAsync`**: the visible-set rule refactored into one static core so a JOB can
+        scope a recipient without an HTTP context — one rule, not a second copy.
+      - **Weekly lesson analysis** (`StaffPerformanceJobs.SendWeeklyLessonAnalysisAsync`, `staff-weekly-lesson-analysis`,
+        hourly; sends on Monday after the policy digest hour, branch-local): last week's lessons to each holder of
+        `timetable.lessons.flag` or `staff.reports.view` **in that person's own scope**, an email report with the totals,
+        a table by teacher and a callout for missed lessons with no recovery; nobody gets an empty sheet or a sheet of
+        only themselves; once a week (new event key `staff.lesson-analysis`, in the catalogue as "The weekly lesson
+        analysis"). Not exercised end to end: it fires only on a Monday (today is Thursday).
+      - **Integrity sweep** now records `timetable.checked` with the hard/soft counts on every run — the health trend.
+      - **Web:** `/admin/timetable/reports` (nav **Teaching Reports**; Load / Lessons / Duty rota / Timetable health tabs;
+        lessons regroup by teacher, department, subject, class, level or week; the recovery schedule), `/admin/timetable/
+        reports/print` (A4 landscape: Annex 4 summary with an All row, Annex 5 recovery schedule, a signature line;
+        Publish to Library; logged as `StaffExportKinds.TeachingReports`), a **Teaching** section on the Dashboard (taught
+        % this week, unrecorded, not recovered, duty reports overdue, and hard clashes for a master; scoped note for a
+        head), links from Staff Reports and Lessons.
+      - e2e section 15.7: **20 checks; 15.6 + 15.7 together 68 passed, 0 failed, first run.** Covered: 403 to a teacher
+        (report and tiles), the head's scope and its label, no out-of-department rows in load, lessons or rota, no health
+        for a head, 22 planned periods Within, by-subject and aggregates, 15.6's recovered lesson at 100% and on the
+        recovery schedule with its reason and recovery, rota rows, health for the master (version, counts, load to
+        place, room use, the sweep's trend), timetabled as the measure once a version is in force (1 of 22 → Under), and
+        both dashboards.
+      - Browser, in the user's Chrome: Moses Ssempala's Dashboard Teaching tiles (scoped, no clash tile), Teaching Reports
+        (Load with Martin Kato Under, Lessons with the recovery schedule, by week, Duty rota), the Annex 4/5 print; the
+        admin's clash tile and Timetable health (an empty state, then a version published for the check: clashes, room
+        use, the trend). One harness FAIL (a CSS-uppercased header) rechecked. Polish found by screenshot and fixed: long
+        tile sub-labels rendering as bubbles on a phone, the period selector stretching the header, "(s)" plurals.
+        Headless 390 / 1440 — no sideways scroll on the dashboard, every tab, or the print.
+- [x] Phase 6 — Import and polish (no migration: `RosterImportKind.Timetable = 4` is an appended value on an int column).
+      **Built and verified 2026-09-17 (late).**
+      - **Timetable import** through the import-job machinery: `POST …/timetable/timetables/{id}/import` (draft only; scoped
+        caller 403; ≤5,000 rows; one import per draft at a time, checked and inserted under `timetable-import:{id}` —
+        without the lock two uploads both passed the check), `GET …/timetable/import-jobs/{id}` and `/entries`.
+        `RosterImportProcessorJob.ProcessTimetableJobAsync` resolves each row as a master placing it would: day as "Mon",
+        "Monday", "Mon B" or the cycle-day number; period by key, label or start time; subject by code or name; teacher by
+        email, username or full name (an ambiguous name is refused); class and room by name. Same teacher, subject and slot
+        for another class → a joint lesson. Refused with a reason: not a teaching period, unknown class / subject / teacher /
+        room, a teacher already teaching something else then. An identical lesson already in the draft is skipped as a
+        duplicate; "Replace" clears the draft first. Class or room double-bookings are imported and left to the diagnosis.
+      - Web: **Import** on a draft (the dialog names the columns, previews the rows, "Replace this draft's lessons", live
+        progress, the refused rows with their reasons). The file is read by SheetJS in the browser (CSV or Excel), with
+        column aliases for aSc / FET / hand-made headers. `CsvText` (Web/Services) is now the ONE CSV splitter — the staff
+        import's private copy was moved there rather than copied.
+      - **`Content/Schedules.razor`'s weekly overview is on `QWeekGrid`** (days across, three-hour bands down; two playlists
+        in the same band marked as an overlap, "the one with the higher priority plays"; a per-day list on a phone). The
+        hand-rolled percentage timeline, its CSS and its block class are gone.
+      - e2e section 15.8: **15 checks, 15/0** (the first run's single FAIL was the test's own setup — publishing a draft
+        whose lesson was unassigned is correctly refused). Covered: 403 to a head, two simultaneous uploads → 202 + 409,
+        4 created / 1 duplicate / 7 refused with each reason, day and period aliases, a username and an email, the joint
+        lesson, replace, 409 into a published version, the activity line.
+      - Browser, in the user's Chrome: Import on "E2E Chrome Import" with a four-row aSc-style CSV uploaded through the file
+        input — preview, 3 created · 1 refused ("'Z9Z' is not a configured, active class"), 3 lesson rows, the joint Tue P2
+        lesson; Schedules with two overlapping playlists seeded (the first check found no playlists on the branch, so the
+        page drew no overview) — the grid, the overlap warning, Tuesday alone, Saturday empty. Headless 390: Schedules and
+        the import dialog, no sideways scroll. The draft and the playlists were removed afterwards.
+- **FINAL e2e, 2026-09-17 (late), after all six phases:** sections 0–14 (`class-teacher-e2e.sh`): 471 passed, 0 failed; section 15
+  (`duty-rota-e2e.mjs`, 15.0–15.8): 252 passed, 0 failed (242 before the rooms block below).
+- **After the build, 2026-09-17 (night): three user reports, all fixed and verified.**
+  - **"Dropdowns do not fire select."** Real, app-wide, and my earlier browser checks could not have caught it: they picked options
+    with a scripted `element.click()`, which fires no mousedown. `QSelect` and `QMultiSelect` closed the list 200ms after the
+    trigger blurred, and pressing an option blurs it, so a press held past 200ms (or a slow round trip) lost the option before
+    mouseup. Measured with real CDP mouse input: 60 and 150ms presses selected, 300ms did not, on every select tried. Now a
+    mousedown inside the open list is prevented by default (no blur at all; the search box opts back out) and a focus on the
+    component cancels a pending close. `QMultiSelect` also closed on every tick and when its filter box was clicked; both fixed.
+    The 13 remaining native `<select>`s (10 files) moved onto `QSelect`; none are left. Real-input check: 26/26 (60/300/800ms
+    presses on a short and a searchable list, search, click-away, Tab, the trigger, one list open at a time, a dialog, several slow
+    ticks in a multi-select, the migrated pages).
+  - **Found while testing that: the health check put a full-page overlay over a working app.** `ConnectionMonitorService` read a
+    429 from `api/v1/health` as a lost connection, and `ConnectionOverlay` swallowed every click. A 429 now counts as reachable,
+    and `get:/api/v1/health` is whitelisted from IP rate limiting in code (a school behind one NAT address shares one key).
+  - **"Rooms links to Student Roster."** Plan §6.1 puts rooms in timetable settings; I had linked to the roster, whose save needs
+    `students.manage` and whose room renames moved no lessons. Rooms now have a card on Bell Schedule and their own
+    `GET/PUT …/timetable/rooms` (`timetable.manage`, scoped callers refused, under the branch-settings lock): a rename moves draft
+    and published lessons and upcoming lesson duties; a room with live lessons cannot be removed (retire it); saves are logged.
+    The roster lists lost their Rooms tab, and **the student lists save keeps the stored rooms whatever it is sent**: one writer.
+    e2e 15.5 gained 10 checks; browser: the card, add / save / reload / remove, the in-use lock with its reason, 390px, the roster
+    tab gone.
+  - **"Rooms opens /billing/modules."** I had restarted the API; 19 pages redirected on an empty module list without checking
+    `ModuleState.LoadSucceeded` (MainLayout already did). All 19 guard now, and a failed module load is retried by the next page
+    instead of sticking for the circuit.
+  - Test fix: 15.5's "teaching without an assignment" check depended on which class won a concurrent race; it places its own lesson.
+  - **"Those buttons are so large … why is the spacing not uniform?" then "spacing, size and font should be uniform across the
+    project."** Measured first: an audit script visited all 80 parameterless in-app pages and recorded every button, button-row
+    gap, title and paragraph. Found: header rows had no shared rule (about twenty pages set 8/10/12/14/16px, the rest none, where
+    Blazor's trimmed whitespace left buttons touching); buttons 34 and 39px, dropdowns 44px, inputs 48px; titles 22 to 32px;
+    body text 14 or 16px; about twenty hand-styled buttons. Now one scale: `--q-control-h` 36 / 30 / 44px, control text 14 / 13px,
+    `--q-row-gap` 8px (q-components.css); `.header-actions` and the shared row names, `.qm-main` 14px body and a 28px/700 title
+    (22px on a phone) in layout.css; 77 page rules that set their own control size, row gap or title size removed, and 20 named
+    card/footer rows put on the token. Customer Links, Marketing, Visitors and the queue board moved onto QButton / QTabs; the
+    welfare case picker, the scanner toggle, the Users pager and the date-range chips put on the tokens. Kiosk, public display,
+    public feedback, booking, ticket status, shared documents and print sheets keep their own sizes by design (the first sweep
+    caught them too and was reverted for those files). Re-audit: all 70 in-app titles 28px/700, body 14px, default controls 36px;
+    spot check 28/28 (seven pages at desktop, three at 390px with 40px tap targets and no sideways scroll); dropdowns still 26/26.
+- [x] e2e section 15 — ran the same evening and has run green many times since (263 assertions as of 2026-09-18).
 
 ### Phase 88 (2026-09-17, afternoon) — unfinished code, portal speed at scale, the stuck page
 
@@ -1741,7 +2381,7 @@ someone else's file — **Session A's author should confirm it was the intended 
 > own classes**, and the reports gate was audited at the same time (it already existed; three
 > related leaks around it did not).
 
-- [ ] **Four endpoints exist with no UI at all.** They work and are curl-tested, but nothing in the
+- [x] **CLOSED — all four have UI (verified 2026-09-18, Phase 90).** `NotificationPreferences.razor`, the deliveries tab in `NotificationSettings`, and the contact form and history on `ClassTeachers.razor`. Original note: **Four endpoints exist with no UI at all.** They work and are curl-tested, but nothing in the
   app calls them:
   `GET`/`PUT /notifications/preferences` (no preferences panel — so a class teacher who is now
   emailed by default has **no in-app way to opt out**; this is the consequential one),
@@ -1749,12 +2389,12 @@ someone else's file — **Session A's author should confirm it was the intended 
   curl), `PUT …/class-teachers/staff/{id}/contact` (`AlternatePhone`/`OfficeLocation`/`JobTitle`
   are API-only), and `GET …/class-teachers/history` (the "who held this class last term" audit
   trail is not visible anywhere).
-- [ ] **Three UI items from Phase 77's own plan were not built**: the class-teacher chip in the
+- [x] **CLOSED — all three are built (verified 2026-09-18, Phase 90):** the class multi-select in `UsersSetup`, the contact line on the roster, and the class-teacher history. Original note: **Three UI items from Phase 77's own plan were not built**: the class-teacher chip in the
   Classes tab of the "Classes, houses & lists" modal; the class multi-select in `UsersSetup` when
   the Class Teacher role is picked (so you can currently create a class teacher who sees nothing,
   caught only afterwards by the coverage warning); and the class-teacher contact line on the roster
   row and student profile.
-- [ ] **Small bug, found and left**: `StudentWelfareTimeline.razor`'s "no response recorded" nag has
+- [x] **CLOSED — fixed (verified 2026-09-18, Phase 90):** `ungradedWarning` now guards on `CaseType != Achievement`. Original note: **Small bug, found and left**: `StudentWelfareTimeline.razor`'s "no response recorded" nag has
   no case-type guard (`ungradedWarning = !asDraft && ResponseStage == null && …`), but the API
   explicitly rejects a response stage on an Achievement
   (`WelfareController.cs` — *"An achievement has no response stage"*). So logging an achievement

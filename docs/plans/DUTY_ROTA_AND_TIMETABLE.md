@@ -2,10 +2,7 @@
 
 **Status:** BUILDING — Phase 89 in `docs/TASK_TRACKER.md`, started 2026-09-17; all fourteen §15 decisions
 taken as proposed. **Written:** 2026-09-17.
-**Progress (end of 2026-09-17):** Phase 0A done and verified. Phase 0 API done and verified live (migration
-`20260917114532_AddSubjectsAndTieredAssignments`, which also carries `StaffDuty.Kind` and `ReminderStage`
-from Phase 1's list); Phase 0 Web screens, Phases 1–6 and e2e section 15 remain. The exact resume point is
-"Phase 0, remaining — resume HERE" in the tracker.
+**Progress (2026-09-17, late): ALL PHASES BUILT AND VERIFIED** — 0A and 0–6, one migration per phase that needed one (`AddStaffOnboarding`, `AddSubjectsAndTieredAssignments`, `AddDutyRota`, `AddDutyReports`, `AddTimetable`, `AddLessonDutyColumns`); final e2e sections 0–14 471 passed, 0 failed, section 15 252 passed, 0 failed (242 before the rooms block below); browser checks for every phase in the user's Chrome. Details are Phase 89 in the tracker.
 **Artifact:** https://claude.ai/artifact/S6dLKnBX4o6SscUUd8WgpY
 **Module:** Welfare & Performance (`student-welfare`) — the staff side it extends already lives there.
 

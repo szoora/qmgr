@@ -64,11 +64,16 @@ the single source of truth for all `--qm-*` custom properties):
   for accents only (badge background via `--qm-primary-light`, price text, icons). If a future
   color complaint is about one specific page/component rather than the brand as a whole, prefer
   this pattern — scope the fix to that component, don't touch the shared token without asking.
-- **Radius — reconciled; this note was stale and is corrected 2026-09-05.** It described the
-  tokens as 6/10/16/24px and the reconciliation as undecided. `qm-theme.css` has in fact carried
-  `--qm-radius-sm/md/lg/xl` = **3/4/6/8px** since the repository's baseline snapshot — Webster's
-  flat convention, already adopted. Keep new work on these tokens rather than reintroducing a
-  softer radius; there is nothing outstanding here.
+- **Radius — one family, and it is the flat one (user decision 2026-09-18).** `qm-theme.css` carries
+  `--qm-radius-sm/md/lg/xl` = **3/4/6/8px**, Webster's flat convention. Until 2026-09-18 a second,
+  softer family lived beside it: `q-components.css` set its own `--q-btn/card/input/modal/toast-border-radius`
+  at 8 and 12px, and 122 page-level literals ran from 2px to 24px. The user chose to unify on the
+  tokens, so those five component tokens now resolve to `--qm-radius-md`/`-lg`, and every literal was
+  mapped by value: **≤3px → sm, 4–10px → md (buttons, inputs, tiles, shell chrome), ≥11px → lg (cards,
+  modals, panels)**. Pills (`50%`, `999px`, `9999px`, `50px`) and `0` were left alone — that is
+  geometry, not a radius choice. **A new rule uses a token; a raw px radius is the drift coming back.**
+  The kiosk, public display, signage, public feedback, booking, ticket status, shared documents and
+  print sheets were deliberately excluded, the same set the size scale excludes.
 - **Shadow — Webster's convention** is a soft, low-spread card shadow (`0px 3px 10px
   rgba(0,0,0,0.1)`) plus a larger ambient shadow for section depth (`0px 0px 50px rgba(0,0,0,
   0.05)`). Compare against `--qm-shadow-sm/md/lg` before changing anything broadly.
@@ -386,7 +391,39 @@ photograph of an injured child**, so that lookup lives in one place.
 
 ## Secure document sharing: publishing is the boundary (built 2026-09-15)
 
-The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md`; the rules that are easy to break:
+The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md` (**Revision 3, 2026-09-18** carries the post-build
+audit: §13 SSoT, §14 findings); the rules that are easy to break:
+
+- **`MediaServing` is the ONE home for "is this file public", and it reads `IsShareable` alone.**
+  Playlist membership makes a document playable on signage; it does not make it public. Until
+  2026-09-18 the classifier read `!IsShareable || OnSignage`, so adding a share-only document to any
+  playlist served it anonymously with a day of cache — the plan promised in §1 that a document could
+  be both "without leaking from one into the other", §5 defined only two exclusive categories, and the
+  e2e asserted each separately ("on **no** playlist") and never the combination.
+  **Both write paths now refuse the combination** (`ContentController.AddPlaylistItem`,
+  `DocumentSharesController.UpdatePublishing`), and that refusal is load-bearing rather than tidy:
+  gating alone would make a shared document silently stop rendering on a wall, because a public
+  display fetches anonymously. Never re-derive this predicate anywhere else.
+- **A Library document with share history is RETIRED, never deleted.** `document_shares` cascades from
+  `media_content` and `document_share_events` from that, so a hard delete used to erase the whole
+  record of who opened a document — on `content.delete`, which Manager holds, by someone who may hold
+  neither `documents.share.manage` nor `documents.share.audit`. `DeleteMediaContent` now clears
+  `IsActive`/`IsShareable` and keeps the rows when any share exists (NIST SP 800-53 AU-9; the
+  controller's own "the history of who could open a document is the audit answer").
+- **`ActiveShareCount` comes from `EvaluateState`** (`EvaluateStateOf`, the static entry point), not a
+  second SQL predicate. The old copy ignored `LockedUntil`, `NotBefore` and the document's own
+  `IsShareable`/`IsActive`/`FilePath`, so the Library card advertised live links on a document whose
+  sharing was off while the activity modal on the same page said none.
+- **A document carries a classification, and it NARROWS the tenant policy — never widens it.**
+  `DocumentClassification { General, Internal, Confidential }` on `MediaContent`, with
+  `DocumentSharingPolicyDto.EffectiveFor` as the one reader: the shorter link cap of the two wins, and
+  a rule may force download off or email verification on. **The tenant's `AllowDownloadByDefault` /
+  `RequireEmailByDefault` are DEFAULTS for a new link, not constraints** — folding them into the
+  effective rule made a General document asking for download come back with it withheld, which the
+  e2e caught. Raising a classification needs `library.publish`; **lowering needs
+  `documents.share.manage` and a reason of ten characters**, kept on the row — without that lock the
+  label is decoration, which is exactly what Google's locked DLP labels and Microsoft's recorded
+  justification exist to prevent.
 
 - **Sharing only knows the Library (`MediaContent`).** Nothing is shared in place; a report reaches
   the Library through "Publish to Library" on its print route (`reportPublish.js` renders it in the
@@ -1017,8 +1054,35 @@ test of this path needs `http://127.0.0.1:5003` in the API's CORS origins (for e
 `Cors__AllowedOrigins__4`), because locally Web and API are different origins. The dummy record it
 created, "Dummy record - evidence upload test. Safe to delete.", is on Test Student One.
 
-A SuperAdmin with no organization chosen sees an empty Category list on the create form until the
-page is reloaded after picking an organization and branch. Not investigated.
+## A page that reads the branch once never reads it again — `OnBranchChanged` is the only signal
+
+The old "a SuperAdmin sees an empty Category list until the page is reloaded" note was one instance of
+this; it was investigated and closed 2026-09-18. **There is no `OrganizationState` service and no
+organization-changed event anywhere in `Q-Mgr.Web`.** A SuperAdmin's chosen organization lives only as
+three private fields on `MainLayout`, and picking one raises nothing. `BranchStateService.OnBranchChanged`,
+raised by `SetBranchAsync`, is the app's ONLY cross-page change signal — so a page that wants to react
+subscribes to the *branch* event, because there is nothing else to subscribe to.
+
+A SuperAdmin arrives with `CurrentBranchId == Guid.Empty`. A page that reads it once in its first render
+then fires requests at `…/branches/00000000-0000-0000-0000-000000000000/…`, which the API answers **404**,
+and a fetch with no `else` renders an empty list with no explanation. A reload fixes it only because
+`SetBranchAsync` has by then written the branch to localStorage.
+
+- **Subscribe, clear, reload, dispose.** `StudentWelfareTimeline` is the reference: subscribe next to the
+  branch read in `OnAfterRenderAsync(firstRender)`; the handler returns if the id is unchanged or empty,
+  **clears the branch-scoped caches** and re-runs the load; `Dispose` unsubscribes. Clearing matters as much
+  as reloading — `StudentRoster`'s quick-log dialog guarded its category fetch with `if (!list.Any())`, so
+  after a switch it offered the previous organization's categories and the API refused the post.
+- **Guard `Guid.Empty` and say so**, in the shape `WelfareCategoriesSetup` already used: a Warning toast
+  reading *"No Branch Selected — Please select a branch from the header first."* The guard is what the page
+  shows while nothing is chosen; the subscription is what removes the reload.
+- **A lookup fetch with no `else` is the bug underneath the bug.** Three welfare forms swallowed a failed
+  category fetch silently. Any future cause — a revoked module, a 500, an org mismatch — reproduces the
+  original report exactly, and no amount of subscribing helps.
+- **24 components subscribe; 47 read the branch once and do not.** `StudentPicture`, `StudentRoster` and
+  `StudentWelfareTimeline` were fixed 2026-09-18. The rest are listed in `docs/TASK_TRACKER.md` under that
+  date. A `BranchAwareComponentBase` would give this the one home the codebase gives every other repeated
+  rule, but it touches ~70 files and is its own phase — not a bug fix. Ask before starting it.
 
 **CLOSED 2026-09-15 — uploads are served by a controller with a per-file decision; see the
 "Uploads are gated per file" section below.** Until then they lived under the API's own `wwwroot`
@@ -1568,6 +1632,57 @@ closed and asserted in section 14 (now 288 checks). The rules to keep:
   Measured on 199 staff / 12,496 records: 50 users, portal p95 1,959 → 369 ms. The person's OWN score
   is still computed live on every load.
 
+## Dropdowns: never close on a blur timer alone, and test them with real input (2026-09-17)
+
+Reported as "dropdowns do not fire select". `QSelect` and `QMultiSelect` closed 200ms after blur, and pressing an option blurs the
+trigger, so any press held past 200ms selected nothing. **The open list prevents mousedown by default** (no blur happens; the
+search box opts out with `@onmousedown:stopPropagation`), and **a focus event on the component cancels a pending close**
+(`closeGeneration`). **Every dropdown is `QSelect` or `QMultiSelect`; there is no native `<select>` left, so keep it that way.**
+Never put a `QSelect` inside a `<label>`: a click in a label re-clicks its first button and toggles the list shut.
+
+**Verify a dropdown with CDP `Input.dispatchMouseEvent` (press, hold, release), never `element.click()`.** A scripted click fires
+no mousedown and moves no focus, and it passed for weeks over this bug. Before blaming a missed press, check
+`document.elementFromPoint`: `ConnectionOverlay` covers the page whenever the health check fails, and this app scrolls smoothly,
+so read positions after `scrollIntoView({ behavior: "instant" })`.
+
+- **A 429 from `api/v1/health` means reachable**, and that route is whitelisted from IP rate limiting in code. Treating it as lost
+  put a click-swallowing overlay over a working app.
+- **A page-level module redirect checks `ModuleState.LoadSucceeded` first** (all 19 do). Otherwise an API restart sends every open
+  module page to `/billing/modules`. A failed module load is retried by the next `LoadAsync`.
+
+## One size scale for controls, rows and titles (user direction 2026-09-17: "spacing, size and font should be uniform")
+
+An audit script measured every parameterless page (buttons, button-row gaps, titles, body text) before anything changed:
+buttons at 34 and 39px, dropdowns at 44px, inputs at 48px, row gaps of 2 to 16px, titles at 22 to 32px, body text at 14 or 16px.
+Fonts were already right (Poppins, with Montserrat titles). The scale now lives in two places and nowhere else:
+
+- **`q-components.css` tokens**: `--q-control-h` 36px (`-sm` 30, `-lg` 44), `--q-control-font` 14px (`-sm` 13) and
+  `--q-row-gap` 8px. Every `QButton`, text or time input, `QSelect` / `QMultiSelect` trigger and `QDatePicker` uses them; an
+  icon-only button is square; on a phone every control is at least 40px.
+- **`layout.css`**: `.header-actions` and the shared row names (`.form-actions`, `.modal-actions`, `.card-actions`,
+  `.filter-actions`, `.dialog-actions`, `.q-modal__footer` and a few more) use the row gap; `.qm-main` body text is 14px;
+  `.qm-main h1` is Montserrat 28px, weight 700 (22px on a phone).
+- **A page must not set a control's height, padding or font size, a shared row's gap, or its title's size.** 77 page rules that
+  did were removed, and that is where the drift came from. A new row of buttons uses a shared row name or `var(--q-row-gap)`.
+- **A hand-styled `<button>` is a `QButton`; a hand-rolled tab strip is `QTabs`.** Segmented pickers that carry meaning in
+  colour (the welfare case type, the scanner direction) keep their look on the control tokens.
+- **Outside the app shell the scale deliberately does not apply**: the kiosk, the public display and signage, public feedback,
+  booking, ticket status, shared documents and print sheets keep their own large-format or paper sizes. `.qm-main` scoping is
+  what keeps them out, and a sweep of page rules must skip them (the first sweep did not, and was reverted for those files).
+- **Pulled onto the scale 2026-09-18, on the user's instruction** ("all four"): Profile's action-menu rows (now
+  `min-height: var(--q-control-h-lg)` rather than a 55px of their own), the notification rows in both the panel and
+  `/notifications`, Branding's palette swatches and theme tiles (their LABELS and gaps only — the swatch and the
+  Dark/Light preview stay a preview of a theme, not a control), and the chart and fieldset legends, now
+  `--q-control-font-sm`. On `.notif-row` the `font-size` must come AFTER its `font: inherit` shorthand, or the
+  shorthand resets it.
+- **THE TRAP THAT BIT: `.header-actions`'s flex rule and the `min-width: 0` rule must stay separate blocks.**
+  The 2026-09-17 sweep inserted `.header-actions {` between `.q-card > *,` and that rule's declarations, which
+  (a) deleted `min-width: 0` outright — the ROOT-CAUSE layer of the never-scroll-sideways fix — and (b) put
+  `display: flex; flex-wrap: wrap` on **every direct child of every `.admin-page` and every `.q-card`**. The
+  visible symptom was a component's own `<style>` element rendering as CSS text on the page (a `<style>` is
+  `display:none` only until something overrides it) — found on the portal, 2026-09-18, by driving the app in a
+  browser. A CSS audit that measures fonts and control heights cannot see this; **only opening the page can.**
+
 ## Duty rota build: the rules Phase 0 left (2026-09-17)
 
 The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.
@@ -1595,6 +1710,66 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
   `NpgsqlRetryingExecutionStrategy`; `BeginTransactionAsync` outside `CreateExecutionStrategy().ExecuteAsync`
   throws (found live: the Subjects page's first read returned 400). A helper that may be called inside an
   existing transaction checks `Database.CurrentTransaction` and joins it (`SubjectDefaults.SeedIfEmptyAsync`).
+- **A rota slot is a `StaffDuty` of kind Rota; `StaffRota` is the one home for its rules** (default cadence, warnings,
+  the seeded "Teacher on Duty" parameter, the assignment notice). Warnings never refuse. A duty's kind never changes, a
+  Lesson is never created by hand, and the Duties & Registers page lists Session duties only — the rota has its own page.
+- **The rota is readable by every member of the branch (a displayed MoES record); who has ACKNOWLEDGED is not** — only
+  duty managers and the slot's supervisors get the map. Acknowledgement is the atomic jsonb `||` pattern, and a
+  reschedule clears it. A supervisor is told a COUNT by the ladder; names appear only on their portal to-do.
+- **Dates in API-built text must be `string.Create(CultureInfo.InvariantCulture, …)`.** The dev machine is en-GB, so a
+  bare `{x:dd MMM}` reads "Sept" locally and "Sep" on the server. Older API code still has the bare form (see Phase 89).
+- **The e2e suite's password `E2eTeacher!2026` is refused by the blocklist for NEW accounts** (it is "teacher" plus a
+  year). Accounts the suites create use `NEW_PW` and sign-in tries both. Section 15 is `scripts/e2e/duty-rota-e2e.mjs`.
+- **Who reads a duty report is `StaffDutyReports.AccessForAsync`, and nothing else decides it** — the controller and
+  `UploadAuthorizer` (report evidence) both call it. A draft's text is the author's alone, even from the supervisor; the
+  supervisor's report is hidden from the teacher on duty unless the policy says otherwise; out of reach is 404. A
+  permission gate on a note/review request must not sit behind a `[Required]` body, or a non-reviewer gets 400 not 403.
+- **A section key in the report template is a wire format** (answers are stored under it): the editor locks a saved
+  key, and an empty stored template means "the defaults", read through `DutyReportTemplateDefaults`.
+- **`Branch.Settings` has three writers (vocabularies, class colours, the timetable), and every one takes
+  `BranchSettingsLock` inside its transaction and re-reads under it.** A fourth key must do the same, or a save of one
+  silently drops another. The timetable key is read only through `ITimetableSettingsService`; cycle arithmetic only
+  through Shared `TimetableCycle`.
+- **`TimetableChecker` is the only diagnosis**: the editor, publish and the integrity sweep call the same function, so
+  the clash a master saw is the clash the sweep re-checks. The browser only colours what the API said. Hard never
+  publishes; soft publishes with a note. A timetable write refuses a scoped caller even with `timetable.manage`.
+- **Published timetable versions may not overlap in dates, and that is checked under the publish lock, not by an
+  index** (overlap needs a gist exclusion constraint, i.e. an extension); the unique index is on the start date only. A
+  published or archived version is never deleted: a change is a new draft published over it.
+- **A lesson is a StaffDuty of kind Lesson, and `StaffLessons` is its one home** (materialise, status, flag). Its status is
+  derived, never stored: "unrecorded" and "not recovered" are time passing, not marks. Lesson supervisors are decided
+  per request (`timetable.lessons.flag` + staff scope), never stored on the row. A teacher's own mark is a SelfReport a
+  supervisor confirms or overrides; the teacher can never replace a supervisor's mark.
+- **Re-publishing must not churn lessons.** A new version is a copy with new lesson ids: an unchanged lesson keeps its row
+  and is re-pointed; a lesson cancelled by hand ("Cancelled: …") stays cancelled. Cancelling and recreating would reset
+  reminders and tell teachers a lesson "moved" to where it already was.
+- **An e2e that places lessons "now" needs teachers with nothing else on their day** — a colleague's leftover meeting over
+  a lesson is a genuine hard clash, so section 15.6 makes its own two teachers.
+- **Teaching figures have one builder, `TeachingReportBuilder`, and one taught % rule**: (taught + recovered) ÷
+  (taught + missed without permission + recovered + not recovered). Missed with permission is outside it; unrecorded is
+  shown, never counted. The page, the print, the dashboard tiles and the Monday email all call the builder.
+- **A weekly job's "once a week" gate is anchored to the REAL current week, never to a reported week
+  (2026-09-18).** `SendWeeklyLessonAnalysisAsync` takes `force` and `weekStartOverride`, used only by the
+  Development-only `POST …/staff/reports/teaching/weekly-analysis/run?weekStart=` (404 elsewhere, unscoped
+  `timetable.manage`) — it exists because the analysis fires only on Mondays and so shipped unexercised for a
+  day. Two rules came out of exercising it: the Monday it reports from is **the Monday of the local week**, not
+  "today" (it was `DateOnly.FromDateTime(local)`, correct only because the day gate guaranteed Monday, and
+  wrong the moment anything else calls it); and the dedupe window uses that real Monday even when the reported
+  week is overridden, or a forced run cannot see the messages it just sent and sends twice. Exercised live by
+  **e2e section 15.9**, which clears the accounts' held analyses first — otherwise the guard suppresses the run
+  under test and every assertion passes vacuously.
+- **A background job that must honour a person's staff scope uses `StaffScopeService.VisibleUserIdsForAsync`** — the
+  same static core the request path uses. Never re-derive "which staff can this person see" in a job.
+- **A timetable import resolves rows the way a hand placement would, into a draft only, one import per draft at a time**
+  (`ProcessTimetableJobAsync`); what it cannot place it refuses per row with a reason, and clashes it may place are left to
+  the diagnosis. CSV text on the Web is split by `CsvText` only.
+- **Rooms have one writer: `PUT …/timetable/rooms` (the Bell Schedule page).** They are stored in `BranchVocabulariesDto.Rooms`,
+  but `UpdateVocabularies` keeps the stored rooms whatever it is sent. A rename moves draft and published lessons and upcoming
+  lesson duties; a room with live lessons is retired, never removed.
+- **A class rename moves timetable lessons too** (Draft and Published; Archived keeps the old name), in the same save
+  that moves students and class-teacher assignments.
+- **A print route is `QPrintSheet`, and its phone margins come out of `max-width`** — a 100% sheet plus side margins
+  scrolled every print page sideways by 8px until 2026-09-17.
 - **A password is temporary after an import or an administrator's RESET, not after account creation**
   (plan §12.3). A test that expects a forced change after `POST /users` is wrong, as the first live run was.
 
