@@ -8,6 +8,15 @@ MediatR). **Git was adopted 2026-08-25**, and **there is a GitHub remote:
 published, not private. Before that it said no git repo existed at all. See `git log` for history
 from 2026-08-25 forward rather than this file's older prose for anything after that date.
 
+
+**This repository keeps ONE branch: `master`. Work on it directly** (user instruction, 2026-09-18:
+*"we need to maintain single branch please"*). The two long-lived feature branches were consolidated
+that day — `phase-82-scope-sweep-and-platform-email` was already fully contained in
+`phase-85-staff-performance`, which fast-forwarded into `master` at `57eb5a6` with no merge commit —
+and both were deleted locally and on `origin`. Older tracker entries name those branches; they are
+history, not somewhere to push. **Do not open a feature branch without asking**, and note this
+overrides the general "if on the default branch, branch first" habit.
+
 **History was rewritten on 2026-09-06 to strip Claude attribution trailers** (`Co-Authored-By:
 Claude …` and `Claude-Session: …`) from all 108 commits, then force-pushed. Commit SHAs before that
 date in older tracker entries therefore no longer resolve — the entries were left as written rather

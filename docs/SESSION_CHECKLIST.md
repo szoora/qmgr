@@ -15,7 +15,7 @@ to context compaction. Update status inline as work progresses.
 
 Status: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked / needs a decision · `[-]` won't do (with reason)
 
-**Branch** `phase-85-staff-performance` · started from `3b0544d` (clean, = origin)
+**Branch** `master` — the only branch since 2026-09-18; started from `3b0544d`
 
 ---
 

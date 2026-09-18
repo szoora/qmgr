@@ -7,11 +7,13 @@ Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/
 ---
 ## ▶ NEXT SESSION — start here (rewritten 2026-09-18, evening)
 
-**State: everything through Phase 93 is BUILT and VERIFIED. Nothing is committed.** The working tree
-carries 83 changed files. Sections 0–14 are **512 / 0**, section 15 **254 / 0** (263 when 15.9 does not
-skip), and a new browser suite **25 / 0**.
+**State: everything through Phase 93 is BUILT, VERIFIED, COMMITTED and PUSHED.** Sections 0–14 are
+**512 / 0**, section 15 **254 / 0** (263 when 15.9 does not skip), and a new browser suite **25 / 0**.
 
-**Branch:** `phase-85-staff-performance`, `origin` at `3b0544d` — everything since is uncommitted.
+**Branch: `master`, and it is now the ONLY branch** (user instruction, 2026-09-18: *"we need to
+maintain single branch please"*). `phase-85-staff-performance` fast-forwarded into `master` at
+`57eb5a6` — `phase-82-…` was already fully contained in it — and both feature branches were deleted
+locally and on `origin`. **Work on `master` directly; do not open a feature branch without asking.**
 **Dev database:** migrations applied through `20260918161245_AddActivityEventStudentSubject`.
 
 ### 1. The one thing that is genuinely urgent
@@ -24,12 +26,11 @@ not have this fix. **Committing and deploying is the user's decision and is not 
 say it plainly when the subject of deployment next comes up, because three other production-only
 fixes (the stretched SYSTEM badge, "Edit Permissions" erroring, PERMISSIONS (0)) ride along with it.
 
-### 2. What the user's own call is, unchanged
+### 2. What the user's own call is
 
-1. `[!]` **Commit** the 83 files. The user commits when they ask.
-2. `[!]` **Merge** `phase-82-…` and `phase-85-…` into `master` — declined twice; do not merge without
-   asking again.
-3. `[!]` **Deployment** is never a task here.
+1. `[x]` **Committed, pushed and merged** — six commits, fast-forwarded into `master`, feature
+   branches deleted. **The branch question is settled: one branch from here.**
+2. `[!]` **Deployment** is never a task here. The user decides when to deploy.
 
 ### 3. Genuinely open, and small
 
