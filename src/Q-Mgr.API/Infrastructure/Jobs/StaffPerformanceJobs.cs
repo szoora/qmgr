@@ -492,7 +492,7 @@ public class StaffPerformanceJobs
                             EventKey = NotificationEventKeys.StaffWeeklyDigest,
                             EmailSubject = subject,
                             EmailHtmlBody = html,
-                            ActionUrl = "/admin/staff/reports",
+                            ActionUrl = "/admin/staff/records?tab=reports",
                             IconClass = "bar-chart-line"
                         });
                         delivered++;
@@ -623,7 +623,7 @@ public class StaffPerformanceJobs
                             Type = NotificationType.StaffPerformance, Priority = NotificationPriority.Low,
                             Channels = NotificationChannel.InApp | NotificationChannel.Email, EventKey = NotificationEventKeys.StaffLessonAnalysis,
                             EmailSubject = $"Weekly lesson analysis — {branch.Name} — {range}", EmailHtmlBody = html,
-                            ActionUrl = "/admin/timetable/reports?tab=lessons", IconClass = "journal-check"
+                            ActionUrl = "/admin/timetable?tab=reports&view=lessons", IconClass = "journal-check"
                         });
                     }
                     catch (Exception ex) { _logger.LogError(ex, "Weekly lesson analysis could not reach {UserId}", userId); }

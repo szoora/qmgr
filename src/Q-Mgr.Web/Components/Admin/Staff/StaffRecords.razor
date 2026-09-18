@@ -1,5 +1,6 @@
 @page "/admin/staff/records"
 @implements IDisposable
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -23,7 +24,7 @@
             <p class="subtitle">Every record in the ledger for this branch — search it, log to it, open a person's timeline from it.</p>
         </div>
         <div class="header-actions">
-            @if (canCreate)
+            @if (canCreate && hubTab == "records")
             {
                 <QButton Text="Log record" Icon="journal-plus" Variant="primary" OnClick="@(() => showRecordDialog = true)" Disabled="@(directory.Count == 0)" />
             }
@@ -32,6 +33,14 @@
                          Disabled="@(result == null || result.Items.Count == 0)" DisabledReason="Nothing matches the current filters." />
         </div>
     </div>
+
+    @* Records and Reports are the same ledger — the rows, and what they add up to. Two sidebar
+       entries and two routes until 2026-09-18. *@
+    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="rc" />
+
+    @if (hubTab == "reports") { <StaffReports Embedded="true" /> }
+    else
+    {
 
     <StaffScopeNote Departments="@(result?.ScopedToDepartments)" Noun="records" />
 
@@ -128,6 +137,7 @@
         </QCard>
         <QPager Count="@result.TotalCount" PageSize="@pageSize" PageIndex="@pageIndex" PageIndexChanged="@OnPageChanged" ItemLabel="records" />
     }
+    }
 </div>
 
 <StaffRecordDialog BranchId="@branchId" Subjects="@directory" @bind-Visible="showRecordDialog" OnCreated="@(_ => Search(resetPage: true))" />
@@ -156,6 +166,17 @@
 </style>
 
 @code {
+    /// <summary>Records and Reports: the ledger's rows, and what they add up to. A tab is shown only
+    /// to a caller who may open it — see StaffHubTabs for why that is not cosmetic.</summary>
+    private static readonly StaffHubTabs.Section[] Sections =
+    {
+        new(new QTab("records", "Records", "journal-check"), Permissions.StaffRecordsView),
+        new(new QTab("reports", "Reports", "bar-chart-line"), Permissions.StaffReportsView),
+    };
+
+    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private string hubTab = "records";
+
     private const int pageSize = 25;
 
     private static readonly IReadOnlyList<(string Value, string Label)> StatusOptions = new[]
@@ -216,11 +237,16 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        // The hub opens for anyone who may open ANY of its sections; the strip then shows only those.
+        // Gating the whole hub on staff.records.view would have taken Reports away from a
+        // reports-only holder the moment the two pages were merged into one route.
+        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
+        if (HubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+        hubTab = HubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -236,6 +262,14 @@
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
 
+        // The hub owns the URL: /admin/staff/records?tab=reports is the one link to the reports.
+        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
+        {
+            var t = wantedTab.ToString().Trim().ToLowerInvariant();
+            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
+        }
+
+        if (!HubTabs.Any(x => x.Key == "records")) { isLoading = false; return; }
         await LoadLookups();
         await Search(resetPage: true);
     }

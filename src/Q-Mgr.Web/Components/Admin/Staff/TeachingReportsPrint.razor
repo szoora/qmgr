@@ -26,7 +26,7 @@
 <PageTitle>Lessons Report - Q-Mgr</PageTitle>
 
 <QPrintSheet SheetId="trp-sheet" Title="@DocTitle" Class="trp-sheet" Landscape="true"
-             Ready="@(!isLoading && loadError == null)" BackText="Back to the teaching reports" OnBack="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))"
+             Ready="@(!isLoading && loadError == null)" BackText="Back to the teaching reports" OnBack="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))"
              CanPublish="@canPublish" Publishing="@isPublishing" OnPublish="@PublishToLibrary" OnPrint="@Print" Disabled="@(isLoading || loadError != null)">
     @if (report != null)
     {

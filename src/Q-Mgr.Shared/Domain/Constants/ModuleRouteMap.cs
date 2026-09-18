@@ -91,8 +91,6 @@ public static class ModuleRouteMap
         // product, it merely gains staff event keys when the module is on.
         ("/portal", ModuleCodes.StudentWelfare),
         ("/admin/staff", ModuleCodes.StudentWelfare),
-        // The subject catalogue (duty rota plan §5.2): its API is under api/v1/branches/{b}/staff/subjects.
-        ("/admin/subjects", ModuleCodes.StudentWelfare),
         // The timetable (duty rota plan §6): API under api/v1/branches/{b}/timetable.
         ("/admin/timetable", ModuleCodes.StudentWelfare),
         // My Day (duty rota plan §7.2): API under api/v1/branches/{b}/staff/lessons.

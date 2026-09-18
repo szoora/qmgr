@@ -32,7 +32,7 @@
              Class="rpp-sheet"
              Ready="@(!isLoading && loadError == null && r != null)"
              BackText="Back to reports"
-             OnBack="@(() => Navigation.NavigateTo("/admin/staff/reports"))"
+             OnBack="@(() => Navigation.NavigateTo("/admin/staff/records?tab=reports"))"
              CanPublish="@canPublish"
              Publishing="@isPublishing"
              OnPublish="@PublishToLibrary"

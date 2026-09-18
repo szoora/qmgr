@@ -15,7 +15,7 @@
 @inject IJSRuntime JS
 @inject JsonSerializerOptions JsonOptions
 
-<PageTitle>My Portal - Q-Mgr</PageTitle>
+<PageTitle>My Workspace - Q-Mgr</PageTitle>
 
 @*
     The staff member's own landing page (plan §10). Mobile-first: one column under 760px, two
@@ -98,7 +98,7 @@
         @if (myDay != null && (myDay.Lessons.Any() || myDay.Unrecorded.Any() || myDay.RecoveryOwed.Any()))
         {
             var toRecord = myDay.Lessons.Count(l => l.Status == LessonStatus.Unrecorded) + myDay.Unrecorded.Count;
-            <QCard id="my-day" Title="My Day" Subtitle="@MyDaySubtitle" Icon="sunrise" Class="portal-card">
+            <QCard id="my-day" Title="My School Day" Subtitle="@MyDaySubtitle" Icon="sunrise" Class="portal-card">
                 @if (myDay.NextLessonStartsAt is { } next && myDay.Lessons.FirstOrDefault(l => l.StartsAt == next) is { } nextLesson)
                 {
                     <p class="portal-myday-next"><QIcon Name="hourglass-split" Size="sm" /> Next: <strong>@nextLesson.ClassName · @nextLesson.SubjectName</strong> at @QDateFormat.LocalT(next)@(string.IsNullOrEmpty(nextLesson.Room) ? "" : $", {nextLesson.Room}")</p>
@@ -112,7 +112,7 @@
                     <p class="portal-myday-owed"><QIcon Name="arrow-repeat" Size="sm" /> @(myDay.RecoveryOwed.Count == 1 ? "1 missed lesson" : $"{myDay.RecoveryOwed.Count} missed lessons") to recover</p>
                 }
                 <div class="portal-duty__actions">
-                    <QButton Text="Open My Day" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/my-day"))" />
+                    <QButton Text="Open my school day" Icon="box-arrow-in-right" Size="sm" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/my-day"))" />
                 </div>
             </QCard>
         }

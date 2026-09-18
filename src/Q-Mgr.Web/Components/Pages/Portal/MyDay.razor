@@ -12,7 +12,7 @@
 @inject IModuleStateService ModuleState
 @inherits BranchAwareComponentBase
 
-<PageTitle>My Day - Q-Mgr</PageTitle>
+<PageTitle>My School Day - Q-Mgr</PageTitle>
 
 @*
     A teacher's day (duty rota plan §7.2): today's lessons in order with Taught / Not taught on each one that has
@@ -23,7 +23,7 @@
 <div class="admin-page myday-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>My Day</h1>
+            <h1>My School Day</h1>
             <p class="subtitle">@QDateFormat.LongDay(date) @(IsToday ? "· today" : "")</p>
         </div>
         <div class="header-actions">
@@ -143,7 +143,7 @@
                             <li><strong>@d.Title</strong><span>@(d.IsSupervisedByMe ? "Supervising" : "On duty") · @QDateFormat.LocalDT(d.StartsAt) – @QDateFormat.LocalDT(d.EndsAt)</span></li>
                         }
                     </ul>
-                    <QButton Text="Portal" Icon="person-badge" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/portal#on-duty"))" />
+                    <QButton Text="Workspace" Icon="person-badge" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo("/portal#on-duty"))" />
                 </QCard>
             }
             @if (day.Sessions.Any())

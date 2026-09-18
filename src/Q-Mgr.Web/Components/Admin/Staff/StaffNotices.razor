@@ -1,4 +1,5 @@
-@page "/admin/staff/notices"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/parameters, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using System.Text.Json
 @using QMgr.Application.DTOs
@@ -16,7 +17,10 @@
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
 
-<PageTitle>Staff Notices - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Staff Notices - Q-Mgr</PageTitle>
+}
 
 @*
     Notices (plan §8): published to a branch, a set of departments, a set of roles or a staff
@@ -26,6 +30,8 @@
 *@
 
 <div class="admin-page notices-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Staff notices</h1>
@@ -36,6 +42,7 @@
             <QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
         </div>
     </div>
+}
 
     @if (isLoading)
     {
@@ -296,6 +303,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private Task OnAcksExported(ExportResult export) => export.Success
         ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.NoticeAcknowledgements, Format = export.Format?.ToString() ?? "CSV", RowCount = export.RowCount })
         : Task.CompletedTask;

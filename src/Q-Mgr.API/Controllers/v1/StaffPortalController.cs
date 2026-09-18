@@ -211,7 +211,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
                 Detail = "You are the administrator on duty for this slot.",
                 DueAt = slot.StartsAt,
                 IsOverdue = slot.StartsAt <= now.AddHours(2),
-                Url = "/admin/staff/rota"
+                Url = "/admin/staff/duties?tab=rota"
             });
         }
 
@@ -230,7 +230,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
                 Detail = $"For {StaffDutyReports.PeriodText(r.PeriodStart, r.PeriodEnd)}. You are the administrator on duty.",
                 DueAt = r.DueAt,
                 IsOverdue = true,
-                Url = "/admin/staff/duty-reports"
+                Url = "/admin/staff/duties?tab=reports"
             }));
         }
 

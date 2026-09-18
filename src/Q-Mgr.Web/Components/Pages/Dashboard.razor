@@ -373,7 +373,7 @@ else if (hasCoreQueue && queueStatus != null)
         <div class="module-section-head">
             <h2><QIcon Name="journal-check" /> Teaching</h2>
             <QButton Text="Open reports" Icon="arrow-right" Variant="ghost" Size="sm"
-                     OnClick="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))" />
+                     OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))" />
         </div>
         @* This week in the reader's staff scope (duty rota plan §11, Phase 5): the lessons behind these figures are on the
            Lessons page; a head's tiles cover their departments only. *@
@@ -383,11 +383,11 @@ else if (hasCoreQueue && queueStatus != null)
         }
         <QStatRow>
             <QStatTile Value="@(teachingTiles.TaughtPercentThisWeek.HasValue ? $"{teachingTiles.TaughtPercentThisWeek:0.#}%" : "—")" Label="Lessons taught this week" Icon="check-circle"
-                       Variant="@(teachingTiles.TaughtPercentThisWeek is < 90 ? "warning" : "success")" Href="/admin/timetable/reports?tab=lessons" Sub="@($"{teachingTiles.LessonsThisWeek} {(teachingTiles.LessonsThisWeek == 1 ? "lesson" : "lessons")} so far")" />
+                       Variant="@(teachingTiles.TaughtPercentThisWeek is < 90 ? "warning" : "success")" Href="/admin/timetable?tab=reports&view=lessons" Sub="@($"{teachingTiles.LessonsThisWeek} {(teachingTiles.LessonsThisWeek == 1 ? "lesson" : "lessons")} so far")" />
             <QStatTile Value="@teachingTiles.UnrecordedThisWeek.ToString()" Label="Unrecorded this week" Icon="question-circle"
-                       Variant="@(teachingTiles.UnrecordedThisWeek > 0 ? "warning" : "success")" Href="/admin/timetable/lessons" />
+                       Variant="@(teachingTiles.UnrecordedThisWeek > 0 ? "warning" : "success")" Href="/admin/timetable?tab=lessons" />
             <QStatTile Value="@teachingTiles.NotRecovered.ToString()" Label="Not recovered" Icon="exclamation-octagon"
-                       Variant="@(teachingTiles.NotRecovered > 0 ? "danger" : "success")" Href="/admin/timetable/lessons" />
+                       Variant="@(teachingTiles.NotRecovered > 0 ? "danger" : "success")" Href="/admin/timetable?tab=lessons" />
             <QStatTile Value="@teachingTiles.DutyReportsOverdue.ToString()" Label="Duty reports overdue" Icon="journal-x"
                        Variant="@(teachingTiles.DutyReportsOverdue > 0 ? "danger" : "success")" Href="/admin/staff/duties?tab=reports" />
             @if (teachingTiles.HardClashes is { } clashes)

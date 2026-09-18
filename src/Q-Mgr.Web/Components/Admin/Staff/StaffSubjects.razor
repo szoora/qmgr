@@ -1,4 +1,5 @@
-@page "/admin/subjects"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
@@ -11,12 +12,17 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Subjects - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Subjects - Q-Mgr</PageTitle>
+}
 
 @* The subject catalogue (duty rota plan §5.2). Organization-wide: a subject is the same subject in every
    branch, and the teacher count is this branch's. Retired, never deleted — assignments, timetable lessons and
    lesson duties point at a subject by id. *@
 <div class="admin-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Subjects</h1>
@@ -27,6 +33,7 @@
             <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
         </div>
     </div>
+}
 
     <QFilterBar Wrap="true">
         <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, code or department" IconLeft="search" Clearable="true" Class="sj-search" />
@@ -125,6 +132,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private Guid branchId;
     private bool isLoading = true, saving, showRetired, showModal;
     private string? search;

@@ -1,4 +1,5 @@
-@page "/admin/timetable/lessons"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
@@ -12,7 +13,10 @@
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 
-<PageTitle>Lessons - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Lessons - Q-Mgr</PageTitle>
+}
 
 @*
     Lessons (duty rota plan §10, inside Timetable): the lessons taught, missed, recovered and still unrecorded, for the
@@ -21,6 +25,8 @@
 *@
 
 <div class="admin-page lessons-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Lessons</h1>
@@ -28,13 +34,14 @@
         </div>
         <div class="header-actions">
             <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
-            <QButton Text="Reports" Icon="bar-chart-line" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable/reports?tab=lessons"))" />
+            <QButton Text="Reports" Icon="bar-chart-line" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))" />
             @if (selected.Any())
             {
                 <QButton Text="@($"Confirm {selected.Count} self-report(s)")" Icon="check2-all" Variant="primary" OnClick="@ConfirmSelectedAsync" Disabled="@busy" />
             }
         </div>
     </div>
+}
 
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" />
@@ -209,6 +216,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true, busy, canCancel;
     private Guid branchId;
     private LessonListDto? list;

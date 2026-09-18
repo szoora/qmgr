@@ -1,4 +1,5 @@
 @page "/admin/staff/parameters"
+@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -16,14 +17,28 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Performance Parameters</h1>
-            <p class="subtitle">What is measured: the taxonomy every staff record is logged against, with its points, caps, weight and default visibility. Organisation-wide.</p>
+            <h1>Setup</h1>
+            <p class="subtitle">What is measured, how it is scored, what staff are told, and who did what. Organisation-wide.</p>
         </div>
         <div class="header-actions">
-            <QCheckbox @bind-Value="@showInactive" Label="Show retired" />
-            <QButton Text="New parameter" Icon="plus-lg" Variant="primary" OnClick="@ShowCreate" />
+            @if (hubTab == "parameters")
+            {
+                <QCheckbox @bind-Value="@showInactive" Label="Show retired" />
+                <QButton Text="New parameter" Icon="plus-lg" Variant="primary" OnClick="@ShowCreate" />
+            }
         </div>
     </div>
+
+    @* The Setup hub (2026-09-18). Parameters, Scoring Policy, Notices and the Activity Log were four
+       sidebar entries and four routes; they are all "configure the module and see what happened",
+       done once a term rather than daily. One page, four tabs, one route. *@
+    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="su" />
+
+    @if (hubTab == "policy")        { <StaffPolicy Embedded="true" /> }
+    else if (hubTab == "notices")   { <StaffNotices Embedded="true" /> }
+    else if (hubTab == "activity")  { <StaffActivity Embedded="true" /> }
+    else
+    {
 
     @if (isLoading)
     {
@@ -102,6 +117,7 @@
                 </table>
             </div>
         </QCard>
+    }
     }
 </div>
 
@@ -242,6 +258,19 @@
 </style>
 
 @code {
+    /// <summary>The Setup hub's tabs — four sidebar entries and four routes until 2026-09-18. A tab
+    /// is shown only to a caller who may open it; see StaffHubTabs.</summary>
+    private static readonly StaffHubTabs.Section[] Sections =
+    {
+        new(new QTab("parameters", "Parameters", "sliders2"), Permissions.StaffParametersManage),
+        new(new QTab("policy", "Scoring Policy", "gear-wide-connected"), Permissions.StaffParametersManage),
+        new(new QTab("notices", "Notices", "megaphone"), Permissions.StaffNoticesManage),
+        new(new QTab("activity", "Activity Log", "clock-history"), Permissions.StaffRecordsView),
+    };
+
+    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private string hubTab = "parameters";
+
     private static readonly IReadOnlyList<ParameterKind> Kinds = Enum.GetValues<ParameterKind>();
     private static readonly IReadOnlyList<StaffGroup> Groups = Enum.GetValues<StaffGroup>();
     private static readonly IReadOnlyList<WelfareVisibility> Visibilities = Enum.GetValues<WelfareVisibility>();
@@ -302,11 +331,15 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!await PermissionService.HasPermissionAsync(Permissions.StaffParametersManage))
+        // Notices and the Activity Log were their own pages with their own permissions until the
+        // merge, so the hub opens for any of the four and shows only what the caller holds.
+        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
+        if (HubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+        hubTab = HubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -314,6 +347,15 @@
             Navigation.NavigateTo("/billing/modules");
             return;
         }
+
+        // The hub owns the URL: /admin/staff/parameters?tab=notices is the one link to the notices.
+        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
+        {
+            var t = wantedTab.ToString().Trim().ToLowerInvariant();
+            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
+        }
+
+        if (!HubTabs.Any(x => x.Key == "parameters")) { isLoading = false; return; }
 
         try
         {

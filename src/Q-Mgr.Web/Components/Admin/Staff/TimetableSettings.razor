@@ -1,4 +1,5 @@
-@page "/admin/timetable/settings"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
@@ -11,7 +12,10 @@
 @inherits BranchAwareComponentBase
 @inject IPermissionService PermissionService
 
-<PageTitle>School Day - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>School Day - Q-Mgr</PageTitle>
+}
 
 @*
     The school day (the periods, breaks and cycle — "bell schedule" until 2026-09-18), the cycle and declared unavailability (duty rota plan §6.1) — Branch.Settings["Timetable"],
@@ -22,6 +26,8 @@
 *@
 
 <div class="admin-page tts-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>School Day</h1>
@@ -35,6 +41,7 @@
             }
         </div>
     </div>
+}
 
     @if (isLoading)
     {
@@ -245,6 +252,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true, canManage, saving, staffUnavailable;
     private Guid branchId;
     private TimetableSettingsDto? settings;

@@ -297,7 +297,7 @@ public class StaffRotaController : StaffPerformanceControllerBase
                     Type = NotificationType.StaffPerformance,
                     Channels = NotificationChannel.InApp,
                     EventKey = NotificationEventKeys.StaffRotaAssigned,
-                    ActionUrl = "/admin/staff/rota",
+                    ActionUrl = "/admin/staff/duties?tab=rota",
                     IconClass = "arrow-left-right"
                 });
             }

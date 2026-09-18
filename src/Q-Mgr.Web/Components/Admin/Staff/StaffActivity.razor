@@ -1,4 +1,5 @@
-@page "/admin/staff/activity"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/parameters, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
@@ -14,15 +15,21 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Staff Activity Log - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Staff Activity Log - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Activity Log</h1>
             <p class="subtitle">Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here.</p>
         </div>
     </div>
+}
 
     <StaffScopeNote Departments="@(log?.ScopedToDepartments)" Noun="events" />
 
@@ -54,6 +61,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private const int pageSize = 50;
 
     private Guid branchId;

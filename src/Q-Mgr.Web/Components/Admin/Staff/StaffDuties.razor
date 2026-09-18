@@ -261,12 +261,17 @@
     /// The Duties hub's tabs. Registers is this page's own week view; Rota and Reports are the two
     /// pages that used to be separate sidebar entries and separate routes.
     /// </summary>
-    private static readonly IReadOnlyList<QTab> HubTabs = new List<QTab>
+    // Rota and Duty Reports were their own pages and their own entries before the merge. Everyone
+    // who has a duty sees their own week, so these carry no permission of their own; the sections
+    // scope their contents server-side. See StaffHubTabs.
+    private static readonly StaffHubTabs.Section[] Sections =
     {
-        new("registers", "Registers", "calendar-check"),
-        new("rota", "Rota", "calendar-week"),
-        new("reports", "Reports", "journal-text"),
+        new(new QTab("registers", "Registers", "calendar-check")),
+        new(new QTab("rota", "Rota", "calendar-week")),
+        new(new QTab("reports", "Reports", "journal-text")),
     };
+
+    private static readonly IReadOnlyList<QTab> HubTabs = Sections.Select(s => s.Tab).ToList();
 
     private string hubTab = "registers";
 

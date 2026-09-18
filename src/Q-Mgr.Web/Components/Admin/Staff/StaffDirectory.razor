@@ -197,14 +197,17 @@
     /// StaffStructure, embedded. Before 2026-09-18 those lived on a separate sidebar entry whose
     /// Staff tab listed the same people this page already lists, with fewer columns.
     /// </summary>
-    private static readonly IReadOnlyList<QTab> HubTabs = new List<QTab>
+    // Departments & Structure was its own page and its own permission before the merge, so the hub
+    // opens for either and shows only the sections the caller holds. See StaffHubTabs.
+    private static readonly StaffHubTabs.Section[] Sections =
     {
-        new("people", "People", "people"),
-        new("departments", "Departments", "diagram-3"),
-        new("coverage", "Coverage", "shield-check"),
-        new("import", "Import", "upload"),
+        new(new QTab("people", "People", "people"), Permissions.StaffRecordsView),
+        new(new QTab("departments", "Departments", "diagram-3"), Permissions.StaffStructureManage),
+        new(new QTab("coverage", "Coverage", "shield-check"), Permissions.StaffRecordsView, Permissions.StaffStructureManage),
+        new(new QTab("import", "Import", "upload"), Permissions.StaffStructureManage),
     };
 
+    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
     private string hubTab = "people";
 
     /// <summary>Set when People asks the Departments section to open one person's editor.</summary>
@@ -285,11 +288,13 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!await PermissionService.HasPermissionAsync(Permissions.StaffRecordsView))
+        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
+        if (HubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
+        hubTab = HubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -319,7 +324,9 @@
         branchId = BranchState.CurrentBranchId;
         TrackBranch();
 
-        await LoadAsync();
+        // A structure-only caller never sees People, so do not fetch a list they may not read.
+        if (HubTabs.Any(x => x.Key == "people")) await LoadAsync();
+        else isLoading = false;
     }
 
     private async Task LoadAsync()

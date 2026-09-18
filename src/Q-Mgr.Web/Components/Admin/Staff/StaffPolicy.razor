@@ -1,4 +1,5 @@
-@page "/admin/staff/policy"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/parameters, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -11,9 +12,14 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Staff Performance Policy - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Staff Performance Policy - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Scoring Policy</h1>
@@ -23,6 +29,7 @@
             <QButton Text="Save policy" Icon="check-lg" Variant="primary" OnClick="@Save" Loading="@isSaving" Disabled="@(policy == null)" />
         </div>
     </div>
+}
 
     @if (isLoading)
     {
@@ -130,7 +137,7 @@
                 </div>
                 <small class="pol-help">The MoES band is 20–24 lessons a week, 18 for a teacher on both levels. The timetable reports a teacher outside these as a soft clash; they never block publishing.</small>
                 <div class="form-row">
-                    <QInput TValue="string" @bind-Value="@policy.MyDayLocalTime" Type="time" Label="My Day digest at" HelperText="Branch-local: one message a morning per person." />
+                    <QInput TValue="string" @bind-Value="@policy.MyDayLocalTime" Type="time" Label="My School Day digest at" HelperText="Branch-local: one message a morning per person." />
                     <QInput TValue="int" @bind-Value="@policy.LessonReminderMinutes" Type="number" Min="0" Max="120" Label="Lesson reminder (minutes before)" />
                 </div>
                 <div class="form-row">
@@ -194,6 +201,10 @@
 </style>
 
 @code {
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private sealed class PeriodDraft { public string Key = ""; public string Name = ""; public DateTime? Start; public DateTime? End; }
     private sealed class BandDraft { public int Rating; public string Name = ""; public decimal MinScore; }
 

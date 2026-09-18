@@ -166,7 +166,7 @@ public static class NotificationEventKeys
         new(StaffLessonReminder, "A lesson of mine starts soon",
             "A few minutes before each lesson. In-app by default: the morning digest already carries the day.",
             "Lessons", DefaultEmail: false, DefaultSms: false),
-        new(StaffMyDay, "My Day — the morning digest",
+        new(StaffMyDay, "My School Day — the morning digest",
             "Today's lessons, duties and reports due, in one message.",
             "Lessons", DefaultEmail: true, DefaultSms: false),
         new(StaffLessonChanged, "A lesson of mine moved or was cancelled",

@@ -1,4 +1,5 @@
-@page "/admin/timetable/reports"
+@* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
+   own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
 @implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
@@ -12,7 +13,10 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 
-<PageTitle>Teaching Reports - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Teaching Reports - Q-Mgr</PageTitle>
+}
 
 @*
     The teaching reports (duty rota plan §11): teaching load, lessons taught (MoES Annex 4) with the recovery schedule
@@ -21,6 +25,8 @@
 *@
 
 <div class="admin-page tr-page">
+@if (!Embedded)
+{
     <div class="page-header">
         <div class="header-content">
             <h1>Teaching Reports</h1>
@@ -33,6 +39,7 @@
                      OnClick="@(() => Navigation.NavigateTo($"/admin/timetable/reports/print?period={Uri.EscapeDataString(period)}"))" />
         </div>
     </div>
+}
 
     <StaffScopeNote Departments="@(report?.ScopedToDepartments)" Noun="figures" />
 
@@ -239,7 +246,13 @@
 </style>
 
 @code {
-    [SupplyParameterFromQuery(Name = "tab")] public string? TabQuery { get; set; }
+    /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns
+    /// the page title, the header band and the tabs.</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    // The Timetable hub owns ?tab= (it picks which SECTION shows), so this section reads ?view= for
+    // its own sub-tab. Two components binding one query key is the link duplication all over again.
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewQuery { get; set; }
 
     private Guid branchId;
     private bool isLoading = true;
@@ -286,7 +299,7 @@
             Navigation.NavigateTo("/billing/modules");
             return;
         }
-        if (TabQuery is "load" or "lessons" or "rota" or "health") tab = TabQuery;
+        if (ViewQuery is "load" or "lessons" or "rota" or "health") tab = ViewQuery;
         await BranchState.InitializeAsync();
         branchId = BranchState.CurrentBranchId;
         TrackBranch();

@@ -371,7 +371,7 @@ public class ReminderLadderJob
                         Priority = NotificationPriority.Normal,
                         Channels = channels & ~NotificationChannel.Sms,
                         EventKey = NotificationEventKeys.StaffDutyReportOverdue,
-                        ActionUrl = "/admin/staff/duty-reports",
+                        ActionUrl = "/admin/staff/duties?tab=reports",
                         IconClass = "journal-x"
                     }, report.Id);
             }
@@ -615,8 +615,8 @@ public class ReminderLadderJob
                     if (v.Reports > 0) parts.Add(v.Reports == 1 ? "1 report due" : $"{v.Reports} reports due");
                     var title = parts.Count > 0 ? $"Today: {string.Join(", ", parts)}" : "Today";
                     var message = v.Unrecorded > 0
-                        ? $"{(v.Unrecorded == 1 ? "1 earlier lesson is" : $"{v.Unrecorded} earlier lessons are")} still unrecorded. Open My Day for the times, rooms and to mark them."
-                        : "Open My Day for the times and rooms.";
+                        ? $"{(v.Unrecorded == 1 ? "1 earlier lesson is" : $"{v.Unrecorded} earlier lessons are")} still unrecorded. Open My School Day for the times, rooms and to mark them."
+                        : "Open My School Day for the times and rooms.";
                     await SafeSendAsync(new CreateNotificationRequest
                     {
                         UserId = userId,
