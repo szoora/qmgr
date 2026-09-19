@@ -188,7 +188,7 @@ public class NotificationDispatchJob
                     Type = NotificationType.SystemAlert,
                     Priority = NotificationPriority.High,
                     IconClass = "exclamation-triangle",
-                    ActionUrl = "/admin/notifications",
+                    ActionUrl = "/admin/settings?tab=notifications",
                     DeliveredVia = NotificationChannel.InApp
                 });
             }

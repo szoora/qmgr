@@ -270,6 +270,15 @@
     /// <summary>Raised when the job reaches a terminal state, so the page can refresh its own list.</summary>
     [Parameter] public EventCallback OnCompleted { get; set; }
 
+    /// <summary>
+    /// The name of the sheet the reader chose, raised as soon as it is read. The page needs it for
+    /// SourceFileName on the import job — the column the Import History modal shows so somebody can
+    /// tell last Tuesday's upload from this morning's. StudentRoster passed a field that nothing
+    /// ever assigned (CS0649, on every build) once its own file picker moved in here, so every
+    /// roster import since has recorded a null name.
+    /// </summary>
+    [Parameter] public EventCallback<string?> OnFileChosen { get; set; }
+
     private ImportPreview<TRow>? preview;
     private RosterImportJobDto? job;
     private List<RosterImportJobEntryDto> entries = new();
@@ -313,6 +322,7 @@
             }
 
             FileName = e.File.Name;
+            await OnFileChosen.InvokeAsync(FileName);
             // Excel and CSV alike are read in the BROWSER by SheetJS; only text comes back, which is
             // why this product needs no server-side Excel library (a standing constraint).
             var csv = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId);

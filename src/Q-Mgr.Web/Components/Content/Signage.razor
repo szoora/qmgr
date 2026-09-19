@@ -1,0 +1,119 @@
+@page "/content/signage"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inherits BranchAwareComponentBase
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Signage hub (2026-09-19). Playlists, Campaigns, Display Zones and Schedules were four
+    sidebar entries and four routes for one subject: what plays, where, and when. One entry, one
+    route, four tabs. The sections have no @page of their own — see CLAUDE.md, "A hub owns the
+    route; its sections own nothing".
+
+    FULL-SCREEN SIGNAGE IS NOT A TAB and its route is untouched. /display/signage/{branchId} is a
+    public display surface on DisplayLayout, in the same excluded set as the kiosk and the print
+    sheets that every size and radius rule in CLAUDE.md skips. It is a launch target, so it is an
+    ACTION here and keeps its own @page.
+*@
+
+<PageTitle>Signage - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Signage<QInfo Text="What plays on this branch's screens, where it plays, and when." Label="Signage" /></h1>
+            <p class="subtitle">What plays on this branch's screens, where it plays, and when.</p>
+        </div>
+        <div class="header-actions">
+            <QButton Text="Open full-screen signage" Icon="fullscreen" Variant="secondary"
+                     OnClick="@OpenFullScreen" Disabled="@(BranchState.CurrentBranchId == Guid.Empty)"
+                     Title="@(BranchState.CurrentBranchId == Guid.Empty ? "Select a branch from the header first." : null)" />
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="sg" AriaLabel="Signage sections" />
+
+    @if (hubTab == CampaignsTab) { <Campaigns Embedded="true" /> }
+    else if (hubTab == ZonesTab) { <DisplayZones Embedded="true" /> }
+    else if (hubTab == SchedulesTab) { <Schedules Embedded="true" /> }
+    else if (hubTab == PlaylistsTab) { <Playlists Embedded="true" /> }
+</div>
+
+@code {
+    private const string PlaylistsTab = "playlists";
+    private const string CampaignsTab = "campaigns";
+    private const string ZonesTab = "zones";
+    private const string SchedulesTab = "schedules";
+
+    /// <summary>
+    /// All four sections are content.view, the gate each enforced as a page. Run through HubTabs
+    /// regardless: the rule is load-bearing the moment a section with a narrower permission joins.
+    /// </summary>
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(PlaylistsTab, "Playlists", "music-note-list"), Permissions.ContentView),
+        new(new QTab(CampaignsTab, "Campaigns", "easel-fill"), Permissions.ContentView),
+        new(new QTab(ZonesTab, "Display Zones", "grid-3x3"), Permissions.ContentView),
+        new(new QTab(SchedulesTab, "Schedules", "calendar-week"), Permissions.ContentView),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = PlaylistsTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Only so the full-screen button follows the branch switcher. The sections track the
+        // branch themselves; this hub holds no branch-scoped data of its own.
+        if (!firstRender) return;
+        await BranchState.InitializeAsync();
+        TrackBranch();
+        StateHasChanged();
+    }
+
+    protected override Task OnBranchChangedAsync(Guid branchId) => Task.CompletedTask;
+
+    private void OpenFullScreen()
+    {
+        var branchId = BranchState.CurrentBranchId;
+        if (branchId == Guid.Empty) return;
+        Navigation.NavigateTo($"/display/signage/{branchId}");
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

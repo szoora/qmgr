@@ -18,7 +18,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Welfare Categories</h1>
+            <h1>Welfare Categories<QInfo Text="Define the achievement, behavior and welfare categories staff can log against a student" Label="Welfare Categories" /></h1>
             <p class="subtitle">Define the achievement, behavior and welfare categories staff can log against a student</p>
         </div>
         @if (canCreate)
@@ -150,29 +150,10 @@
     </FooterContent>
 </QModal>
 
-<style>
-    .admin-page {
-        padding: 0;
-    }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
-    .header-content h1 {
+<style>.header-content h1 {
         margin: 0 0 4px;
         color: var(--qm-text-primary);
     }
-
-    .subtitle {
-        margin: 0;
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
-
     .loading-container, .empty-state {
         display: flex;
         flex-direction: column;
@@ -302,10 +283,6 @@
         color: var(--qm-primary);
     }
 
-    .form-group {
-        margin-bottom: 16px;
-    }
-
     .form-group label {
         display: block;
         margin-bottom: 6px;
@@ -320,13 +297,6 @@
         font-size: 12px;
         color: var(--qm-text-muted);
     }
-
-    .form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-
     .color-picker {
         display: flex;
         flex-wrap: wrap;

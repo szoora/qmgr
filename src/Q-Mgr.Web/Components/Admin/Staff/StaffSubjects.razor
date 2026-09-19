@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Web.Services
@@ -21,19 +20,19 @@
    branch, and the teacher count is this branch's. Retired, never deleted — assignments, timetable lessons and
    lesson duties point at a subject by id. *@
 <div class="admin-page">
-@if (!Embedded)
-{
-    <div class="page-header">
+<div class="page-header">
+    @if (!Embedded)
+    {
         <div class="header-content">
-            <h1>Subjects</h1>
+            <h1>Subjects<QInfo Text="The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here." Label="Subjects" /></h1>
             <p class="subtitle">The subjects your school teaches. Subject teachers are assigned to classes on the Class Teachers page; the timetable and teaching-load reports read their names from here.</p>
         </div>
-        <div class="header-actions">
-            <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/class-teachers"))" />
-            <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
-        </div>
+    }
+    <div class="header-actions">
+        <QButton Text="Class Teachers" Icon="person-video3" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/students/class-teachers"))" />
+        <QButton Text="New subject" Icon="plus-lg" Variant="primary" OnClick="@(() => Open(null))" />
     </div>
-}
+</div>
 
     <QFilterBar Wrap="true">
         <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, code or department" IconLeft="search" Clearable="true" Class="sj-search" />
@@ -127,9 +126,7 @@
     .sj-colour label { display: block; font-size: 13px; font-weight: 600; color: var(--qm-text-primary); margin-bottom: 6px; }
     .sj-colour-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
     .sj-colour-row input[type=color] { width: 44px; height: 36px; padding: 2px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm); background: var(--qm-bg-card); cursor: pointer; }
-    .sj-sub { font-size: 12px; color: var(--qm-text-muted); }
-    .admin-page .q-card { margin-top: 14px; }
-</style>
+    .sj-sub { font-size: 12px; color: var(--qm-text-muted); }</style>
 
 @code {
     /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns

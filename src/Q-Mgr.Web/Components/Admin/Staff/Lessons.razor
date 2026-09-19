@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/timetable, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -25,23 +24,23 @@
 *@
 
 <div class="admin-page lessons-page">
-@if (!Embedded)
-{
-    <div class="page-header">
+<div class="page-header">
+    @if (!Embedded)
+    {
         <div class="header-content">
-            <h1>Lessons</h1>
+            <h1>Lessons<QInfo Text="Taught, missed and recovered lessons — and those nobody has recorded yet." Label="Lessons" /></h1>
             <p class="subtitle">Taught, missed and recovered lessons — and those nobody has recorded yet.</p>
         </div>
-        <div class="header-actions">
-            <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
-            <QButton Text="Reports" Icon="bar-chart-line" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))" />
-            @if (selected.Any())
-            {
-                <QButton Text="@($"Confirm {selected.Count} self-report(s)")" Icon="check2-all" Variant="primary" OnClick="@ConfirmSelectedAsync" Disabled="@busy" />
-            }
-        </div>
+    }
+    <div class="header-actions">
+        <QButton Text="Timetable" Icon="grid-3x3-gap" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable"))" />
+        <QButton Text="Reports" Icon="bar-chart-line" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports&view=lessons"))" />
+        @if (selected.Any())
+        {
+            <QButton Text="@($"Confirm {selected.Count} self-report(s)")" Icon="check2-all" Variant="primary" OnClick="@ConfirmSelectedAsync" Disabled="@busy" />
+        }
     </div>
-}
+</div>
 
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" />
@@ -210,10 +209,7 @@
     .lessons-teacher { min-width: 220px; flex: 0 1 280px; }
     .lessons-muted { font-size: 12.5px; color: var(--qm-text-muted); }
     .lessons-error { color: var(--qm-danger); font-size: 13px; }
-    .lessons-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
-
-    .lessons-page .q-card { margin-top: 14px; }
-</style>
+    .lessons-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }</style>
 
 @code {
     /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns

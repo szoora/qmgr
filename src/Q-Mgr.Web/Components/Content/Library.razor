@@ -1,0 +1,108 @@
+@page "/content/library"
+@using Microsoft.AspNetCore.WebUtilities
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Library hub (2026-09-19). Media Library and Document Library were two sidebar entries and
+    two routes for two asset libraries sitting side by side. One entry, one route, two tabs.
+
+    The sections have no @page of their own — see CLAUDE.md, "A hub owns the route; its sections
+    own nothing". /content/media and /content/documents are GONE, not aliased: a hub that works
+    while its sections keep their own routes is two sources of truth for one screen, which is what
+    the user objected to when the Staff hubs first shipped that way.
+*@
+
+<PageTitle>Library - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Library<QInfo Text="Everything this organization has uploaded: pictures and video for the screens, and PDF documents that can be put on a screen, shared by secure link, or both." Label="Library" /></h1>
+            <p class="subtitle">Everything this organization has uploaded: pictures and video for the screens, and PDF documents that can be put on a screen, shared by secure link, or both.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="lib" AriaLabel="Library sections" />
+
+    @if (hubTab == DocumentsTab)
+    {
+        <DocumentLibrary Embedded="true" highlightId="@DocumentParam" />
+    }
+    else if (hubTab == MediaTab)
+    {
+        <MediaLibrary Embedded="true" />
+    }
+</div>
+
+@code {
+    private const string MediaTab = "media";
+    private const string DocumentsTab = "documents";
+
+    /// <summary>
+    /// Both sections are content.view — the same gate they each enforced as pages. HubTabs is used
+    /// anyway rather than skipped as "obviously equal": it earns its keep the moment somebody adds
+    /// a section with a narrower permission, which is exactly how the Staff Records hub silently
+    /// lost Reports for a reports-only holder.
+    /// </summary>
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(MediaTab, "Media", "images"), Permissions.ContentView),
+        new(new QTab(DocumentsTab, "Documents", "file-earmark-lock2"), Permissions.ContentView),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = MediaTab;
+
+    /// <summary>
+    /// The document a notification asked to open. The HUB reads it, because the section is no
+    /// longer routable and [SupplyParameterFromQuery] binds only on a routable component. Two
+    /// notifications carry this link (DocumentShareService and DocumentShareRetentionJob) and both
+    /// now address the hub: /content/library?tab=documents&amp;document={id}. The hub owns "tab",
+    /// the section owns "document" — no collision, and nothing else may bind either.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "document")] public Guid? DocumentParam { get; set; }
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        tabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        // A FAILED module load must not redirect: an API blip is not an absent module, and the
+        // next LoadAsync retries.
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        // A link that names a document but no tab means the documents tab: the notification it
+        // came from is about a document, and landing on Media would read as a broken link.
+        hubTab = HubTabs.Resolve(tabs, TabParam ?? (DocumentParam.HasValue ? DocumentsTab : null));
+        appliedTab = TabParam;
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

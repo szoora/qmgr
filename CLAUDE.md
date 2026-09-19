@@ -469,6 +469,16 @@ photograph of an injured child**, so that lookup lives in one place.
   because the DB "RateLimiting" row replaces the config section wholesale and an administrator's
   edit must not be able to black out a signage screen.
 
+- **`MediaStorage:Provider` must stay `Local`, and the API says so loudly at startup if it is not
+  (2026-09-19).** Flipping it to `S3` wires `S3MediaStorageService` for UPLOADS only —
+  `UploadsController` still serves every byte with `PhysicalFile` off the local store, because it
+  needs a disk path for the existence check, the ETag and the range processing pdf.js and `<video>`
+  depend on. So an S3 install uploads successfully and then 404s every welfare photograph, every
+  visitor badge and every signage image, with nothing anywhere saying why. Serving from a bucket is
+  real work that has never been run against one, and shipping it unexercised would be worse than
+  saying so. `Program.cs` logs a specific error naming the fix; **logged, not fatal, the same call
+  as the Data Protection key-ring probe above it.**
+
 ## Secure document sharing: publishing is the boundary (built 2026-09-15)
 
 The plan is `docs/plans/SECURE_DOCUMENT_SHARING.md` (**Revision 3, 2026-09-18** carries the post-build
@@ -799,6 +809,30 @@ The environmental notes below remain true and are still worth avoiding:
   the wrong browser, not of a server problem. Check `list_connected_browsers` before assuming
   anything else.
 
+## Every bulk import is `QImportPanel`, and the browser only turns a sheet into CSV (finished 2026-09-19)
+
+Three imports, built months apart, each with its own journey: the student roster parsed in
+JavaScript (`rosterImport.parseFile` carried a header-alias map, its own idea of a bad row and its
+own typed output), the staff list parsed in C#, and the welfare history parsed in JavaScript under a
+SECOND alias map in the same file. The roster and the staff list moved to the shared panel on
+2026-09-18; **the welfare history was the last one and moved on 2026-09-19.**
+
+- **`Components/Shared/UI/QImportPanel.razor` owns the whole client-side journey** — choose a sheet,
+  read it, validate it, preview it, send it, watch it over SignalR with a slow reconciling poll
+  behind, and read the row-by-row result. A caller supplies `Columns`, `BuildRow`, `StartAsync`,
+  `LoadJobAsync` and the rest. Uniformity is structural rather than promised: all three callers run
+  this component, so they cannot drift again.
+- **`rosterImport.js` is down to `sheetToCsv`.** `parseFile` and both alias maps were DELETED once
+  the last caller left, rather than left "in case". A second place where a column name can be
+  recognised differently is this codebase's most-repeated bug, and it had already produced two
+  disagreeing maps in one file. SheetJS still does the reading, in the browser, so the server needs
+  no Excel library — that part is the standing no-server-dependencies rule and is unchanged.
+- **The aliases a spreadsheet may use are carried across verbatim** whenever an import moves, so no
+  sheet that used to import stops importing. The welfare set is in `WelfareReports.razor`.
+- **`OnFileChosen` is how the page learns the file name** for `SourceFileName` on the job. The roster
+  passed a field nothing ever assigned once its own file picker moved into the panel — CS0649 on
+  every build — so every roster import since has recorded a null name in the Import History.
+
 ## Text inputs must use `@bind`, never `value="…"` plus `@oninput` (found in production 2026-09-11)
 
 Reported as "when I type fast the input lags and drops characters, on every form". The cause was
@@ -924,6 +958,18 @@ Two rules for anything that acts on auth state:
   race an uninitialised store and read a signed-in user as anonymous. It is idempotent, so calling
   it costs nothing when `MainLayout` already has. `MainLayout` established this order; follow it
   rather than inventing a second one.
+
+**These two rules are about a COMPONENT THAT ACTS ON AUTH STATE ITSELF — `MainLayout`,
+`RedirectToLogin`, a public page. They are NOT a reason to move an ordinary page's permission guard
+(checked 2026-09-19).** A note carried since 2026-09-18 claimed the Document Library's guard had to
+move out of `OnInitializedAsync` because of this race, and that `MediaLibrary` carried the same
+latent bug. **That does not survive a code read.** `MainLayout` renders `@Body` only inside the
+`else` of `@if (!authChecked)`, and `authChecked` is set only after `AppInit.InitializeAsync()` on
+both of its paths — so no page beneath it can run against an uninitialised token store. Seventy-six
+pages guard in `OnInitializedAsync`; a real mechanism would be a seventy-five page outage, not a
+latent edge case. Whatever bounced an administrator on 2026-09-18, the recorded cause does not
+explain it. **Do not sweep the other pages onto that shape on the strength of that note; reproduce
+it first.**
 
 **A public page must never pass through `AuthorizeRouteView` (found 2026-09-15, the share-page
 "login bounce").** `AuthorizeRouteView` renders its *Authorizing* and *NotAuthorized* states
@@ -1145,6 +1191,70 @@ test of this path needs `http://127.0.0.1:5003` in the API's CORS origins (for e
 `Cors__AllowedOrigins__4`), because locally Web and API are different origins. The dummy record it
 created, "Dummy record - evidence upload test. Safe to delete.", is on Test Student One.
 
+
+## The staff record has two halves, and they belong to different people (2026-09-19)
+
+Reported as *"we implemented other basic information relating to the staff member, but the feature
+does not surface in the ui, there is no way of updating the staff member data"* — and it was worse
+than that. Twelve fields had been on the `User` row since 2026-09-18 and the bulk staff import had
+been writing them since, but there was **no per-person read endpoint, no write endpoint and no UI
+anywhere**. A typo in an imported sheet was permanent, and a school entering its staff by hand could
+record none of it.
+
+**The split is enforced by the SHAPE of the request, not by markup**, which is what makes it hold:
+
+- **CONTACT — the person's own.** Phone, second phone, office, emergency contact name and number.
+  `PUT api/v1/staff/portal/profile/contact`, no permission code (self is always visible and is not
+  scope — the `ProfileController` rule). It takes `UpdateStaffContactRequest`, which **has nowhere to
+  put an employment field**, so the endpoint cannot be persuaded to write one however a client asks.
+  `JobTitle` is on that record because the class-teacher card writes it, and the portal endpoint
+  IGNORES it: what the school calls somebody is the school's decision.
+- **EMPLOYMENT — the school's record.** Dates, terms, qualification, registration number, date of
+  birth, sex, national ID, employee number. `PUT …/staff/structure/members/{userId}/profile`, gated
+  on `staff.structure.manage`. **A person editing their own start date or teaching registration
+  number would make the MoES staff return unauditable**, which is the whole reason for the line.
+- **Neither** may touch role, permissions or branch. `RoleAssignmentGuard` owns those.
+
+Four rules that are easy to break:
+
+- **`StaffGroup` is DERIVED, never stored.** `IStaffPerformancePolicyService.GroupFor` reads it off
+  the person's role, so it is absent from every write request. Changing it means changing the role.
+- **The read is `staff.records.view` plus the staff scope, and answers 404 — never 403.** The same
+  rule as `VerifyStudentAccess`: a 403 confirms the person exists.
+- **The activity summary names the FIELD that moved, never its value.** "national ID updated" is the
+  useful half; the values go in `DetailJson`, which no endpoint returns. Recorded at
+  `WelfareVisibility.Confidential`.
+- **The person is told only about what they would notice** — job title, employment terms — not on
+  every save. A corrected national ID is an administrative fix, and a notification on each one
+  trains people to ignore the bell. A self-edit notifies nobody at all and is recorded in the log,
+  which is where "who changed this number" is answered.
+
+**Adding staff no longer leaves the module.** "Add staff" was `NavigateTo("/admin/users")`, which
+dropped the person into Administration with no explanation and no way back — reported as a blackout,
+which is the right word. It is a dialog on the directory now, posting to
+`POST …/staff/structure/members`: the same user-creation path underneath, **`RoleAssignmentGuard`
+included** (a new endpoint that assigns a role and does not call it is the 2026-09-18 privilege
+escalation again), the same temporary password, the same onboarding checklist. Deliberately narrower
+than Users & Roles — permissions and deactivation stay there and the dialog links to them.
+
+**`RoleListDto` moved to `Q-Mgr.Shared`** on the way: the Web was maintaining two independent copies
+of that wire shape and a third was about to be written for the dialog. Same bug class as
+`OrganizationBrandingDto`, `ContentDto`, `NotificationDto`, `UserInfo` and `SubscriptionPlan`.
+
+### A hub section may hide its title. It must NEVER hide its actions (found 2026-09-19)
+
+**Nine sections folded into hubs on 2026-09-18 wrapped their whole `page-header` — title AND
+buttons — in `@if (!Embedded)`.** The hub has nowhere to render those buttons, so they simply
+vanished: inside its hub the **Scoring Policy could not be saved**, the **School Day could not be
+saved**, a notice could not be created, a rota slot could not be added, a subject could not be
+created and a report could not be printed. All nine pages were read-only and nothing said so.
+
+Guard only the `header-content` / `header-left` block; leave the `page-header` element and its
+`header-actions` outside the condition. **`scripts/e2e/section-actions-check.mjs` fails the moment a
+section hides an action again**, and `scripts/e2e/suite-route-check.mjs` catches the other half of
+this class — an e2e suite still driving a route the hubs retired, which is how three suites came to
+measure a 404 page and report it as a product bug.
+
 ## A hub owns the route; its sections own nothing (2026-09-18)
 
 Sixteen Staff Performance entries in the left navigation became six. The user's direction was
@@ -1189,9 +1299,68 @@ Verified by `scripts/e2e/browser/staff-nav-hubs.mjs`, **42 checks in a headed Ch
 eleven absences, five hubs with the right tab counts, all eleven retired routes 404ing rather than
 serving a second copy, and every deep link opening its own section.
 
-**The Communication group is still ten entries** and has the same shape of problem; nothing has been
-done to it, and doing so is its own piece of work, not a tidy-up.
+### The other two groups followed on 2026-09-19 — Communication 10 → 4, Administration 14 → 4
 
+The user's answer when both were put to them was **"both, in this pass"**. Communication is
+**Library** (Media · Documents), **Signage** (Playlists · Campaigns · Display Zones · Schedules),
+**Broadcasts** and **Feedback** (Responses · Survey questions · Reports). Administration is
+**Branches** (Branches · Counters · Service Types), **Users & Roles** (Users · Roles · Join Requests ·
+Onboarding), **Appearance** (Branding · Kiosk · Printing · Customer Links) and **Settings** (General ·
+Notifications · Industry · Integrations). **Eighteen routes were deleted outright**, not aliased.
+
+**`Components/Shared/HubTabs.cs` is the ONE home for all three groups.** It was `StaffHubTabs` under
+`Components/Admin/Staff` and moved rather than being copied the moment a second group needed it — a
+gate that decides who sees what is the worst possible place for a second copy that can drift. Note the
+five Staff hubs each held a FIELD called `HubTabs`, which shadowed the type the moment it was renamed;
+they are `hubTabs` now, matching `hubTab` beside them.
+
+Four rules this pass added, none of which the Staff hubs had to face:
+
+- **A hub can cross module boundaries; its single route cannot.** Branches is base product while
+  Counters and Service Types are Core Queue; Users & Roles is base product while Join Requests and
+  Onboarding are Welfare & Performance; Settings spans base product, Core Queue and Integrations & API.
+  Each of those pages carried its own `ModuleRouteMap` entry, and one route cannot carry several module
+  requirements. The requirement moved onto the SECTION —
+  **`HubTabs.Section.RequiringModule(...)`** — and onto the sidebar gate.
+  **`ModuleAllows(path)` is the trap here: it returns TRUE for an unmapped path** (no requirement
+  found), so once a route is deleted from the table every `ShowAdmin*` gate built on it silently
+  opened to every tenant. They read `HasModule(ModuleCodes.X)` directly now. A failed module load
+  still shows every tab, the same fail-open as every page-level redirect.
+- **A same-route `?tab=` navigation does not re-run `OnInitializedAsync`.** A link from one tab of a
+  hub to another — Join Requests offering "Join link and onboarding", Schedules offering Playlists —
+  changes the URL and nothing else unless the hub follows it. **`HubTabs.FollowQuery` is that one
+  home**, called from `OnParametersSet`; it compares against the last query value ACTED ON, never
+  against the active tab, or clicking a tab snaps the reader back to whatever the URL still said.
+  The five Staff hubs were moved onto it too, and off their hand-rolled `QueryHelpers.ParseQuery`.
+- **`MainLayout.IsActive` strips the query.** `ToBaseRelativePath` keeps it, so `/admin/users?tab=roles`
+  did not equal `/admin/users` and the sidebar entry lost its highlight on every non-default tab of
+  every hub — including the Staff hubs, silently, since 2026-09-18.
+- **A section that is not routable cannot use `[SupplyParameterFromQuery]`.** It binds only on a
+  routable component, so `DocumentLibrary.highlightId` became a plain `[Parameter]` and the LIBRARY
+  HUB reads `?document=` and passes it down. The hub owns `tab`, the section owns `document`.
+  A link naming a document with no tab opens Documents, because the notification it came from is
+  about a document.
+
+**Two gates were wrong before the merge and the hub is what exposed them**, which is the argument for
+running `HubTabs` even where every section shares a permission: the sidebar gated Feedback Reports on
+`feedback.view` while the page enforced `reports.view`, so a holder of one and not the other saw a
+link that bounced them to `/unauthorized`; and `UsersSetup` demanded `users.view` for a page holding
+BOTH the users and the roles list, locking a `roles.view` holder out of the roles. Users and Roles are
+separate tabs with separate gates now.
+
+**"Campaign Marketing" is Broadcasts, and the signage section is Campaigns** (user decision, 2026-09-19,
+chosen from four options). Two unrelated things were called campaigns and would have sat one line apart
+in the sidebar. The route `/admin/marketing` did not move — only what a person reads.
+
+**`scripts/e2e/route-audit.mjs` exists because of this work and should be run after any route change.**
+It reads every `@page` in the solution and every `ActionUrl` / `NavigateTo` / `href` / `Href` /
+`ConfigureUrl` in Web, API and Shared, and reports links that resolve to nothing. It found two real
+bugs on its first run: `NotificationDispatchJob`'s "delivery is failing" alert pointed at
+`/admin/notifications`, **a route no page has ever declared** — the one notification whose job is to
+report that email or SMS is broken could not be opened — and `ReportsOverview` reached
+`/reports/feedback` through `NavigateToReport("feedback")`, an interpolated fragment invisible to a
+grep for the literal route. **Do not build a route by interpolating a fragment**; that card now
+carries its whole path, precisely so a sweep can see it.
 ### Names a person reads (user decisions, 2026-09-18)
 
 `My Portal` → **My Workspace**, because `/portal` is the person's own hub — their file, score, to-dos
@@ -1248,6 +1417,32 @@ and a fetch with no `else` renders an empty list with no explanation. A reload f
   `StateHasChanged` afterwards, and the unsubscribe.** Never subscribe to `OnBranchChanged` by hand
   again: a grep for `BranchState.OnBranchChanged` under `Components/` should return **nothing**.
   59 pages inherit it.
+
+- **A page NEVER declares `@implements IDisposable`, `@implements IAsyncDisposable`, or a `Dispose`
+  of its own. Teardown goes in an override of `DisposeCore()` or `DisposeCoreAsync()`
+  (found 2026-09-19, and it had been live since the base class shipped).** Thirteen pages declared
+  one of those interfaces beside `@inherits BranchAwareComponentBase`, and on every one of them the
+  base's `Dispose` **never ran**: the `OnBranchChanged` handler was never removed and `_disposed`
+  never became true, so a stale instance re-ran its whole load on every later branch switch for the
+  life of the circuit — `IBranchStateService` is `AddScoped`, meaning one instance for the whole
+  browser session, so the handlers piled up one per visit.
+
+  Two separate mechanisms, and only one of them warned:
+  - **Eight pages** wrote `public void Dispose()` beside `@implements IDisposable`. That second line
+    re-declares the interface, which **re-maps `IDisposable.Dispose` to the page's own method** (C#
+    interface re-implementation, §18.6.4) and leaves the base's unreachable. The compiler reported
+    it as **CS0114 on every build** and nothing acted on it. Five of the eight had an *empty* body,
+    so those pages did nothing at all on teardown.
+  - **Five pages** wrote `DisposeAsync` beside `@implements IAsyncDisposable`. Blazor's renderer
+    disposes a component with `IAsyncDisposable` **if it has one and `IDisposable` only otherwise**
+    — an `else if`, not both. Nothing reported this one at all: they are different interfaces, so
+    there is no hiding and no warning of any kind.
+
+  The base now implements **both** interfaces, its `Dispose` and `DisposeAsync` are **not virtual**,
+  and each unsubscribes before calling the page's hook. Trying to `override Dispose` is a compile
+  ERROR now rather than a silent leak, which is the point of sealing it off. A grep under
+  `Components/` for `@implements IDisposable` or `@implements IAsyncDisposable` on a page that
+  inherits the base should return **nothing**.
 - **Converting the 26 hand-rolled copies was a FIX, not tidying.** The common shape was
   `_ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });` — fire-and-forget, with no
   guard on an unchanged or empty branch and no disposed check, so a switch reloaded twice, reloaded
@@ -1910,6 +2105,103 @@ than a patch to one screen.
   Long lines of prose are genuinely harder to read; a table is not prose. The public and kiosk pages
   (`FeedbackPage`, `JoinQueue`, `TicketStatus`) centre deliberately and are outside this, the same
   set every other scale rule excludes.
+
+### The band, the controls and the prose (2026-09-19) — and the two rules that had been inert
+
+Reported as *"that page heading bar and the tabs are extremely exaggerated… the content is coming
+over 3/4 of the page"*, then *"the heading / title bar is still big… yet it has mainly the page
+title"*, then *"reduce the button size"*. Measured across 15 pages: **furniture 171px → 96px**, of
+which the header band was **107px → 48px**.
+
+**TWO RULES WERE SET IN 2026-09-18 AND NEVER REACHED THE SCREEN.** That is the important part; the
+values were never the problem.
+
+- **`qm-theme.css` carried `.page-header h1 { font-size: 28px }`** — equal specificity to
+  `layout.css`'s `.qm-main h1` and LATER in the cascade, so the title reduction lost every time.
+  Read off `document.styleSheets` in the running page, not inferred. The same file also carried
+  `padding: 32px`, a full-bleed negative margin paired with a padding set in another file (the exact
+  trap this document already names), and a **300px radial-gradient blob** drawn by `::before` — the
+  last decorative gradient in the app, missed by the 2026-08-19 flattening because a pseudo-element
+  has no `background` to grep for. All four are gone. **`.qm-main h1` is the one home for the title
+  size and nothing else may set it**; `uniform-check.mjs` now asserts both the computed size AND
+  that the winning rule is that one.
+- **`app.css` carried `.form-group { margin-bottom: 20px }`**, beating `--qm-field-gap` the same way.
+
+**A Razor `<style>` block is NOT scoped.** Blazor injects it as written, so a page that redefines a
+shared class name overrides the global scale for every element of that name while the page is
+mounted — a hub's own frame included. There were **170 such overrides of 14 names**; 142 were swept
+and the rest are page-owned compounds or the excluded set. Three were doing real damage:
+`.page-header { margin-bottom: 24px }` beat the token on whichever page was open;
+`.subtitle { font-size: 14px }` in 24 components beat the band's own size; and
+`.admin-page { max-width: 900px; margin: 0 auto }` in BrandingSettings and KioskSettings **capped
+the entire Appearance hub hosting them** — 312px of a 1212px page unused, which is the second
+screenshot. **`scripts/e2e/style-leak-check.mjs` fails the moment one comes back.**
+
+The scale itself, for reference — change the token, never a page:
+
+- **Title `.qm-main h1`: 20px** (18px on a phone). **Controls 32 / 28 / 38px at 13px**
+  (`--q-control-h`, `-sm`, `-lg`), down from 36 / 30 / 44 at 14px. **The phone floor of 40px is NOT
+  scaled with them** — that is a finger, not a pointer.
+- **Tabs are a control**: `--q-control-h-sm`, 6/13 padding, 13px, 12px margin. They were 48px tall
+  under a 20px margin, the largest fixed cost on a hub page and, since the hubs, on eleven pages.
+- **The band is ONE ROW.** `.page-header .header-content` is a centred flex row: title, then the
+  subtitle beside it taking what is left and truncating. **`align-items: center`, never `baseline`**
+  — a `QInfo` in the `h1` is an inline-flex element that moves the line box's baseline and pushed
+  the subtitle onto a second line (52px against 33px for the same markup). **The title itself never
+  shrinks** (`flex: 0 0 auto; white-space: nowrap`) or a long subtitle wraps it instead.
+- `--qm-page-header-gap` 6px, `--qm-block-gap` 10px, `--qm-field-gap` 12px.
+- **A data page has no width cap; a document page keeps its reading width; a hub SECTION never caps
+  width at all** — the hub owns the frame. `/notifications` lost its 960px cap (a list of rows is not
+  prose); the portal's record, notice and appraisal pages keep theirs.
+
+**`QInfo` is where standing explanation goes, and it is NOT a tooltip.** 155 blocks of permanent
+prose — page subtitles, `.form-hint`, `.settings-hint` — sat on screen for something most people
+read once. 52 moved into a popover beside the thing they explain. The app already had 153 `title=`
+attributes and that is what a reader would otherwise get: a native tooltip cannot hold a sentence,
+never appears on a touch screen, is not reachable by keyboard and cannot carry a link. **A warning
+is not a hint and stays on the page** — if the sentence changes what somebody DOES ("cannot be
+undone", "only ever points here", anything safeguarding), it is not eligible; the sweep's `KEEP`
+list encodes that.
+
+**Short, definitive labels** (user instruction): *"simply write No Students yet. do not use too many
+words."* 28 empty-state and failure headings shortened — a heading names the STATE ("No students
+yet", "Record not available"), and the sentence under it, where one is needed, explains what to do.
+
+**Two measuring scripts, because eyeballing this is how it drifted.**
+`scripts/e2e/browser/furniture-check.mjs` reports header, tabs, furniture, first-row position and
+unused width per page; `density-check.mjs` still does its A/B in one page load.
+
+### A timeline renders a page, never its history (2026-09-19)
+
+**`QTimelinePaging` is the one home** (`Components/Shared/UI/QTimelinePaging.cs`): 25 items, a
+`ShowMore()` step, and a `Reset()` that must be called whenever the underlying list changes — a new
+period, a different person, a branch switch — or the reader keeps a depth they scrolled to on a list
+that is no longer the same list. The staff file, the student welfare chronology and the portal all
+use it.
+
+Every item in a `QTimeline` is a card with a marker, a day header, chips and its own actions — a
+component subtree, not a row. On Blazor Server the renderer diffs each one and ships the result down
+a SignalR circuit, so a 400-record file spent that cost on the wire and on a school's connection.
+It pages what is RENDERED rather than what is fetched: the queries are already scoped by period and
+the payloads are small, so the expensive half is the render, and paging it needs no round trip.
+
+### A dashboard's figures carry a period — except the ones that cannot (2026-09-19)
+
+Every figure was all-time, which answers "how many ever". The dashboard now carries a
+`QDateRangePicker` (default 30 days, remembered per browser in `localStorage`), and **two kinds of
+panel that must not be conflated**:
+
+- **PERIOD** — welfare, feedback, teaching. Scoped to the range, and each panel states it under its
+  own heading, so a scoped figure is never read as all-time (the same rule as
+  `WelfareSummaryDto.ScopedToClasses`). `welfare/summary` has taken `dateFrom`/`dateTo` all along
+  and the dashboard simply never passed them.
+- **LIVE** — Now Serving, counters, visitors on site. **A date range must never apply to who is
+  standing in the building**; a ranged "currently on site" is a number that reads like the truth and
+  is not. That panel is labelled *Live*.
+
+The two summary endpoints spell their parameters differently (`dateFrom`/`dateTo` versus
+`fromDate`/`toDate`). Both are wire formats; the caller names them rather than either being renamed.
+
 ## Duty rota build: the rules Phase 0 left (2026-09-17)
 
 The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume point are Phase 89 in the tracker.

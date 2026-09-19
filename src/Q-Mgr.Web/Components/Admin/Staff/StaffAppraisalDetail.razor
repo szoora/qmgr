@@ -1,5 +1,4 @@
 @page "/admin/staff/appraisals/{Id:guid}"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -22,7 +21,7 @@
     }
     else if (a == null)
     {
-        <QEmptyState Icon="clipboard-x" Title="This appraisal is not available to you"
+        <QEmptyState Icon="clipboard-x" Title="Appraisal not available"
                      Text="It may belong to a member of staff outside your departments, or it may have been removed.">
             <Action><QButton Text="Back to the board" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/appraisals"))" /></Action>
         </QEmptyState>
@@ -110,7 +109,7 @@
                         }
                         else if (!a.Targets.Any())
                         {
-                            <p class="ad-muted">No targets agreed yet. MoES calls this the performance plan: a few specific things this person and their appraiser agree to work towards this term.</p>
+                            <p class="ad-muted">No targets yet. MoES calls this the performance plan: a few specific things this person and their appraiser agree to work towards this term.</p>
                         }
                         else
                         {
@@ -269,7 +268,7 @@
                         <p class="ad-muted ad-small">Signed @QDateFormat.LocalDT(a.SignedAt) by @(a.SignedByName ?? "—"). Score and breakdown are frozen.</p>
                         @if (a.ReportMediaContentId.HasValue)
                         {
-                            <QChip Text="Signed report in the Library" Icon="file-earmark-pdf" Href="@($"/content/documents?document={a.ReportMediaContentId}")" />
+                            <QChip Text="Signed report in the Library" Icon="file-earmark-pdf" Href="@($"/content/library?tab=documents&document={a.ReportMediaContentId}")" />
                         }
                         else
                         {
@@ -452,7 +451,6 @@
     .ad-composite { margin-bottom: 12px; }
     .ad-composite__n { display: block; font-size: 32px; font-weight: 700; line-height: 1; color: var(--qm-text-primary); font-variant-numeric: tabular-nums; }
     .ad-composite__l { font-size: 12px; color: var(--qm-text-muted); }
-    .form-group { margin-bottom: 14px; }
     .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
 </style>
 

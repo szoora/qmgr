@@ -11,7 +11,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Deletion Audit</h1>
+            <h1>Visitor Deletion Audit<QInfo Text="Every deleted visit record for this branch — the records themselves were never actually removed, only hidden from the active log" Label="Visitor Deletion Audit" /></h1>
             <p class="subtitle">Every deleted visit record for this branch — the records themselves were never actually removed, only hidden from the active log</p>
         </div>
         <div class="header-actions">
@@ -68,12 +68,7 @@
     }
 </div>
 
-<style>
-    .admin-page { padding: 0; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; max-width: 640px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
 

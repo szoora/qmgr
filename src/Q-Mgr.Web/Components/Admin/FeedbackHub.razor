@@ -1,0 +1,103 @@
+@page "/admin/feedback"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Reports
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Feedback hub (2026-09-19). Feedback Management and Feedback Reports were two sidebar
+    entries and two routes; Management also carried a tab strip of its own. Flattened to ONE strip
+    of three: a strip inside a strip is the same duplication one level down.
+
+    The sections have no @page — see CLAUDE.md, "A hub owns the route; its sections own nothing".
+    /reports/feedback is gone, and its ModuleRouteMap entry with it.
+*@
+
+<PageTitle>Feedback - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Feedback<QInfo Text="What customers said, the questions they were asked, and what it adds up to over a period." Label="Feedback" /></h1>
+            <p class="subtitle">What customers said, the questions they were asked, and what it adds up to over a period.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="fb" AriaLabel="Feedback sections" />
+
+    @if (hubTab == ReportsTab)
+    {
+        <CustomerFeedback Embedded="true" />
+    }
+    else
+    {
+        @* One component serves both of its tabs; EmbeddedTab tells it which, and keeps the lazy
+           load of the questions list working. Same shape as StaffStructure inside the Staff hub. *@
+        <FeedbackManagement Embedded="true" EmbeddedTab="@hubTab" />
+    }
+</div>
+
+@code {
+    private const string ResponsesTab = "responses";
+    private const string QuestionsTab = "questions";
+    private const string ReportsTab = "reports";
+
+    /// <summary>
+    /// Reports is reports.view, NOT feedback.view — and that is a fix, not a transcription. The
+    /// sidebar gated the Feedback Reports link on feedback.view while the page itself enforced
+    /// reports.view, so anybody holding one and not the other saw a link that bounced them to
+    /// /unauthorized. Gating the tab on what the section actually enforces is the whole point of
+    /// HubTabs: an absent tab reads as an absent permission, a tab that throws you out reads as a
+    /// broken product.
+    /// </summary>
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(ResponsesTab, "Responses", "chat-quote-fill"), Permissions.FeedbackView),
+        new(new QTab(QuestionsTab, "Survey questions", "ui-checks"), Permissions.FeedbackView),
+        new(new QTab(ReportsTab, "Reports", "bar-chart-line-fill"), Permissions.ReportsView),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = ResponsesTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The hub opens for anyone who may open ANY of its sections; the strip then shows only
+        // those. Gating the whole hub on feedback.view would have taken the reports away from a
+        // reports-only holder the moment the two pages were merged onto one route.
+        tabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        await ModuleState.LoadAsync(ModuleApi);
+        if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.EngagementCommunications))
+        {
+            Navigation.NavigateTo("/billing/modules", forceLoad: false);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

@@ -1,0 +1,177 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+
+@*
+    My own staff file, on my own portal (2026-09-19).
+
+    "do you suggest that staff member can update their profile from their portal, except for admin
+    configured information" — yes, and the split is drawn here because it is drawn on the server:
+
+      I may edit      phone, second phone, office, emergency contact name and number. These go
+                      stale constantly and I am the only one who knows when they change.
+      I may READ      employment dates and terms, qualification, registration number, date of
+                      birth, sex, national ID, employee number, job title, department, line
+                      manager. My file is mine to read — subject access assumes it — but editing my
+                      own start date or registration number would make the school's MoES return
+                      unauditable.
+      nobody here     role, permissions, branch. RoleAssignmentGuard owns those.
+
+    The portal endpoint takes UpdateStaffContactRequest, which has nowhere to put an employment
+    field, so it cannot be persuaded to write one. This card is the explanation of that rule, not
+    the thing enforcing it.
+*@
+
+<QCard id="my-details" Title="My details" Subtitle="What the school has on file for you" Icon="person-vcard" Class="portal-card">
+    <HeaderActions>
+        @if (!editing && profile is not null)
+        {
+            <QButton Text="Update my contact detail" Icon="pencil" Size="sm" Variant="secondary" OnClick="StartEdit" />
+        }
+    </HeaderActions>
+    <ChildContent>
+        @if (isLoading)
+        {
+            <div class="md-loading"><QSpinner Size="sm" /><span>Loading your file…</span></div>
+        }
+        else if (profile is null)
+        {
+            <QEmptyState Icon="person-x" Title="File unavailable" Text="Reload the page, or tell an administrator if it keeps happening." />
+        }
+        else if (editing)
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Second phone" @bind-Value="form.AlternatePhone" Placeholder="Staff room or out of hours" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Where to find you" @bind-Value="form.OfficeLocation" Placeholder="Staff room B" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Emergency contact" @bind-Value="form.EmergencyContactName" Placeholder="Who to call about you" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Emergency number" @bind-Value="form.EmergencyContactPhone" />
+                </div>
+            </div>
+            <div class="form-actions md-actions">
+                <QButton Text="Cancel" Variant="ghost" OnClick="CancelEdit" />
+                <QButton Text="Save" Icon="check-lg" Variant="primary" OnClick="Save" Loading="@isSaving" />
+            </div>
+        }
+        else
+        {
+            <dl class="md-list">
+                <div><dt>Phone</dt><dd>@Show(profile.Phone)</dd></div>
+                <div><dt>Second phone</dt><dd>@Show(profile.AlternatePhone)</dd></div>
+                <div><dt>Where to find you</dt><dd>@Show(profile.OfficeLocation)</dd></div>
+                <div><dt>Emergency contact</dt><dd>@Show(profile.EmergencyContactName)</dd></div>
+                <div><dt>Emergency number</dt><dd>@Show(profile.EmergencyContactPhone)</dd></div>
+            </dl>
+
+            <div class="md-sep">
+                <span>
+                    Held by the school
+                    <QInfo Label="Held by the school" Align="right"
+                           Text="Your employment record is part of the school's own file and its MoES staff return, so an administrator maintains it rather than you. If something here is wrong, tell them — it is theirs to correct, and every change is recorded." />
+                </span>
+            </div>
+
+            <dl class="md-list md-list--locked">
+                <div><dt>Job title</dt><dd>@Show(profile.JobTitle)</dd></div>
+                <div><dt>Role</dt><dd>@Show(profile.RoleName)</dd></div>
+                <div><dt>Department</dt><dd>@(profile.DepartmentNames.Count == 0 ? "—" : string.Join(", ", profile.DepartmentNames))</dd></div>
+                <div><dt>Line manager</dt><dd>@Show(profile.LineManagerName)</dd></div>
+                <div><dt>Employee number</dt><dd>@Show(profile.EmployeeNumber)</dd></div>
+                <div><dt>Terms</dt><dd>@(profile.EmploymentType?.ToString() ?? "—")</dd></div>
+                <div><dt>Appointed</dt><dd>@(profile.EmploymentStartDate.HasValue ? QDateFormat.D(profile.EmploymentStartDate.Value) : "—")</dd></div>
+                @if (profile.EmploymentEndDate.HasValue)
+                {
+                    <div><dt>Leaving</dt><dd>@QDateFormat.D(profile.EmploymentEndDate.Value)</dd></div>
+                }
+                <div><dt>Qualification</dt><dd>@Show(profile.Qualification)</dd></div>
+                <div><dt>Registration number</dt><dd>@Show(profile.TeachingRegistrationNumber)</dd></div>
+            </dl>
+        }
+    </ChildContent>
+</QCard>
+
+<style>
+    .md-loading { display: flex; align-items: center; gap: 8px; color: var(--qm-text-muted); font-size: 13px; }
+    .md-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 20px; margin: 0; }
+    .md-list div { display: flex; flex-direction: column; min-width: 0; }
+    .md-list dt { margin: 0; font-size: 11.5px; color: var(--qm-text-muted); }
+    .md-list dd { margin: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+    .md-list--locked dd { color: var(--qm-text-secondary); }
+    .md-sep { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--qm-text-muted); }
+    .md-sep span { display: inline-flex; align-items: center; gap: 4px; }
+    .md-sep::after { content: ""; flex: 1; height: 1px; background: var(--qm-border); }
+    .md-actions { margin-top: 12px; justify-content: flex-end; }
+</style>
+
+@code {
+    private StaffProfileDto? profile;
+    private UpdateStaffContactRequest form = new();
+    private bool isLoading = true, isSaving, editing;
+
+    private static string Show(string? v) => string.IsNullOrWhiteSpace(v) ? "—" : v;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        try
+        {
+            profile = await StaffApi.GetMyProfileAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load your details", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void StartEdit()
+    {
+        if (profile is null) return;
+        form = new UpdateStaffContactRequest
+        {
+            Phone = profile.Phone,
+            AlternatePhone = profile.AlternatePhone,
+            OfficeLocation = profile.OfficeLocation,
+            EmergencyContactName = profile.EmergencyContactName,
+            EmergencyContactPhone = profile.EmergencyContactPhone
+        };
+        editing = true;
+    }
+
+    private void CancelEdit() => editing = false;
+
+    private async Task Save()
+    {
+        isSaving = true;
+        try
+        {
+            profile = await StaffApi.UpdateMyContactAsync(form);
+            editing = false;
+            Toast.Notify(ToastSeverity.Success, "Your details are updated", "Thank you — this is how people reach you.");
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not save your details", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

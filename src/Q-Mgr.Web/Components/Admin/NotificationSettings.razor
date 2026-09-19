@@ -1,4 +1,3 @@
-@page "/admin/notification-settings"
 @using System.Text.Json
 @using QMgr.Application.DTOs
 @using QMgr.Web.Services
@@ -10,14 +9,20 @@
 @inject INotificationApiService NotificationApi
 @inject NavigationManager Navigation
 
-<PageTitle>Notification Settings - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Notification Settings - Q-Mgr</PageTitle>
+}
 
 <div class="qm-admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Notification Settings</h1>
-            <p class="subtitle">Configure SMS, Email, and In-App notification channels</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Notification Settings</h1>
+                <p class="subtitle">Configure SMS, Email, and In-App notification channels</p>
+            </div>
+        }
         @if (canManage)
         {
             <QButton Text="Save Settings" Icon="check-lg" Variant="primary"
@@ -125,8 +130,7 @@
                             </div>
 
                             <div class="qm-admin-divider"></div>
-                            <h4>Credentials (Optional)</h4>
-                            <p class="qm-admin-form-hint">Use if the gateway requires username/password authentication</p>
+                            <h4>Credentials (Optional)<QInfo Text="Use if the gateway requires username/password authentication" Label="Credentials (Optional)" /></h4>
 
                             <div class="qm-admin-form-grid">
                                 <div class="qm-admin-form-group">
@@ -387,8 +391,7 @@
                             </div>
 
                             <div class="qm-admin-divider"></div>
-                            <h4>When to send</h4>
-                            <p class="qm-admin-form-hint">Each moment costs a message per customer &mdash; switch off the ones you don't need.</p>
+                            <h4>When to send<QInfo Text="Each moment costs a message per customer &mdash; switch off the ones you don't need." Label="When to send" /></h4>
 
                             <div class="qm-admin-form-grid">
                                 <div class="qm-admin-form-group toggle-item">
@@ -717,6 +720,11 @@
 </div>
 
 @code {
+    /// <summary>True when the Settings hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true;
     private bool isSaving = false;
     /// <summary>Latched when a settings load fails. Blocks Save so defaults cannot silently overwrite real settings.</summary>

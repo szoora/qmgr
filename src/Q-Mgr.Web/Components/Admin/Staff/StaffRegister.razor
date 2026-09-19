@@ -67,7 +67,7 @@
     }
     else if (register == null)
     {
-        <QEmptyState Icon="clipboard-x" Title="This register could not be opened" Text="@(loadError ?? "The duty may have been cancelled, or you may not be one of its recorders.")">
+        <QEmptyState Icon="clipboard-x" Title="Register not available" Text="@(loadError ?? "The duty may have been cancelled, or you may not be one of its recorders.")">
             <Action><QButton Text="Back to duties" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff/duties"))" /></Action>
         </QEmptyState>
     }
@@ -166,10 +166,7 @@
 <style>
     .reg-page { max-width: 760px; margin: 0 auto; }
     .reg-page--editing { padding-bottom: 96px; }
-    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-    .header-content { min-width: 0; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); overflow-wrap: anywhere; }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 13px; }
     .reg-back { margin-left: -8px; margin-bottom: 4px; }
 
     .reg-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: var(--qm-radius-md); font-size: 13px; }
@@ -198,7 +195,8 @@
     .reg-seg__btn:disabled { cursor: default; opacity: 0.85; }
     .reg-seg__key { font-weight: 700; font-size: 15px; line-height: 1; }
     .reg-seg__word { font-size: 11px; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-    @@media (max-width: 480px) { .reg-seg__word { display: none; } .reg-seg__key { font-size: 17px; } }
+    @@media (max-width: 480px) { .reg-seg__word { display: none; }
+     .reg-seg__key { font-size: 17px; } }
 
     .reg-seg__btn--on { color: var(--qm-text-on-primary); border-color: transparent; }
     .reg-seg__btn--present.reg-seg__btn--on, .reg-seg__btn--completed.reg-seg__btn--on, .reg-seg__btn--recovered.reg-seg__btn--on, .reg-key--present, .reg-key--recovered { background: var(--qm-success); }

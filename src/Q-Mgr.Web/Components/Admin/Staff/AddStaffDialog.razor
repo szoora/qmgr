@@ -1,0 +1,211 @@
+@using QMgr.Application.DTOs
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject HttpClient Http
+@inject System.Text.Json.JsonSerializerOptions JsonOptions
+@inject IToastService Toast
+@inject NavigationManager Navigation
+
+@*
+    Adding a member of staff without leaving the Staff Directory (2026-09-19).
+
+    "Add staff" used to be NavigateTo("/admin/users") — it dropped the person into Administration
+    with no explanation and no way back to the directory they were reading. Reported as a blackout,
+    and that is the right word for it.
+
+    Underneath it is the same user-creation path: RoleAssignmentGuard still decides which roles the
+    caller may hand out, the account is still created with a temporary password that must be
+    changed at first sign-in, and the onboarding checklist still picks it up. Deliberately narrower
+    than Users & Roles — permissions and deactivation stay there, and the footer links to it for
+    exactly those.
+*@
+
+<QModal @bind-Visible="Visible" Title="@(created is null ? "Add a member of staff" : "Staff member added")" Size="md">
+    <ChildContent>
+        @if (created is not null)
+        {
+            <div class="as-done">
+                <QIcon Name="check-circle-fill" Class="as-done__mark" />
+                <strong>@created.FullName can now sign in.</strong>
+                <p class="form-hint">Give them these. The password works once, for 72 hours, and they choose their own at first sign-in.</p>
+
+                <dl class="as-creds">
+                    <div><dt>Username</dt><dd>@created.Username</dd></div>
+                    <div><dt>Email</dt><dd>@created.Email</dd></div>
+                    <div><dt>Temporary password</dt><dd class="as-pw">@created.TemporaryPassword</dd></div>
+                </dl>
+
+                <p class="form-hint as-warn">
+                    This password is shown once and is not stored anywhere in readable form. If it is lost,
+                    issue a new one from Onboarding.
+                </p>
+            </div>
+        }
+        else
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="string" Label="First name" @bind-Value="form.FirstName" Required="true" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Last name" @bind-Value="form.LastName" Required="true" />
+                </div>
+                <div class="form-group form-group--wide">
+                    <QInput TValue="string" Label="Email" Type="email" @bind-Value="form.Email" Required="true"
+                            Placeholder="name@school.ac.ug" />
+                    <p class="form-hint">They sign in with this, and it is where an invitation would go.</p>
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Job title" @bind-Value="form.JobTitle" Placeholder="Teacher of Maths" />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="Guid" TItem="RoleListDto" Label="Role" @bind-Value="form.RoleId" Items="@roles"
+                             TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Id)" Placeholder="Choose a role" Required="true" />
+                    <p class="form-hint">
+                        What they may do in Q-Mgr. Only roles you may hand out are listed.
+                    </p>
+                </div>
+                <div class="form-group">
+                    <QMultiSelect TValue="Guid" TItem="DepartmentDto" Label="Department" SelectedValues="@form.DepartmentIds"
+                                  SelectedValuesChanged="@(v => form.DepartmentIds = v.ToList())"
+                                  Items="@departments" TextSelector="@(d => d.Name)" ValueSelector="@(d => d.Id)"
+                                  Placeholder="None yet" />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="Guid?" TItem="StaffMemberDto" Label="Line manager" @bind-Value="form.LineManagerUserId"
+                             Items="@directory" TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)"
+                             Placeholder="Nobody yet" AllowClear="true" />
+                    <p class="form-hint">Who appraises them, and who is told about their records.</p>
+                </div>
+            </div>
+        }
+    </ChildContent>
+    <FooterContent>
+        @if (created is not null)
+        {
+            <QButton Text="Add another" Icon="plus-lg" Variant="secondary" OnClick="Reset" />
+            <QButton Text="Done" Variant="primary" OnClick="Close" />
+        }
+        else
+        {
+            <QButton Text="Users &amp; Roles" Icon="box-arrow-up-right" Variant="ghost"
+                     OnClick="@(() => Navigation.NavigateTo("/admin/users"))"
+                     Title="Permissions and deactivating an account live there" />
+            <QButton Text="Cancel" Variant="ghost" OnClick="Close" />
+            <QButton Text="Add staff member" Icon="person-plus" Variant="primary" OnClick="Save" Loading="@isSaving" />
+        }
+    </FooterContent>
+</QModal>
+
+<style>
+    .as-done { text-align: center; }
+    .as-done__mark { font-size: 34px; color: var(--qm-success); }
+    .as-done strong { display: block; margin: 8px 0 4px; }
+    .as-creds { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 0; text-align: left; }
+    .as-creds div { display: flex; justify-content: space-between; gap: 14px; padding-bottom: 6px; border-bottom: 1px solid var(--qm-border); }
+    .as-creds dt { margin: 0; font-size: 12px; color: var(--qm-text-muted); }
+    .as-creds dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+    .as-pw { font-family: var(--qm-font-mono, monospace); letter-spacing: 0.04em; }
+    .as-warn { margin-top: 12px; }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>The directory, for the line-manager picker. Passed in rather than re-fetched.</summary>
+    [Parameter] public IReadOnlyList<StaffMemberDto> Directory { get; set; } = Array.Empty<StaffMemberDto>();
+
+    /// <summary>Raised after a successful create so the directory behind the dialog refreshes.</summary>
+    [Parameter] public EventCallback OnCreated { get; set; }
+
+    private CreateStaffMemberRequest form = new();
+    private CreateStaffMemberResult? created;
+    private List<RoleListDto> roles = new();
+    private List<DepartmentDto> departments = new();
+    private List<StaffMemberDto> directory = new();
+    private bool isSaving, loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        directory = Directory.OrderBy(m => m.FullName).ToList();
+        if (!Visible || loaded) return;
+        loaded = true;
+        await LoadLookupsAsync();
+    }
+
+    private async Task LoadLookupsAsync()
+    {
+        try
+        {
+            // RolesController already withholds the platform-only and other-module roles, so this
+            // list is what the tenant may see. RoleAssignmentGuard still has the final word on the
+            // server when the create is posted.
+            var rolesResponse = await Http.GetAsync("api/v1/roles");
+            if (rolesResponse.IsSuccessStatusCode)
+            {
+                var all = await rolesResponse.Content.ReadFromJsonAsync<List<RoleListDto>>(JsonOptions) ?? new();
+                roles = all.Where(r => r.IsActive).OrderBy(r => r.Name).ToList();
+            }
+            departments = (await StaffApi.GetDepartmentsAsync(BranchId)).OrderBy(d => d.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            Toast.Notify(ToastSeverity.Error, "Could not load the roles and departments", ex.Message);
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(form.FirstName) || string.IsNullOrWhiteSpace(form.LastName))
+        {
+            Toast.Notify(ToastSeverity.Warning, "A name is needed", "Both a first and a last name.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(form.Email))
+        {
+            Toast.Notify(ToastSeverity.Warning, "An email address is needed", "Staff sign in with it.");
+            return;
+        }
+        if (form.RoleId == Guid.Empty)
+        {
+            Toast.Notify(ToastSeverity.Warning, "Choose a role", "It decides what they may do in Q-Mgr.");
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            created = await StaffApi.CreateStaffMemberAsync(BranchId, form);
+            await OnCreated.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            // Carries the server's own words: a duplicate email, a role the caller may not assign.
+            Toast.Notify(ToastSeverity.Error, "Could not add them", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void Reset()
+    {
+        created = null;
+        form = new CreateStaffMemberRequest();
+    }
+
+    private async Task Close()
+    {
+        Reset();
+        loaded = false;
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+}

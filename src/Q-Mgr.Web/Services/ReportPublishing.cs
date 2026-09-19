@@ -92,7 +92,7 @@ public static class ReportPublishing
                 ? SnapshotDetail
                 : $"{SnapshotDetail} {request.ExtraDetail}";
             toast.Notify(ToastSeverity.Success, "Published to the Document Library", detail);
-            navigation.NavigateTo($"/content/documents?document={doc.Id}");
+            navigation.NavigateTo($"/content/library?tab=documents&document={doc.Id}");
         }
         catch (Exception ex)
         {

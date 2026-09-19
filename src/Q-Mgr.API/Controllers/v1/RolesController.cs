@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using QMgr.Application.DTOs;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Authorization;
 using QMgr.Application.Tenant;
@@ -660,21 +661,9 @@ public class RolesController : ControllerBase
 
 #region DTOs
 
-public record RoleListDto
-{
-    public Guid Id { get; init; }
-    public string Code { get; init; } = string.Empty;
-    public string Name { get; init; } = string.Empty;
-    public string? Description { get; init; }
-    public string? Color { get; init; }
-    public string? Icon { get; init; }
-    public bool IsSystem { get; init; }
-    public bool IsActive { get; init; }
-    public int UserCount { get; init; }
-    public int PermissionCount { get; init; }
-    public RoleDataScope DataScope { get; init; }
-    public StaffDataScope StaffScope { get; init; }
-}
+// RoleListDto moved to Q-Mgr.Shared/Application/DTOs/RoleListDto.cs on 2026-09-19. The Web was
+// maintaining two independent copies of this wire shape and a third was about to be written; see
+// the note on the record itself.
 
 public record RoleDetailDto
 {

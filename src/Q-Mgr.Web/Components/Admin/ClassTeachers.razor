@@ -19,7 +19,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Class Teachers</h1>
+            <h1>Class Teachers<QInfo Text="Who holds pastoral responsibility for each class, and who teaches it which subject. A class teacher sees their own classes' students and their welfare, and is alerted about them. A subject teacher sees only the students they teach, with no guardians, welfare or discipline." Label="Class Teachers" /></h1>
             <p class="subtitle">Who holds pastoral responsibility for each class, and who teaches it which subject. A class teacher sees their own classes' students and their welfare, and is alerted about them. A subject teacher sees only the students they teach, with no guardians, welfare or discipline.</p>
         </div>
         <div class="header-actions">
@@ -394,12 +394,7 @@
         <QInput TValue="string" Label="Job title" @bind-Value="contactForm.JobTitle" Placeholder="e.g. Form tutor, Head of Year 4" MaxLength="120" />
         <QInput TValue="string" Label="Phone" @bind-Value="contactForm.Phone" Placeholder="0753404044" MaxLength="30" />
         <QInput TValue="string" Label="Alternate phone" @bind-Value="contactForm.AlternatePhone" Placeholder="A second number to try" MaxLength="30" />
-        <QInput TValue="string" Label="Office location" @bind-Value="contactForm.OfficeLocation" Placeholder="e.g. Staff room, Block B" MaxLength="200" />
-        <p class="form-hint">
-            Clearing a field removes it — this replaces the whole contact block rather than merging,
-            so a stale number can actually be taken off. The email address is part of the account and
-            is changed in the user editor.
-        </p>
+        <QInput TValue="string" Label="Office location" @bind-Value="contactForm.OfficeLocation" Placeholder="e.g. Staff room, Block B" MaxLength="200" /><QInfo Text="Clearing a field removes it — this replaces the whole contact block rather than merging, so a stale number can actually be taken off. The email address is part of the account and is changed in the user editor." Label="Office location" />
     </div>
     </ChildContent>
     <FooterContent>

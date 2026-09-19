@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/parameters, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using System.Text.Json
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
@@ -30,19 +29,19 @@
 *@
 
 <div class="admin-page notices-page">
-@if (!Embedded)
-{
-    <div class="page-header">
+<div class="page-header">
+    @if (!Embedded)
+    {
         <div class="header-content">
-            <h1>Staff notices</h1>
+            <h1>Staff notices<QInfo Text="Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged." Label="Staff notices" /></h1>
             <p class="subtitle">Publish to the whole branch, a department, a role or a staff group; see who has read and who has acknowledged.</p>
         </div>
-        <div class="header-actions">
-            <QCheckbox @bind-Value="@includeInactive" @bind-Value:after="LoadAsync" Label="Show withdrawn and expired" />
-            <QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
-        </div>
+    }
+    <div class="header-actions">
+        <QCheckbox @bind-Value="@includeInactive" @bind-Value:after="LoadAsync" Label="Show withdrawn and expired" />
+        <QButton Text="New notice" Icon="plus-lg" Variant="primary" OnClick="@OpenCreate" Disabled="@(branchId == Guid.Empty)" />
     </div>
-}
+</div>
 
     @if (isLoading)
     {
@@ -274,7 +273,6 @@
        screen. A page that shows ONE document keeps a reading width — see CLAUDE.md. */
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .notice-list { display: flex; flex-direction: column; gap: 10px; }
     .notice-card--pinned { border-left: 3px solid var(--qm-primary); }
     .notice-card--off { opacity: 0.7; }
@@ -289,7 +287,6 @@
     .notice-progress__fill { height: 100%; background: var(--qm-warning); border-radius: var(--qm-radius-md); transition: width var(--qm-transition-base, 0.2s); }
     .notice-progress__fill--done { background: var(--qm-success); }
     .notice-card__actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; justify-content: flex-end; }
-    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
     .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
     .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 6px 0 0; }
     .notice-attach__label { display: block; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); margin-bottom: 6px; }
@@ -346,7 +343,8 @@
     private sealed record GroupOption(StaffGroup Value, string Label);
     private sealed record RoleOption(string Code, string Name);
     private sealed record AttachmentRef(Guid Id, string Name);
-    private sealed record RoleApiDto(Guid Id, string Name, string Code, bool IsActive);
+    // Was a local four-field copy of the roles wire shape until 2026-09-19; RoleListDto in
+    // Q-Mgr.Shared is the one definition now.
 
     private static readonly List<AudienceOption> AudienceModes = new()
     {
@@ -441,7 +439,7 @@
             var response = await Http.GetAsync("api/v1/roles");
             if (response.IsSuccessStatusCode)
             {
-                var apiRoles = await response.Content.ReadFromJsonAsync<List<RoleApiDto>>(JsonOptions) ?? new();
+                var apiRoles = await response.Content.ReadFromJsonAsync<List<RoleListDto>>(JsonOptions) ?? new();
                 roles = apiRoles.Where(r => r.IsActive).Select(r => new RoleOption(r.Code, r.Name)).OrderBy(r => r.Name).ToList();
             }
         }
@@ -611,9 +609,5 @@
         {
             acksLoading = false;
         }
-    }
-
-    public void Dispose()
-    {
     }
 }

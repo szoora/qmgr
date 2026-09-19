@@ -90,6 +90,134 @@ public class StaffPortalController : StaffPerformanceControllerBase
     }
 
     // ---------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------
+    // My own file (2026-09-19)
+    // ---------------------------------------------------------------------
+    //
+    // "do you suggest that staff member can update their profile from their portal, except for
+    // admin configured information" — yes, and the split is enforced HERE rather than in markup.
+    //
+    //   the person may edit   phone, second phone, office, emergency contact name and number
+    //   read-only, admin's    employment dates and type, qualification, registration number, date
+    //                         of birth, sex, national ID, employee number, job title, department,
+    //                         line manager, staff group
+    //   neither may edit      role, permissions, branch — RoleAssignmentGuard owns those
+    //
+    // The contact half goes stale constantly and the person is the only one who knows. The
+    // employment half is the school's record and part of an auditable MoES return: somebody
+    // editing their own start date or teaching registration number would make that return
+    // unauditable. UpdateStaffContactRequest has nowhere to put an employment field, so this
+    // endpoint cannot be persuaded to write one even if a client tries.
+    //
+    // No permission code on either action: this is the ProfileController rule — self is always
+    // visible and is not scope. Every other read of a staff file goes through the staff scope.
+
+    /// <summary>My own staff file, whole. The employment half is returned and shown read-only: a
+    /// person may read their own record, and subject access assumes they can.</summary>
+    [HttpGet("profile")]
+    [ProducesResponseType(typeof(StaffProfileDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyProfile()
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        return Ok(await BuildMyProfileAsync(self.User!, self.OrganizationId));
+    }
+
+    /// <summary>
+    /// Maintains my own contact detail. Contact only — see the note above.
+    ///
+    /// <para>The line manager is NOT told. A phone number changing is a routine correction, and a
+    /// notification on every one of them is noise that trains people to ignore the bell. It is
+    /// recorded in the activity log, which is where "who changed this number" is answered.</para>
+    /// </summary>
+    [HttpPut("profile/contact")]
+    [ProducesResponseType(typeof(StaffProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateMyContact([FromBody] UpdateStaffContactRequest request)
+    {
+        var self = await ResolveSelfAsync();
+        if (self.Error != null) return self.Error;
+        var me = self.User!;
+
+        // JobTitle is on the shared record because the class-teacher card writes it. IGNORED here:
+        // what the school calls somebody is the school's decision, not theirs.
+        var before = new
+        {
+            me.Phone, me.AlternatePhone, me.OfficeLocation, me.EmergencyContactName, me.EmergencyContactPhone
+        };
+
+        me.Phone = TrimTo(request.Phone, 30);
+        me.AlternatePhone = TrimTo(request.AlternatePhone, 30);
+        me.OfficeLocation = TrimTo(request.OfficeLocation, 200);
+        me.EmergencyContactName = TrimTo(request.EmergencyContactName, 120);
+        me.EmergencyContactPhone = TrimTo(request.EmergencyContactPhone, 30);
+        me.UpdatedAt = DateTime.UtcNow;
+        me.UpdatedBy = me.Id;
+        await Db.SaveChangesAsync();
+
+        var changed = new List<string>();
+        if (before.Phone != me.Phone) changed.Add("phone");
+        if (before.AlternatePhone != me.AlternatePhone) changed.Add("second phone");
+        if (before.OfficeLocation != me.OfficeLocation) changed.Add("office");
+        if (before.EmergencyContactName != me.EmergencyContactName) changed.Add("emergency contact");
+        if (before.EmergencyContactPhone != me.EmergencyContactPhone) changed.Add("emergency number");
+
+        if (changed.Count > 0)
+            await Activity.RecordAsync(ActivityActions.StaffContactSelfUpdated, nameof(QMgr.Domain.Entities.Identity.User),
+                me.Id, me.Id,
+                $"{StaffPerformanceMapping.FullName(me)} updated their own {string.Join(", ", changed)}",
+                new { Changed = changed }, self.BranchId, self.OrganizationId,
+                visibility: WelfareVisibility.Confidential);
+
+        return Ok(await BuildMyProfileAsync(me, self.OrganizationId));
+    }
+
+    private async Task<StaffProfileDto> BuildMyProfileAsync(QMgr.Domain.Entities.Identity.User me, Guid organizationId)
+    {
+        var departmentNames = await DepartmentNamesAsync(organizationId);
+        var names = await BuildNamesAsync(new[] { me.LineManagerUserId });
+
+        return new StaffProfileDto
+        {
+            UserId = me.Id,
+            FullName = StaffPerformanceMapping.FullName(me),
+            Email = me.Email,
+            Username = me.Username,
+            RoleName = me.Role?.Name ?? string.Empty,
+            IsActive = me.IsActive,
+
+            Phone = me.Phone,
+            AlternatePhone = me.AlternatePhone,
+            OfficeLocation = me.OfficeLocation,
+            EmergencyContactName = me.EmergencyContactName,
+            EmergencyContactPhone = me.EmergencyContactPhone,
+
+            JobTitle = me.JobTitle,
+            EmployeeNumber = me.EmployeeNumber,
+            StaffGroup = _policy.GroupFor(me.Role?.Code),
+            EmploymentStartDate = me.EmploymentStartDate,
+            EmploymentEndDate = me.EmploymentEndDate,
+            EmploymentType = me.EmploymentType,
+            Qualification = me.Qualification,
+            TeachingRegistrationNumber = me.TeachingRegistrationNumber,
+            DateOfBirth = me.DateOfBirth,
+            Sex = me.Sex,
+            NationalId = me.NationalId,
+
+            DepartmentNames = (me.DepartmentIds ?? Array.Empty<Guid>())
+                .Select(id => departmentNames.GetValueOrDefault(id, "?")).ToList(),
+            LineManagerName = me.LineManagerUserId.HasValue ? names[me.LineManagerUserId] : null,
+            IsSelf = true
+        };
+    }
+
+    private static string? TrimTo(string? value, int max)
+    {
+        var t = value?.Trim();
+        if (string.IsNullOrEmpty(t)) return null;
+        return t.Length <= max ? t : t[..max];
+    }
     // The hub
     // ---------------------------------------------------------------------
 

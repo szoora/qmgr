@@ -231,14 +231,6 @@
     .filter-card {
         padding: 16px 24px;
     }
-
-    .filter-row {
-        display: flex;
-        gap: 20px;
-        align-items: flex-end;
-        flex-wrap: wrap;
-    }
-
     .filter-item {
         display: flex;
         flex-direction: column;
@@ -570,7 +562,7 @@
         }
     }
 
-    private void NavigateToCounters() => Navigation.NavigateTo("/admin/counters");
+    private void NavigateToCounters() => Navigation.NavigateTo("/admin/branches?tab=counters");
 
     /// <summary>
     /// Downloads the per-counter CSV for exactly the range on screen — same data: URL +

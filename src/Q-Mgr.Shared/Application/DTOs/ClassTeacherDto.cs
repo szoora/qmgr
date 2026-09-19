@@ -161,6 +161,17 @@ public record EndClassTeacherRequest
 /// <summary>
 /// Patch body for a staff member's contact card. Every field is optional and null clears it —
 /// this is a full replace of the contact block, not a merge, so the form can blank a field.
+///
+/// <para>Used by two endpoints, deliberately the same record: the class-teacher contact card
+/// (<c>ClassTeachersController.UpdateContact</c>) and, since 2026-09-19, a member of staff
+/// maintaining their OWN detail from their portal (<c>StaffPortalController.UpdateMyContact</c>).
+/// It is CONTACT ONLY and must stay that way — the portal endpoint cannot be persuaded to write an
+/// employment field because there is nowhere in this record to put one. Employment terms,
+/// qualification, registration number and national ID are the school's auditable record and go
+/// through <see cref="UpdateStaffProfileRequest"/>, which needs staff.structure.manage.</para>
+///
+/// <para><c>JobTitle</c> is the exception and the portal endpoint IGNORES it: what the school calls
+/// somebody is the school's decision, not theirs.</para>
 /// </summary>
 public record UpdateStaffContactRequest
 {
@@ -175,4 +186,11 @@ public record UpdateStaffContactRequest
 
     [MaxLength(120, ErrorMessage = "Job title cannot exceed 120 characters")]
     public string? JobTitle { get; set; }
+
+    /// <summary>Who to call about this member of staff, not about a student.</summary>
+    [MaxLength(120, ErrorMessage = "Emergency contact name cannot exceed 120 characters")]
+    public string? EmergencyContactName { get; set; }
+
+    [MaxLength(30, ErrorMessage = "Emergency contact number cannot exceed 30 characters")]
+    public string? EmergencyContactPhone { get; set; }
 }

@@ -10,7 +10,6 @@
 @inject IConfiguration Configuration
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
-@implements IDisposable
 
 <PageTitle>Queue Board - Q-Mgr</PageTitle>
 
@@ -609,7 +608,13 @@
         await LoadData();
     }
 
-    public void Dispose()
+    /// <summary>
+    /// This page's own teardown. It runs from BranchAwareComponentBase.Dispose, AFTER the branch
+    /// subscription has been removed. Until 2026-09-19 it was a `public void Dispose()` beside an
+    /// `@implements IDisposable`, which re-mapped the interface to this method and left the base's
+    /// unsubscribe unreachable — so the handler piled up once per visit for the life of the circuit.
+    /// </summary>
+    protected override void DisposeCore()
     {
         timer?.Dispose();
         SignalR.OnTokenCreated -= HandleTokenCreated;

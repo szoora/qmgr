@@ -1,5 +1,4 @@
 @page "/admin/visitors/board"
-@implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
 @inject INotificationClientService NotificationClient
 @inherits BranchAwareComponentBase
@@ -15,7 +14,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Activity Board</h1>
+            <h1>Visitor Activity Board<QInfo Text="Live feed — updates the instant someone checks in, checks out, or is flagged" Label="Visitor Activity Board" /></h1>
             <p class="subtitle">Live feed — updates the instant someone checks in, checks out, or is flagged</p>
         </div>
         <div class="header-actions">
@@ -101,12 +100,7 @@
     </div>
 </div>
 
-<style>
-    .admin-page { padding: 0; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .live-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
     .live-indicator .q-icon { font-size: 9px; }
     .live-indicator.on { color: var(--qm-success); }
@@ -139,7 +133,8 @@
     .feed-danger { color: var(--qm-danger); }
     .feed-time { font-size: 11px; color: var(--qm-text-muted); font-variant-numeric: tabular-nums; }
 
-    @@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    @@keyframes feed-in { from { opacity: 0; transform: translateY(-6px); }
+     to { opacity: 1; transform: translateY(0); } }
 </style>
 
 @code {
@@ -261,7 +256,12 @@
         _ => ""
     };
 
-    public async ValueTask DisposeAsync()
+    /// <summary>This page's own teardown, run by BranchAwareComponentBase after it has removed the
+    /// branch subscription. It was a `public async ValueTask DisposeAsync()` beside an
+    /// `@implements IAsyncDisposable` until 2026-09-19; Blazor calls IAsyncDisposable INSTEAD of
+    /// IDisposable, so the base's unsubscribe never ran and nothing warned, because the two are
+    /// different interfaces.</summary>
+    protected override async ValueTask DisposeCoreAsync()
     {
         NotificationClient.OnVisitorActivityReceived -= HandleActivity;
         NotificationClient.ConnectionStateChanged -= HandleConnectionStateChanged;

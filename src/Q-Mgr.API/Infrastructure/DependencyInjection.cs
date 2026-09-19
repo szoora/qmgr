@@ -141,6 +141,9 @@ public static class DependencyInjection
                 }
                 return new AmazonS3Client(s3Config);
             });
+            // UPLOADS only. UploadsController still serves from the local store, so this provider
+            // makes every uploaded file unreachable once written — Program.cs logs a loud error at
+            // startup saying so. Do not flip this on without teaching the serving path to stream.
             services.AddScoped<IMediaStorageService, S3MediaStorageService>();
         }
         else

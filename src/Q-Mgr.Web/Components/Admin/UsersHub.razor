@@ -1,0 +1,90 @@
+@page "/admin/users"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@using QMgr.Web.Components.Admin.Onboarding
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Users & Roles hub (2026-09-19). Users & Roles, Join Requests and Onboarding were three
+    sidebar entries and three routes about one subject: who can sign in, and as what. The sections
+    have no @page — see CLAUDE.md, "A hub owns the route; its sections own nothing".
+
+    THIS HUB CROSSES A MODULE BOUNDARY. Users & Roles is base product; Join Requests and Onboarding
+    belong to Welfare & Performance, because their API does (duty rota plan §12), and each carried
+    its own ModuleRouteMap entry. The requirement moved onto the section and those entries went.
+*@
+
+<PageTitle>Users &amp; Roles - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Users &amp; Roles<QInfo Text="Who can sign in and what they may do — including the people still waiting to be let in." Label="Users &amp; Roles" /></h1>
+            <p class="subtitle">Who can sign in and what they may do — including the people still waiting to be let in.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="us" AriaLabel="User sections" />
+
+    @if (hubTab == RequestsTab) { <JoinRequests Embedded="true" /> }
+    else if (hubTab == OnboardingTab) { <StaffOnboardingPage Embedded="true" /> }
+    else { <UsersSetup Embedded="true" EmbeddedTab="@hubTab" /> }
+</div>
+
+@code {
+    private const string UsersTab = "users";
+    private const string RolesTab = "roles";
+    private const string RequestsTab = "requests";
+    private const string OnboardingTab = "onboarding";
+
+    /// <summary>
+    /// Users and Roles are two tabs, not one. UsersSetup carried its own strip of exactly those two
+    /// while demanding users.view for the page — so a roles.view holder without users.view was
+    /// locked out of the roles list. Separate tabs mean separate gates.
+    /// </summary>
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(UsersTab, "Users", "people-fill"), Permissions.UsersView),
+        new(new QTab(RolesTab, "Roles", "shield-lock-fill"), Permissions.RolesView),
+        new HubTabs.Section(new QTab(RequestsTab, "Join Requests", "person-check"), Permissions.UsersApprove)
+            .RequiringModule(ModuleCodes.StudentWelfare),
+        new HubTabs.Section(new QTab(OnboardingTab, "Onboarding", "person-plus"), Permissions.UsersView)
+            .RequiringModule(ModuleCodes.StudentWelfare),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = UsersTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+
+        tabs = await HubTabs.VisibleAsync(PermissionService, ModuleState, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

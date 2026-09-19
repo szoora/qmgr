@@ -436,7 +436,7 @@ public class DocumentShareService : IDocumentShareService
                 Message = $"\"{doc.Name}\"{label} was opened for the first time{by}.",
                 Type = NotificationType.Custom,
                 IconClass = "bi-share-fill",
-                ActionUrl = $"/content/documents?document={doc.Id}",
+                ActionUrl = $"/content/library?tab=documents&document={doc.Id}",
                 Channels = NotificationChannel.InApp | NotificationChannel.Email,
                 Email = creator?.Email,
                 EmailSubject = $"Q-Mgr: \"{doc.Name}\" was opened"

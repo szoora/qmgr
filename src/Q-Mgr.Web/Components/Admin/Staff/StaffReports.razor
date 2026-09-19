@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/records, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -20,9 +19,9 @@
 }
 
 <div class="admin-page">
-@if (!Embedded)
-{
-    <div class="page-header">
+<div class="page-header">
+    @if (!Embedded)
+    {
         <div class="header-content">
             <h1>Staff Performance Reports</h1>
             <p class="subtitle">
@@ -36,14 +35,14 @@
                 }
             </p>
         </div>
-        <div class="header-actions">
-            <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
-                     TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
-            <QButton Text="Teaching reports" Icon="journal-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports"))" />
-            <QButton Text="Print / publish" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/reports/report?period={Uri.EscapeDataString(period)}"))" Disabled="@(reports == null)" />
-        </div>
+    }
+    <div class="header-actions">
+        <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@periodOptions"
+                 TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)" Placeholder="Period" Class="rp-period" />
+        <QButton Text="Teaching reports" Icon="journal-check" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/timetable?tab=reports"))" />
+        <QButton Text="Print / publish" Icon="printer" Variant="secondary" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/reports/report?period={Uri.EscapeDataString(period)}"))" Disabled="@(reports == null)" />
     </div>
-}
+</div>
 
     <StaffScopeNote Departments="@(reports?.ScopedToDepartments)" Noun="figures" />
 
@@ -53,7 +52,7 @@
     }
     else if (reports == null)
     {
-        <QEmptyState Icon="bar-chart" Title="The reports could not be built" Text="Try another period, or reload the page." />
+        <QEmptyState Icon="bar-chart" Title="Reports unavailable" Text="Try another period, or reload the page." />
     }
     else
     {

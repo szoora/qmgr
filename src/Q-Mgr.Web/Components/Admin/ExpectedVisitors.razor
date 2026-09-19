@@ -17,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Expected Visitors</h1>
+            <h1>Expected Visitors<QInfo Text="Who is booked in to arrive, and one-click check-in when they do" Label="Expected Visitors" /></h1>
             <p class="subtitle">Who is booked in to arrive, and one-click check-in when they do</p>
         </div>
         <div class="header-actions">
@@ -198,13 +198,7 @@
                ConfirmButtonClass="btn-danger"
                OnClose="@HandleCancelConfirm" />
 
-<style>
-    .admin-page { padding: 0; }
-
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
     .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
     .summary-card.alert { border-color: var(--qm-danger); }

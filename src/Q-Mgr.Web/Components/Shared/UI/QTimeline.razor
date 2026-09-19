@@ -42,7 +42,16 @@
 
     [Parameter] public string EmptyIcon { get; set; } = "journal-richtext";
 
-    /// <summary>Whether older items exist beyond what is rendered; shows the "Load older" control.</summary>
+    /// <summary>
+    /// Whether older items exist beyond what is rendered; shows the "Load older" control.
+    ///
+    /// <para><b>A timeline must never render its whole history in one pass.</b> A staff file or a
+    /// student's welfare chronology grows without limit, and every item here is a card with a
+    /// marker, a date header, chips and its own actions — so a file with 400 records built 400
+    /// component subtrees on first paint, on a Blazor Server circuit where each one is diffed and
+    /// sent over SignalR. Callers page with <c>Take(shown)</c> and raise <c>shown</c> from
+    /// <see cref="OnLoadOlder"/>; <see cref="QTimelinePaging"/> is the shared counter for it.</para>
+    /// </summary>
     [Parameter] public bool HasMore { get; set; }
 
     [Parameter] public bool LoadingOlder { get; set; }

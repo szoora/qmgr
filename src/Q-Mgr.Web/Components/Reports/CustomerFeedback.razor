@@ -1,4 +1,3 @@
-@page "/reports/feedback"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Web.Services
@@ -13,14 +12,6 @@
 @inject IToastService NotificationService
 @inject IJSRuntime JS
 
-<PageTitle>Customer Feedback - Q-Mgr</PageTitle>
-
-<div class="page-header">
-    <h1>Customer Feedback</h1>
-    <div class="breadcrumb">
-        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Reports", "/reports"), new("Customer Feedback") })" />
-    </div>
-</div>
 
 <div class="feedback-page">
     <!-- Filters — the Date Range drives every figure on this page AND the CSV export -->
@@ -368,14 +359,6 @@
     .filter-card {
         padding: 16px 24px;
     }
-
-    .filter-row {
-        display: flex;
-        gap: 20px;
-        align-items: flex-end;
-        flex-wrap: wrap;
-    }
-
     .filter-item {
         display: flex;
         flex-direction: column;
@@ -589,6 +572,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Feedback hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title, the header band and the tabs. There is no route to reach this
+    /// component any other way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     // Every figure on this page is the FeedbackReportDto the API computed for the selected
     // range — the JSON sibling of the feedback CSV the Export button downloads. Nothing here is
     // generated, sampled or hardcoded.

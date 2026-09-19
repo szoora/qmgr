@@ -1,4 +1,3 @@
-@page "/admin/settings"
 @using System.Text.Json
 @using QMgr.Application.DTOs
 @inject HttpClient Http
@@ -11,14 +10,20 @@
 @inject IModuleStateService ModuleState
 @using QMgr.Domain.Constants
 
-<PageTitle>System Settings - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>System Settings - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>System Settings</h1>
-            <p class="subtitle">Configure global system preferences and defaults</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>System Settings</h1>
+                <p class="subtitle">Configure global system preferences and defaults</p>
+            </div>
+        }
         <QButton Text="Save All Changes" Icon="check-lg" Variant="primary" OnClick="@SaveSettings" Disabled="@(isLoading || isSaving)" />
     </div>
 
@@ -131,7 +136,7 @@
                     <div class="settings-section">
                         <h3>Display Settings</h3>
                         <p class="section-note">
-                            Dark/Light theme is managed under <a href="/admin/branding-settings">Branding Settings</a>, not here.
+                            Dark/Light theme is managed under <a href="/admin/appearance">Appearance</a>, not here.
                         </p>
                         <div class="settings-group">
                             <div class="setting-item">
@@ -175,11 +180,11 @@
                         <h3>Notification Settings</h3>
                         <p class="section-note">
                             SMS, Email, and Push notification channels are configured under
-                            <a href="/admin/notification-settings">Notification Settings</a>, not here — that page
+                            <a href="/admin/settings?tab=notifications">Notifications</a>, not here — that page
                             already manages the real gateway credentials and enable/disable toggles for this
                             organization.
                         </p>
-                        <QButton Text="Go to Notification Settings" Icon="bell" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/notification-settings"))" />
+                        <QButton Text="Go to Notification Settings" Icon="bell" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/settings?tab=notifications"))" />
                     </div>
                 }
                 else if (activeSection == "security")
@@ -232,19 +237,7 @@
     }
 </div>
 
-<style>
-    .admin-page { padding: 0; }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .loading-overlay {
         display: flex;
         flex-direction: column;
@@ -374,6 +367,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Settings hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private string activeSection = "general";
     private SystemSettingsDto settings = new();
     private string voiceLanguage = "en-US";

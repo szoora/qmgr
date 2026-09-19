@@ -1,0 +1,90 @@
+@page "/admin/appearance"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Appearance hub (2026-09-19). Branding, Kiosk Settings, Printer Settings and Customer Links
+    were four sidebar entries and four routes for one subject: what the CUSTOMER sees — the screen
+    they look at, the kiosk they touch, the ticket they hold and the link they are sent. The
+    sections have no @page — see CLAUDE.md, "A hub owns the route; its sections own nothing".
+
+    THIS HUB CROSSES A MODULE BOUNDARY. Branding is base product; the other three are Core Queue
+    and each carried its own ModuleRouteMap entry. The requirement moved onto the section.
+
+    The route is /admin/appearance, not the old /admin/branding-settings: a hub named for one of
+    its sections would be the wrong name for the other three, and a new base-product route under
+    /admin needs no ModuleRouteMap entry.
+*@
+
+<PageTitle>Appearance - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Appearance<QInfo Text="What the customer sees: the screens and kiosk, your logo and colours, the printed ticket, and the links you share." Label="Appearance" /></h1>
+            <p class="subtitle">What the customer sees: the screens and kiosk, your logo and colours, the printed ticket, and the links you share.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="ap" AriaLabel="Appearance sections" />
+
+    @if (hubTab == KioskTab) { <KioskSettings Embedded="true" /> }
+    else if (hubTab == PrinterTab) { <PrinterSettings Embedded="true" /> }
+    else if (hubTab == LinksTab) { <CustomerLinks Embedded="true" /> }
+    else if (hubTab == BrandingTab) { <BrandingSettings Embedded="true" /> }
+</div>
+
+@code {
+    private const string BrandingTab = "branding";
+    private const string KioskTab = "kiosk";
+    private const string PrinterTab = "printer";
+    private const string LinksTab = "links";
+
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(BrandingTab, "Branding", "palette"), Permissions.SettingsView),
+        new HubTabs.Section(new QTab(KioskTab, "Kiosk", "display"), Permissions.SettingsView)
+            .RequiringModule(ModuleCodes.CoreQueue),
+        new HubTabs.Section(new QTab(PrinterTab, "Printing", "printer"), Permissions.SettingsView)
+            .RequiringModule(ModuleCodes.CoreQueue),
+        new HubTabs.Section(new QTab(LinksTab, "Customer Links", "share"), Permissions.SettingsView)
+            .RequiringModule(ModuleCodes.CoreQueue),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = BrandingTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ModuleState.LoadAsync(ModuleApi);
+
+        tabs = await HubTabs.VisibleAsync(PermissionService, ModuleState, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

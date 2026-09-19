@@ -1,4 +1,3 @@
-@page "/admin/service-types"
 @using System.Text.Json
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -9,14 +8,20 @@
 @using QMgr.Application.DTOs
 @using QMgr.Web.Services
 
-<PageTitle>Service Types - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Service Types - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Service Types</h1>
-            <p class="subtitle">Configure service types for queue management</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Service Types</h1>
+                <p class="subtitle">Configure service types for queue management</p>
+            </div>
+        }
         @if (canCreate)
         {
             <QButton Text="Add Service Type" Icon="plus-lg" Variant="primary" OnClick="@ShowAddDialog" />
@@ -123,29 +128,10 @@
     </FooterContent>
 </QModal>
 
-<style>
-    .admin-page {
-        padding: 0;
-    }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
-    .header-content h1 {
+<style>.header-content h1 {
         margin: 0 0 4px;
         color: var(--qm-text-primary);
     }
-
-    .subtitle {
-        margin: 0;
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
-
     .loading-container, .empty-state {
         display: flex;
         flex-direction: column;
@@ -308,10 +294,6 @@
         background: var(--qm-bg-elevated);
     }
 
-    .form-group {
-        margin-bottom: 16px;
-    }
-
     .form-group label {
         display: block;
         margin-bottom: 6px;
@@ -319,13 +301,6 @@
         font-weight: 500;
         color: var(--qm-text-secondary);
     }
-
-    .form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-
     .color-picker {
         display: flex;
         flex-wrap: wrap;
@@ -352,6 +327,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Branches hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private List<ServiceTypeDto> serviceTypes = new();
     private bool isLoading = true;
     private bool showDialog = false;

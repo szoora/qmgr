@@ -11,7 +11,7 @@ post('\n== Rooms on the Bell Schedule page ==');
 const RUN = Date.now().toString(36);
 const name = `UI Room ${RUN}`;
 
-await t.goto(BASE + '/admin/timetable/settings');
+await t.goto(BASE + '/admin/timetable?tab=schoolday');
 await t.waitFor(`[...document.querySelectorAll('.q-card')].some(c => /Rooms/.test(c.innerText))`, 20000); await t.sleep(1200);
 const card = `[...document.querySelectorAll('.q-card')].find(c => c.querySelector('.q-card__title, h3, h2')?.innerText.trim() === 'Rooms' || /^Rooms/.test(c.innerText.trim()))`;
 check('the page has a Rooms card listing the branch rooms', await t.eval(`(${card})?.querySelectorAll('tbody tr').length > 0`), await t.eval(`(${card})?.innerText.slice(0, 200)`));
@@ -27,7 +27,7 @@ for (const [i, v] of [[0, name], [1, 'Lab'], [2, '32']]) {
   await t.sleep(300);
 }
 await t.clickText('Save', '.header-actions button'); await t.sleep(2500);
-await t.goto(BASE + '/admin/timetable/settings');
+await t.goto(BASE + '/admin/timetable?tab=schoolday');
 await t.waitFor(`[...document.querySelectorAll('.q-card')].some(c => /Rooms/.test(c.innerText))`, 20000); await t.sleep(1500);
 const row = await t.eval(`(() => { const r = [...(${card}).querySelectorAll('tbody tr')].find(r => r.cells[0].querySelector('input')?.value === ${JSON.stringify(name)}); return r ? [...r.cells].slice(0, 3).map(c => c.querySelector('input')?.value) : null; })()`);
 check('saved through the page and still there after a reload, with type and seats', JSON.stringify(row) === JSON.stringify([name, 'Lab', '32']), JSON.stringify(row));
@@ -35,7 +35,7 @@ check('saved through the page and still there after a reload, with type and seat
 // remove it again through the page
 await t.eval(`[...(${card}).querySelectorAll('tbody tr')].find(r => r.cells[0].querySelector('input')?.value === ${JSON.stringify(name)}).querySelector('button').click()`); await t.sleep(600);
 await t.clickText('Save', '.header-actions button'); await t.sleep(2500);
-await t.goto(BASE + '/admin/timetable/settings');
+await t.goto(BASE + '/admin/timetable?tab=schoolday');
 await t.waitFor(`[...document.querySelectorAll('.q-card')].some(c => /Rooms/.test(c.innerText))`, 20000); await t.sleep(1500);
 check('an unused room removed through the page is gone after a reload', !(await t.eval(`[...(${card}).querySelectorAll('tbody input')].some(i => i.value === ${JSON.stringify(name)})`)));
 

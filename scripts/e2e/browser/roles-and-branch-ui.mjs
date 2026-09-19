@@ -104,13 +104,15 @@ post(`    (branch control: ${branches ?? 'not found'})`);
 
 // Pages that used to read the branch once and never again. Each must render its shell, react to a
 // branch change, and never surface the Blazor error bar.
+// The first three moved into hubs on 2026-09-19 and are addressed by ?tab= now; the sections
+// themselves have no routes. See scripts/e2e/browser/hub-nav.mjs for the hubs' own checks.
 const pages = [
-  ['/admin/counters',        'Counters'],
-  ['/admin/service-types',   'Service Types'],
-  ['/admin/visitors',        'Visitor Management'],
-  ['/reports/queue',       'Queue Analytics'],
-  ['/content/playlists',     'Playlists'],
-  ['/admin/welfare-categories','Welfare Categories'],
+  ['/admin/branches?tab=counters',      'Counters'],
+  ['/admin/branches?tab=service-types', 'Service Types'],
+  ['/admin/visitors',                   'Visitor Management'],
+  ['/reports/queue',                    'Queue Analytics'],
+  ['/content/signage?tab=playlists',    'Playlists'],
+  ['/admin/welfare-categories',         'Welfare Categories'],
 ];
 
 for (const [path, label] of pages) {

@@ -1,5 +1,4 @@
 @page "/admin/staff/parameters"
-@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -17,7 +16,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Setup</h1>
+            <h1>Setup<QInfo Text="What is measured, how it is scored, what staff are told, and who did what. Organisation-wide." Label="Setup" /></h1>
             <p class="subtitle">What is measured, how it is scored, what staff are told, and who did what. Organisation-wide.</p>
         </div>
         <div class="header-actions">
@@ -32,7 +31,7 @@
     @* The Setup hub (2026-09-18). Parameters, Scoring Policy, Notices and the Activity Log were four
        sidebar entries and four routes; they are all "configure the module and see what happened",
        done once a term rather than daily. One page, four tabs, one route. *@
-    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="su" />
+    <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="su" />
 
     @if (hubTab == "policy")        { <StaffPolicy Embedded="true" /> }
     else if (hubTab == "notices")   { <StaffNotices Embedded="true" /> }
@@ -243,9 +242,7 @@
     .pp-swatch { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
     .pp-desc { font-size: 12px; color: var(--qm-text-muted); margin-top: 2px; }
     .pp-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
-    .form-row { display: flex; flex-wrap: wrap; gap: 14px; }
     .form-row .form-group { flex: 1 1 160px; min-width: 0; }
-    .form-group { margin-bottom: 14px; }
     .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
     .pp-grow { flex: 2 1 240px !important; }
     .pp-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--qm-border); border-left: 3px solid var(--qm-text-muted); border-radius: var(--qm-radius-md); font-size: 13px; color: var(--qm-text-secondary); }
@@ -259,8 +256,8 @@
 
 @code {
     /// <summary>The Setup hub's tabs — four sidebar entries and four routes until 2026-09-18. A tab
-    /// is shown only to a caller who may open it; see StaffHubTabs.</summary>
-    private static readonly StaffHubTabs.Section[] Sections =
+    /// is shown only to a caller who may open it; see HubTabs.</summary>
+    private static readonly HubTabs.Section[] Sections =
     {
         new(new QTab("parameters", "Parameters", "sliders2"), Permissions.StaffParametersManage),
         new(new QTab("policy", "Scoring Policy", "gear-wide-connected"), Permissions.StaffParametersManage),
@@ -268,8 +265,13 @@
         new(new QTab("activity", "Activity Log", "clock-history"), Permissions.StaffRecordsView),
     };
 
-    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private IReadOnlyList<QTab> hubTabs = Array.Empty<QTab>();
     private string hubTab = "parameters";
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
 
     private static readonly IReadOnlyList<ParameterKind> Kinds = Enum.GetValues<ParameterKind>();
     private static readonly IReadOnlyList<StaffGroup> Groups = Enum.GetValues<StaffGroup>();
@@ -333,13 +335,13 @@
     {
         // Notices and the Activity Log were their own pages with their own permissions until the
         // merge, so the hub opens for any of the four and shows only what the caller holds.
-        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
-        if (HubTabs.Count == 0)
+        hubTabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (hubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
-        hubTab = HubTabs[0].Key;
+        hubTab = hubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -349,13 +351,10 @@
         }
 
         // The hub owns the URL: /admin/staff/parameters?tab=notices is the one link to the notices.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
-        {
-            var t = wantedTab.ToString().Trim().ToLowerInvariant();
-            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
-        }
+        hubTab = HubTabs.Resolve(hubTabs, TabParam);
+        appliedTab = TabParam;
 
-        if (!HubTabs.Any(x => x.Key == "parameters")) { isLoading = false; return; }
+        if (!hubTabs.Any(x => x.Key == "parameters")) { isLoading = false; return; }
 
         try
         {
@@ -494,5 +493,15 @@
         {
             Toast.Notify(ToastSeverity.Error, "Could not change the parameter", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
     }
 }

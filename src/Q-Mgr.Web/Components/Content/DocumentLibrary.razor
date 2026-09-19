@@ -1,4 +1,3 @@
-@page "/content/documents"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
@@ -26,14 +25,20 @@
     place. A document gets here by upload, or by "Publish to Library" on a printable report.
 *@
 
-<PageTitle>Document Library - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Document Library - Q-Mgr</PageTitle>
+}
 
 <div class="doclib">
     <div class="doclib-header">
-        <div>
-            <h1><QIcon Name="file-earmark-lock2" /> Document Library</h1>
-            <p class="doclib-sub">PDF documents that can be put on a screen, shared by secure link, or both. Sharing only ever points here.</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div>
+                <h1><QIcon Name="file-earmark-lock2" /> Document Library</h1>
+                <p class="doclib-sub">PDF documents that can be put on a screen, shared by secure link, or both. Sharing only ever points here.</p>
+            </div>
+        }
         <div class="doclib-actions">
             @if (canManage)
             {
@@ -526,7 +531,18 @@
 </style>
 
 @code {
-    [SupplyParameterFromQuery(Name = "document")] public Guid? highlightId { get; set; }
+    /// <summary>True when the Library hub is hosting this section: the host owns the page title
+    /// and the tab strip. There is no route to this component any other way — see CLAUDE.md,
+    /// "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>
+    /// The document a notification asked to open, highlighted in the list. It is a plain parameter
+    /// and NOT [SupplyParameterFromQuery] since 2026-09-19: query parameters are bound only on a
+    /// ROUTABLE component, and this one has no route any more. The Library hub reads ?document=
+    /// off its own URL and passes it down — the hub owns the query string, as it owns ?tab=.
+    /// </summary>
+    [Parameter] public Guid? highlightId { get; set; }
 
     private bool isLoading = true;
     private List<MediaContentDto> documents = new();
@@ -552,12 +568,18 @@
         // successful publish navigates straight here — and got a toast-storm of API refusals instead of
         // the billing page.
         //
-        // In OnAfterRenderAsync, and behind AppInit, ON PURPOSE. Auth state lives in localStorage and is
-        // read over JS interop, which does not exist during prerendering and races an uninitialised store
-        // on a cold navigation — so deciding in OnInitializedAsync sent a signed-in administrator with
-        // content.view straight to /unauthorized. Found by opening the page directly rather than through
-        // the nav. (MediaLibrary still decides in OnInitializedAsync and has the same latent race; it is
-        // masked because it is normally reached after MainLayout has already initialised.)
+        // In OnAfterRenderAsync, and behind AppInit, ON PURPOSE — it is the order MainLayout
+        // established and CLAUDE.md records, and it costs nothing here.
+        //
+        // The note that used to sit here said this fixed a prerendering race that also lurked in
+        // MediaLibrary, and that claim does NOT survive a code read: MainLayout renders @Body only
+        // inside the else of @if (!authChecked), and authChecked is set only after
+        // AppInit.InitializeAsync() on both of its paths, so no page beneath it can run against an
+        // uninitialised token store. Seventy-six pages guard in OnInitializedAsync and none of them
+        // bounces. Whatever sent an administrator here to /unauthorized on 2026-09-18, that was not
+        // it — so do NOT sweep the other pages onto this shape on the strength of that note.
+        // (Since 2026-09-19 both libraries are sections of the Library hub, which gates the tab
+        // before either renders; these guards are the second line, not the first.)
         await AppInit.InitializeAsync();
 
         if (!await PermissionService.HasPermissionAsync(Permissions.ContentView))

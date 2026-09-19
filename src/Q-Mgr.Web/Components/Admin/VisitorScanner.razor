@@ -1,5 +1,4 @@
 @page "/admin/visitors/scan"
-@implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
 @inject IToastService NotificationService
 @inherits BranchAwareComponentBase
@@ -14,7 +13,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Scan Visitor Badge</h1>
+            <h1>Scan Visitor Badge<QInfo Text="Point the camera at a visitor's QR badge or a group pass" Label="Scan Visitor Badge" /></h1>
             <p class="subtitle">Point the camera at a visitor's QR badge or a group pass</p>
         </div>
         <div class="header-actions">
@@ -74,12 +73,7 @@
     </div>
 </div>
 
-<style>
-    .admin-page { padding: 0; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .scanner-layout { display: grid; grid-template-columns: minmax(280px, 480px) 1fr; gap: 24px; align-items: start; }
     @@media (max-width: 800px) { .scanner-layout { grid-template-columns: 1fr; } }
 
@@ -163,7 +157,12 @@
         await JS.InvokeVoidAsync("visitorBadge.resumeScanner");
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>This page's own teardown, run by BranchAwareComponentBase after it has removed the
+    /// branch subscription. It was a `public async ValueTask DisposeAsync()` beside an
+    /// `@implements IAsyncDisposable` until 2026-09-19; Blazor calls IAsyncDisposable INSTEAD of
+    /// IDisposable, so the base's unsubscribe never ran and nothing warned, because the two are
+    /// different interfaces.</summary>
+    protected override async ValueTask DisposeCoreAsync()
     {
         try { await JS.InvokeVoidAsync("visitorBadge.stopScanner"); } catch { /* page navigating away, JS interop may already be gone */ }
         dotNetRef?.Dispose();

@@ -1,6 +1,4 @@
 @page "/admin/staff/records"
-@implements IDisposable
-@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -20,7 +18,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff Records</h1>
+            <h1>Staff Records<QInfo Text="Every record in the ledger for this branch — search it, log to it, open a person's timeline from it." Label="Staff Records" /></h1>
             <p class="subtitle">Every record in the ledger for this branch — search it, log to it, open a person's timeline from it.</p>
         </div>
         <div class="header-actions">
@@ -36,7 +34,7 @@
 
     @* Records and Reports are the same ledger — the rows, and what they add up to. Two sidebar
        entries and two routes until 2026-09-18. *@
-    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="rc" />
+    <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="rc" />
 
     @if (hubTab == "reports") { <StaffReports Embedded="true" /> }
     else
@@ -167,15 +165,20 @@
 
 @code {
     /// <summary>Records and Reports: the ledger's rows, and what they add up to. A tab is shown only
-    /// to a caller who may open it — see StaffHubTabs for why that is not cosmetic.</summary>
-    private static readonly StaffHubTabs.Section[] Sections =
+    /// to a caller who may open it — see HubTabs for why that is not cosmetic.</summary>
+    private static readonly HubTabs.Section[] Sections =
     {
         new(new QTab("records", "Records", "journal-check"), Permissions.StaffRecordsView),
         new(new QTab("reports", "Reports", "bar-chart-line"), Permissions.StaffReportsView),
     };
 
-    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private IReadOnlyList<QTab> hubTabs = Array.Empty<QTab>();
     private string hubTab = "records";
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
 
     private const int pageSize = 25;
 
@@ -240,13 +243,13 @@
         // The hub opens for anyone who may open ANY of its sections; the strip then shows only those.
         // Gating the whole hub on staff.records.view would have taken Reports away from a
         // reports-only holder the moment the two pages were merged into one route.
-        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
-        if (HubTabs.Count == 0)
+        hubTabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (hubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
-        hubTab = HubTabs[0].Key;
+        hubTab = hubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -263,13 +266,10 @@
         TrackBranch();
 
         // The hub owns the URL: /admin/staff/records?tab=reports is the one link to the reports.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
-        {
-            var t = wantedTab.ToString().Trim().ToLowerInvariant();
-            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
-        }
+        hubTab = HubTabs.Resolve(hubTabs, TabParam);
+        appliedTab = TabParam;
 
-        if (!HubTabs.Any(x => x.Key == "records")) { isLoading = false; return; }
+        if (!hubTabs.Any(x => x.Key == "records")) { isLoading = false; return; }
         await LoadLookups();
         await Search(resetPage: true);
     }
@@ -361,4 +361,14 @@
         await Search(resetPage: true);
     }
 
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
+    }
 }

@@ -1,5 +1,4 @@
 @page "/my-day"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -217,9 +216,7 @@
     </FooterContent>
 </QModal>
 
-<style>
-    .myday-page .q-card { margin-top: 14px; }
-    .myday-next { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--qm-border); border-left: 4px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); font-size: 14px; }
+<style>.myday-next { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--qm-border); border-left: 4px solid var(--qm-primary); border-radius: var(--qm-radius-md); background: var(--qm-bg-card); font-size: 14px; }
     .myday-muted { font-size: 13px; color: var(--qm-text-muted); margin: 0; }
     .myday-error { color: var(--qm-danger); font-size: 13px; }
     .myday-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

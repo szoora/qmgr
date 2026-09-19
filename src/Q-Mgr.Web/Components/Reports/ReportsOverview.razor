@@ -138,7 +138,11 @@
 
     <!-- Report Cards -->
     <div class="report-cards">
-        <QCard Class="report-card" @onclick="@(() => NavigateToReport("queue"))">
+        @* Whole routes, not NavigateToReport("queue"). Building a route by interpolating a
+           fragment makes it invisible to any sweep for who links where — which is exactly how
+           this card's sibling went on pointing at /reports/feedback after that route was
+           retired, while every literal caller was found and fixed. *@
+        <QCard Class="report-card" @onclick="@(() => Navigation.NavigateTo("/reports/queue"))">
             <div class="report-card-icon queue">
                 <QIcon Name="bar-chart-fill" />
             </div>
@@ -147,7 +151,7 @@
             <span class="report-link">View Report <QIcon Name="arrow-right" /></span>
         </QCard>
 
-        <QCard Class="report-card" @onclick="@(() => NavigateToReport("counters"))">
+        <QCard Class="report-card" @onclick="@(() => Navigation.NavigateTo("/reports/counters"))">
             <div class="report-card-icon counters">
                 <QIcon Name="speedometer2" />
             </div>
@@ -156,7 +160,9 @@
             <span class="report-link">View Report <QIcon Name="arrow-right" /></span>
         </QCard>
 
-        <QCard Class="report-card" @onclick="@(() => NavigateToReport("feedback"))">
+        @* /reports/feedback was retired on 2026-09-19: the feedback reports are a tab of the
+           Feedback hub now. *@
+        <QCard Class="report-card" @onclick="@(() => Navigation.NavigateTo("/admin/feedback?tab=reports"))">
             <div class="report-card-icon feedback">
                 <QIcon Name="chat-dots-fill" />
             </div>
@@ -315,14 +321,6 @@
         color: var(--qm-text-muted);
         margin: 0;
     }
-
-    .filter-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 20px;
-        align-items: flex-end;
-    }
-
     .filter-item {
         display: flex;
         flex-direction: column;
@@ -495,10 +493,6 @@
         }
     }
 
-    private void NavigateToReport(string report)
-    {
-        Navigation.NavigateTo($"/reports/{report}");
-    }
 
     /// <summary>
     /// Downloads the selected report as CSV from ReportsController — same data: URL +

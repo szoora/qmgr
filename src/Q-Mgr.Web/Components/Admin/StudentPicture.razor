@@ -16,7 +16,6 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 @inject IClassTeacherApiService ClassTeacherApi
-@implements IDisposable
 
 <PageTitle>Student Picture - Q-Mgr</PageTitle>
 
@@ -538,7 +537,8 @@
 
     /* Bars grow from the baseline in sequence, left to right — the axis is time, so the motion
        follows it rather than everything appearing at once. */
-    @@keyframes spGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    @@keyframes spGrow { from { transform: scaleY(0); }
+     to { transform: scaleY(1); } }
     .sp-trend-col:nth-child(1)  .sp-trend-stack { animation-delay: .02s; }
     .sp-trend-col:nth-child(2)  .sp-trend-stack { animation-delay: .05s; }
     .sp-trend-col:nth-child(3)  .sp-trend-stack { animation-delay: .08s; }
@@ -577,7 +577,8 @@
     .sp-rung.empty .sp-rung-name { color: var(--qm-text-muted); }
     .sp-rung-n { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-    @@keyframes spFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @@keyframes spFill { from { transform: scaleX(0); }
+     to { transform: scaleX(1); } }
 
     .sp-warn, .sp-hint {
         display: flex; align-items: center; gap: 8px; margin-top: 12px;
@@ -738,10 +739,6 @@
         classTeacher = null;
         classTeachersLoaded = false;
         await LoadAsync();
-    }
-
-    public void Dispose()
-    {
     }
 
     private async Task LoadAsync()

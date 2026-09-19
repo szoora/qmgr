@@ -14,7 +14,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Docs Management</h1>
+            <h1>Docs Management<QInfo Text="Getting-started guides shown publicly at /docs — no login required to read them" Label="Docs Management" /></h1>
             <p class="subtitle">Getting-started guides shown publicly at /docs — no login required to read them</p>
         </div>
         @if (canManage)
@@ -129,12 +129,7 @@
     </FooterContent>
 </QModal>
 
-<style>
-    .admin-page { padding: 0; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .loading-container, .empty-state {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         padding: 60px 20px; color: var(--qm-text-muted);
@@ -160,9 +155,7 @@
     .doc-card-footer { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--qm-text-muted); }
     .doc-stat { display: flex; align-items: center; gap: 4px; }
 
-    .form-group { margin-bottom: 16px; }
     .form-group label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--qm-text-secondary); }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-control {
         width: 100%; padding: 8px 12px; border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
         background: var(--qm-bg-elevated); color: var(--qm-text-primary);

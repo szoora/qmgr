@@ -767,13 +767,54 @@ html, body {
    Common Page Patterns - Responsive
    ================================ */
 
-/* Page Header */
-/* Density (2026-09-18): was 24px margin + 20px padding. app.css loads LAST, so this file — not
-   layout.css — is where the page header band is actually decided. */
+/* Page Header — the LAYOUT of the band. The title size is .qm-main h1 (layout.css) and nothing
+   else may set it.
+
+   The 2026-09-18 note here said app.css loads last and therefore decides the band. It does not:
+   css/components/admin.css and shared.css are linked after it in App.razor, and qm-theme.css
+   carried a `padding: 32px` plus a full-bleed negative margin and a decorative radial blob that
+   this file's padding-bottom could only partly override. All three are gone; this is the home now.
+
+   Density (2026-09-19): 12px padding + 16px margin + a 1.45 subtitle came to 107px on a two-line
+   header. A page is read for its data, so the band states the page and gets out of the way. */
 .page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--q-row-gap, 8px);
     margin-bottom: var(--qm-block-gap, 16px);
     padding-bottom: var(--qm-page-header-gap, 12px);
     border-bottom: 1px solid var(--qm-border);
+}
+
+/* THE TITLE AND ITS SUBTITLE SHARE ONE LINE (2026-09-19, second pass). Reported as "the heading
+   / title bar is still big and occupying a lot of space, yet it has mainly the page title" — and
+   that was right: a 22px title stacked over a 12.5px subtitle is two text lines to say one thing,
+   and the subtitle is the half nobody re-reads. Baseline-aligned on one row, the subtitle takes
+   whatever width is left and truncates; the whole sentence is on the QInfo beside the title.
+
+   The band is now one row tall — the actions, or the title line, whichever is taller.
+   31 pages wrote their own .page-header rule before this file owned it. */
+.page-header .header-content,
+.page-header .header-left {
+    display: flex;
+    /* CENTRE, not baseline. A QInfo in the h1 is an inline-flex element, which moves the h1 line
+       box baseline and pushed the subtitle onto a second line — measured 52px against 33px for
+       the same band without one. */
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 340px;
+}
+
+.page-header h1 {
+    /* The TITLE never shrinks and never wraps; the subtitle beside it absorbs the squeeze and
+       truncates. With `flex: 0 1 auto` a long subtitle competed for the row and pushed a short
+       title onto two lines — Class Teachers measured 52px against 33px for the same markup with a
+       shorter sentence. */
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 /* `.header-left` belongs to the app topbar (layout.css), where it is a horizontal
@@ -801,30 +842,43 @@ html, body {
     color: var(--qm-primary);
 }
 
-.page-header .subtitle {
+/* ONE LINE, BESIDE THE TITLE. A subtitle explains the page to somebody reading it for the first
+   time and then costs every later visit a whole line of the screen for ever. The full sentence
+   lives on the QInfo beside the title — see QInfo.razor for why that is a popover and not a
+   tooltip. */
+.page-header .subtitle,
+.page-header .page-subtitle {
     margin: 0;
-    font-size: 13px;
-    line-height: 1.45;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 1.4;
     color: var(--qm-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 @media (max-width: 576px) {
     .page-header {
-        margin-bottom: 16px;
-        padding-bottom: 16px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
     }
 
+    /* Size comes from .qm-main h1's own phone rule — one home, on the phone too. */
     .page-header h1 {
-        font-size: 22px;
-        gap: 10px;
+        gap: 8px;
     }
 
     .page-header h1 i {
-        font-size: 24px;
+        font-size: 18px;
     }
 
-    .page-header .subtitle {
-        font-size: 13px;
+    /* On a phone there is no room for both on one line, and no room to stack them either. The
+       QInfo beside the title carries the sentence, so the band is the title alone. */
+    .page-header .subtitle,
+    .page-header .page-subtitle {
+        display: none;
     }
 }
 
@@ -846,9 +900,9 @@ html, body {
 }
 
 /* Form Groups - Mobile Optimized */
-.form-group {
-    margin-bottom: 20px;
-}
+/* Spacing comes from layout.css's --qm-field-gap. This file loads after layout.css, so the
+   20px that used to sit here beat the token and made it inert — the same shape of bug as
+   qm-theme.css's .page-header h1 beating .qm-main h1. Label and control styling below stays. */
 
 .form-group label {
     display: block;

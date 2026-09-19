@@ -1773,21 +1773,44 @@
     gap: var(--q-row-gap, 8px);
 }
 
+/* The buttons at the foot of a dialog: a right-aligned row, clear of the last field. Five
+   components carried an identical copy in their own <style>, each with a 24px top margin. */
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--qm-block-gap, 12px);
+}
+
+/* A card following the filter bar needs air above it. Nine components wrote this rule into their
+   own <style> — six of them byte-identical — under three different container names. Adjacent
+   block margins collapse, so this does not stack with the bar's own margin-bottom. */
+.admin-page .q-card,
+.lessons-page .q-card,
+.tts-page .q-card,
+.myday-page .q-card {
+    margin-top: var(--qm-block-gap, 12px);
+}
+
 /* One page title and one body size inside the app shell. Print sheets and public screens are outside
    .qm-main and keep their own paper and large-format sizes. */
 .qm-main { font-size: 14px; }
 
 .qm-main h1 {
     font-family: var(--qm-font-display);
-    /* 28px until 2026-09-18: a title is the loudest thing on a page, it need not also be the
-       tallest, and on a data-driven screen those pixels are a row of data. */
-    font-size: 24px;
+    /* THE ONE HOME FOR THE TITLE SIZE. 28px until 2026-09-18, when it was set to 24px here and
+       nothing changed on screen: qm-theme.css also carried `.page-header h1 { font-size: 28px }`,
+       equal specificity and later in the cascade, so it won every time. That rule is gone (see the
+       note there) and this one finally applies. 20px now — a title is the loudest thing on a page,
+       it need not also be the tallest, and on a data-driven screen those pixels are a row of data.
+       uniform-check.mjs asserts the computed size against this number on every page, AND that the
+       rule winning the cascade is this one. */
+    font-size: 20px;
     font-weight: 700;
     line-height: 1.25;
 }
 
 @media (max-width: 640px) {
-    .qm-main h1 { font-size: 20px; }
+    .qm-main h1 { font-size: 18px; }
 }
 
 
@@ -1871,9 +1894,18 @@
 
 :root {
     /* The vertical rhythm every page block is built from. */
-    --qm-page-header-gap: 12px;     /* was an effective 44px of padding + margin */
-    --qm-block-gap: 16px;           /* between cards and sections; was 24px */
-    --qm-field-gap: 14px;           /* between form fields; was 20px */
+    --qm-page-header-gap: 6px;      /* below the title, above the rule. Was 8, 12, then 44. */
+    --qm-block-gap: 10px;           /* between cards and sections; was 12, 16, then 24. */
+    --qm-field-gap: 12px;           /* between form fields; was 14, and 20 before that. */
+}
+
+/* A page is the frame the content sits in and has no padding of its own — the gutter belongs to
+   .qm-main (--qm-page-pad). Seventeen components wrote `\.admin-page { padding: 0 }` into their
+   own <style> to say this, and two more wrote `padding: 24px; max-width: 900px; margin: 0 auto`,
+   which (a <style> block being global, not scoped) capped whatever hub happened to be hosting
+   them — 312px of a 1212px page unused on Appearance. Declared once, here. */
+.admin-page {
+    padding: 0;
 }
 
 .form-group {

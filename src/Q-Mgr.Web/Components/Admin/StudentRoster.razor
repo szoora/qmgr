@@ -3,7 +3,6 @@
    lived under /admin/visitors when the welfare features were part of the visitor module; they are
    separate modules now and a welfare-only subscriber should not see "visitors" in their URL. *@
 @page "/admin/visitors/roster"
-@implements IAsyncDisposable
 @inject IStudentApiService StudentApi
 @inject IBatchApiService BatchApi
 @inject INotificationClientService NotificationClient
@@ -25,13 +24,18 @@
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
 
-<PageTitle>Student Roster - Q-Mgr</PageTitle>
+<PageTitle>Students - Q-Mgr</PageTitle>
 
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Student Roster</h1>
-            <p class="subtitle">Pre-register visiting-day guardians against your student roll, so check-in is a search and a tap — not a form.</p>
+            @* "Student Roster" until 2026-09-19 (user decision). Roster names the container, and in
+               a product that already has a Duty Rota and Registers it reads as a schedule; the page
+               is the school's enrolled roll, so it is named for its subject like every other entry —
+               Broadcasts, Signage, Library, Branches, Feedback. The ROUTE did not move: it is a wire
+               format carried by notifications and ModuleRouteMap. *@
+            <h1>Students<QInfo Text="Your student roll: who is enrolled, their class, their guardians, and the pre-registration that makes visiting-day check-in a search and a tap rather than a form." Label="Students" /></h1>
+            <p class="subtitle">Your student roll — who is enrolled, their class, and their guardians.</p>
         </div>
         <div class="header-actions">
             <PermissionGuard Permission="students.manage">
@@ -137,7 +141,7 @@
     {
         <div class="empty-state">
             <QIcon Name="mortarboard" Size="xl" />
-            <h3>No students on the roster yet</h3>
+            <h3>No students yet</h3>
             <p>Add students one at a time, or use Bulk Import to upload your whole roll from a spreadsheet.</p>
         </div>
     }
@@ -895,6 +899,7 @@
                       StartAsync="@StartRosterImport"
                       LoadJobAsync="@LoadRosterJob"
                       LoadEntriesAsync="@LoadRosterEntries"
+                      OnFileChosen="@(n => importFileName = n)"
                       OnCompleted="@OnRosterImportCompleted"
                       RowSummary="@RosterRowSummary" />
     </ChildContent>
@@ -3026,6 +3031,7 @@
         StateHasChanged();
     }
 
+    /// <summary>Set by QImportPanel when a sheet is chosen; stored on the job as SourceFileName.</summary>
     private string? importFileName;
 
     private async Task HandleImportProgress(RosterImportProgressEvent progress)
@@ -3107,7 +3113,12 @@
         NotificationService.Notify(ToastSeverity.Success, "Export ready", $"{file.FileName} downloaded");
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>This page's own teardown, run by BranchAwareComponentBase after it has removed the
+    /// branch subscription. It was a `public async ValueTask DisposeAsync()` beside an
+    /// `@implements IAsyncDisposable` until 2026-09-19; Blazor calls IAsyncDisposable INSTEAD of
+    /// IDisposable, so the base's unsubscribe never ran and nothing warned, because the two are
+    /// different interfaces.</summary>
+    protected override void DisposeCore()
     {
         NotificationClient.OnRosterImportProgressReceived -= HandleImportProgress;
     }

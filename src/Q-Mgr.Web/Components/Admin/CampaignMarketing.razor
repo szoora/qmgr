@@ -11,13 +11,16 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 
-<PageTitle>Campaign Marketing - Q-Mgr</PageTitle>
+<PageTitle>Broadcasts - Q-Mgr</PageTitle>
 
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Campaign Marketing</h1>
-            <p class="subtitle">Broadcast email and SMS campaigns to your contacts — every message includes a working unsubscribe link</p>
+            @* "Campaign Marketing" until 2026-09-19. The Signage hub has a Campaigns tab of
+               its own, about what plays on a screen — two unrelated things under one word, one
+               line apart in the sidebar. This one sends messages to people, so it says so. *@
+            <h1>Broadcasts<QInfo Text="Email, SMS and WhatsApp sent to your contacts — every message includes a working unsubscribe link" Label="Broadcasts" /></h1>
+            <p class="subtitle">Email, SMS and WhatsApp sent to your contacts — every message includes a working unsubscribe link</p>
         </div>
     </div>
 
@@ -240,13 +243,7 @@
     </FooterContent>
 </QModal>
 
-<style>
-    .admin-page { padding: 0; }
-    .page-header { margin-bottom: 20px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .section-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 16px; }
 
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }

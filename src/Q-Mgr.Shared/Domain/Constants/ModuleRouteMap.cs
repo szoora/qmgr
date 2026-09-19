@@ -45,19 +45,15 @@ public static class ModuleRouteMap
         ("/ticket", ModuleCodes.CoreQueue),
         ("/book", ModuleCodes.CoreQueue),
         ("/admin/appointments", ModuleCodes.CoreQueue),
-        ("/admin/counters", ModuleCodes.CoreQueue),
-        ("/admin/service-types", ModuleCodes.CoreQueue),
-        ("/admin/printer-settings", ModuleCodes.CoreQueue),
-        ("/admin/kiosk-settings", ModuleCodes.CoreQueue),
-        ("/admin/customer-links", ModuleCodes.CoreQueue),
         ("/reports/queue", ModuleCodes.CoreQueue),
         ("/reports/counters", ModuleCodes.CoreQueue),
 
         // ---- Communication ----
+        // "/content" covers the Library and Signage hubs; the six pages that used to have their
+        // own routes under it are sections of those two now.
         ("/content", ModuleCodes.EngagementCommunications),
         ("/admin/marketing", ModuleCodes.EngagementCommunications),
         ("/admin/feedback", ModuleCodes.EngagementCommunications),
-        ("/reports/feedback", ModuleCodes.EngagementCommunications),
 
         // ---- Visitor Management ----
         // Matching is per whole segment, so "/admin/welfare" would not cover "/admin/welfare-reports".
@@ -78,13 +74,6 @@ public static class ModuleRouteMap
         ("/admin/welfare-my-actions", ModuleCodes.StudentWelfare),
         ("/admin/welfare-reports", ModuleCodes.StudentWelfare),
 
-        // Industry type is read by exactly two things: the kiosk, which themes itself and writes
-        // its welcome copy from it, and tenant provisioning, which seeds default service types
-        // from it. Both are Core Queue. The page says as much in its own subtitle ("customize the
-        // kiosk experience") and its main action opens /queue/kiosk — a route this same table
-        // already refuses without the module, so the page was offering a button that bounced.
-        ("/admin/industry", ModuleCodes.CoreQueue),
-
         // ---- Staff Performance (part of Student Welfare since 2026-09-17) ----
         // The portal is every staff member's own page and the admin pages all live under one
         // prefix. /notifications is deliberately NOT listed: the notification centre is base
@@ -95,19 +84,30 @@ public static class ModuleRouteMap
         ("/admin/timetable", ModuleCodes.StudentWelfare),
         // My Day (duty rota plan §7.2): API under api/v1/branches/{b}/staff/lessons.
         ("/my-day", ModuleCodes.StudentWelfare),
-        // Staff onboarding (duty rota plan §12, 2026-09-17): Users & Roles itself stays base product; the
-        // join requests and onboarding pages beneath it belong to the module their API belongs to.
-        ("/admin/users/requests", ModuleCodes.StudentWelfare),
-        ("/admin/users/onboarding", ModuleCodes.StudentWelfare),
 
         // ---- Integrations & API Access ----
         ("/admin/api-clients", ModuleCodes.IntegrationsApi),
-        ("/admin/integrations", ModuleCodes.IntegrationsApi),
 
         // Declared last on purpose: matching is first-hit and by segment prefix, so the specific
-        // /reports/visitors and /reports/feedback entries above must win before this catches the
-        // remaining /reports pages, which are all queue and counter metrics.
+        // /reports/visitors entry above must win before this catches the remaining /reports pages,
+        // which are all queue and counter metrics.
         ("/reports", ModuleCodes.CoreQueue),
+
+        // TEN WEB ROUTES WERE DELETED FROM THIS TABLE ON 2026-09-19, and the reason matters more
+        // than the list. /admin/counters, /admin/service-types, /admin/printer-settings,
+        // /admin/kiosk-settings, /admin/customer-links, /admin/industry, /admin/integrations,
+        // /admin/users/requests, /admin/users/onboarding and /reports/feedback are no longer
+        // routes: they are sections of the Branches, Users & Roles, Appearance, Settings and
+        // Feedback hubs. A hub crosses module boundaries — Branches is base product while Counters
+        // is Core Queue — and its single route cannot carry two module requirements, so the
+        // requirement moved onto the SECTION (HubTabs.Section.RequiringModule) and onto the
+        // sidebar gate (MainLayout's ShowAdmin* use HasModule directly).
+        //
+        // Do NOT add them back to "keep old links working". RequiredModulesForPage returns an
+        // empty list for an unmapped path, which callers read as "no module needed" — so a stale
+        // entry here is not harmless, and a MISSING one for a route that still exists is how a
+        // paid module stops being enforced. The API routes below are untouched: the server's gate
+        // never depended on which page a call came from.
     };
 
     /// <summary>

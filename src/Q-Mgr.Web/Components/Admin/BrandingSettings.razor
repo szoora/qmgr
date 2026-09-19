@@ -1,4 +1,3 @@
-@page "/admin/branding-settings"
 @inject IOrganizationApiService OrganizationApi
 @inject IToastService NotificationService
 @inject IAuthService AuthService
@@ -10,14 +9,20 @@
 @using QMgr.Application.DTOs
 @using QMgr.Web.Services
 
-<PageTitle>Branding Settings - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Branding Settings - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Branding Settings</h1>
-            <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Branding Settings<QInfo Text="Customize the look of your public kiosk and display screens with your own logo and colors" Label="Branding Settings" /></h1>
+                <p class="subtitle">Customize the look of your public kiosk and display screens with your own logo and colors</p>
+            </div>
+        }
         <div class="header-actions">
             @if (canEdit)
             {
@@ -58,7 +63,7 @@
             <QCard Icon="lock-fill" Title="White-Label Branding" Subtitle="Not available on your current plan">
                 <div class="upgrade-notice">
                     <p>@(featureUnavailableMessage ?? "Add the Communication module to customize your logo and colors.")</p>
-                    <QButton Text="View Plans" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/plans"))" />
+                    <QButton Text="View Plans" Icon="arrow-up-circle-fill" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/billing/modules"))" />
                 </div>
             </QCard>
         }
@@ -216,31 +221,10 @@
     }
 </div>
 
-<style>
-    .admin-page {
-        padding: 24px;
-        max-width: 900px;
-        margin: 0 auto;
-    }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 32px;
-    }
-
-    .header-content h1 {
+<style>.header-content h1 {
         margin: 0 0 8px;
         color: var(--qm-text-primary);
     }
-
-    .header-content .subtitle {
-        margin: 0;
-        color: var(--qm-text-secondary);
-        font-size: 14px;
-    }
-
     .loading-container {
         display: flex;
         justify-content: center;
@@ -504,6 +488,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Appearance hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true;
     private bool isSaving = false;
     private bool isSavingTheme = false;

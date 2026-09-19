@@ -320,6 +320,322 @@ public class StaffStructureController : StaffPerformanceControllerBase
         return Ok(StaffPerformanceMapping.ToDto(user, names, departmentNames));
     }
 
+
+    /// <summary>
+    /// Creates a member of staff from the Staff Directory (2026-09-19).
+    ///
+    /// <para>"Add staff" used to be <c>NavigateTo("/admin/users")</c> — it dropped the person into
+    /// Administration with no explanation and no way back to what they were doing. This is the same
+    /// user-creation path underneath: <see cref="RoleAssignmentGuard"/> still decides which roles
+    /// the caller may hand out, the account is still created with a temporary password, and the
+    /// onboarding checklist still picks it up. What is different is that the person asking never
+    /// leaves the directory they were looking at.</para>
+    ///
+    /// <para>Deliberately NARROWER than Users &amp; Roles: a name, an email, a role, and the staff
+    /// fields the directory itself shows. Editing permissions and deactivating an account stay
+    /// there, and the dialog links to it for exactly those.</para>
+    /// </summary>
+    [HttpPost("members")]
+    [RequirePermission(Permissions.StaffStructureManage)]
+    [ProducesResponseType(typeof(CreateStaffMemberResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateMember(Guid branchId, [FromBody] CreateStaffMemberRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var actorId = CurrentUserId();
+
+        var firstName = (request.FirstName ?? string.Empty).Trim();
+        var lastName = (request.LastName ?? string.Empty).Trim();
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (firstName.Length == 0) return BadRequestProblem("A first name is needed");
+        if (lastName.Length == 0) return BadRequestProblem("A last name is needed");
+        if (email.Length == 0 || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@'))
+            return BadRequestProblem("An email address is needed", "Staff sign in with it, and it is where their invitation goes.");
+
+        if (await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Email == email))
+            return BadRequestProblem("Somebody already uses that email address",
+                "Two accounts in one organization cannot share an email address. Search the directory for them instead.");
+
+        // SECURITY: nobody chooses their own privilege. Same guard as UsersController.CreateUser —
+        // without it a caller holding staff.structure.manage could post the seeded super-admin
+        // role's id and mint a Platform Administrator. A new endpoint that assigns a role and does
+        // not call this is that bug again.
+        var role = await Db.Roles.FirstOrDefaultAsync(r => r.Id == request.RoleId);
+        if (role == null) return BadRequestProblem("That role was not found");
+
+        var roleRefusal = await RoleAssignmentGuard.RefusalAsync(Db, actorId, role);
+        if (roleRefusal != null) return BadRequestProblem("That role cannot be assigned", roleRefusal);
+
+        var departmentIds = (request.DepartmentIds ?? new List<Guid>()).Distinct().ToList();
+        if (departmentIds.Count > 0)
+        {
+            var known = await Db.Departments.CountAsync(d => d.OrganizationId == organizationId && departmentIds.Contains(d.Id));
+            if (known != departmentIds.Count)
+                return BadRequestProblem("One of the departments was not found", "Every department must belong to this organization.");
+        }
+
+        if (request.LineManagerUserId is { } lm)
+        {
+            var managerOk = await Db.Users.AnyAsync(u => u.Id == lm && u.OrganizationId == organizationId
+                                                         && u.IsActive && u.Role.Code != RoleCodes.SuperAdmin);
+            if (!managerOk) return BadRequestProblem("The line manager was not found",
+                "The line manager must be an active member of staff in this organization.");
+        }
+
+        // Username: the email's local part, made unique with a numeric suffix because the username
+        // index is global. Exactly what the staff import does, so the two agree.
+        var baseUsername = new string(email[..email.IndexOf('@')].Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-').ToArray());
+        if (baseUsername.Length < 3) baseUsername = $"user{Guid.NewGuid():N}"[..12];
+        var username = baseUsername;
+        for (var n = 2; await Db.Users.AnyAsync(u => u.Username == username); n++) username = $"{baseUsername}{n}";
+
+        // A temporary password, hashed only, forced change at first sign-in, 72 hours — the same
+        // treatment the import gives (plan §12.2–12.3). The plaintext is returned ONCE, to be read
+        // out or printed, and is never stored.
+        var temporaryPassword = TemporaryPasswords.Generate();
+
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            Username = username,
+            Email = email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
+            MustChangePassword = true,
+            TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(TemporaryPasswords.Lifetime),
+            FirstName = firstName,
+            LastName = lastName,
+            Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
+            JobTitle = string.IsNullOrWhiteSpace(request.JobTitle) ? null : request.JobTitle.Trim(),
+            RoleId = role.Id,
+            AssignedBranchId = branchId,
+            DepartmentIds = departmentIds.Count > 0 ? departmentIds.ToArray() : null,
+            LineManagerUserId = request.LineManagerUserId,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            CreatedBy = actorId
+        };
+
+        Db.Users.Add(user);
+        await Db.SaveChangesAsync();
+
+        await Activity.RecordAsync(ActivityActions.StaffMemberCreated, nameof(User), user.Id, user.Id,
+            $"{StaffPerformanceMapping.FullName(user)} added to the staff directory as {role.Name}",
+            new { role.Code, DepartmentCount = departmentIds.Count, HasLineManager = request.LineManagerUserId.HasValue },
+            branchId, organizationId);
+
+        return Ok(new CreateStaffMemberResult
+        {
+            UserId = user.Id,
+            FullName = StaffPerformanceMapping.FullName(user),
+            Username = user.Username,
+            Email = user.Email,
+            TemporaryPassword = temporaryPassword
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // The staff profile (2026-09-19)
+    // ---------------------------------------------------------------------
+    //
+    // Twelve fields have been on the User row since 2026-09-18 and the bulk staff import has been
+    // writing them since. Nothing could READ one back per person, and nothing could correct one:
+    // no endpoint, no UI. A typo in an imported sheet was permanent and a school entering staff by
+    // hand could record none of it. These two actions are that missing surface.
+    //
+    // The read is staff.records.view plus the staff scope, the same pair every other staff read
+    // uses. The write is staff.structure.manage — the employment record is part of an auditable
+    // MoES return, so it is an administrator's write, and the person's own half is a separate
+    // endpoint on the portal (StaffPortalController.UpdateMyContact).
+
+    /// <summary>
+    /// One member of staff's whole record. Out of the caller's staff scope answers 404, never 403,
+    /// which is the standing rule: a 403 confirms the person exists.
+    /// </summary>
+    [HttpGet("members/{userId:guid}/profile")]
+    [RequirePermission(Permissions.StaffRecordsView)]
+    [ProducesResponseType(typeof(StaffProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMemberProfile(Guid branchId, Guid userId)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var user = await Db.Users.Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId && u.Role.Code != RoleCodes.SuperAdmin);
+        if (user == null) return StaffMemberNotFound();
+
+        // Self is always visible and is not scope — the ProfileController rule. Everyone else goes
+        // through the staff scope, which fails closed.
+        var me = CurrentUserId();
+        if (user.Id != me && !await StaffScope.CanSeeStaffAsync(branchId, userId)) return StaffMemberNotFound();
+
+        return Ok(await BuildProfileAsync(user, organizationId, user.Id == me));
+    }
+
+    /// <summary>
+    /// Writes one member of staff's record. The whole record is sent every time, so a null is a
+    /// deliberate blank rather than a field the form forgot.
+    ///
+    /// Every change writes an <c>ActivityEvent</c> naming what moved: a staff file is exactly the
+    /// thing an inspection asks who changed and when. The person is told only when something they
+    /// would notice changed — their job title or their employment terms — rather than on every save.
+    /// </summary>
+    [HttpPut("members/{userId:guid}/profile")]
+    [RequirePermission(Permissions.StaffStructureManage)]
+    [ProducesResponseType(typeof(StaffProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateMemberProfile(Guid branchId, Guid userId, [FromBody] UpdateStaffProfileRequest request)
+    {
+        var branchError = await VerifyBranchOwnership(branchId);
+        if (branchError != null) return branchError;
+
+        var organizationId = await ResolveOrganizationIdAsync(branchId);
+        var user = await Db.Users.Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId && u.Role.Code != RoleCodes.SuperAdmin);
+        if (user == null) return StaffMemberNotFound();
+        if (user.Id != CurrentUserId() && !await StaffScope.CanSeeStaffAsync(branchId, userId)) return StaffMemberNotFound();
+
+        if (request.EmploymentStartDate is { } start && request.EmploymentEndDate is { } end && end < start)
+            return BadRequestProblem("The leaving date is before the start date",
+                "A person cannot leave before they were appointed. Clear one of the two dates if it was entered by mistake.");
+
+        if (request.DateOfBirth is { } dob && dob > DateOnly.FromDateTime(DateTime.UtcNow.Date))
+            return BadRequestProblem("The date of birth is in the future");
+
+        // An employee number is the school's own key for this person and must not repeat.
+        var employeeNumber = Trim(request.EmployeeNumber, 40);
+        if (!string.IsNullOrEmpty(employeeNumber))
+        {
+            var taken = await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Id != userId
+                                                     && u.EmployeeNumber == employeeNumber);
+            if (taken) return BadRequestProblem("That employee number is already in use",
+                "Two members of staff cannot share an employee number — it is how the school's own file identifies them.");
+        }
+
+        var before = Snapshot(user);
+
+        user.Phone = Trim(request.Phone, 40);
+        user.AlternatePhone = Trim(request.AlternatePhone, 40);
+        user.OfficeLocation = Trim(request.OfficeLocation, 120);
+        user.EmergencyContactName = Trim(request.EmergencyContactName, 120);
+        user.EmergencyContactPhone = Trim(request.EmergencyContactPhone, 40);
+
+        user.JobTitle = Trim(request.JobTitle, 120);
+        user.EmployeeNumber = employeeNumber;
+        user.EmploymentStartDate = request.EmploymentStartDate;
+        user.EmploymentEndDate = request.EmploymentEndDate;
+        user.EmploymentType = request.EmploymentType;
+        user.Qualification = Trim(request.Qualification, 120);
+        user.TeachingRegistrationNumber = Trim(request.TeachingRegistrationNumber, 60);
+        user.DateOfBirth = request.DateOfBirth;
+        user.Sex = request.Sex;
+        user.NationalId = Trim(request.NationalId, 40);
+
+        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedBy = CurrentUserId();
+        await Db.SaveChangesAsync();
+
+        var after = Snapshot(user);
+        var changed = ChangedFields(before, after);
+
+        await Activity.RecordAsync(ActivityActions.StaffProfileUpdated, nameof(User), user.Id, user.Id,
+            changed.Count == 0
+                ? $"{StaffPerformanceMapping.FullName(user)}: staff record saved, nothing changed"
+                : $"{StaffPerformanceMapping.FullName(user)}: {string.Join(", ", changed)} updated",
+            new { Before = before, After = after }, branchId, organizationId,
+            visibility: WelfareVisibility.Confidential);
+
+        // Told only about what a person would notice. A corrected national ID is an administrative
+        // fix; a changed job title or set of employment terms is not.
+        var notable = changed.Where(c => c is "job title" or "employment type" or "start date" or "leaving date").ToList();
+        if (notable.Count > 0)
+            await NotifyProfileChangedAsync(user.Id, organizationId, branchId, "Your staff record changed",
+                $"An administrator updated your {string.Join(", ", notable)}. Open My Workspace to see your file.");
+
+        return Ok(await BuildProfileAsync(user, organizationId, user.Id == CurrentUserId()));
+    }
+
+    /// <summary>The profile, with the structure fields StaffStructureController owns read-only.</summary>
+    private async Task<StaffProfileDto> BuildProfileAsync(User user, Guid organizationId, bool isSelf)
+    {
+        var departmentNames = await DepartmentNamesAsync(organizationId);
+        var names = await BuildNamesAsync(new[] { user.LineManagerUserId });
+
+        return new StaffProfileDto
+        {
+            UserId = user.Id,
+            FullName = StaffPerformanceMapping.FullName(user),
+            Email = user.Email,
+            Username = user.Username,
+            RoleName = user.Role?.Name ?? string.Empty,
+            IsActive = user.IsActive,
+
+            Phone = user.Phone,
+            AlternatePhone = user.AlternatePhone,
+            OfficeLocation = user.OfficeLocation,
+            EmergencyContactName = user.EmergencyContactName,
+            EmergencyContactPhone = user.EmergencyContactPhone,
+
+            JobTitle = user.JobTitle,
+            EmployeeNumber = user.EmployeeNumber,
+            // Derived from the role, never stored — see the note on the DTO.
+            StaffGroup = _policy.GroupFor(user.Role?.Code),
+            EmploymentStartDate = user.EmploymentStartDate,
+            EmploymentEndDate = user.EmploymentEndDate,
+            EmploymentType = user.EmploymentType,
+            Qualification = user.Qualification,
+            TeachingRegistrationNumber = user.TeachingRegistrationNumber,
+            DateOfBirth = user.DateOfBirth,
+            Sex = user.Sex,
+            NationalId = user.NationalId,
+
+            DepartmentNames = (user.DepartmentIds ?? Array.Empty<Guid>())
+                .Select(id => departmentNames.GetValueOrDefault(id, "?")).ToList(),
+            LineManagerName = user.LineManagerUserId.HasValue ? names[user.LineManagerUserId] : null,
+            IsSelf = isSelf
+        };
+    }
+
+    private static string? Trim(string? value, int max)
+    {
+        var t = value?.Trim();
+        if (string.IsNullOrEmpty(t)) return null;
+        return t.Length <= max ? t : t[..max];
+    }
+
+    /// <summary>
+    /// What the activity row records. A NAME, never a value: the summary is readable by anybody
+    /// holding staff.records.view, and "national ID updated" is the useful half — the number itself
+    /// is not something a log should repeat. The values are in DetailJson, which no endpoint returns.
+    /// </summary>
+    private static Dictionary<string, string?> Snapshot(User u) => new()
+    {
+        ["phone"] = u.Phone,
+        ["second phone"] = u.AlternatePhone,
+        ["office"] = u.OfficeLocation,
+        ["emergency contact"] = u.EmergencyContactName,
+        ["emergency number"] = u.EmergencyContactPhone,
+        ["job title"] = u.JobTitle,
+        ["employee number"] = u.EmployeeNumber,
+        ["start date"] = u.EmploymentStartDate?.ToString("O"),
+        ["leaving date"] = u.EmploymentEndDate?.ToString("O"),
+        ["employment type"] = u.EmploymentType?.ToString(),
+        ["qualification"] = u.Qualification,
+        ["registration number"] = u.TeachingRegistrationNumber,
+        ["date of birth"] = u.DateOfBirth?.ToString("O"),
+        ["sex"] = u.Sex?.ToString(),
+        ["national ID"] = u.NationalId
+    };
+
+    private static List<string> ChangedFields(Dictionary<string, string?> before, Dictionary<string, string?> after)
+        => before.Where(kv => after[kv.Key] != kv.Value).Select(kv => kv.Key).ToList();
     // ---------------------------------------------------------------------
     // Coverage
     // ---------------------------------------------------------------------

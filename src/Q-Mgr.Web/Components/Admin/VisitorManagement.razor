@@ -1,7 +1,6 @@
 @page "/admin/visitors"
 @using QMgr.Web.Services
 @using System.Text.Json
-@implements IAsyncDisposable
 @inject IVisitorApiService VisitorApi
 @inject IStudentApiService StudentApi
 @inject IToastService NotificationService
@@ -23,7 +22,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Visitor Management</h1>
+            <h1>Visitor Management<QInfo Text="Check in visitors, notify hosts, and keep a record of who's on site" Label="Visitor Management" /></h1>
             <p class="subtitle">Check in visitors, notify hosts, and keep a record of who's on site</p>
         </div>
         <div class="header-actions">
@@ -378,8 +377,7 @@
 <QModal @bind-Visible="showSettingsModal" Title="Visitor Settings" Size="md">
     <ChildContent>
         <div class="settings-section">
-            <h3>Consent / NDA</h3>
-            <p class="settings-hint">When enabled, every check-in requires the visitor (or the staff member on their behalf) to accept this statement before the visit can start.</p>
+            <h3>Consent / NDA<QInfo Text="When enabled, every check-in requires the visitor (or the staff member on their behalf) to accept this statement before the visit can start." Label="Consent / NDA" /></h3>
             <label class="settings-toggle">
                 <input type="checkbox" @bind="consentSettingsModel.Required" />
                 <span>Require consent at check-in</span>
@@ -419,12 +417,7 @@
         </div>
 
         <div class="settings-section">
-            <h3>Reporting Thresholds</h3>
-            <p class="settings-hint">
-                What counts as an exception on the Visitors report. A visit still open past these
-                hours is listed as an overstay; a visitor reaching the visit count is listed as
-                unusually frequent. Neither blocks anything — they decide what gets surfaced.
-            </p>
+            <h3>Reporting Thresholds<QInfo Text="What counts as an exception on the Visitors report. A visit still open past these hours is listed as an overstay; a visitor reaching the visit count is listed as unusually frequent. Neither blocks anything — they decide what gets surfaced." Label="Reporting Thresholds" /></h3>
             <label>
                 Overstay after (hours)
                 <input type="number" min="1" max="168" @bind="reportingSettingsModel.OverstayThresholdHours" />
@@ -441,12 +434,7 @@
         </div>
 
         <div class="settings-section">
-            <h3>Evacuation &amp; Scheduled Reports</h3>
-            <p class="settings-hint">
-                Where the roll call is emailed from the evacuation screen, and which reports go out
-                on their own. A scheduled report is an export that leaves the building on a timer,
-                so editing this needs the same permission as downloading the log by hand.
-            </p>
+            <h3>Evacuation &amp; Scheduled Reports<QInfo Text="Where the roll call is emailed from the evacuation screen, and which reports go out on their own. A scheduled report is an export that leaves the building on a timer, so editing this needs the same permission as downloading the log by hand." Label="Evacuation &amp; Scheduled Reports" /></h3>
             <label class="full-width-label">
                 Evacuation roll call goes to
                 <input type="email" @bind="reportingSettingsModel.EvacuationEmail" placeholder="fire.marshal@yourschool.ac.ug" />
@@ -505,8 +493,7 @@
 <QModal @bind-Visible="showPassesModal" Title="Group Passes" Size="md">
     <ChildContent>
         <div class="settings-section">
-            <h3>New Pass</h3>
-            <p class="settings-hint">A single QR badge that admits a group (e.g. a contractor crew or tour) — up to the cap you set, checked in/out individually at the scanner.</p>
+            <h3>New Pass<QInfo Text="A single QR badge that admits a group (e.g. a contractor crew or tour) — up to the cap you set, checked in/out individually at the scanner." Label="New Pass" /></h3>
             <div class="form-grid">
                 <label>Label *<input @bind="newPassRequest.Label" placeholder="e.g. ACME Contractors - Roof Repair" /></label>
                 <label>Max Visitors<input type="number" min="1" max="200" @bind="newPassRequest.MaxVisitors" /></label>
@@ -579,13 +566,7 @@
                @bind-Reason="flagReason"
                OnClose="@HandleToggleWatchlistConfirm" />
 
-<style>
-    .admin-page { padding: 0; }
-
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr)); gap: var(--qm-statcard-gap); margin-bottom: 18px; }
     .summary-card { display: flex; align-items: center; gap: 10px; background: var(--qm-bg-card); border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md); padding: var(--qm-statcard-pad); }
     .summary-card.alert { border-color: var(--qm-danger); }
@@ -616,7 +597,6 @@
         padding: 6px 9px; border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
         background: var(--qm-bg-card); color: var(--qm-text-primary); font-size: 13px;
     }
-
 
     .loading-container, .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
     .empty-state .q-icon { font-size: 40px; opacity: 0.5; }
@@ -1868,7 +1848,12 @@
         }
     }
 
-    public ValueTask DisposeAsync()
+    /// <summary>This page's own teardown, run by BranchAwareComponentBase after it has removed the
+    /// branch subscription. It was a `public ValueTask DisposeAsync()` beside an
+    /// `@implements IAsyncDisposable` until 2026-09-19; Blazor calls IAsyncDisposable INSTEAD of
+    /// IDisposable, so the base's unsubscribe never ran and nothing warned, because the two are
+    /// different interfaces.</summary>
+    protected override ValueTask DisposeCoreAsync()
     {
         searchDebounce?.Cancel();
         return ValueTask.CompletedTask;

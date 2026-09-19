@@ -1,6 +1,4 @@
 @page "/admin/staff/duties"
-@implements IDisposable
-@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -41,7 +39,7 @@
     @* The Duties hub (2026-09-18). Registers, Rota and Duty Reports were three sidebar entries and
        three routes for one subject — the week's duties, who is on them, and what they wrote. One
        page, three tabs, one route; the sections carry no @page of their own. *@
-    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="du" />
+    <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="du" />
 
     @if (hubTab == "rota")
     {
@@ -237,7 +235,6 @@
        screen. A page that shows ONE document keeps a reading width — see CLAUDE.md. */
     .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .duty-day { margin-top: 20px; }
     .duty-day__head { font-size: 15px; font-weight: 600; color: var(--qm-text-primary); margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
     .duty-day__head small { font-weight: 400; color: var(--qm-text-muted); font-size: 12px; }
@@ -251,7 +248,6 @@
     .duty-card__desc { margin: 0; font-size: 13px; color: var(--qm-text-muted); white-space: pre-wrap; }
     .duty-card__minutes { display: flex; gap: 6px; flex-wrap: wrap; }
     .duty-card__actions { display: flex; gap: var(--q-row-gap, 8px); flex-wrap: wrap; justify-content: flex-end; }
-    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
     .form-row > .form-group { flex: 1 1 200px; min-width: 0; }
     .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); background: var(--qm-bg-card); border-radius: var(--qm-radius-xl); border: 1px solid var(--qm-border); }
 </style>
@@ -263,17 +259,22 @@
     /// </summary>
     // Rota and Duty Reports were their own pages and their own entries before the merge. Everyone
     // who has a duty sees their own week, so these carry no permission of their own; the sections
-    // scope their contents server-side. See StaffHubTabs.
-    private static readonly StaffHubTabs.Section[] Sections =
+    // scope their contents server-side. See HubTabs.
+    private static readonly HubTabs.Section[] Sections =
     {
         new(new QTab("registers", "Registers", "calendar-check")),
         new(new QTab("rota", "Rota", "calendar-week")),
         new(new QTab("reports", "Reports", "journal-text")),
     };
 
-    private static readonly IReadOnlyList<QTab> HubTabs = Sections.Select(s => s.Tab).ToList();
+    private static readonly IReadOnlyList<QTab> hubTabs = Sections.Select(s => s.Tab).ToList();
 
     private string hubTab = "registers";
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
 
     private bool isLoading = true;
     private bool canManage;
@@ -344,11 +345,8 @@
 
         // The hub owns the URL: /admin/staff/duties?tab=rota is the one link to the rota, and the
         // sections carry no routes of their own.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
-        {
-            var t = wantedTab.ToString().Trim().ToLowerInvariant();
-            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
-        }
+        hubTab = HubTabs.Resolve(hubTabs, TabParam);
+        appliedTab = TabParam;
         await LoadAsync();
     }
 
@@ -588,7 +586,13 @@
         }
     }
 
-    public void Dispose()
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
     {
+        HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
     }
 }

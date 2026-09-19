@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/parameters, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -25,7 +24,7 @@
 {
     <div class="page-header">
         <div class="header-content">
-            <h1>Activity Log</h1>
+            <h1>Activity Log<QInfo Text="Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here." Label="Activity Log" /></h1>
             <p class="subtitle">Who did what to which record, from where — every write in the module plus sign-ins. Summaries are written at the actor's visibility, so a Restricted record's content never appears here.</p>
         </div>
     </div>

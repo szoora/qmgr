@@ -338,7 +338,7 @@ public class PublicStaffJoinController : ControllerBase
                     Title = waiting == 1 ? "1 join request is waiting" : $"{waiting} join requests are waiting",
                     Message = "Staff have asked to join through the join link and are waiting for approval.",
                     Type = QMgr.Domain.Entities.Notification.NotificationType.SystemAlert,
-                    ActionUrl = "/admin/users/requests",
+                    ActionUrl = "/admin/users?tab=requests",
                     Channels = QMgr.Domain.Entities.Notification.NotificationChannel.InApp | QMgr.Domain.Entities.Notification.NotificationChannel.Email
                 });
             }

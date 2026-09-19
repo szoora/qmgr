@@ -1,4 +1,3 @@
-@page "/admin/users/requests"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using System.Text.Json
@@ -21,17 +20,23 @@
     are for the approver's eyes only — the applicant is never told.
 *@
 
-<PageTitle>Join Requests - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Join Requests - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Join Requests</h1>
-            <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Join Requests<QInfo Text="Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role." Label="Join Requests" /></h1>
+                <p class="subtitle">Staff who asked to join through your join link. Nobody can sign in until you approve them and choose their role.</p>
+            </div>
+        }
         <div class="header-actions">
             <QCheckbox Value="@showClosed" ValueChanged="@ToggleClosed" Label="Show rejected and expired" />
-            <QButton Text="Join link and onboarding" Icon="link-45deg" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/users/onboarding"))" />
+            <QButton Text="Join link and onboarding" Icon="link-45deg" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/users?tab=onboarding"))" />
         </div>
     </div>
 
@@ -45,7 +50,7 @@
     }
     else if (requests.Count == 0)
     {
-        <QEmptyState Icon="person-check" Title="No join requests waiting"
+        <QEmptyState Icon="person-check" Title="No join requests"
                      Text="When someone applies through your join link, their request appears here." />
     }
     else
@@ -151,6 +156,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Users & Roles hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true, saving, showClosed, canApprove, moduleMissing, showApprove, showReject;
     private int purgeDays = 30;
     private List<JoinRequestDto> requests = new();

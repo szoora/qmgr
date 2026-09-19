@@ -27,7 +27,10 @@ namespace QMgr.Web.Components.Shared;
 /// drop its own <c>@inject IBranchStateService BranchState</c> (this base injects it), call
 /// <see cref="TrackBranch"/> once from <c>OnAfterRenderAsync(firstRender)</c> next to the first branch
 /// read, and override <see cref="OnBranchChangedAsync"/> to clear branch-scoped caches and re-run the
-/// load. Do not re-subscribe or unsubscribe by hand.</para>
+/// load. Do not re-subscribe or unsubscribe by hand, and do NOT declare <c>@implements IDisposable</c>
+/// or a <c>Dispose</c> of your own — teardown of the page's own timers and handlers goes in an
+/// override of <see cref="DisposeCore"/> (or <see cref="DisposeCoreAsync"/> when it must await).
+/// See those methods for the two leaks the old shapes caused.</para>
 ///
 /// <para><b>Four traps, each already paid for in this codebase:</b></para>
 /// <list type="number">
@@ -47,7 +50,7 @@ namespace QMgr.Web.Components.Shared;
 /// branch from the header first."</item>
 /// </list>
 /// </summary>
-public abstract class BranchAwareComponentBase : ComponentBase, IDisposable
+public abstract class BranchAwareComponentBase : ComponentBase, IDisposable, IAsyncDisposable
 {
     [Inject] protected IBranchStateService BranchState { get; set; } = default!;
 
@@ -127,9 +130,49 @@ public abstract class BranchAwareComponentBase : ComponentBase, IDisposable
         });
     }
 
-    public virtual void Dispose()
+    /// <summary>
+    /// Removes the subscription, marks the component disposed, then runs the page's own teardown.
+    ///
+    /// <para><b>Deliberately NOT virtual.</b> It was virtual until 2026-09-19, and eight pages
+    /// declared their own <c>public void Dispose()</c> beside an <c>@implements IDisposable</c>.
+    /// That second line re-declares the interface, which re-maps <c>IDisposable.Dispose</c> to the
+    /// page's own method (C# interface re-implementation) — so THIS method never ran on any of
+    /// them: the handler was never removed, <c>_disposed</c> never became true, and a stale
+    /// instance re-ran its whole load on every later branch switch for the life of the circuit
+    /// (<c>IBranchStateService</c> is scoped, so one instance serves the entire session). The
+    /// compiler reported it as CS0114 on every build and nothing acted on it.</para>
+    ///
+    /// <para>A page with teardown of its own overrides <see cref="DisposeCore"/> or
+    /// <see cref="DisposeCoreAsync"/>. Trying to override this method instead is now a compile
+    /// ERROR rather than a silent leak, which is the point of sealing it off.</para>
+    /// </summary>
+    public void Dispose()
     {
-        if (_disposed) return;
+        if (Teardown()) DisposeCore();
+    }
+
+    /// <summary>
+    /// The async half, and the reason this class implements <see cref="IAsyncDisposable"/> at all.
+    ///
+    /// <para>Blazor's renderer disposes a component with <c>IAsyncDisposable</c> if it has one and
+    /// <c>IDisposable</c> only <b>otherwise</b> — an <c>else if</c>, not both. So five pages that
+    /// inherited this base and declared <c>@implements IAsyncDisposable</c> had their
+    /// <c>DisposeAsync</c> called and <see cref="Dispose"/> never called, leaking the branch
+    /// subscription exactly like the eight above. Nothing reported it: unlike the sync case there
+    /// is no hiding, no CS0114, no warning of any kind, because the two are different interfaces.
+    /// Owning both shapes here is what makes the leak unreachable rather than merely fixed.</para>
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (!Teardown()) return;
+        DisposeCore();
+        await DisposeCoreAsync();
+    }
+
+    /// <summary>Unsubscribes once. Returns false if teardown has already run.</summary>
+    private bool Teardown()
+    {
+        if (_disposed) return false;
         _disposed = true;
 
         if (_subscribed)
@@ -137,5 +180,22 @@ public abstract class BranchAwareComponentBase : ComponentBase, IDisposable
             BranchState.OnBranchChanged -= HandleBranchChanged;
             _subscribed = false;
         }
+        return true;
     }
+
+    /// <summary>
+    /// The page's own synchronous teardown — timers it started, SignalR handlers it attached. Runs
+    /// AFTER the branch subscription has been removed, so a branch change can never re-enter a
+    /// component on its way out. Do NOT unsubscribe from <c>OnBranchChanged</c> here: the base owns
+    /// that, and a page that also does it by hand is the duplication this class exists to end.
+    /// </summary>
+    protected virtual void DisposeCore() { }
+
+    /// <summary>
+    /// The page's own asynchronous teardown — leaving a SignalR group, stopping a JS-side scanner.
+    /// Runs after <see cref="DisposeCore"/>. A page that needs both may override both; most need
+    /// only one. Never declare <c>@implements IAsyncDisposable</c> on the page: see
+    /// <see cref="DisposeAsync"/> for what that used to cost.
+    /// </summary>
+    protected virtual ValueTask DisposeCoreAsync() => ValueTask.CompletedTask;
 }

@@ -15,14 +15,15 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 24px;
+    /* Gap comes from the shared .page-header rule in app.css. */
     flex-wrap: wrap;
-    gap: 16px;
+    gap: var(--q-row-gap, 8px);
 }
 
 .qm-admin-page .header-content h1 {
     margin: 0 0 4px;
-    font-size: 28px;
+    /* Size comes from .qm-main h1 — one home. This file loads LAST, so a size here beats every
+       other rule in the app; it carried 28px and was a third competing definition. */
     color: var(--qm-text-primary);
     display: flex;
     align-items: center;

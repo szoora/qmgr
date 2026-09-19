@@ -1,5 +1,4 @@
 @page "/admin/welfare-reports"
-@implements IAsyncDisposable
 @using System.Text.Json
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -11,7 +10,6 @@
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
 @inject IStudentApiService StudentApi
-@inject INotificationClientService NotificationClient
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -96,8 +94,7 @@
                     <QBarList Items="@CategoryBars" EmptyText="No records in this range." />
                 </div>
                 <div class="report-panel">
-                    <h3>By Staff (Consistency Check)</h3>
-                    <p class="form-hint">Who's logging what, and how often — a school's own process-consistency check, not an evaluation of any one student group.</p>
+                    <h3>By Staff (Consistency Check)<QInfo Text="Who's logging what, and how often — a school's own process-consistency check, not an evaluation of any one student group." Label="By Staff (Consistency Check)" /></h3>
                     <QBarList Items="@StaffBars" EmptyText="No records in this range." />
                 </div>
             </div>
@@ -306,115 +303,33 @@
 
 <QModal @bind-Visible="showImportModal" Title="Import Historical Records" Size="lg">
     <ChildContent>
-        @if (importJob == null)
-        {
-            <div class="import-upload">
-                <p>
-                    Upload an Excel (.xlsx/.xls) or CSV export of your previous system's ledger with columns for
-                    <strong>student code</strong>, <strong>case type</strong> (Achievement / Behavior / Welfare),
-                    <strong>category</strong> (must already exist under Welfare Categories), <strong>date</strong> and
-                    <strong>description</strong>; optionally points, tier, action taken and status. Column order doesn't
-                    matter and common header variations are recognized. Students are matched by code — import the roster first.
-                    Imported records default to <em>Resolved</em> and are attributed to you as the importer.
-                </p>
-                <input type="file" id="welfare-file-input" accept=".xlsx,.xls,.csv" @onchange="OnFileSelected" />
-
-                @if (isParsingFile)
-                {
-                    <div class="loading-container loading-container--inline"><QSpinner Size="sm" /><span>Reading file...</span></div>
-                }
-                else if (headerErrors.Any())
-                {
-                    <div class="import-errors">
-                        <strong>Couldn't read this file:</strong>
-                        <ul>
-                            @foreach (var err in headerErrors)
-                            {
-                                <li>@err</li>
-                            }
-                        </ul>
-                    </div>
-                }
-                else if (parsedRows.Any())
-                {
-                    <div class="import-preview">
-                        <p><strong>@parsedRows.Count</strong> row@(parsedRows.Count == 1 ? "" : "s") parsed from <strong>@parsedFileName</strong>. First few rows:</p>
-                        <div class="import-preview-table">
-                            <div class="import-preview-row import-preview-header">
-                                <span>Code</span><span>Case Type</span><span>Category</span><span>Date</span><span>Tier</span><span>Points</span><span>Description</span>
-                            </div>
-                            @foreach (var r in parsedRows.Take(5))
-                            {
-                                <div class="import-preview-row">
-                                    <span>@r.StudentCode</span><span>@r.CaseType</span><span>@r.Category</span><span>@r.OccurredAt</span>
-                                    <span>@r.Tier</span><span>@r.Points</span><span title="@r.Description">@r.Description</span>
-                                </div>
-                            }
-                            @if (parsedRows.Count > 5)
-                            {
-                                <p class="import-preview-more">+ @(parsedRows.Count - 5) more row@(parsedRows.Count - 5 == 1 ? "" : "s")</p>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
-        }
-        else
-        {
-            <div class="import-progress">
-                <div class="import-progress-header">
-                    <span class="import-status-badge @importJob.Status.ToString().ToLower()">@importJob.Status</span>
-                    <span>@importJob.ProcessedRows / @importJob.TotalRows rows processed</span>
-                </div>
-                <div class="import-progress-bar">
-                    <div class="import-progress-fill" style="width: @(importJob.TotalRows > 0 ? (importJob.ProcessedRows * 100 / importJob.TotalRows) : 0)%"></div>
-                </div>
-                <div class="import-summary-grid">
-                    <div class="import-summary-tile created"><span class="value">@importJob.CreatedCount</span><span class="label">Created</span></div>
-                    <div class="import-summary-tile duplicate"><span class="value">@importJob.DuplicateCount</span><span class="label">Duplicates</span></div>
-                    <div class="import-summary-tile failed"><span class="value">@importJob.FailedCount</span><span class="label">Failed</span></div>
-                </div>
-                @if (importJob.Status == RosterImportStatus.Failed && !string.IsNullOrWhiteSpace(importJob.FailureReason))
-                {
-                    <div class="import-errors">@importJob.FailureReason</div>
-                }
-
-                @if (importJob.Status == RosterImportStatus.Completed || importJob.Status == RosterImportStatus.CompletedWithErrors)
-                {
-                    <QButton Text="@(showImportEntries ? "Hide Row-by-Row Log" : "View Row-by-Row Log")" Icon="list-ul" Variant="secondary" OnClick="@ToggleImportEntries" />
-                    @if (showImportEntries)
-                    {
-                        <div class="import-log">
-                            @foreach (var entry in importEntries)
-                            {
-                                <div class="import-log-row outcome-@ImportOutcomeDisplay.CssModifier(entry.Outcome)">
-                                    <span class="import-log-rownum">#@entry.RowNumber</span>
-                                    <span class="import-log-outcome">@ImportOutcomeDisplay.Label(entry.Outcome)</span>
-                                    @* For a welfare job the entry's GuardianName column carries the category name. *@
-                                    <span class="import-log-name">@(entry.StudentName ?? entry.StudentCode ?? "—") / @(entry.GuardianName ?? "—")</span>
-                                    <span class="import-log-message" title="@entry.Message">@entry.Message</span>
-                                </div>
-                            }
-                        </div>
-                    }
-                }
-            </div>
-        }
+        <p class="form-hint">
+            Upload an Excel (.xlsx/.xls) or CSV export of your previous system's ledger with columns for
+            <strong>student code</strong>, <strong>case type</strong> (Achievement / Behavior / Welfare),
+            <strong>category</strong> (must already exist under Welfare Categories), <strong>date</strong> and
+            <strong>description</strong>; optionally points, tier, action taken and status. Column order doesn't
+            matter and common header variations are recognized. Students are matched by code — import the roster first.
+            Imported records default to <em>Resolved</em> and are attributed to you as the importer.
+        </p>
+        <QImportPanel TRow="WelfareImportRow"
+                      BranchId="@branchId"
+                      InputId="welfare-file-input"
+                      Noun="record"
+                      Columns="@WelfareImportColumns"
+                      BuildRow="@BuildWelfareRow"
+                      TemplateRows="@WelfareTemplateRows"
+                      TemplateFileStem="welfare-history-import-template"
+                      StartAsync="@StartWelfareImport"
+                      LoadJobAsync="@LoadWelfareJob"
+                      LoadEntriesAsync="@LoadWelfareEntries"
+                      OnFileChosen="@(n => importFileName = n)"
+                      OnCompleted="@OnWelfareImportCompleted"
+                      RowSummary="@WelfareRowSummary" />
     </ChildContent>
     <FooterContent>
-        @if (importJob == null)
-        {
-            <QButton Text="Cancel" Variant="ghost" OnClick="@CloseImportModal" />
-            <QButton Text="@($"Start Import{(parsedRows.Any() ? $" ({parsedRows.Count} rows)" : "")}")" Icon="upload" Variant="primary"
-                     OnClick="@StartImport" Disabled="@(!parsedRows.Any() || isStartingImport)" />
-        }
-        else
-        {
-            <QButton Text="Close" Variant="primary" OnClick="@CloseImportModal" />
-        }
+        <QButton Text="Close" Variant="ghost" OnClick="@CloseImportModal" />
     </FooterContent>
 </QModal>
-
 @* ---------------- Import History ---------------- *@
 <QModal @bind-Visible="showHistoryModal" Title="Record Import History" Size="lg">
     <ChildContent>
@@ -495,12 +410,7 @@
 
     @@media (prefers-reduced-motion: reduce) {
         .cohort-panel { animation: none !important; }
-    }
-
-    .admin-page { padding: 0; }
-    .page-header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
-
-    /* Import modal — same classes/tokens as StudentRoster.razor's Bulk Import so the two read as one feature. */
+    }/* Import modal — same classes/tokens as StudentRoster.razor's Bulk Import so the two read as one feature. */
     .loading-container--inline { padding: 16px; flex-direction: row; gap: 10px; border: none; background: none; }
     .import-upload p { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 8px; line-height: 1.5; }
     .import-upload input[type=file] { margin: 12px 0; display: block; color: var(--qm-text-primary); }
@@ -539,10 +449,7 @@
     .outcome-failed .import-log-outcome { color: var(--qm-danger, #d9534f); }
     .import-log-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .import-log-message { color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
-    /* Deliberately quiet — a standing fact about the caller's role, not a problem to fix. Tinted
+    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }/* Deliberately quiet — a standing fact about the caller's role, not a problem to fix. Tinted
        from --qm-primary-rgb so it follows the theme without a [data-theme="light"] override. */
     .wr-scope-note {
         display: flex; align-items: flex-start; gap: 10px;
@@ -821,137 +728,158 @@
             branchId = BranchState.CurrentBranchId;
             TrackBranch();
 
-            // Live import progress arrives on the branch group of the same hub the roster page
-            // listens to — one event ("RosterImportProgress") for both import kinds; the JobId
-            // check in HandleImportProgress keeps each page to its own job.
-            NotificationClient.OnRosterImportProgressReceived += HandleImportProgress;
-            await NotificationClient.JoinBranchAsync(branchId);
-
             await LoadSummary();
             if (activeTab == "search") await LoadSearch();
             StateHasChanged();
         }
     }
 
-    public ValueTask DisposeAsync()
-    {
-        NotificationClient.OnRosterImportProgressReceived -= HandleImportProgress;
-        return ValueTask.CompletedTask;
-    }
-
     // ---------------- Import historical records ----------------
+    //
+    // On QImportPanel since 2026-09-19. This was the LAST of the three imports still parsing in
+    // JavaScript: rosterImport.parseFile carried its own welfare header-alias map, its own idea of
+    // a bad row and its own progress plumbing, while the student roster and the staff list had
+    // already moved to the shared panel. The aliases below are exactly the ones
+    // WELFARE_HEADER_ALIASES recognised, carried across so no spreadsheet that used to import
+    // stops importing. SheetJS still turns the workbook into CSV in the browser, which is what
+    // keeps the server free of an Excel library.
 
     private bool canImport;
-    private bool showImportModal, isParsingFile, isStartingImport, showImportEntries;
-    private string? parsedFileName;
-    private List<WelfareImportRow> parsedRows = new();
-    private List<string> headerErrors = new();
+    private bool showImportModal;
     private RosterImportJobDto? importJob;
-    private List<RosterImportJobEntryDto> importEntries = new();
+    /// <summary>Set by QImportPanel when a sheet is chosen; stored on the job as SourceFileName.</summary>
+    private string? importFileName;
     private bool showHistoryModal;
     private List<RosterImportJobDto> historyJobs = new();
 
-    private record ParsedFileResult(string? FileName, List<WelfareImportRow> Rows, List<string> HeaderErrors);
+    private static readonly IReadOnlyList<ImportColumn> WelfareImportColumns = new[]
+    {
+        new ImportColumn("StudentCode", true, "Student Code", "Admission No", "Admission Number", "Roll No", "Code"),
+        new ImportColumn("CaseType", true, "Case Type", "Type", "Case", "Record Type"),
+        new ImportColumn("Category", true, "Category Name", "Reason", "Subcategory"),
+        new ImportColumn("OccurredAt", true, "Date", "Occurred At", "Occurred", "Occurred On", "Incident Date", "Date Occurred", "Event Date", "When"),
+        new ImportColumn("Description", true, "Details", "Notes", "Note", "What Happened", "Narrative", "Comment", "Comments"),
+        new ImportColumn("Points", false, "Point", "Score", "Merits", "Merit Points", "Demerits", "Demerit Points"),
+        new ImportColumn("Tier", false, "Severity", "Level", "Priority"),
+        new ImportColumn("ActionTaken", false, "Action Taken", "Action", "Intervention", "Consequence", "Sanction", "Outcome", "Follow Up"),
+        new ImportColumn("Status", false, "State", "Case Status")
+    };
+
+    private static readonly IReadOnlyList<IReadOnlyList<string>> WelfareTemplateRows = new[]
+    {
+        new[] { "ADM-2024-018", "Achievement", "Academic Excellence", "14 Feb 2026", "Top of the class in the end-of-term examinations.", "5", "", "Certificate presented at assembly", "Resolved" },
+        new[] { "ADM-2024-019", "Behavior", "Late Arrival", "03 Mar 2026", "Arrived twenty minutes after registration for the third time this week.", "-2", "Low", "Spoken to by the class teacher", "Resolved" }
+    };
+
+    private static readonly string[] CaseTypeNames = Enum.GetNames<WelfareCaseType>();
+    private static readonly string[] TierNames = Enum.GetNames<WelfareTier>();
+
+    /// <summary>
+    /// One historical ledger row. Student code, case type, category, date and description are all
+    /// required — a record that cannot be attached to a student, or that says nothing about what
+    /// happened, is not a record. The category is deliberately NOT checked against a list here:
+    /// the import job resolves it server-side and reports the miss per row, which is the only
+    /// place that can see the organization's real categories.
+    /// </summary>
+    private (WelfareImportRow? Row, string? Error, List<string> Warnings) BuildWelfareRow(
+        IReadOnlyList<string> cells, Dictionary<string, int> map, int rowNumber)
+    {
+        var warnings = new List<string>();
+        string C(string name) => ImportParsing.Cell(cells, map, name);
+
+        var code = C("StudentCode");
+        var caseType = C("CaseType");
+        var category = C("Category");
+        var occurred = C("OccurredAt");
+        var description = C("Description");
+
+        if (string.IsNullOrWhiteSpace(code) && string.IsNullOrWhiteSpace(category) && string.IsNullOrWhiteSpace(description))
+            return (null, "The row is empty.", warnings);
+        if (string.IsNullOrWhiteSpace(code))
+            return (null, "Student code is missing — records are matched to a student by code.", warnings);
+        if (string.IsNullOrWhiteSpace(caseType))
+            return (null, "Case type is missing. Expected Achievement, Behavior or Welfare.", warnings);
+        if (!CaseTypeNames.Any(n => string.Equals(n, caseType.Trim(), StringComparison.OrdinalIgnoreCase)))
+            return (null, $"\"{caseType}\" is not a case type. Expected {string.Join(", ", CaseTypeNames)}.", warnings);
+        if (string.IsNullOrWhiteSpace(category))
+            return (null, "Category is missing.", warnings);
+        if (string.IsNullOrWhiteSpace(occurred))
+            return (null, "Date is missing.", warnings);
+        if (ImportParsing.ParseDate(occurred) is not { } occurredOn)
+            return (null, $"\"{occurred}\" is not a date this import can read.", warnings);
+        if (string.IsNullOrWhiteSpace(description))
+            return (null, "Description is missing.", warnings);
+
+        if (occurredOn > DateOnly.FromDateTime(DateTime.Today))
+            warnings.Add($"{QDateFormat.D(occurredOn)} is in the future.");
+
+        var points = C("Points");
+        if (!string.IsNullOrWhiteSpace(points) && !int.TryParse(points.Trim(), out _))
+            warnings.Add($"\"{points}\" is not a whole number of points — it will be left blank.");
+
+        var tier = C("Tier");
+        if (!string.IsNullOrWhiteSpace(tier) && !TierNames.Any(n => string.Equals(n, tier.Trim(), StringComparison.OrdinalIgnoreCase)))
+            warnings.Add($"\"{tier}\" is not a tier — it will be left blank.");
+
+        return (new WelfareImportRow
+        {
+            StudentCode = code.Trim(),
+            CaseType = caseType.Trim(),
+            Category = category.Trim(),
+            OccurredAt = occurred.Trim(),
+            Description = description.Trim(),
+            Points = string.IsNullOrWhiteSpace(points) ? null : points.Trim(),
+            Tier = string.IsNullOrWhiteSpace(tier) ? null : tier.Trim(),
+            ActionTaken = C("ActionTaken") is { Length: > 0 } act ? act : null,
+            Status = C("Status") is { Length: > 0 } st ? st : null
+        }, null, warnings);
+    }
+
+    private RenderFragment<WelfareImportRow> WelfareRowSummary => row => __builder =>
+    {
+        <span class="import-preview-name">@row.StudentCode · @row.Category</span>
+        <span class="import-preview-sub">@row.CaseType@(string.IsNullOrWhiteSpace(row.OccurredAt) ? "" : " · " + row.OccurredAt)@(string.IsNullOrWhiteSpace(row.Description) ? "" : " · " + Shorten(row.Description!))</span>
+    };
+
+    private static string Shorten(string s) => s.Length <= 60 ? s : s[..57] + "…";
+
+    private async Task<Guid> StartWelfareImport(List<WelfareImportRow> rows)
+    {
+        var started = await StudentApi.StartWelfareImportAsync(branchId,
+            new StartWelfareImportRequest { SourceFileName = importFileName, Rows = rows });
+        importJob = started;
+        return started.Id;
+    }
+
+    private Task<RosterImportJobDto?> LoadWelfareJob(Guid jobId)
+        => StudentApi.GetImportJobAsync(branchId, jobId, RosterImportKind.Welfare);
+
+    private Task<List<RosterImportJobEntryDto>> LoadWelfareEntries(Guid jobId)
+        => StudentApi.GetImportJobEntriesAsync(branchId, jobId, RosterImportKind.Welfare);
+
+    /// <summary>A finished import changed the ledger, so whatever the page is showing is now stale.</summary>
+    private async Task OnWelfareImportCompleted()
+    {
+        await LoadSummary();
+        if (activeTab == "search") await LoadSearch();
+        StateHasChanged();
+    }
 
     private void OpenImportModal()
     {
-        parsedRows = new();
-        headerErrors = new();
-        parsedFileName = null;
         importJob = null;
-        showImportEntries = false;
-        importEntries = new();
         showImportModal = true;
     }
 
     private async Task CloseImportModal()
     {
         showImportModal = false;
+        // A completed import changed the ledger — refresh whatever the page is showing.
+        // Awaited, not fire-and-forget (see StudentRoster.CloseImportModal for why).
         if (importJob != null)
         {
-            // A completed import changed the ledger — refresh whatever the page is showing.
-            // Awaited, not fire-and-forget (see StudentRoster.CloseImportModal for why).
             await LoadSummary();
             if (activeTab == "search") await LoadSearch();
-        }
-    }
-
-    private async Task OnFileSelected(ChangeEventArgs e)
-    {
-        isParsingFile = true;
-        headerErrors = new();
-        parsedRows = new();
-        try
-        {
-            var json = await JS.InvokeAsync<string>("rosterImport.parseFile", "welfare-file-input", "welfare");
-            var result = JsonSerializer.Deserialize<ParsedFileResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            if (result != null)
-            {
-                parsedFileName = result.FileName;
-                parsedRows = result.Rows;
-                headerErrors = result.HeaderErrors;
-            }
-        }
-        catch (Exception ex)
-        {
-            headerErrors = new() { $"Failed to read the file: {ex.Message}" };
-        }
-        finally
-        {
-            isParsingFile = false;
-        }
-    }
-
-    private async Task StartImport()
-    {
-        isStartingImport = true;
-        try
-        {
-            importJob = await StudentApi.StartWelfareImportAsync(branchId, new StartWelfareImportRequest
-            {
-                SourceFileName = parsedFileName,
-                Rows = parsedRows
-            });
-        }
-        catch (InvalidOperationException ex)
-        {
-            NotificationService.Notify(ToastSeverity.Error, "Could not start import", ex.Message);
-        }
-        finally
-        {
-            isStartingImport = false;
-        }
-    }
-
-    private async Task HandleImportProgress(RosterImportProgressEvent progress)
-    {
-        if (importJob == null || progress.JobId != importJob.Id) return;
-
-        importJob = importJob with
-        {
-            Status = progress.Status,
-            TotalRows = progress.TotalRows,
-            ProcessedRows = progress.ProcessedRows,
-            CreatedCount = progress.CreatedCount,
-            UpdatedCount = progress.UpdatedCount,
-            DuplicateCount = progress.DuplicateCount,
-            FailedCount = progress.FailedCount
-        };
-
-        // The final broadcast carries no FailureReason — re-fetch the job row once it's terminal
-        // so a whole-job failure (not just per-row ones) shows its reason instead of a bare badge.
-        if (progress.Status == RosterImportStatus.Failed)
-            importJob = await StudentApi.GetImportJobAsync(branchId, importJob.Id, RosterImportKind.Welfare) ?? importJob;
-
-        await InvokeAsync(StateHasChanged);
-    }
-
-    private async Task ToggleImportEntries()
-    {
-        showImportEntries = !showImportEntries;
-        if (showImportEntries && importJob != null && !importEntries.Any())
-        {
-            importEntries = await StudentApi.GetImportJobEntriesAsync(branchId, importJob.Id, RosterImportKind.Welfare);
         }
     }
 

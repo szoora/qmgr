@@ -1,4 +1,3 @@
-@page "/admin/integrations"
 @using System.Text.Json
 @using QMgr.Application.DTOs
 @inject HttpClient Http
@@ -8,15 +7,21 @@
 @inject IPermissionService PermissionService
 @inject NavigationManager Navigation
 
-<PageTitle>Integrations - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Integrations - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
-    <div class="page-header">
-        <div class="header-content">
-            <h1>Integrations</h1>
-            <p class="subtitle">Connect Q-Mgr with external systems and services</p>
+    @if (!Embedded)
+    {
+<div class="page-header">
+            <div class="header-content">
+                <h1>Integrations</h1>
+                <p class="subtitle">Connect Q-Mgr with external systems and services</p>
+            </div>
         </div>
-    </div>
+    }
 
     <div class="integrations-grid">
         @foreach (var integration in integrations)
@@ -115,19 +120,7 @@
     </div>
 </div>
 
-<style>
-    .admin-page { padding: 0; }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
+<style>.header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
     .integrations-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -265,6 +258,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Settings hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private List<IntegrationInfo> integrations = new();
     private List<WebhookInfo> webhooks = new();
     private bool webhooksLoading = true;
@@ -285,11 +283,11 @@
 
         integrations = new List<IntegrationInfo>
         {
-            new() { Name = "SMS Gateway", Description = "Send SMS notifications to customers when their token is called", Icon = "chat-dots", Color = "#10b981", IsConnected = smsEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Token Notifications", "Appointment Reminders", "Custom Templates" } },
-            new() { Name = "Email Service", Description = "Send email notifications and reports to customers and staff", Icon = "envelope", Color = "#8c2f52", IsConnected = emailEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Token Updates", "Daily Reports", "Custom Branding" } },
-            new() { Name = "Display Signage", Description = "Q-Mgr's built-in digital signage module for queue displays", Icon = "tv", Color = "#f59e0b", IsConnected = true, IsBuilt = true, ConfigureUrl = "/content/playlists", Features = new() { "Real-time Updates", "Multi-screen Support", "Custom Layouts" } },
-            new() { Name = "Telegram Bot", Description = "Send Telegram messages via a bot you create — contacts must message the bot first", Icon = "telegram", Color = "#26A5E4", IsConnected = telegramEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Broadcast Campaigns", "Token Notifications", "Free to Use" } },
-            new() { Name = "WhatsApp Business", Description = "Send WhatsApp messages via the real WhatsApp Cloud API (Meta for Developers)", Icon = "whatsapp", Color = "#25D366", IsConnected = whatsAppEnabled, IsBuilt = true, ConfigureUrl = "/admin/notification-settings", Features = new() { "Broadcast Campaigns", "Token Notifications", "Rich Text Messages" } },
+            new() { Name = "SMS Gateway", Description = "Send SMS notifications to customers when their token is called", Icon = "chat-dots", Color = "#10b981", IsConnected = smsEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Token Notifications", "Appointment Reminders", "Custom Templates" } },
+            new() { Name = "Email Service", Description = "Send email notifications and reports to customers and staff", Icon = "envelope", Color = "#8c2f52", IsConnected = emailEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Token Updates", "Daily Reports", "Custom Branding" } },
+            new() { Name = "Display Signage", Description = "Q-Mgr's built-in digital signage module for queue displays", Icon = "tv", Color = "#f59e0b", IsConnected = true, IsBuilt = true, ConfigureUrl = "/content/signage?tab=playlists", Features = new() { "Real-time Updates", "Multi-screen Support", "Custom Layouts" } },
+            new() { Name = "Telegram Bot", Description = "Send Telegram messages via a bot you create — contacts must message the bot first", Icon = "telegram", Color = "#26A5E4", IsConnected = telegramEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Broadcast Campaigns", "Token Notifications", "Free to Use" } },
+            new() { Name = "WhatsApp Business", Description = "Send WhatsApp messages via the real WhatsApp Cloud API (Meta for Developers)", Icon = "whatsapp", Color = "#25D366", IsConnected = whatsAppEnabled, IsBuilt = true, ConfigureUrl = "/admin/settings?tab=notifications", Features = new() { "Broadcast Campaigns", "Token Notifications", "Rich Text Messages" } },
             new() { Name = "Hospital Information System", Description = "Integrate with HIS for patient queue management", Icon = "hospital", Color = "#ef4444", IsConnected = false, IsBuilt = false, Features = new() { "Patient Lookup", "Appointment Sync", "Department Routing" } },
             new() { Name = "Banking Core System", Description = "Connect to core banking for customer identification", Icon = "bank", Color = "#47393f", IsConnected = false, IsBuilt = false, Features = new() { "Customer Lookup", "Account Verification", "Service Routing" } }
         };
@@ -382,19 +380,19 @@
             return;
         }
 
-        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/notification-settings");
+        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/settings?tab=notifications");
     }
 
     private void DisconnectIntegration(IntegrationInfo integration)
     {
         NotificationService.Notify(ToastSeverity.Info, "Manage from Settings",
             $"Disable {integration.Name} from its settings page rather than here, so the change is actually saved.");
-        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/notification-settings");
+        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/settings?tab=notifications");
     }
 
     private void ConfigureIntegration(IntegrationInfo integration)
     {
-        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/notification-settings");
+        Navigation.NavigateTo(integration.ConfigureUrl ?? "/admin/settings?tab=notifications");
     }
 
     // Webhooks are a property of an API client, so both "add" and "manage" land on the API

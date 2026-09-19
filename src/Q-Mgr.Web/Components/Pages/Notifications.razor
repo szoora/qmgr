@@ -22,7 +22,7 @@
 <div class="admin-page notif-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Notifications</h1>
+            <h1>Notifications<QInfo Text="Everything you have been told, newest first. The bell shows the latest twenty; this is all of them." Label="Notifications" /></h1>
             <p class="subtitle">Everything you have been told, newest first. The bell shows the latest twenty; this is all of them.</p>
         </div>
         <div class="header-actions">
@@ -46,7 +46,7 @@
     }
     else if (loadError != null)
     {
-        <QEmptyState Icon="exclamation-triangle" Title="Notifications could not be loaded" Text="@loadError">
+        <QEmptyState Icon="exclamation-triangle" Title="Notifications unavailable" Text="@loadError">
             <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" OnClick="@(() => LoadPageAsync(0))" /></Action>
         </QEmptyState>
     }
@@ -96,10 +96,11 @@
 </div>
 
 <style>
-    .notif-page { max-width: 960px; margin: 0 auto; }
-    .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-    .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
+    /* No width cap since 2026-09-19. The rule from 2026-09-18 is that a DATA page uses the
+       width it has and a DOCUMENT page keeps a reading width; this was filed under document
+       because it is read like a feed, but it is a list of rows — a sender, a subject, a time and
+       an action — and 252px of a 1212px page was going unused. The portal's record, notice and
+       appraisal pages are the real documents and keep theirs. */
     .notif-filters { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 12px; }
     .notif-filters .notif-tabs { flex: 1 1 320px; min-width: 0; margin-bottom: 0; }
     .notif-unread { flex: 0 0 auto; }

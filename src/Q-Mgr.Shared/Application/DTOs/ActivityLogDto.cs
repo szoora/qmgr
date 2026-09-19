@@ -92,6 +92,19 @@ public static class ActivityActions
     public const string PeriodReopened = "staff.period.reopened";
     public const string RoleChanged = "staff.structure.role-changed";
 
+    /// <summary>
+    /// An administrator wrote a member of staff's own record — employment terms, qualification,
+    /// registration number, contact detail. Confidential: the summary names the FIELDS that moved
+    /// and never their values, and the values sit in DetailJson, which no endpoint returns.
+    /// </summary>
+    public const string StaffProfileUpdated = "staff.profile.updated";
+
+    /// <summary>A member of staff maintained their own contact detail from their portal.</summary>
+    public const string StaffContactSelfUpdated = "staff.profile.contact-self-updated";
+
+    /// <summary>A member of staff was created from the Staff Directory rather than Users & Roles.</summary>
+    public const string StaffMemberCreated = "staff.structure.member-created";
+
     // ---- Onboarding (duty rota plan §12, 2026-09-17). Summaries never carry an applicant's details. ----
     public const string PasswordChanged = "auth.password-changed";
     public const string TemporaryPasswordIssued = "onboarding.temporary-password-issued";

@@ -1,5 +1,3 @@
-@page "/admin/users/onboarding"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Web.Components.Admin.Staff
@@ -25,18 +23,24 @@
     back from a re-issue once and live only in this page's memory until printed.
 *@
 
-<PageTitle>Staff Onboarding - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Staff Onboarding - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Staff Onboarding</h1>
-            <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Staff Onboarding<QInfo Text="Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves." Label="Staff Onboarding" /></h1>
+                <p class="subtitle">Getting staff signed in: who still has to, a new temporary password or invitation for anyone stuck, and the join link for people to ask for an account themselves.</p>
+            </div>
+        }
         @if (pendingJoinRequests > 0)
         {
             <div class="header-actions">
-                <QButton Text="@($"{pendingJoinRequests} join request{(pendingJoinRequests == 1 ? "" : "s")} waiting")" Icon="person-check" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/users/requests"))" />
+                <QButton Text="@($"{pendingJoinRequests} join request{(pendingJoinRequests == 1 ? "" : "s")} waiting")" Icon="person-check" Variant="primary" OnClick="@(() => Navigation.NavigateTo("/admin/users?tab=requests"))" />
             </div>
         }
     </div>
@@ -199,7 +203,6 @@
     .ob-board-sheet h1 { font-size: 22pt; margin: 0 0 8px; }
     .ob-board-qr { display: flex; justify-content: center; margin: 14mm 0 8mm; }
     .ob-board-url { font-family: "Courier New", monospace; font-size: 11pt; overflow-wrap: anywhere; }
-    .admin-page .q-card { margin-top: 14px; }
     .tps-overlay { position: fixed; inset: 0; z-index: 1200; overflow: auto; background: var(--qm-bg-body, #f3f3f3); }
     @@media print {
         body * { visibility: hidden !important; }
@@ -209,6 +212,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Users & Roles hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private static readonly IReadOnlyList<QTab> Tabs = new List<QTab>
     {
         new("status", "Status", "people"),

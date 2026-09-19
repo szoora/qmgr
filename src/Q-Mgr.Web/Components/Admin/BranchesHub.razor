@@ -1,0 +1,86 @@
+@page "/admin/branches"
+@using QMgr.Domain.Constants
+@using QMgr.Web.Services
+@inject IPermissionService PermissionService
+@inject NavigationManager Navigation
+@inject IModuleApiService ModuleApi
+@inject IModuleStateService ModuleState
+
+@*
+    The Branches hub (2026-09-19). Branches, Counters Setup and Service Types were three sidebar
+    entries and three routes for one subject: where you serve, from which positions, and what you
+    serve. The sections have no @page — see CLAUDE.md, "A hub owns the route; its sections own
+    nothing"; /admin/counters and /admin/service-types are gone, not aliased.
+
+    THIS HUB CROSSES A MODULE BOUNDARY. Branches is base product — every tenant needs it to run
+    the account at all — while Counters and Service Types are Core Queue and each carried its own
+    ModuleRouteMap entry. One route cannot carry two module requirements, so the requirement moved
+    onto the section (HubTabs.Section.RequiringModule) and those two route entries were deleted.
+*@
+
+<PageTitle>Branches - Q-Mgr</PageTitle>
+
+<div class="admin-page">
+    <div class="page-header">
+        <div class="header-content">
+            <h1>Branches<QInfo Text="The places this organization serves from, the counters inside them, and the services offered." Label="Branches" /></h1>
+            <p class="subtitle">The places this organization serves from, the counters inside them, and the services offered.</p>
+        </div>
+    </div>
+
+    <QTabs Tabs="@tabs" @bind-ActiveKey="@hubTab" IdPrefix="br" AriaLabel="Branch sections" />
+
+    @if (hubTab == CountersTab) { <CountersSetup Embedded="true" /> }
+    else if (hubTab == ServiceTypesTab) { <ServiceTypesSetup Embedded="true" /> }
+    else if (hubTab == BranchesTab) { <BranchesSetup Embedded="true" /> }
+</div>
+
+@code {
+    private const string BranchesTab = "branches";
+    private const string CountersTab = "counters";
+    private const string ServiceTypesTab = "service-types";
+
+    private static readonly HubTabs.Section[] Sections =
+    {
+        new(new QTab(BranchesTab, "Branches", "building-fill"), Permissions.BranchesView),
+        new HubTabs.Section(new QTab(CountersTab, "Counters", "door-open-fill"), Permissions.CountersView)
+            .RequiringModule(ModuleCodes.CoreQueue),
+        new HubTabs.Section(new QTab(ServiceTypesTab, "Service Types", "tags"), Permissions.ServiceTypesView)
+            .RequiringModule(ModuleCodes.CoreQueue),
+    };
+
+    private IReadOnlyList<QTab> tabs = Array.Empty<QTab>();
+    private string hubTab = BranchesTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The module state has to be loaded BEFORE the tabs are decided, because a section's
+        // module is half of whether its tab exists. A failed load shows every tab (see HubTabs).
+        await ModuleState.LoadAsync(ModuleApi);
+
+        tabs = await HubTabs.VisibleAsync(PermissionService, ModuleState, Sections);
+        if (tabs.Count == 0)
+        {
+            Navigation.NavigateTo("/unauthorized", forceLoad: true);
+            return;
+        }
+
+        hubTab = HubTabs.Resolve(tabs, TabParam);
+        appliedTab = TabParam;
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(tabs, TabParam, ref appliedTab, ref hubTab);
+    }
+}

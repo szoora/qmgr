@@ -1,5 +1,4 @@
 @page "/admin/staff/{UserId:guid}/timeline"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -24,7 +23,7 @@
     }
     else if (timeline == null)
     {
-        <QEmptyState Icon="person-x" Title="This member of staff is not available to you"
+        <QEmptyState Icon="person-x" Title="Not available to you"
                      Text="Either they are not on this branch, or your role does not reach their file. Return to the directory and pick someone from your departments.">
             <Action>
                 <QButton Text="Back to directory" Icon="arrow-left" Variant="secondary" OnClick="@(() => Navigation.NavigateTo("/admin/staff"))" />
@@ -87,8 +86,13 @@
             <div class="st-main">
                 @if (activeTab == "records")
                 {
-                    <QTimeline GroupByDay="true" EmptyText="@EmptyText">
-                        @foreach (var entry in TimelineEntries)
+                    @* Paged: a staff file grows without limit and every entry here is a card with a
+                       marker, chips and its own actions. See QTimelinePaging for why that is a
+                       render cost worth avoiding on a Blazor Server circuit. *@
+                    <QTimeline GroupByDay="true" EmptyText="@EmptyText"
+                               HasMore="@paging.HasMore(TimelineTotal)" OnLoadOlder="@paging.ShowMore"
+                               LoadOlderText="@($"Show older ({TimelineTotal - paging.Shown} left)")">
+                        @foreach (var entry in TimelineEntries.Take(paging.Shown))
                         {
                             @if (entry.Event is { } ev)
                             {
@@ -332,7 +336,6 @@
     .st-facts { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 14px 0 0; }
     .st-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--qm-text-muted); margin: 0; }
     .st-facts dd { margin: 0; font-size: 14px; color: var(--qm-text-primary); }
-    .form-group { margin-bottom: 14px; }
     .form-group > label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--qm-text-secondary); }
 </style>
 
@@ -372,6 +375,11 @@
             return entries.OrderByDescending(e => e.At);
         }
     }
+
+    /// <summary>How deep into the file the reader has asked to go. Reset whenever the list changes.</summary>
+    private readonly QTimelinePaging paging = new();
+
+    private int TimelineTotal => TimelineEntries.Count();
     private Guid loadedFor;
 
     private bool showRecordDialog;
@@ -481,6 +489,9 @@
             DateTime? from = range.IsAllTime ? null : range.From.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
             DateTime? to = range.IsAllTime ? null : range.To.ToDateTime(TimeOnly.MaxValue).ToUniversalTime();
             timeline = await StaffApi.GetTimelineAsync(branchId, UserId, from, to);
+            // A new person or a new period is a different list; keeping the old depth would show a
+            // reader three pages of a file they have only just opened.
+            paging.Reset();
         }
         catch (Exception ex)
         {

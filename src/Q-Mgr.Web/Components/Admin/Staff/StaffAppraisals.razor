@@ -1,5 +1,4 @@
 @page "/admin/staff/appraisals"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -18,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Appraisals</h1>
+            <h1>Appraisals<QInfo Text="The termly appraisal board: who is at which stage, and what the evidence says so far." Label="Appraisals" /></h1>
             <p class="subtitle">The termly appraisal board: who is at which stage, and what the evidence says so far.</p>
         </div>
         <div class="header-actions">
@@ -62,7 +61,7 @@
     }
     else if (board == null)
     {
-        <QEmptyState Icon="clipboard-x" Title="The board could not be loaded" Text="Try another period, or reload the page." />
+        <QEmptyState Icon="clipboard-x" Title="Board unavailable" Text="Try another period, or reload the page." />
     }
     else
     {
@@ -200,7 +199,6 @@
     .sa-row:hover td { background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
     .sa-person { display: flex; align-items: center; gap: 8px; }
     .sa-muted { color: var(--qm-text-muted); font-size: 12.5px; }
-    .form-group { margin-bottom: 14px; }
 </style>
 
 @code {

@@ -1,4 +1,3 @@
-@page "/admin/users"
 @inject HttpClient Http
 @inject IToastService NotificationService
 @inject JsonSerializerOptions JsonOptions
@@ -14,14 +13,20 @@
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
 
-<PageTitle>Users & Roles - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Users & Roles - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Users & Roles</h1>
-            <p class="subtitle">Manage system users and their permissions</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Users & Roles</h1>
+                <p class="subtitle">Manage system users and their permissions</p>
+            </div>
+        }
         <div class="header-actions">
             @* Gated on the same read this page already needed to render at all. *@
             <QDataExport TItem="UserInfo"
@@ -39,7 +44,15 @@
         </div>
     </div>
 
-    <QTabs Tabs="@PageTabs" @bind-ActiveKey="activeTab" AriaLabel="Users and roles" IdPrefix="users-tab" />
+    @* Its own strip until 2026-09-19. Users and Roles are tabs of the Users & Roles hub now,
+       beside Join Requests and Onboarding — a strip inside a strip whose parent carried this very
+       page's name was the same duplication one level down. Flattening also let the two be gated
+       separately: a roles.view holder without users.view used to get a Users tab they could not
+       use, because the page enforced users.view for both. *@
+    @if (!Embedded)
+    {
+        <QTabs Tabs="@PageTabs" @bind-ActiveKey="activeTab" AriaLabel="Users and roles" IdPrefix="users-tab" />
+    }
 
     @if (activeTab == "users")
     {
@@ -518,19 +531,7 @@
     .batch-menu .dropdown-item { display: block; width: 100%; padding: 8px 10px; border: none; background: none; border-radius: var(--qm-radius-sm); font-size: 13px; text-align: left; color: var(--qm-text-primary); cursor: pointer; }
     .batch-menu .dropdown-item:hover { background: var(--qm-primary-light); }
     .batch-clear { margin-left: auto; background: none; border: none; padding: 2px 6px; cursor: pointer; font: inherit; font-size: 13px; color: var(--qm-text-muted); text-decoration: underline; }
-
-    .admin-page { padding: 0; }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
     .loading-container {
         display: flex;
         justify-content: center;
@@ -774,22 +775,13 @@
         background: var(--qm-bg-elevated);
     }
 
-    .form-group { margin-bottom: 16px; }
     .form-group label {
         display: block;
         margin-bottom: 6px;
         font-size: 13px;
         font-weight: 500;
         color: var(--qm-text-secondary);
-    }
-
-    .form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-
-    /* Role code badge */
+    }/* Role code badge */
     .role-code {
         display: block;
         font-size: 11px;
@@ -885,6 +877,11 @@
 <QBatchDialog @ref="batchDialog" BranchId="@BranchState.CurrentBranchId" OnQueued="@OnBatchQueued" />
 
 @code {
+    /// <summary>True when the Users & Roles hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private static string GetRoleVariant(string? role) => role?.ToLowerInvariant() switch
     {
         "superadmin" => "danger",
@@ -894,6 +891,15 @@
     };
 
     private string activeTab = "users";
+
+    /// <summary>Which section the hub is showing — "users" or "roles". The hub owns ?tab=.</summary>
+    [Parameter] public string? EmbeddedTab { get; set; }
+
+    /// <summary>When embedded, the host's tab is the source of truth for which section shows.</summary>
+    protected override void OnParametersSet()
+    {
+        if (Embedded && !string.IsNullOrWhiteSpace(EmbeddedTab)) activeTab = EmbeddedTab;
+    }
 
     private static readonly IReadOnlyList<QTab> PageTabs = new List<QTab>
     {
@@ -996,8 +1002,10 @@
     {
         if (firstRender)
         {
-            // Check permission (tokens are now loaded from localStorage)
-            if (!await PermissionSvc.HasPermissionAsync(Permissions.UsersView))
+            // users.view OR roles.view: the page holds both lists and either is reason enough to
+            // open it. It demanded users.view for both until 2026-09-19, which quietly locked a
+            // roles-only holder out of the roles list as well.
+            if (!await PermissionSvc.HasAnyPermissionAsync(Permissions.UsersView, Permissions.RolesView))
             {
                 Navigation.NavigateTo("/unauthorized", forceLoad: true);
                 return;

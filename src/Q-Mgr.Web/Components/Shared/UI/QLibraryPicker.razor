@@ -24,7 +24,7 @@
         }
         else if (loadError != null)
         {
-            <QEmptyState Icon="exclamation-triangle" Title="The Library could not be loaded" Text="@loadError">
+            <QEmptyState Icon="exclamation-triangle" Title="Library unavailable" Text="@loadError">
                 <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" Size="sm" OnClick="@LoadAsync" /></Action>
             </QEmptyState>
         }

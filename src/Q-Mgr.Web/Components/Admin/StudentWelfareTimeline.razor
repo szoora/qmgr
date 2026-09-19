@@ -15,7 +15,6 @@
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
-@implements IDisposable
 
 <PageTitle>Welfare Timeline - Q-Mgr</PageTitle>
 
@@ -111,8 +110,10 @@
     {
         @RenderRestrictedNotes()
 
-        <QTimeline>
-            @foreach (var record in records)
+        @* Paged — see QTimelinePaging. A welfare chronology is append-only and only ever grows. *@
+        <QTimeline HasMore="@paging.HasMore(records.Count)" OnLoadOlder="@paging.ShowMore"
+                   LoadOlderText="@($"Show older ({records.Count - paging.Shown} left)")">
+            @foreach (var record in records.Take(paging.Shown))
             {
                 <QTimelineItem MarkerColor="@(record.CategoryColor ?? DefaultCaseColor(record.CaseType))"
                                MarkerIcon="@CaseTypeIcon(record.CaseType)"
@@ -492,8 +493,7 @@
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@actionModel.ActionTaken" Label="Action / Intervention"
                     List="vocab-actions-taken"
-                    Placeholder="e.g., Detention, Parental meeting, Restorative conversation" />
-            <p class="form-hint">Suggested from the branch's own list — anything else is still accepted.</p>
+                    Placeholder="e.g., Detention, Parental meeting, Restorative conversation" /><QInfo Text="Suggested from the branch's own list — anything else is still accepted." Label="Action / Intervention" />
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -527,8 +527,7 @@
         }
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@interpretationAntecedent" Label="What happened just before"
-                    Placeholder="e.g., Told to put the phone away" />
-            <p class="form-hint">Feeds the &ldquo;share the same trigger&rdquo; pattern insight.</p>
+                    Placeholder="e.g., Told to put the phone away" /><QInfo Text="Feeds the &ldquo;share the same trigger&rdquo; pattern insight." Label="What happened just before" />
         </div>
         <div class="form-group">
             <QSelect TValue="WelfarePerceivedFunction?" TItem="FunctionOption" @bind-Value="@interpretationFunction"
@@ -675,19 +674,12 @@
     @@media (prefers-reduced-motion: reduce) {
         .escalation-prompt, .plan-note { animation: none !important; }
     }
-
-    .admin-page { padding: 0; }
     .timeline-filter-card { margin-bottom: 16px; }
     .timeline-filter { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
     .timeline-filter__actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .points-summary__scope { font-size: 12px; color: var(--qm-text-muted); }
-
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-content { min-width: 0; flex: 1 1 260px; }
     .header-content h1 { overflow-wrap: break-word; }
     .header-content h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
-
     .points-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .points-summary__item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
     .points-summary__item--positive { background: rgba(22, 163, 74, 0.12); color: var(--qm-accent-green, #16a34a); }
@@ -750,9 +742,7 @@
     .notification-item--success { color: var(--qm-accent-green, #16a34a); }
     .notification-item--failed { color: var(--qm-danger, #dc2626); }
 
-    .form-group { margin-bottom: 16px; }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
+.form-hint { font-size: 12px; color: var(--qm-text-muted); margin: 0 0 12px; }
     .response-dialog-subject { font-size: 13px; color: var(--qm-text-secondary); margin: 0 0 16px; }
     /* Informational, not a warning — nothing is wrong, this account simply holds welfare access
        without roster access. Muted so it reads as a note rather than an error. */
@@ -793,6 +783,9 @@
     /// <summary>welfare.restricted.view — gates the visibility control and the restricted-notes panel. Cosmetic only; the API re-checks both.</summary>
     private bool canSetRestricted;
     private List<WelfareRecordDto> records = new();
+
+    /// <summary>How deep into the chronology the reader has asked to go.</summary>
+    private readonly QTimelinePaging paging = new();
 
     /// <summary>
     /// The period the timeline covers. All time by default — see the filter card above.
@@ -976,10 +969,6 @@
         await LoadData();
     }
 
-    public void Dispose()
-    {
-    }
-
     private async Task OnRangeChanged(DateRange next)
     {
         range = next;
@@ -1071,6 +1060,7 @@
             if (recordsResponse.IsSuccessStatusCode)
             {
                 records = await recordsResponse.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+                paging.Reset();
             }
             else
             {

@@ -1,7 +1,6 @@
 @page "/"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
-@implements IDisposable
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
 @inherits BranchAwareComponentBase
@@ -11,21 +10,24 @@
 @inject NavigationManager Navigation
 @inject HttpClient Http
 @inject System.Text.Json.JsonSerializerOptions JsonOptions
+@inject IJSRuntime JS
 
 <PageTitle>Dashboard - Q-Mgr</PageTitle>
 
 <!-- Page Header -->
 <div class="page-header">
     <div class="header-left">
-        <h1>Dashboard</h1>
-        <div class="breadcrumb">
-            <span>@dashboardSubtitle</span>
-        </div>
+        <h1>Dashboard<QInfo Label="Dashboard" Text="Figures marked with a period cover the range you choose. Now Serving, counters and visitors on site are LIVE and always show this moment — a date range cannot apply to who is in the building." /></h1>
+        <span class="subtitle">@dashboardSubtitle</span>
     </div>
-    <div class="header-right">
+    <div class="header-actions">
+        @* THE PERIOD. A dashboard without one answers "how many ever", which is not a question
+           anybody asks twice — the standard for a data-driven screen is that its figures carry a
+           range and say which. Live panels are deliberately outside it; see PeriodNote. *@
+        <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" ShowCaption="false" Presets="@DashboardPresets" />
         @if (lastUpdated != default)
         {
-            <span class="last-updated">Last updated: @QDateFormat.TS(lastUpdated)</span>
+            <span class="last-updated">@QDateFormat.TS(lastUpdated)</span>
         }
         <QButton Icon="arrow-clockwise" Text="Refresh" Variant="secondary" OnClick="@RefreshData" Disabled="@isLoading" />
     </div>
@@ -294,7 +296,7 @@ else if (hasCoreQueue && queueStatus != null)
 {
     <div class="module-section">
         <div class="module-section-head">
-            <h2><QIcon Name="mortarboard-fill" /> Student Welfare</h2>
+            <h2><QIcon Name="mortarboard-fill" /> Student Welfare <span class="module-section-period">@PeriodNote</span></h2>
             <QButton Text="Open ledger" Icon="arrow-right" Variant="ghost" Size="sm"
                      OnClick="@(() => Navigation.NavigateTo("/admin/welfare-my-actions"))" />
         </div>
@@ -402,7 +404,10 @@ else if (hasCoreQueue && queueStatus != null)
 {
     <div class="module-section">
         <div class="module-section-head">
-            <h2><QIcon Name="person-badge-fill" /> Visitor Management</h2>
+            @* LIVE, not period: this panel counts who is in the building now. A date range must
+               never apply to it — a ranged "currently on site" is a number that reads like the
+               truth and is not. *@
+            <h2><QIcon Name="person-badge-fill" /> Visitor Management <span class="module-section-period module-section-period--live">Live</span></h2>
             <QButton Text="Open desk" Icon="arrow-right" Variant="ghost" Size="sm"
                      OnClick="@(() => Navigation.NavigateTo("/admin/visitors"))" />
         </div>
@@ -433,9 +438,9 @@ else if (hasCoreQueue && queueStatus != null)
 {
     <div class="module-section">
         <div class="module-section-head">
-            <h2><QIcon Name="broadcast" /> Communication</h2>
+            <h2><QIcon Name="broadcast" /> Communication <span class="module-section-period">@PeriodNote</span></h2>
             <QButton Text="Open campaigns" Icon="arrow-right" Variant="ghost" Size="sm"
-                     OnClick="@(() => Navigation.NavigateTo("/content/campaigns"))" />
+                     OnClick="@(() => Navigation.NavigateTo("/content/signage?tab=campaigns"))" />
         </div>
 
         @if (feedbackSummary == null)
@@ -489,7 +494,6 @@ else if (hasCoreQueue && queueStatus != null)
         font-size: 14px;
     }
 
-
     .welfare-category-list { display: flex; flex-direction: column; }
 
     .welfare-category-row {
@@ -507,6 +511,11 @@ else if (hasCoreQueue && queueStatus != null)
 </style>
 
 <style>
+    /* The period a panel covers, stated on the panel. A scoped figure read as all-time is a wrong
+       conclusion drawn from a correct query — the same rule as WelfareSummaryDto.ScopedToClasses. */
+    .module-section-period { font-family: var(--qm-font-primary); font-size: 11.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--qm-text-muted); }
+    .module-section-period--live { color: var(--qm-success); }
+
     .module-empty {
         max-width: 620px;
         margin: 48px auto;
@@ -547,18 +556,7 @@ else if (hasCoreQueue && queueStatus != null)
         margin-top: 20px !important;
         font-size: 13px;
         color: var(--qm-text-muted);
-    }
-
-    .page-header {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
-        margin-bottom: 24px;
-    }
-
-    /* Wraps under the title on a phone: "Last updated" plus Refresh were wider than the space beside
+    }/* Wraps under the title on a phone: "Last updated" plus Refresh were wider than the space beside
        "Dashboard", and the button hung 15px past the edge at 390px (UI sweep, 2026-09-17). */
     .header-right {
         display: flex;
@@ -1070,6 +1068,79 @@ else if (hasCoreQueue && queueStatus != null)
     private string? errorMessage;
     private bool isLoading = true;
     private DateTime lastUpdated;
+
+    // ---- The period (2026-09-19) ------------------------------------------------------------
+    //
+    // Every figure on this dashboard was all-time until now, which answers "how many ever" — not a
+    // question anybody asks twice. A data-driven dashboard carries a range and says which figures
+    // it covers.
+    //
+    // TWO KINDS OF PANEL, and conflating them would be the real mistake:
+    //   PERIOD  welfare, feedback, teaching — counted over the chosen range, and each says so.
+    //   LIVE    Now Serving, counters, visitors on site — this instant, by definition. A date
+    //           range cannot apply to who is standing in the building, and applying one would put
+    //           a number on the screen that reads like the truth and is not.
+
+    private DateRange range = DateRange.LastDays(30);
+
+    /// <summary>
+    /// The presets a dashboard is actually read over. "Complete record" is deliberately absent:
+    /// this screen is about what is happening, and the reports are where the whole history lives.
+    /// </summary>
+    private static readonly IReadOnlyList<DateRangePreset> DashboardPresets = new DateRangePreset[]
+    {
+        new("Today", () => DateRange.LastDays(1)),
+        new("Last 7 days", () => DateRange.LastDays(7)),
+        new("Last 30 days", () => DateRange.LastDays(30)),
+        new("Last 90 days", () => DateRange.LastDays(90)),
+        new("This year", () => new DateRange(new DateOnly(DateTime.Today.Year, 1, 1), DateOnly.FromDateTime(DateTime.Today)))
+    };
+
+    /// <summary>What a period panel puts under its heading, so a scoped figure is never read as all-time.</summary>
+    private string PeriodNote => range.IsAllTime ? "the complete record" : range.Caption;
+
+    private DateTime? RangeFrom => range.IsAllTime ? null : range.From.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+    private DateTime? RangeTo => range.IsAllTime ? null : range.To.ToDateTime(TimeOnly.MaxValue).ToUniversalTime();
+
+    /// <summary>
+    /// The range as a query string. The two summary endpoints spell their parameters differently
+    /// (welfare takes dateFrom/dateTo, feedback fromDate/toDate), which is a wire format on each
+    /// and not worth a breaking rename, so the caller names them.
+    /// </summary>
+    private string RangeQuery(string fromKey, string toKey)
+        => RangeFrom is null || RangeTo is null
+            ? string.Empty
+            : $"?{fromKey}={Uri.EscapeDataString(RangeFrom.Value.ToString("O"))}&{toKey}={Uri.EscapeDataString(RangeTo.Value.ToString("O"))}";
+
+    /// <summary>
+    /// One edit of the range reloads once. QDateRangePicker emits a single RangeChanged for a
+    /// From/To pair precisely so a dashboard cannot briefly query a nonsense one in between.
+    /// The choice is remembered per browser: a person who reads this screen over a term should not
+    /// re-pick the term every morning.
+    /// </summary>
+    private async Task OnRangeChanged(DateRange next)
+    {
+        range = next;
+        try { await JS.InvokeVoidAsync("localStorage.setItem", RangeKey, $"{next.From:O}|{next.To:O}"); }
+        catch { /* private window, blocked storage — the range still works for this visit */ }
+        await RefreshData();
+    }
+
+    private const string RangeKey = "qmgr-dashboard-range";
+
+    /// <summary>Restores the remembered range. Any failure leaves the 30-day default standing.</summary>
+    private async Task RestoreRangeAsync()
+    {
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", RangeKey);
+            if (string.IsNullOrWhiteSpace(saved)) return;
+            var parts = saved.Split('|');
+            if (parts.Length == 2 && DateOnly.TryParse(parts[0], out var f) && DateOnly.TryParse(parts[1], out var t))
+                range = new DateRange(f, t);
+        }
+        catch { /* see above */ }
+    }
     private bool noBranchSelected = false;
 
     private Guid BranchId => BranchState.CurrentBranchId;
@@ -1085,6 +1156,10 @@ else if (hasCoreQueue && queueStatus != null)
 
         // Subscribe to branch changes
         TrackBranch();
+
+        // The remembered period, before anything is fetched — otherwise the first load runs on the
+        // default range and is immediately thrown away by a second one.
+        await RestoreRangeAsync();
 
         // LoadAsync is idempotent, so this is a no-op when MainLayout already populated it; it
         // matters when the dashboard is the first page rendered on a fresh circuit.
@@ -1157,8 +1232,8 @@ else if (hasCoreQueue && queueStatus != null)
 
     // Engagement: ratings and volume are a report; an unanswered comment is a job, and that
     // lives in the feedback inbox rather than the report.
-    private string? CampaignsHref => canViewContent ? "/content/campaigns" : null;
-    private string? FeedbackReportHref => canViewReports && canViewFeedback ? "/reports/feedback" : null;
+    private string? CampaignsHref => canViewContent ? "/content/signage?tab=campaigns" : null;
+    private string? FeedbackReportHref => canViewReports && canViewFeedback ? "/admin/feedback?tab=reports" : null;
     private string? FeedbackInboxHref => canRespondFeedback ? "/admin/feedback" : null;
 
     /// <summary>
@@ -1388,8 +1463,10 @@ else if (hasCoreQueue && queueStatus != null)
 
         try
         {
+            // Scoped to the chosen period. The endpoint has taken dateFrom/dateTo all along; the
+            // dashboard simply never passed them, so every welfare figure here was all-time.
             welfareSummary = await Http.GetFromJsonAsync<WelfareSummaryDto>(
-                $"api/v1/branches/{BranchId}/welfare/summary", JsonOptions) ?? new WelfareSummaryDto();
+                $"api/v1/branches/{BranchId}/welfare/summary{RangeQuery("dateFrom", "dateTo")}", JsonOptions) ?? new WelfareSummaryDto();
 
             var students = await Http.GetFromJsonAsync<List<StudentDto>>(
                 $"api/v1/branches/{BranchId}/students", JsonOptions);
@@ -1435,7 +1512,7 @@ else if (hasCoreQueue && queueStatus != null)
         try
         {
             feedbackSummary = await Http.GetFromJsonAsync<FeedbackSummaryDto>(
-                $"api/v1/branches/{BranchId}/feedbacks/summary", JsonOptions) ?? new FeedbackSummaryDto();
+                $"api/v1/branches/{BranchId}/feedbacks/summary{RangeQuery("fromDate", "toDate")}", JsonOptions) ?? new FeedbackSummaryDto();
 
             var campaigns = await Http.GetFromJsonAsync<List<CampaignDto>>(
                 $"api/v1/branches/{BranchId}/campaigns", JsonOptions);
@@ -1570,7 +1647,13 @@ else if (hasCoreQueue && queueStatus != null)
 
     [Inject] private NavigationManager NavigationManager { get; set; } = default!;
 
-    public void Dispose()
+    /// <summary>
+    /// This page's own teardown. It runs from BranchAwareComponentBase.Dispose, AFTER the branch
+    /// subscription has been removed. Until 2026-09-19 it was a `public void Dispose()` beside an
+    /// `@implements IDisposable`, which re-mapped the interface to this method and left the base's
+    /// unsubscribe unreachable — so the handler piled up once per visit for the life of the circuit.
+    /// </summary>
+    protected override void DisposeCore()
     {
         SignalR.OnQueueUpdated -= HandleQueueUpdated;
     }

@@ -1,5 +1,4 @@
 @page "/admin/staff/duty-reports/{Id:guid}"
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -27,7 +26,7 @@
     }
     else if (report == null)
     {
-        <QEmptyState Icon="journal-x" Title="This report is not available to you"
+        <QEmptyState Icon="journal-x" Title="Report not available"
                      Text="Either it does not exist, or it is another person's report you do not read. Reports are read by their author, the administrator on duty, and the heads who review them.">
             <Action><QButton Text="Back" Icon="arrow-left" Variant="secondary" OnClick="@Back" /></Action>
         </QEmptyState>
@@ -267,9 +266,7 @@
     .dr-snapshot dt { color: var(--qm-text-muted); }
     .dr-snapshot dd { margin: 0; white-space: pre-wrap; }
     .dr-comment { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-top: 12px; }
-    .dr-comment > .q-input-wrapper { width: 100%; }
-    .admin-page .q-card { margin-bottom: 16px; }
-</style>
+    .dr-comment > .q-input-wrapper { width: 100%; }</style>
 
 @code {
     [Parameter] public Guid Id { get; set; }

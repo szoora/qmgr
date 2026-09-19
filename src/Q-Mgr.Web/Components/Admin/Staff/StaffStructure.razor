@@ -1,7 +1,6 @@
 @* No @page: this is a SECTION of the Staff hub (StaffDirectory), not a page of its own. It had a
    route until 2026-09-18, which meant two URLs rendering the same screen — one link per thing, or
    the two drift and a reader cannot tell which is canonical. Deep-link with /admin/staff?tab=. *@
-@implements IDisposable
 @using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.Import
 @using Microsoft.AspNetCore.Components.Forms
@@ -34,7 +33,7 @@
     {
         <div class="page-header">
             <div class="header-content">
-                <h1>Departments &amp; Structure</h1>
+                <h1>Departments &amp; Structure<QInfo Text="Who belongs to which department, who heads it, and who each person reports to." Label="Departments &amp; Structure" /></h1>
                 <p class="subtitle">Who belongs to which department, who heads it, and who each person reports to.</p>
             </div>
         </div>
@@ -97,7 +96,7 @@
 
         @if (VisibleStaff.Count == 0)
         {
-            <QEmptyState Icon="people" Title="@(staff.Count == 0 ? "No staff on this branch yet" : "Nobody matches")"
+            <QEmptyState Icon="people" Title="@(staff.Count == 0 ? "No staff yet" : "Nobody matches")"
                          Text="@(staff.Count == 0 ? "People appear here once they have a user account on this branch. Import a list on the Import tab." : "Clear the search or the gaps filter to see everyone.")" />
         }
         else
@@ -136,7 +135,7 @@
     {
         @if (coverage == null)
         {
-            <QEmptyState Icon="shield-check" Title="Coverage could not be loaded" Text="Try the tab again in a moment." />
+            <QEmptyState Icon="shield-check" Title="Coverage unavailable" Text="Try the tab again in a moment." />
         }
         else
         {
@@ -327,15 +326,13 @@
     .ss-cov h4 { margin: 0 0 8px; font-size: 13px; font-family: var(--qm-font-display); }
     .ss-cov ul { margin: 0; padding-left: 18px; font-size: 13px; }
     .ss-cov li { margin: 2px 0; }
-    .ss-cov--ok { color: var(--qm-success); font-size: 13px; margin: 0; }
-    .admin-page .q-card { margin-top: 14px; }
-</style>
+    .ss-cov--ok { color: var(--qm-success); font-size: 13px; margin: 0; }</style>
 
 @code {
     private const int PageSize = 25;
 
     private Guid branchId;
-    private bool isLoading = true, saving, canImport, importing, showRetired, onlyGaps;
+    private bool isLoading = true, saving, canImport, showRetired, onlyGaps;
 
     // Delivery (duty rota plan §12.2). Slips by default: the recommended mode for a school.
     private StaffImportDeliveryMode deliveryMode = StaffImportDeliveryMode.Slips;
@@ -406,7 +403,6 @@
     private Guid? memberLineManager;
 
     // Import
-    private string? csvText;
     private List<PreviewRow> previewRows = new();
     private RosterImportJobDto? currentJob;
     private List<RosterImportJobEntryDto> jobEntries = new();
@@ -896,9 +892,5 @@
     {
         this.branchId = branchId;
         await LoadAllAsync();
-    }
-
-    public void Dispose()
-    {
     }
 }

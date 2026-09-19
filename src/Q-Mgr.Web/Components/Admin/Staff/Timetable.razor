@@ -1,6 +1,4 @@
 @page "/admin/timetable"
-@implements IDisposable
-@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -48,7 +46,7 @@
     @* The Timetable hub (2026-09-18). The timetable, the lessons it produces, the subjects it is
        built from, the school day it sits on and the teaching reports it feeds were five sidebar
        entries and five routes for one subject. One page, five tabs, one route. *@
-    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="tt" />
+    <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="tt" />
 
     @if (hubTab == "lessons")      { <Lessons Embedded="true" /> }
     else if (hubTab == "subjects") { <StaffSubjects Embedded="true" /> }
@@ -477,11 +475,11 @@
     /// The Timetable hub's tabs. Timetable is this page's own builder; the other four were separate
     /// sidebar entries and separate routes until 2026-09-18.
     /// </summary>
-    private static readonly StaffHubTabs.Section[] Sections =
+    private static readonly HubTabs.Section[] Sections =
     {
         // The timetable itself, the lessons and the bell schedule are readable by every member of the
         // branch (a displayed MoES record); editing inside each is gated separately. Subjects and
-        // Teaching Reports had their own gate as pages and keep it here — see StaffHubTabs.
+        // Teaching Reports had their own gate as pages and keep it here — see HubTabs.
         new(new QTab("timetable", "Timetable", "grid-3x3")),
         new(new QTab("lessons", "Lessons", "journal-check")),
         new(new QTab("subjects", "Subjects", "book"), Permissions.StaffStructureManage),
@@ -490,8 +488,13 @@
             Permissions.StaffReportsView, Permissions.TimetableLessonsFlag, Permissions.TimetableManage),
     };
 
-    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private IReadOnlyList<QTab> hubTabs = Array.Empty<QTab>();
     private string hubTab = "timetable";
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
 
     [SupplyParameterFromQuery(Name = "t")] public Guid? QueryTimetable { get; set; }
     [SupplyParameterFromQuery(Name = "by")] public string? QueryBy { get; set; }
@@ -560,7 +563,7 @@
             Navigation.NavigateTo("/billing/modules");
             return;
         }
-        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
+        hubTabs = await HubTabs.VisibleAsync(PermissionService, Sections);
         canManage = await PermissionService.HasPermissionAsync(Permissions.TimetableManage);
         me = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
         if (QueryBy is "class" or "teacher" or "room" or "master") by = QueryBy;
@@ -570,11 +573,8 @@
         TrackBranch();
 
         // The hub owns the URL; the sections carry no routes.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
-        {
-            var t = wantedTab.ToString().Trim().ToLowerInvariant();
-            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
-        }
+        hubTab = HubTabs.Resolve(hubTabs, TabParam);
+        appliedTab = TabParam;
         await LoadAsync(QueryTimetable);
     }
 
@@ -1168,5 +1168,15 @@
         }
         catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not archive", ex.Message); }
         finally { busy = false; }
+    }
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
     }
 }

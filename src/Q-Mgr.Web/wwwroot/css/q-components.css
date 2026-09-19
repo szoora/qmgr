@@ -239,8 +239,82 @@
    degraded calendar rather than a broken card. */
 .q-card:has(.q-datepicker__popover),
 .filter-card:has(.q-datepicker__popover),
-.q-modal__body:has(.q-datepicker__popover) {
+.q-modal__body:has(.q-datepicker__popover),
+.q-card:has(.q-info__pop),
+.filter-card:has(.q-info__pop),
+.q-modal__body:has(.q-info__pop) {
     overflow: visible;
+}
+
+/* ---------------------------------------------------------------------------------------------
+   QInfo — the explanation that used to sit permanently on the page. See QInfo.razor for why this
+   is a popover and not a `title` tooltip.
+   --------------------------------------------------------------------------------------------- */
+.q-info {
+    position: relative;
+    display: inline-flex;
+    vertical-align: middle;
+    line-height: 1;
+}
+
+.q-info__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--qm-radius-sm, 3px);
+    background: none;
+    color: var(--qm-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.q-info__btn:hover { color: var(--qm-primary); background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+.q-info__btn--on { color: var(--qm-primary); background: var(--qm-bg-hover, var(--qm-bg-secondary)); }
+.q-info__btn:focus-visible { outline: 2px solid var(--qm-primary); outline-offset: 1px; }
+
+.q-info__pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: -8px;
+    z-index: 60;
+    display: block;
+    width: max-content;
+    max-width: min(320px, 70vw);
+    padding: 10px 12px;
+    border: 1px solid var(--qm-border);
+    border-radius: var(--qm-radius-md, 4px);
+    background: var(--qm-bg-card);
+    box-shadow: var(--qm-shadow-md);
+    color: var(--qm-text-secondary);
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+}
+
+.q-info__pop--right { left: auto; right: -8px; }
+.q-info__head { display: block; margin-bottom: 3px; color: var(--qm-text-primary); font-weight: 600; }
+.q-info__body { display: block; }
+.q-info__body a { color: var(--qm-primary); }
+
+/* On a phone the popover is centred rather than anchored — 320px hanging off a control near the
+   right edge would run off the screen. Same treatment as the date picker's own popover. */
+@media (max-width: 560px) {
+    .q-info__pop,
+    .q-info__pop--right {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        top: auto;
+        width: auto;
+        max-width: none;
+    }
 }
 
 .q-card--default {
@@ -2082,12 +2156,17 @@
 /* ==========================================================================
    Tabs — lifted from WelfareReports .tab-strip. Scrolls sideways, never wraps.
    ========================================================================== */
+/* The tab strip is a CONTROL and sits on the control scale like every other one. It did not
+   until 2026-09-19: 48px-tall buttons (10px/18px padding, 14px) under a 20px margin came to 69px,
+   the single largest fixed cost on a hub page — and since the hubs, that is eleven pages. Tabs
+   scroll, they never wrap: a wrapped tab strip reads as broken in a way a wrapped button row
+   does not. */
 .q-tabs {
     display: flex;
     flex-wrap: nowrap;
-    gap: 4px;
+    gap: 2px;
     border-bottom: 1px solid var(--qm-border);
-    margin-bottom: 20px;
+    margin-bottom: var(--qm-block-gap, 12px);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
@@ -2099,14 +2178,15 @@
 .q-tabs__tab {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
+    gap: 6px;
+    min-height: var(--q-control-h-sm, 30px);
+    padding: 6px 13px;
     border: none;
     border-bottom: 2px solid transparent;
     background: none;
     color: var(--qm-text-muted);
     font: inherit;
-    font-size: 14px;
+    font-size: var(--q-control-font-sm, 13px);
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
@@ -2411,12 +2491,18 @@
 /* ==========================================================================
    Filter bar — lifted from WelfareReports .filter-bar
    ========================================================================== */
-.q-filter-bar {
+/* Density (2026-09-19): gap 14 and margin 20 put a one-row filter bar at 58px for 36px of
+   control. The controls were already on the scale; it was the space around them that cost. */
+/* `.filter-row` is the same object under an older name: five report pages write the markup by
+   hand rather than using QFilterBar, and each carried its own `display:flex; gap:20px` copy. One
+   rule for both, so the two shapes cannot drift; new filter rows use QFilterBar. */
+.q-filter-bar,
+.filter-row {
     display: flex;
     align-items: flex-end;
     flex-wrap: wrap;
-    gap: 14px;
-    margin-bottom: 20px;
+    gap: var(--q-row-gap, 8px) 10px;
+    margin-bottom: var(--qm-block-gap, 12px);
     min-width: 0;
 }
 
@@ -2719,23 +2805,30 @@
 /* =====================================================================================================
    ONE control scale (2026-09-17). An audit of 80 pages measured buttons at 34 and 39px, dropdowns at 44px
    and text and date inputs at 48px, so a filter bar showed three heights in one row. Every button, input,
-   dropdown and date picker is now one of three heights, and text in a control is 14px (13px small).
+   dropdown and date picker is one of three heights, and text in a control is one of two sizes.
    Change the tokens, never a page: a page rule that sets a control's height, padding or font-size puts
    the drift back.
+
+   TIGHTENED 2026-09-19 — 36/30/44 at 14px became 32/28/38 at 13px. Reported as "reduce the button size,
+   the buttons are still large", and on a data-driven screen the header row is as tall as the buttons in
+   it: four pixels off a control is four pixels off every band and filter row in the app.
+
+   The phone rule below is NOT scaled with it. 40px stays the floor there, because that is a finger
+   rather than a pointer, and it is the one place where a smaller control would be a worse one.
    ===================================================================================================== */
 :root {
-    --q-control-h: 36px;
-    --q-control-h-sm: 30px;
-    --q-control-h-lg: 44px;
-    --q-control-font: 14px;
-    --q-control-font-sm: 13px;
-    --q-control-pad-x: 12px;
+    --q-control-h: 32px;
+    --q-control-h-sm: 28px;
+    --q-control-h-lg: 38px;
+    --q-control-font: 13px;
+    --q-control-font-sm: 12.5px;
+    --q-control-pad-x: 10px;
     --q-row-gap: 8px;
 }
 
 .q-btn {
     min-height: var(--q-control-h);
-    padding: 0 14px;
+    padding: 0 12px;
     font-size: var(--q-control-font);
     line-height: 1.2;
 }

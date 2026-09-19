@@ -1,6 +1,5 @@
 @* No @page since 2026-09-18: this is a SECTION of the hub at /admin/staff/duties, not a page of its
    own. Two URLs rendering one screen is two sources of truth for it — see CLAUDE.md. *@
-@implements IDisposable
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Domain.Constants
@@ -23,19 +22,19 @@
 *@
 
 <div class="admin-page">
-@if (!Embedded)
-{
-    <div class="page-header">
+<div class="page-header">
+    @if (!Embedded)
+    {
         <div class="header-content">
-            <h1>Duty Reports</h1>
+            <h1>Duty Reports<QInfo Text="Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written." Label="Duty Reports" /></h1>
             <p class="subtitle">Reports from the people on duty and the administrators who supervise them: what is waiting for review, what came back, and what was never written.</p>
         </div>
-        <div class="header-actions">
-            <QButton Text="Print pack" Icon="printer" Variant="secondary" Disabled="@(queue == null || !queue.Items.Any())"
-                     OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/print?from={range.From:yyyy-MM-dd}&to={range.To:yyyy-MM-dd}"))" />
-        </div>
+    }
+    <div class="header-actions">
+        <QButton Text="Print pack" Icon="printer" Variant="secondary" Disabled="@(queue == null || !queue.Items.Any())"
+                 OnClick="@(() => Navigation.NavigateTo($"/admin/staff/duty-reports/print?from={range.From:yyyy-MM-dd}&to={range.To:yyyy-MM-dd}"))" />
     </div>
-}
+</div>
 
     <QFilterBar Wrap="true">
         <QDateRangePicker Range="@range" RangeChanged="@OnRangeChanged" CaptionPrefix="Due" />
@@ -53,7 +52,7 @@
     }
     else if (forbidden)
     {
-        <QEmptyState Icon="lock" Title="Duty reports are read by the heads who review them"
+        <QEmptyState Icon="lock" Title="Only reviewers see these"
                      Text="If you are on duty, write your reports from your portal. If you supervise a slot, its reports appear here once you are its administrator on duty." />
     }
     else if (queue != null)
@@ -114,9 +113,7 @@
 <style>
     .drq-scope { font-size: 13px; color: var(--qm-text-secondary); margin: 8px 0; }
     .drq-overdue td:first-child { box-shadow: inset 3px 0 0 var(--qm-danger); }
-    .drq-muted { font-size: 12.5px; color: var(--qm-text-muted); }
-    .admin-page .q-card { margin-top: 14px; }
-</style>
+    .drq-muted { font-size: 12.5px; color: var(--qm-text-muted); }</style>
 
 @code {
     /// <summary>True when a hub is hosting this section inside its own tab strip: the host then owns

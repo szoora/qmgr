@@ -1,0 +1,275 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@using QMgr.Web.Services
+@inject IStaffPerformanceApiService StaffApi
+@inject IToastService Toast
+
+@*
+    One member of staff's own record — the surface that was missing (2026-09-19).
+
+    The twelve employment fields have been on the User row since 2026-09-18 and the bulk staff
+    import has been writing them since, but nothing could read one back per person and nothing
+    could correct one. A typo in an imported sheet was permanent.
+
+    The two halves are laid out as two, because they belong to different people: the CONTACT half
+    is the person's own and they maintain it from their portal; the EMPLOYMENT half is the school's
+    record and part of an auditable MoES return. The server enforces that split — the portal's
+    endpoint has nowhere to put an employment field — so this dialog says which is which rather
+    than being the thing that decides it.
+*@
+
+<QModal @bind-Visible="Visible" Title="@(profile is null ? "Staff record" : profile.FullName)" Size="lg">
+    <ChildContent>
+        @if (isLoading)
+        {
+            <div class="loading-container"><QSpinner Size="lg" /><span>Loading the record…</span></div>
+        }
+        else if (profile is null)
+        {
+            <QEmptyState Icon="person-x" Title="Record not available"
+                         Text="The person may have left, or they may be outside the departments you cover." />
+        }
+        else
+        {
+            <div class="sp-identity">
+                <QAvatar Name="@profile.FullName" Size="md" />
+                <div class="sp-identity__text">
+                    <strong>@profile.FullName</strong>
+                    <span>@profile.RoleName · @profile.Email</span>
+                </div>
+                <QChip Text="@(profile.StaffGroup == StaffGroup.SupportStaff ? "Support staff" : "Teaching staff")" Size="sm" />
+            </div>
+
+            <h4 class="sp-head">
+                Contact
+                <QInfo Label="Contact" Text="The person maintains these themselves from My Workspace. Change them here when somebody cannot, or when a correction cannot wait." />
+            </h4>
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Second phone" @bind-Value="form.AlternatePhone" Placeholder="Staff room or out of hours" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Office" @bind-Value="form.OfficeLocation" Placeholder="Block C, office 4" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Emergency contact" @bind-Value="form.EmergencyContactName" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Emergency number" @bind-Value="form.EmergencyContactPhone" Disabled="@(!CanEdit)" />
+                </div>
+            </div>
+
+            <h4 class="sp-head">
+                Employment
+                <QInfo Label="Employment" Text="The school's own record, and what its MoES staff return is built from. Only somebody who can manage the staff structure may change it — a person editing their own start date or registration number would make the return unauditable." />
+            </h4>
+            <div class="form-row">
+                <div class="form-group">
+                    <QInput TValue="string" Label="Job title" @bind-Value="form.JobTitle" Placeholder="Head of Year 4" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Employee number" @bind-Value="form.EmployeeNumber" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="StaffEmploymentType?" TItem="EnumOption<StaffEmploymentType>" Label="Terms"
+                             @bind-Value="form.EmploymentType" Items="@EmploymentTypes"
+                             TextSelector="@(o => o.Label)" ValueSelector="@(o => (StaffEmploymentType?)o.Value)"
+                             Placeholder="Not recorded" AllowClear="true" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker Label="Appointed" Value="@ToDateTime(form.EmploymentStartDate)"
+                                 ValueChanged="@(v => form.EmploymentStartDate = ToDateOnly(v))"
+                                 Max="@DateTime.Today" Clearable="true" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker Label="Left" Value="@ToDateTime(form.EmploymentEndDate)"
+                                 ValueChanged="@(v => form.EmploymentEndDate = ToDateOnly(v))"
+                                 Clearable="true" Disabled="@(!CanEdit)" />
+                    <p class="form-hint">
+                        A leaver is recorded, not erased — clearing the account would drop them out of every
+                        register and appraisal they legitimately appear on.
+                    </p>
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Qualification" @bind-Value="form.Qualification" Placeholder="Dip.Ed, BSc Ed, MEd" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Registration number" @bind-Value="form.TeachingRegistrationNumber" Placeholder="MoES licence" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QDatePicker Label="Date of birth" Value="@ToDateTime(form.DateOfBirth)"
+                                 ValueChanged="@(v => form.DateOfBirth = ToDateOnly(v))"
+                                 Max="@DateTime.Today" Clearable="true" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QSelect TValue="PersonSex?" TItem="EnumOption<PersonSex>" Label="Sex"
+                             @bind-Value="form.Sex" Items="@Sexes"
+                             TextSelector="@(o => o.Label)" ValueSelector="@(o => (PersonSex?)o.Value)"
+                             Placeholder="Not recorded" AllowClear="true" Disabled="@(!CanEdit)" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="National ID" @bind-Value="form.NationalId" Disabled="@(!CanEdit)" />
+                </div>
+            </div>
+
+            <h4 class="sp-head">
+                Structure
+                <QInfo Label="Structure" Text="Department and line manager are set on the Departments tab, where the whole structure is visible at once." />
+            </h4>
+            <div class="sp-readonly">
+                <div><span>Department</span><strong>@(profile.DepartmentNames.Count == 0 ? "None" : string.Join(", ", profile.DepartmentNames))</strong></div>
+                <div><span>Line manager</span><strong>@(profile.LineManagerName ?? "Nobody")</strong></div>
+            </div>
+
+            @if (!CanEdit)
+            {
+                <p class="form-hint sp-note">
+                    You can read this record but not change it. Changing a staff record needs permission to
+                    manage the staff structure.
+                </p>
+            }
+        }
+    </ChildContent>
+    <FooterContent>
+        <QButton Text="Close" Variant="ghost" OnClick="Close" />
+        @if (CanEdit && profile is not null)
+        {
+            <QButton Text="Save record" Icon="check-lg" Variant="primary" OnClick="Save" Loading="@isSaving" />
+        }
+    </FooterContent>
+</QModal>
+
+<style>
+    .sp-identity { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid var(--qm-border); }
+    .sp-identity__text { display: flex; flex-direction: column; min-width: 0; }
+    .sp-identity__text span { font-size: 12.5px; color: var(--qm-text-muted); overflow: hidden; text-overflow: ellipsis; }
+    .sp-head { display: flex; align-items: center; gap: 6px; margin: 14px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--qm-text-muted); }
+    .sp-readonly { display: flex; flex-wrap: wrap; gap: 8px 28px; font-size: 13px; }
+    .sp-readonly div { display: flex; flex-direction: column; }
+    .sp-readonly span { font-size: 11.5px; color: var(--qm-text-muted); }
+    .sp-note { margin-top: 12px; }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback<bool> VisibleChanged { get; set; }
+
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    /// <summary>Whose record. Setting it to a new value loads that person.</summary>
+    [Parameter] public Guid? UserId { get; set; }
+
+    /// <summary>True when the caller holds staff.structure.manage. The server checks again.</summary>
+    [Parameter] public bool CanEdit { get; set; }
+
+    /// <summary>Raised after a successful save so the directory can refresh the row.</summary>
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private StaffProfileDto? profile;
+    private UpdateStaffProfileRequest form = new();
+    private bool isLoading, isSaving;
+    private Guid? loadedFor;
+
+    // QDatePicker speaks DateTime?; the record stores DateOnly?, which is what a date without a
+    // time is. Converted here rather than widening either side.
+    private static DateTime? ToDateTime(DateOnly? d) => d?.ToDateTime(TimeOnly.MinValue);
+    private static DateOnly? ToDateOnly(DateTime? d) => d.HasValue ? DateOnly.FromDateTime(d.Value) : null;
+
+    private record EnumOption<T>(T Value, string Label);
+
+    private static readonly IReadOnlyList<EnumOption<StaffEmploymentType>> EmploymentTypes = new[]
+    {
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Permanent, "Permanent"),
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Contract, "Contract"),
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Probation, "Probation"),
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.PartTime, "Part time"),
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Volunteer, "Volunteer"),
+        new EnumOption<StaffEmploymentType>(StaffEmploymentType.Seconded, "Seconded")
+    };
+
+    private static readonly IReadOnlyList<EnumOption<PersonSex>> Sexes = new[]
+    {
+        new EnumOption<PersonSex>(PersonSex.Female, "Female"),
+        new EnumOption<PersonSex>(PersonSex.Male, "Male"),
+        new EnumOption<PersonSex>(PersonSex.Other, "Other")
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || UserId is null) { loadedFor = null; return; }
+        if (loadedFor == UserId) return;
+        loadedFor = UserId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        profile = null;
+        try
+        {
+            profile = await StaffApi.GetStaffProfileAsync(BranchId, UserId!.Value);
+            form = new UpdateStaffProfileRequest
+            {
+                Phone = profile.Phone,
+                AlternatePhone = profile.AlternatePhone,
+                OfficeLocation = profile.OfficeLocation,
+                EmergencyContactName = profile.EmergencyContactName,
+                EmergencyContactPhone = profile.EmergencyContactPhone,
+                JobTitle = profile.JobTitle,
+                EmployeeNumber = profile.EmployeeNumber,
+                EmploymentStartDate = profile.EmploymentStartDate,
+                EmploymentEndDate = profile.EmploymentEndDate,
+                EmploymentType = profile.EmploymentType,
+                Qualification = profile.Qualification,
+                TeachingRegistrationNumber = profile.TeachingRegistrationNumber,
+                DateOfBirth = profile.DateOfBirth,
+                Sex = profile.Sex,
+                NationalId = profile.NationalId
+            };
+        }
+        catch (Exception ex)
+        {
+            // The API answers 404 rather than 403 for somebody outside the caller's staff scope —
+            // a 403 would confirm the person exists. The empty state above says the same thing.
+            Toast.Notify(ToastSeverity.Error, "Could not open the record", ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (profile is null) return;
+        isSaving = true;
+        try
+        {
+            profile = await StaffApi.UpdateStaffProfileAsync(BranchId, profile.UserId, form);
+            Toast.Notify(ToastSeverity.Success, "Record saved", profile.FullName);
+            await OnSaved.InvokeAsync();
+            await Close();
+        }
+        catch (Exception ex)
+        {
+            // Carries the server's own words: a duplicate employee number, a leaving date before
+            // the start date, a date of birth in the future.
+            Toast.Notify(ToastSeverity.Error, "Could not save the record", ex.Message);
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task Close()
+    {
+        loadedFor = null;
+        Visible = false;
+        await VisibleChanged.InvokeAsync(false);
+    }
+}

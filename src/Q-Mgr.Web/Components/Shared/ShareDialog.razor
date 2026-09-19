@@ -1,6 +1,5 @@
 @inject IJSRuntime JS
 @inject NavigationManager NavigationManager
-@implements IAsyncDisposable
 
 @if (IsVisible)
 {
@@ -420,7 +419,6 @@
     private string? qrCodeDataUrl;
     private bool copied = false;
     private bool supportsNativeShare = false;
-    private IJSObjectReference? jsModule;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -541,11 +539,8 @@
         await IsVisibleChanged.InvokeAsync(false);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (jsModule != null)
-        {
-            await jsModule.DisposeAsync();
-        }
-    }
+    // No DisposeAsync: the jsModule field it disposed was never assigned (CS0649 on every
+    // build), so this component imported no JS module and had nothing to release. An empty
+    // IAsyncDisposable is not free either — Blazor calls IAsyncDisposable INSTEAD of IDisposable,
+    // which is precisely how five pages lost their base class's teardown. Removed 2026-09-19.
 }

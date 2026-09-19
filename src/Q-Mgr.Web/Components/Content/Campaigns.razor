@@ -1,4 +1,3 @@
-@page "/content/campaigns"
 @using QMgr.Application.DTOs
 @using QMgr.Web.Components.Shared
 @using QMgr.Web.Components.Shared.UI
@@ -13,14 +12,6 @@
 @inject IJSRuntime JS
 @using QMgr.Domain.Constants
 
-<PageTitle>Campaigns - Q-Mgr</PageTitle>
-
-<div class="page-header">
-    <h1>Campaigns</h1>
-    <div class="breadcrumb">
-        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Campaigns") })" />
-    </div>
-</div>
 
 <div class="campaigns-page">
     <!-- Toolbar -->
@@ -363,17 +354,7 @@
         gap: 8px;
     }
 
-    .form-group {
-        margin-bottom: 16px;
-    }
-
-    .form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-
-    .form-group label {
+.form-group label {
         display: block;
         margin-bottom: 6px;
         font-weight: 500;
@@ -443,7 +424,6 @@
     /* The summary figures are QStatTile/QStatRow (q-components.css). */
     .stats-tiles { margin-bottom: 20px; }
 
-
     .stats-chart-card, .stats-table-card {
         padding: 16px;
         background: var(--qm-bg-elevated);
@@ -470,7 +450,6 @@
 
     /* The per-media and per-branch shares are QBarList (q-components.css). */
 
-
     @@media (max-width: 900px) {
         .stats-tables-row {
             grid-template-columns: 1fr;
@@ -479,6 +458,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Signage hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title, the header band and the tabs. There is no route to reach this
+    /// component any other way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private List<CampaignDto> campaigns = new();
     private bool isLoading = true;
     private string searchTerm = "";

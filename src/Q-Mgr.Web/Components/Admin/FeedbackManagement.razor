@@ -1,4 +1,3 @@
-@page "/admin/feedback"
 @using System.Text.Json
 @inject HttpClient Http
 @inject JsonSerializerOptions JsonOptions
@@ -16,14 +15,20 @@
 @using QMgr.Web.Components.Shared.UI
 @using QMgr.Web.Services
 
-<PageTitle>Feedback Management - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Feedback Management - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Customer Feedback</h1>
-            <p class="subtitle">View and respond to customer feedback</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Customer Feedback</h1>
+                <p class="subtitle">View and respond to customer feedback</p>
+            </div>
+        }
         <div class="header-actions">
             <PermissionGuard Permission="feedback.analytics">
                 @* Four formats over the same paged fetch this page already did for its CSV. *@
@@ -38,8 +43,13 @@
         </div>
     </div>
 
-    <QTabs Tabs="@FeedbackTabs" ActiveKey="@activeTab" ActiveKeyChanged="@OnTabChanged"
-           AriaLabel="Feedback sections" IdPrefix="tab" />
+    @* Its own tab strip until 2026-09-19. Responses and Questions are tabs of the Feedback hub
+       now, beside Reports — one strip, not a strip inside a strip. *@
+    @if (!Embedded)
+    {
+        <QTabs Tabs="@FeedbackTabs" ActiveKey="@activeTab" ActiveKeyChanged="@OnTabChanged"
+               AriaLabel="Feedback sections" IdPrefix="tab" />
+    }
 
     @if (activeTab == ResponsesTab)
     {
@@ -530,31 +540,10 @@
 
     .question-form { display: flex; flex-direction: column; gap: 16px; }
     .choice-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-
-    .admin-page {
-        padding: 0;
-    }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 24px;
-    }
-
     .header-content h1 {
         margin: 0 0 4px;
         color: var(--qm-text-primary);
-    }
-
-    .subtitle {
-        margin: 0;
-        color: var(--qm-text-muted);
-        font-size: 14px;
-    }
-
-
-    /* Summary Cards */
+    }/* Summary Cards */
     .summary-cards {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(var(--qm-statcard-min), 1fr));
@@ -916,6 +905,27 @@
 </style>
 
 @code {
+    /// <summary>True when the Feedback hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
+    /// <summary>Which section the hub is showing — "responses" or "questions". The hub owns
+    /// <c>?tab=</c>, so this is how the choice reaches the section; the same shape StaffStructure
+    /// uses. Nothing inside a hub may bind that query key itself.</summary>
+    [Parameter] public string? EmbeddedTab { get; set; }
+
+    /// <summary>
+    /// When embedded, the host's tab is the source of truth for which section shows. It goes
+    /// through OnTabChanged rather than assigning activeTab, because the Questions list is fetched
+    /// lazily the first time it is opened and a plain assignment would show an empty table.
+    /// </summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Embedded || string.IsNullOrWhiteSpace(EmbeddedTab) || EmbeddedTab == activeTab) return;
+        await OnTabChanged(EmbeddedTab);
+    }
+
     // ---- Tabs -------------------------------------------------------------------------------
     private const string ResponsesTab = "responses";
     private const string QuestionsTab = "questions";

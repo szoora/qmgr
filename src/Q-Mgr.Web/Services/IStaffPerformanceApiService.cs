@@ -30,6 +30,22 @@ public interface IStaffPerformanceApiService
     Task<DepartmentDto> UpdateDepartmentAsync(Guid branchId, Guid id, SaveDepartmentRequest request);
     Task<DepartmentDto> ToggleDepartmentAsync(Guid branchId, Guid id);
     Task<StaffDirectoryDto> GetDirectoryAsync(Guid branchId, string? period = null);
+
+    // ---- The staff record (2026-09-19). Every field below has been on the User row since
+    //      2026-09-18 and only the bulk import could write one; these are the surface that was
+    //      missing. The read is staff.records.view plus the staff scope; the write is
+    //      staff.structure.manage, because the employment half is an auditable MoES return.
+    Task<StaffProfileDto> GetStaffProfileAsync(Guid branchId, Guid userId);
+    Task<StaffProfileDto> UpdateStaffProfileAsync(Guid branchId, Guid userId, UpdateStaffProfileRequest request);
+
+    /// <summary>Adds a member of staff from the directory, without a trip to Users &amp; Roles.</summary>
+    Task<CreateStaffMemberResult> CreateStaffMemberAsync(Guid branchId, CreateStaffMemberRequest request);
+
+    /// <summary>My own file. Self is always visible and is not scope — the ProfileController rule.</summary>
+    Task<StaffProfileDto> GetMyProfileAsync();
+
+    /// <summary>Maintains my own contact detail. Contact only; the employment half is the school's.</summary>
+    Task<StaffProfileDto> UpdateMyContactAsync(UpdateStaffContactRequest request);
     Task<StaffMemberDto> UpdateMemberStructureAsync(Guid branchId, Guid userId, UpdateStaffStructureRequest request);
     Task<StructureCoverageDto> GetCoverageAsync(Guid branchId, string? period = null);
 
@@ -327,6 +343,11 @@ public class StaffPerformanceApiService : IStaffPerformanceApiService
     public Task<DepartmentDto> ToggleDepartmentAsync(Guid branchId, Guid id) => SendAsync<DepartmentDto>(HttpMethod.Patch, $"{B(branchId)}/structure/departments/{id}/toggle");
     public Task<StaffDirectoryDto> GetDirectoryAsync(Guid branchId, string? period = null) => GetAsync<StaffDirectoryDto>($"{B(branchId)}/structure/members{Q(("period", period))}");
     public Task<StaffMemberDto> UpdateMemberStructureAsync(Guid branchId, Guid userId, UpdateStaffStructureRequest request) => SendAsync<StaffMemberDto>(HttpMethod.Put, $"{B(branchId)}/structure/members/{userId}", request);
+    public Task<StaffProfileDto> GetStaffProfileAsync(Guid branchId, Guid userId) => GetAsync<StaffProfileDto>($"{B(branchId)}/structure/members/{userId}/profile");
+    public Task<StaffProfileDto> UpdateStaffProfileAsync(Guid branchId, Guid userId, UpdateStaffProfileRequest request) => SendAsync<StaffProfileDto>(HttpMethod.Put, $"{B(branchId)}/structure/members/{userId}/profile", request);
+    public Task<CreateStaffMemberResult> CreateStaffMemberAsync(Guid branchId, CreateStaffMemberRequest request) => SendAsync<CreateStaffMemberResult>(HttpMethod.Post, $"{B(branchId)}/structure/members", request);
+    public Task<StaffProfileDto> GetMyProfileAsync() => GetAsync<StaffProfileDto>("api/v1/staff/portal/profile");
+    public Task<StaffProfileDto> UpdateMyContactAsync(UpdateStaffContactRequest request) => SendAsync<StaffProfileDto>(HttpMethod.Put, "api/v1/staff/portal/profile/contact", request);
     public Task<List<SubjectDto>> GetSubjectsAsync(Guid branchId, bool includeInactive = false) => GetAsync<List<SubjectDto>>($"{B(branchId)}/subjects{Q(("includeInactive", includeInactive ? "true" : null))}");
     public Task<SubjectDto> CreateSubjectAsync(Guid branchId, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Post, $"{B(branchId)}/subjects", request);
     public Task<SubjectDto> UpdateSubjectAsync(Guid branchId, Guid id, SaveSubjectRequest request) => SendAsync<SubjectDto>(HttpMethod.Put, $"{B(branchId)}/subjects/{id}", request);

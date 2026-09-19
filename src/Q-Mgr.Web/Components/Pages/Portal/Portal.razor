@@ -31,7 +31,7 @@
     }
     else if (portal == null)
     {
-        <QEmptyState Icon="person-badge" Title="Your portal could not be loaded"
+        <QEmptyState Icon="person-badge" Title="Workspace unavailable"
                      Text="@(loadError ?? "The staff performance service did not answer. Try again in a moment.")">
             <Action><QButton Text="Try again" Icon="arrow-clockwise" Variant="secondary" OnClick="@LoadAsync" /></Action>
         </QEmptyState>
@@ -57,7 +57,7 @@
                         }
                         else
                         {
-                            <QChip Text="No band yet" Icon="hourglass" Variant="muted" Title="A band appears once there is evidence in this period" />
+                            <QChip Text="No band yet" Icon="hourglass" Variant="muted" Title="No evidence yet" />
                         }
                         @if (score.RankInBranch.HasValue && score.RankedOutOf.HasValue)
                         {
@@ -448,6 +448,11 @@
             </QCard>
         }
 
+        @* ---- My details ---------------------------------------------------------------------
+             The staff record the school holds, and the contact half I maintain myself. Until
+             2026-09-19 nothing in the product could show a person their own file. *@
+        <MyDetailsCard />
+
         @* ---- My timeline -------------------------------------------------------------------- *@
         <QCard id="my-timeline" Title="My timeline" Subtitle="Records about you, newest first" Icon="journal-text" Class="portal-card">
             <HeaderActions>
@@ -461,8 +466,11 @@
                 }
             </HeaderActions>
             <ChildContent>
-                <QTimeline GroupByDay="true" EmptyText="No records about you yet this period.">
-                    @foreach (var record in portal.RecentRecords.OrderByDescending(r => r.OccurredAt))
+                @* Paged — see QTimelinePaging. *@
+                <QTimeline GroupByDay="true" EmptyText="No records yet this period."
+                           HasMore="@paging.HasMore(portal.RecentRecords.Count)" OnLoadOlder="@paging.ShowMore"
+                           LoadOlderText="@($"Show older ({portal.RecentRecords.Count - paging.Shown} left)")">
+                    @foreach (var record in portal.RecentRecords.OrderByDescending(r => r.OccurredAt).Take(paging.Shown))
                     {
                         <QTimelineItem MarkerColor="@(record.ParameterColor ?? StaffDisplay.KindColor(record.ParameterKind))"
                                        MarkerIcon="@StaffDisplay.KindIcon(record.ParameterKind)"
@@ -553,7 +561,7 @@
         <QCard Title="Appraisal" Subtitle="@score.Period.Name" Icon="clipboard2-check" Class="portal-card">
             @if (portal.Appraisal == null)
             {
-                <QEmptyState Icon="clipboard2-check" Title="No appraisal open this period" Text="When your appraiser opens one, its stage and what it needs from you will show here." />
+                <QEmptyState Icon="clipboard2-check" Title="No appraisal open" Text="When your appraiser opens one, its stage and what it needs from you will show here." />
             }
             else
             {
@@ -648,7 +656,6 @@
     .portal-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
     .portal-greeting { display: flex; align-items: center; gap: 16px; min-width: 0; }
     .portal-greeting h1 { margin: 0 0 4px; color: var(--qm-text-primary); }
-    .subtitle { margin: 0; color: var(--qm-text-muted); font-size: 14px; }
     .portal-band-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
     .portal-rank { font-size: 13px; color: var(--qm-text-secondary); }
 
@@ -679,7 +686,6 @@
     .portal-duty__actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .portal-myday-next, .portal-myday-owed { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13.5px; }
     .portal-myday-owed { color: var(--qm-text-secondary); }
-
 
     .portal-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--qm-border); }
     .portal-item:last-child { border-bottom: 0; }
@@ -755,6 +761,9 @@
     private bool isLoading = true;
     private string? loadError;
     private StaffPortalDto? portal;
+
+    /// <summary>How much of my timeline is rendered — see QTimelinePaging.</summary>
+    private readonly QTimelinePaging paging = new();
     private UserInfo? me;
 
     private bool showGive;
@@ -891,6 +900,7 @@
         try
         {
             portal = await StaffApi.GetPortalAsync();
+            paging.Reset();
             await LoadMyDayAsync();
         }
         catch (Exception ex)
@@ -911,6 +921,7 @@
         try
         {
             portal = await StaffApi.GetPortalAsync();
+            paging.Reset();
         }
         catch (Exception ex)
         {

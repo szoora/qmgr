@@ -128,7 +128,7 @@ public class DocumentShareRetentionJob
                     Message = $"The link to \"{doc.Name}\"{label} stops working on {when}.",
                     Type = NotificationType.Custom,
                     IconClass = "bi-hourglass-split",
-                    ActionUrl = $"/content/documents?document={doc.Id}",
+                    ActionUrl = $"/content/library?tab=documents&document={doc.Id}",
                     Channels = NotificationChannel.InApp | NotificationChannel.Email,
                     Email = creator?.Email,
                     EmailSubject = $"Q-Mgr: the link to \"{doc.Name}\" expires on {when}"

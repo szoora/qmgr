@@ -12,7 +12,7 @@
 
 <div class="page-header">
     <div class="header-content">
-        <h1><QIcon Name="heart-pulse-fill" Size="32" /> System Health</h1>
+        <h1><QIcon Name="heart-pulse-fill" Size="32" /> System Health<QInfo Text="Monitor system performance, resources, and service status" Label="System Health" /></h1>
         <p class="page-subtitle">Monitor system performance, resources, and service status</p>
     </div>
     <div class="header-actions">
@@ -240,31 +240,13 @@
     }
 </div>
 
-<style>
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 32px;
-        flex-wrap: wrap;
-        gap: 16px;
-    }
-
-    .page-header h1 {
+<style>.page-header h1 {
         display: flex;
         align-items: center;
         gap: 12px;
         margin: 0 0 8px;
         color: var(--qm-text-primary);
     }
-
-    .page-subtitle {
-        color: var(--qm-text-muted);
-        margin: 0;
-        font-size: 16px;
-    }
-
-
     .auto-refresh-toggle {
         display: flex;
         align-items: center;

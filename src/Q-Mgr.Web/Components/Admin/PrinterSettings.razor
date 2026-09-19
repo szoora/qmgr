@@ -1,4 +1,3 @@
-@page "/admin/printer-settings"
 @inject HttpClient Http
 @inject IToastService NotificationService
 @inherits BranchAwareComponentBase
@@ -9,14 +8,20 @@
 @using QMgr.Domain.Enums
 @using QMgr.Web.Services
 
-<PageTitle>Printer Settings - Q-Mgr</PageTitle>
+@if (!Embedded)
+{
+    <PageTitle>Printer Settings - Q-Mgr</PageTitle>
+}
 
 <div class="admin-page">
     <div class="page-header">
-        <div class="header-content">
-            <h1>Printer Settings</h1>
-            <p class="subtitle">Configure ticket printing for kiosk and counter terminals</p>
-        </div>
+        @if (!Embedded)
+        {
+            <div class="header-content">
+                <h1>Printer Settings<QInfo Text="Configure ticket printing for kiosk and counter terminals" Label="Printer Settings" /></h1>
+                <p class="subtitle">Configure ticket printing for kiosk and counter terminals</p>
+            </div>
+        }
         <div class="header-actions">
             @if (canEdit)
             {
@@ -522,6 +527,11 @@
 </style>
 
 @code {
+    /// <summary>True when the Appearance hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title and the tab strip. There is no route to this component any other
+    /// way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private bool isLoading = true;
     private bool isSaving = false;
     /// <summary>Latched when a settings load fails. Blocks Save so defaults cannot silently overwrite real settings.</summary>

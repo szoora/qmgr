@@ -200,7 +200,7 @@ else
                         <ul class="submenu">
                             @if (canViewStudents)
                             {
-                                <li><a href="admin/students/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Student Roster</a></li>
+                                <li><a href="admin/students/roster" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/students/roster") ? "active" : "")"><i class="bi bi-people-fill"></i>Students</a></li>
                             }
                             @if (canManageClassTeachers)
                             {
@@ -300,11 +300,11 @@ else
                     </li>
                 }
 
-                <!-- Communication (Digital Signage + Campaign Marketing + Feedback —
-                     one module, was 3 scattered nav homes before: a "Digital Signage" submenu, a
-                     standalone "Campaign Marketing" item, and Feedback split between Reports &
-                     Administration. Matches the Visitor & Safeguarding / Integrations & API
-                     consolidation pattern below. -->
+                <!-- Communication -->
+                @* Four entries since 2026-09-19, from ten. Library, Signage and Feedback are hubs;
+                   Broadcasts is one page with its own permission, and a hub of one is not a hub.
+                   Full-Screen Signage is NOT here: it is a public display surface on DisplayLayout,
+                   so it became an action on the Signage hub rather than a tab or a nav entry. *@
                 @if ((canViewContent || canViewMarketing || canViewFeedback) && HasModule(ModuleCodes.EngagementCommunications))
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("engagement") ? "open" : "")">
@@ -316,22 +316,19 @@ else
                         <ul class="submenu">
                             @if (canViewContent)
                             {
-                                <li><a href="content/media" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/media") ? "active" : "")"><i class="bi bi-images"></i>Media Library</a></li>
-                                <li><a href="content/documents" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/documents") ? "active" : "")"><i class="bi bi-file-earmark-lock2"></i>Document Library</a></li>
-                                <li><a href="content/playlists" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/playlists") ? "active" : "")"><i class="bi bi-music-note-list"></i>Playlists</a></li>
-                                <li><a href="content/campaigns" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/campaigns") ? "active" : "")"><i class="bi bi-easel-fill"></i>Display Campaigns</a></li>
-                                <li><a href="content/zones" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/zones") ? "active" : "")"><i class="bi bi-grid-3x3"></i>Display Zones</a></li>
-                                <li><a href="content/schedules" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/schedules") ? "active" : "")"><i class="bi bi-calendar-week"></i>Schedules</a></li>
-                                <li><a href="@($"display/signage/{BranchState.CurrentBranchId}")" @onclick="CollapseSidebarOnMobile" class="@(IsActive($"/display/signage/{BranchState.CurrentBranchId}") ? "active" : "")"><i class="bi bi-fullscreen"></i>Full-Screen Signage</a></li>
+                                <li><a href="content/library" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/library") ? "active" : "")"><i class="bi bi-images"></i>Library</a></li>
+                                <li><a href="content/signage" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/content/signage") ? "active" : "")"><i class="bi bi-easel-fill"></i>Signage</a></li>
                             }
+                            @* "Campaign Marketing" until 2026-09-19. It sends SMS, WhatsApp and email;
+                               calling it a campaign put it one line under Signage's own Campaigns tab,
+                               two unrelated things under one word. *@
                             @if (canViewMarketing)
                             {
-                                <li><a href="admin/marketing" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/marketing") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Campaign Marketing</a></li>
+                                <li><a href="admin/marketing" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/marketing") ? "active" : "")"><i class="bi bi-megaphone-fill"></i>Broadcasts</a></li>
                             }
-                            @if (canViewFeedback)
+                            @if (canViewFeedback || canViewReports)
                             {
-                                <li><a href="admin/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback Management</a></li>
-                                <li><a href="reports/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/reports/feedback") ? "active" : "")"><i class="bi bi-bar-chart-line-fill"></i>Feedback Reports</a></li>
+                                <li><a href="admin/feedback" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/feedback") ? "active" : "")"><i class="bi bi-chat-dots"></i>Feedback</a></li>
                             }
                         </ul>
                     </li>
@@ -367,6 +364,17 @@ else
                 }
 
                 <!-- Administration -->
+                @* Four entries since 2026-09-19, from fourteen — the longest group in the app, and
+                   longer than Communication, which is what made it worth doing in the same pass.
+
+                   Branches (branches, counters, service types), Users & Roles (users, join
+                   requests, onboarding), Appearance (branding, kiosk, printing, customer links)
+                   and Settings (general, notifications, industry, integrations).
+
+                   Each gate below is the OR of its hub's sections, so an entry is shown exactly
+                   when at least one tab inside it would open — the same rule HubTabs applies on
+                   the page itself, written once here and once there because the two answer
+                   different questions (is the entry worth showing / which tabs does it hold). *@
                 @if (CanViewAdminSection)
                 {
                     <li class="nav-item has-submenu @(IsMenuExpanded("admin") ? "open" : "")">
@@ -376,72 +384,21 @@ else
                             <i class="bi bi-chevron-down submenu-arrow"></i>
                         </a>
                         <ul class="submenu">
-                            @if (canViewBranches)
+                            @if (ShowAdminBranchesHub)
                             {
                                 <li><a href="admin/branches" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branches") ? "active" : "")"><i class="bi bi-building"></i>Branches</a></li>
                             }
-                            @* Every item below pairs its RBAC check with ModuleAllows, which reads the
-                               same ModuleRouteMap the navigation guard and the API middleware use — so
-                               an item is visible exactly when it is reachable.
-
-                               Base product, no module, shown to every tenant: Branches, Users & Roles,
-                               Notifications and System Settings — each is needed to run the account
-                               itself whatever was bought.
-
-                               Industry and Branding were on that list until 2026-09-05 and should not
-                               have been. Both configure the public kiosk and display screens and
-                               nothing else, so a school holding only Student Welfare was being offered
-                               a kiosk theme picker for a kiosk it does not have. See the notes on
-                               those two entries in ModuleRouteMap. *@
-                            @if (ShowAdminCounters)
+                            @if (ShowAdminUsersHub)
                             {
-                                <li><a href="admin/counters" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/counters") ? "active" : "")"><i class="bi bi-door-open"></i>Counters Setup</a></li>
+                                <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") ? "active" : "")"><i class="bi bi-people-fill"></i>Users &amp; Roles</a></li>
                             }
-                            @if (ShowAdminServiceTypes)
+                            @if (ShowAdminAppearanceHub)
                             {
-                                <li><a href="admin/service-types" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/service-types") ? "active" : "")"><i class="bi bi-tags"></i>Service Types</a></li>
+                                <li><a href="admin/appearance" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/appearance") ? "active" : "")"><i class="bi bi-palette"></i>Appearance</a></li>
                             }
-                            @if (ShowAdminUsers)
+                            @if (ShowAdminSettingsHub)
                             {
-                                <li><a href="admin/users" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users") && !IsActive("/admin/users/requests") && !IsActive("/admin/users/onboarding") ? "active" : "")"><i class="bi bi-people-fill"></i>Users & Roles</a></li>
-                            }
-                            @* Staff onboarding (duty rota plan §12). Its API is part of Welfare & Performance, so the links follow the module. *@
-                            @if (ShowAdminJoinRequests)
-                            {
-                                <li><a href="admin/users/requests" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users/requests") ? "active" : "")"><i class="bi bi-person-check"></i>Join Requests</a></li>
-                            }
-                            @if (ShowAdminOnboarding)
-                            {
-                                <li><a href="admin/users/onboarding" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/users/onboarding") ? "active" : "")"><i class="bi bi-person-plus"></i>Onboarding</a></li>
-                            }
-                            @if (ShowAdminPrinterAndKiosk)
-                            {
-                                <li><a href="admin/printer-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/printer-settings") ? "active" : "")"><i class="bi bi-printer"></i>Printer Settings</a></li>
-                                <li><a href="admin/kiosk-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/kiosk-settings") ? "active" : "")"><i class="bi bi-display"></i>Kiosk Settings</a></li>
-                            }
-                            @if (ShowAdminIndustry)
-                            {
-                                <li><a href="admin/industry" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/industry") ? "active" : "")"><i class="bi bi-buildings"></i>Industry Settings</a></li>
-                            }
-                            @if (ShowAdminBranding)
-                            {
-                                <li><a href="admin/branding-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/branding-settings") ? "active" : "")"><i class="bi bi-palette"></i>Branding Settings</a></li>
-                            }
-                            @if (ShowAdminIntegrations)
-                            {
-                                <li><a href="admin/integrations" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/integrations") ? "active" : "")"><i class="bi bi-plug"></i>Integrations</a></li>
-                            }
-                            @if (ShowAdminCustomerLinks)
-                            {
-                                <li><a href="admin/customer-links" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/customer-links") ? "active" : "")"><i class="bi bi-share"></i>Customer Links</a></li>
-                            }
-                            @if (canViewNotifications)
-                            {
-                                <li><a href="admin/notification-settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/notification-settings") ? "active" : "")"><i class="bi bi-bell-fill"></i>Notifications</a></li>
-                            }
-                            @if (canViewSettings)
-                            {
-                                <li><a href="admin/settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/settings") ? "active" : "")"><i class="bi bi-sliders"></i>System Settings</a></li>
+                                <li><a href="admin/settings" @onclick="CollapseSidebarOnMobile" class="@(IsActive("/admin/settings") ? "active" : "")"><i class="bi bi-sliders"></i>Settings</a></li>
                             }
                         </ul>
                     </li>
@@ -1156,21 +1113,35 @@ else
     // has a link inside it — so a class teacher or teacher saw an Administration group with nothing
     // (or almost nothing) in it.
 
-    private bool ShowAdminCounters => canViewCounters && ModuleAllows("/admin/counters");
-    private bool ShowAdminServiceTypes => canViewServiceTypes && ModuleAllows("/admin/service-types");
+    // Administration is four hubs since 2026-09-19. Each entry's gate is the OR of its hub's
+    // sections, so the entry appears exactly when at least one tab inside it would open. The
+    // section conditions read `permission && module` because a hub crosses module boundaries and
+    // its own route cannot: Branches is base product while Counters and Service Types are Core
+    // Queue, Users & Roles is base product while Join Requests and Onboarding are Welfare &
+    // Performance. HubTabs.Section.RequiringModule carries the same rule on the page.
+    //
+    // HasModule, not ModuleAllows(path): those paths no longer exist, and ModuleAllows answers
+    // TRUE for an unmapped one (no requirement found), which would have shown every tab to every
+    // tenant. That is the trap in retiring a route that carried a module mapping.
+
+    private bool ShowAdminCounters => canViewCounters && HasModule(ModuleCodes.CoreQueue);
+    private bool ShowAdminServiceTypes => canViewServiceTypes && HasModule(ModuleCodes.CoreQueue);
     private bool ShowAdminUsers => canViewUsers || canViewRoles;
-    private bool ShowAdminJoinRequests => canApproveJoinRequests && ModuleAllows("/admin/users/requests");
-    private bool ShowAdminOnboarding => canViewUsers && ModuleAllows("/admin/users/onboarding");
-    private bool ShowAdminPrinterAndKiosk => canViewSettings && ModuleAllows("/admin/printer-settings");
-    private bool ShowAdminIndustry => canViewSettings && ModuleAllows("/admin/industry");
-    private bool ShowAdminBranding => canViewSettings && ModuleAllows("/admin/branding-settings");
-    private bool ShowAdminIntegrations => canViewSettings && ModuleAllows("/admin/integrations");
-    private bool ShowAdminCustomerLinks => canViewSettings && ModuleAllows("/admin/customer-links");
+    private bool ShowAdminJoinRequests => canApproveJoinRequests && HasModule(ModuleCodes.StudentWelfare);
+    private bool ShowAdminOnboarding => canViewUsers && HasModule(ModuleCodes.StudentWelfare);
+    private bool ShowAdminPrinterAndKiosk => canViewSettings && HasModule(ModuleCodes.CoreQueue);
+    private bool ShowAdminIndustry => canViewSettings && HasModule(ModuleCodes.CoreQueue);
+    private bool ShowAdminBranding => canViewSettings;
+    private bool ShowAdminIntegrations => canViewSettings && HasModule(ModuleCodes.IntegrationsApi);
+    private bool ShowAdminCustomerLinks => canViewSettings && HasModule(ModuleCodes.CoreQueue);
+
+    private bool ShowAdminBranchesHub => canViewBranches || ShowAdminCounters || ShowAdminServiceTypes;
+    private bool ShowAdminUsersHub => ShowAdminUsers || ShowAdminJoinRequests || ShowAdminOnboarding;
+    private bool ShowAdminAppearanceHub => ShowAdminBranding || ShowAdminPrinterAndKiosk || ShowAdminCustomerLinks;
+    private bool ShowAdminSettingsHub => canViewSettings || canViewNotifications || ShowAdminIndustry || ShowAdminIntegrations;
 
     private bool CanViewAdminSection =>
-        canViewBranches || ShowAdminCounters || ShowAdminServiceTypes || ShowAdminUsers || ShowAdminPrinterAndKiosk
-        || ShowAdminIndustry || ShowAdminBranding || ShowAdminIntegrations || ShowAdminCustomerLinks
-        || canViewNotifications || canViewSettings;
+        ShowAdminBranchesHub || ShowAdminUsersHub || ShowAdminAppearanceHub || ShowAdminSettingsHub;
 
     private bool ShowReportsOverview => canViewReports && ModuleAllows("/reports");
     private bool ShowReportsQueue => canViewReports && ModuleAllows("/reports/queue");
@@ -1328,9 +1299,21 @@ else
     // string-prefix of another item's, e.g. "/admin/visitors" matching "/admin/students/roster",
     // or "Overview" (/reports) matching every other /reports/* sub-page. Callers with a genuinely
     // dynamic route now pass the fully-resolved path (same one used in their own href) instead.
+    /// <summary>
+    /// Whether a sidebar entry is the page being looked at.
+    ///
+    /// <para>The QUERY IS STRIPPED, and that is the whole point since the hubs arrived.
+    /// ToBaseRelativePath keeps it, so /admin/users?tab=roles did not equal /admin/users and the
+    /// entry lost its highlight the moment the reader opened any tab but the first — on every hub,
+    /// in every group. The tab lives in the query by design (the hub owns ?tab=), so an entry is
+    /// active when its ROUTE is open, whichever section of it is showing.</para>
+    /// </summary>
     private bool IsActive(string path)
     {
         var currentPath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        var cut = currentPath.IndexOfAny(new[] { '?', '#' });
+        if (cut >= 0) currentPath = currentPath[..cut];
+
         if (string.IsNullOrEmpty(currentPath)) currentPath = "/";
         else currentPath = "/" + currentPath;
 

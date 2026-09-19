@@ -1,0 +1,95 @@
+@namespace QMgr.Web.Components.Shared.UI
+
+@*
+    The explanation that used to sit permanently on the page.
+
+    Q-Mgr carried 155 blocks of standing explanatory text — page subtitles, .form-hint,
+    .settings-hint, .setting-info — for things most people read once and then scroll past for ever.
+    On a data-driven screen each of those is a row of data nobody can see. This is where that text
+    goes: out of the flow, one click away, and still there.
+
+    WHY NOT A TOOLTIP. The app already had 153 `title=` attributes and that is what a reader would
+    otherwise get. A native tooltip cannot hold a sentence, never appears on a touch screen, is not
+    reachable by keyboard, and cannot carry a link. It is fine for "Open this person's timeline" on
+    an icon; it is not a place to explain a field.
+
+    WHAT DOES NOT GO IN HERE. A warning is not a hint. If the text changes what somebody DOES —
+    "Sharing only ever points here", "attribution, not prevention", anything safeguarding — it
+    stays on the page where it cannot be missed. This is for the explanation of a control, not for
+    the consequence of using it.
+
+    Mechanics follow QDatePicker, which already solved both problems this has: a popover positioned
+    against its own anchor, and the card it sits in clipping it (see `.q-card:has(...)` in
+    q-components.css). No JS interop, so nothing to leak on dispose.
+*@
+
+<span class="q-info @Class" @onfocusout="HandleFocusOut">
+    <button type="button"
+            class="q-info__btn @(isOpen ? "q-info__btn--on" : "")"
+            id="@Id"
+            aria-expanded="@(isOpen ? "true" : "false")"
+            aria-label="@($"More about {Label}")"
+            title="@(isOpen ? null : Label)"
+            @onclick="Toggle"
+            @onclick:stopPropagation="true"
+            @onkeydown="HandleKey">
+        <i class="bi bi-info-circle" aria-hidden="true"></i>
+    </button>
+
+    @if (isOpen)
+    {
+        <span class="q-info__pop @(Align == "right" ? "q-info__pop--right" : "")" role="note">
+            @if (!string.IsNullOrWhiteSpace(Heading))
+            {
+                <strong class="q-info__head">@Heading</strong>
+            }
+            @if (ChildContent is not null)
+            {
+                <span class="q-info__body">@ChildContent</span>
+            }
+            else
+            {
+                <span class="q-info__body">@Text</span>
+            }
+        </span>
+    }
+</span>
+
+@code {
+    /// <summary>The explanation. Ignored when <see cref="ChildContent"/> is supplied.</summary>
+    [Parameter] public string? Text { get; set; }
+
+    /// <summary>Rich content, for an explanation that needs a list or a link.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>An optional bold first line.</summary>
+    [Parameter] public string? Heading { get; set; }
+
+    /// <summary>
+    /// What this explains — "Sharing policy", "Employment type". Used for the accessible name, so
+    /// a screen reader announces "More about Employment type" rather than a bare "info".
+    /// </summary>
+    [Parameter] public string Label { get; set; } = "this";
+
+    /// <summary>"right" hangs the popover off the right edge, for a control near the page edge.</summary>
+    [Parameter] public string? Align { get; set; }
+
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private bool isOpen;
+
+    private void Toggle() => isOpen = !isOpen;
+
+    private void HandleKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") isOpen = false;
+    }
+
+    /// <summary>
+    /// Collapses when focus leaves the control entirely. Same reasoning as QDatePicker: focusout
+    /// rather than a document click handler, so there is no JS listener to leak. A pointer user
+    /// closes it with the same button, or by moving focus anywhere else.
+    /// </summary>
+    private void HandleFocusOut(FocusEventArgs _) => isOpen = false;
+}

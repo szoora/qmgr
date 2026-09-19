@@ -1,4 +1,3 @@
-@page "/content/playlists"
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
@@ -12,14 +11,6 @@
 @inject IModuleStateService ModuleState
 @using QMgr.Domain.Constants
 
-<PageTitle>Playlists - Q-Mgr</PageTitle>
-
-<div class="page-header">
-    <h1>Playlists</h1>
-    <div class="breadcrumb">
-        <QBreadcrumb Items="@(new List<QBreadcrumbItem> { new("Digital Signage", "/content/media"), new("Playlists") })" />
-    </div>
-</div>
 
 <div class="playlists-page">
     <!-- Toolbar -->
@@ -309,37 +300,24 @@
         margin: 0 0 20px;
     }
 
-    .form-group {
-        margin-bottom: 16px;
-    }
-
     .form-group .rz-label {
         display: block;
         margin-bottom: 6px;
         font-weight: 500;
     }
-
-    .form-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-    }
-
     .checkbox-group {
         display: flex;
         align-items: center;
         gap: 8px;
         padding-top: 24px;
-    }
-
-    .dialog-actions {
-        display: flex;
-        justify-content: flex-end;
-        margin-top: 24px;
-    }
-</style>
+    }</style>
 
 @code {
+    /// <summary>True when the Signage hub is hosting this page inside its own tab strip: the host
+    /// then owns the page title, the header band and the tabs. There is no route to reach this
+    /// component any other way — see CLAUDE.md, "A hub owns the route; its sections own nothing".</summary>
+    [Parameter] public bool Embedded { get; set; }
+
     private List<PlaylistDto> playlists = new();
     private bool isLoading = true;
     private string searchTerm = "";

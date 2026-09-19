@@ -1957,34 +1957,31 @@ a:hover {
 }
 
 /* Page Header */
-.page-header {
-    background: var(--qm-gradient-header);
-    color: var(--qm-text-primary);
-    padding: 32px;
-    /* Full bleed to the page gutter, whatever the breakpoint sets it to (layout.css --qm-page-pad). */
-    margin: calc(-1 * var(--qm-page-pad, 24px)) calc(-1 * var(--qm-page-pad, 24px)) 24px;
-    border-bottom: 1px solid var(--qm-border);
-    position: relative;
-    overflow: hidden;
-}
+/* The page header band. Everything about its SIZE lives in app.css and its title size in
+   layout.css (.qm-main h1) — see the note there. What was here until 2026-09-19, and what it cost:
 
-.page-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 300px;
-    height: 100%;
-    background: radial-gradient(ellipse at right, var(--qm-primary-light) 0%, transparent 70%);
-    pointer-events: none;
+     padding: 32px            a full 32px above the title on every page in the app
+     margin: -pad -pad 24px   a full-bleed negative margin paired with a padding set in another
+                              file, which is the exact trap CLAUDE.md names under the size scale
+     ::before                 a 300px radial gradient blob in the top-right corner — the last
+                              decorative gradient in the app, missed by the 2026-08-19 flattening
+                              because it is drawn by a pseudo-element rather than a background
+     h1 { font-size: 28px }   equal specificity to layout.css's .qm-main h1 { 24px } and LATER in
+                              the cascade, so the title reduction of 2026-09-18 never once reached
+                              the screen. Read off document.styleSheets in the running page.
+
+   Together those were ~45px of the 107px header and the whole of its "exaggerated" look. The band
+   is now a title, a subtitle and the rule beneath them. */
+.page-header {
+    color: var(--qm-text-primary);
+    border-bottom: 1px solid var(--qm-border);
 }
 
 .page-header h1 {
+    /* Size comes from .qm-main h1. Do not set it here — this file loads after layout.css. */
     color: var(--qm-text-primary);
-    font-size: 28px;
-    margin: 0 0 8px 0;
+    margin: 0 0 2px 0;
     font-family: var(--qm-font-display);
-    position: relative;
 }
 
 .page-header .breadcrumb {

@@ -1,6 +1,4 @@
 @page "/admin/staff"
-@implements IDisposable
-@using Microsoft.AspNetCore.WebUtilities
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
@@ -19,7 +17,7 @@
 <div class="admin-page">
     <div class="page-header">
         <div class="header-content">
-            <h1>Staff</h1>
+            <h1>Staff<QInfo Text="Everyone on this branch's staff, with their department, line manager and this period's band." Label="Staff" /></h1>
             <p class="subtitle">Everyone on this branch's staff, with their department, line manager and this period's band.</p>
         </div>
         <div class="header-actions">
@@ -34,7 +32,7 @@
             @if (canAddStaff)
             {
                 <QButton Text="Add staff" Icon="person-plus" Variant="secondary"
-                         OnClick="@(() => Navigation.NavigateTo("/admin/users"))" />
+                         OnClick="@(() => showAddDialog = true)" />
             }
             @if (canImportStaff)
             {
@@ -52,7 +50,7 @@
     @* The Staff hub (2026-09-18). Departments & Structure used to be its own sidebar entry with its
        own list of people — the same Name/Role/Departments/Line manager this page already shows,
        minus Band and Last record. One page, four tabs, one sidebar entry. *@
-    <QTabs Tabs="@HubTabs" @bind-ActiveKey="@hubTab" IdPrefix="sd" />
+    <QTabs Tabs="@hubTabs" @bind-ActiveKey="@hubTab" IdPrefix="sd" />
 
     @if (hubTab != "people")
     {
@@ -81,12 +79,12 @@
     }
     else if (directory == null || directory.Items.Count == 0)
     {
-        <QEmptyState Icon="people" Title="No staff on this branch yet"
+        <QEmptyState Icon="people" Title="No staff yet"
                      Text="Staff appear here once they have a user account on this branch. Add them under Users, or import a list under Staff Performance → Structure → Import." />
     }
     else if (!Visible.Any())
     {
-        <QEmptyState Icon="funnel" Title="Nobody matches these filters" Text="Clear a filter or two to see the rest of the directory." />
+        <QEmptyState Icon="funnel" Title="No matches" Text="Clear a filter or two to see the rest of the directory." />
     }
     else
     {
@@ -134,6 +132,12 @@
                                 <td>
                                     <div class="sd-actions">
                                         <QButton Text="Timeline" Icon="clock-history" Variant="ghost" Size="sm" OnClick="@(() => Navigation.NavigateTo($"/admin/staff/{m.UserId}/timeline"))" />
+                                        @* The staff record — employment terms, qualification,
+                                           registration number, contact. It could only ever be
+                                           WRITTEN by the bulk import until 2026-09-19, and never
+                                           read back per person. *@
+                                        <QButton Text="Record" Icon="person-vcard" Variant="ghost" Size="sm"
+                                                 OnClick="@(() => OpenProfile(m))" />
                                         @if (canEditStructure)
                                         {
                                             @* The department / line-manager editor moved here with the
@@ -164,6 +168,12 @@
 {
     <StaffRecordDialog BranchId="@branchId" SubjectUserId="@recordSubjectId" Subjects="@directory.Items"
                        Visible="@showRecordDialog" VisibleChanged="@OnRecordDialogVisibleChanged" OnCreated="@OnRecordCreated" />
+
+    <StaffProfileDialog BranchId="@branchId" UserId="@profileUserId" CanEdit="@canEditStructure"
+                        @bind-Visible="showProfileDialog" OnSaved="@LoadAsync" />
+
+    <AddStaffDialog BranchId="@branchId" Directory="@directory.Items"
+                    @bind-Visible="showAddDialog" OnCreated="@LoadAsync" />
 }
 
 <style>
@@ -198,8 +208,8 @@
     /// Staff tab listed the same people this page already lists, with fewer columns.
     /// </summary>
     // Departments & Structure was its own page and its own permission before the merge, so the hub
-    // opens for either and shows only the sections the caller holds. See StaffHubTabs.
-    private static readonly StaffHubTabs.Section[] Sections =
+    // opens for either and shows only the sections the caller holds. See HubTabs.
+    private static readonly HubTabs.Section[] Sections =
     {
         new(new QTab("people", "People", "people"), Permissions.StaffRecordsView),
         new(new QTab("departments", "Departments", "diagram-3"), Permissions.StaffStructureManage),
@@ -207,11 +217,27 @@
         new(new QTab("import", "Import", "upload"), Permissions.StaffStructureManage),
     };
 
-    private IReadOnlyList<QTab> HubTabs = Array.Empty<QTab>();
+    private IReadOnlyList<QTab> hubTabs = Array.Empty<QTab>();
     private string hubTab = "people";
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub acted on — see HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
 
     /// <summary>Set when People asks the Departments section to open one person's editor.</summary>
     private Guid? structureEditId;
+
+    /// <summary>Whose staff record the profile dialog is showing.</summary>
+    private Guid? profileUserId;
+    private bool showProfileDialog;
+
+    /// <summary>
+    /// Adding staff used to be NavigateTo("/admin/users") — out of the module, into Administration,
+    /// with no way back to the directory. It is a dialog on this page now; the endpoint behind it
+    /// is the same user-creation path, RoleAssignmentGuard included.
+    /// </summary>
+    private bool showAddDialog;
 
     /// <summary>The gaps view the removed Staff tab offered: who has no department or no line manager.</summary>
     private bool onlyGaps;
@@ -288,13 +314,13 @@
 
     protected override async Task OnInitializedAsync()
     {
-        HubTabs = await StaffHubTabs.VisibleAsync(PermissionService, Sections);
-        if (HubTabs.Count == 0)
+        hubTabs = await HubTabs.VisibleAsync(PermissionService, Sections);
+        if (hubTabs.Count == 0)
         {
             Navigation.NavigateTo("/unauthorized", forceLoad: true);
             return;
         }
-        hubTab = HubTabs[0].Key;
+        hubTab = hubTabs[0].Key;
 
         await ModuleState.LoadAsync(ModuleApi);
         if (ModuleState.LoadSucceeded && !ModuleState.ActiveModuleCodes.Contains(ModuleCodes.StudentWelfare))
@@ -312,11 +338,8 @@
         // The hub owns the URL: /admin/staff?tab=departments is the one link to that section, and
         // the sections themselves no longer carry routes. Anything unrecognised falls back to People
         // rather than showing an empty shell.
-        if (QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query).TryGetValue("tab", out var wantedTab))
-        {
-            var t = wantedTab.ToString().Trim().ToLowerInvariant();
-            if (HubTabs.Any(x => x.Key == t)) hubTab = t;
-        }
+        hubTab = HubTabs.Resolve(hubTabs, TabParam);
+        appliedTab = TabParam;
         canImportStaff = canAddStaff && await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
         canEditStructure = await PermissionService.HasPermissionAsync(Permissions.StaffStructureManage);
 
@@ -325,7 +348,7 @@
         TrackBranch();
 
         // A structure-only caller never sees People, so do not fetch a list they may not read.
-        if (HubTabs.Any(x => x.Key == "people")) await LoadAsync();
+        if (hubTabs.Any(x => x.Key == "people")) await LoadAsync();
         else isLoading = false;
     }
 
@@ -361,6 +384,13 @@
         await LoadAsync();
     }
 
+    /// <summary>Opens one person's staff record — the employment and contact file.</summary>
+    private void OpenProfile(StaffMemberDto m)
+    {
+        profileUserId = m.UserId;
+        showProfileDialog = true;
+    }
+
     private void OpenRecordFor(StaffMemberDto m)
     {
         recordSubjectId = m.UserId;
@@ -375,4 +405,14 @@
 
     private Task OnRecordCreated(StaffPerformanceRecordDto _) => LoadAsync();
 
+
+    /// <summary>
+    /// Follow a ?tab= that changed without the route changing — a link from one tab of this
+    /// hub to another. OnInitializedAsync does not re-run for that, so without this the URL
+    /// would change and the screen would not. The rule itself lives in HubTabs.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(hubTabs, TabParam, ref appliedTab, ref hubTab);
+    }
 }

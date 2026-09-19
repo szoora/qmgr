@@ -2,7 +2,6 @@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Enums
 @using QMgr.Web.Components.Shared
-@implements IDisposable
 @inject IQueueApiService QueueApi
 @inject ISignalRService SignalR
 @inject IToastService NotificationService
@@ -17,7 +16,7 @@
 <div class="counter-terminal">
     <!-- Terminal Header -->
     <div class="counter-terminal-header">
-        <div class="header-left">
+        <div class="ct-head-left">
             <h2><QIcon Name="cash-stack" /> Counter Terminal</h2>
             <div class="counter-selector">
                 <QSelect TValue="Guid" TItem="CounterDto" Value="@selectedCounterId" ValueChanged="@OnCounterSelected" Items="@counters"
@@ -311,13 +310,13 @@
         gap: 16px;
     }
 
-    .header-left {
+    .ct-head-left {
         display: flex;
         align-items: center;
         gap: 24px;
     }
 
-    .header-left h2 {
+    .ct-head-left h2 {
         color: var(--qm-text-primary);
         margin: 0;
         font-size: 22px;
@@ -799,7 +798,7 @@
             align-items: stretch;
         }
 
-        .header-left, .header-right {
+        .ct-head-left, .header-right {
             justify-content: center;
         }
 
@@ -1230,7 +1229,13 @@
         return $"{(int)duration.TotalMinutes}:{duration.Seconds:00}";
     }
 
-    public void Dispose()
+    /// <summary>
+    /// This page's own teardown. It runs from BranchAwareComponentBase.Dispose, AFTER the branch
+    /// subscription has been removed. Until 2026-09-19 it was a `public void Dispose()` beside an
+    /// `@implements IDisposable`, which re-mapped the interface to this method and left the base's
+    /// unsubscribe unreachable — so the handler piled up once per visit for the life of the circuit.
+    /// </summary>
+    protected override void DisposeCore()
     {
         SignalR.OnTokenCalled -= HandleTokenCalled;
         SignalR.OnTokenCompleted -= HandleTokenCompleted;

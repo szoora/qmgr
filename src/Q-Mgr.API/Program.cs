@@ -118,6 +118,23 @@ catch (Exception ex)
         keyRingPath);
 }
 
+// The same shape of check for media storage. Flipping MediaStorage:Provider to S3 wires
+// S3MediaStorageService for UPLOADS, but UploadsController still serves every byte with
+// PhysicalFile off the local store — it needs a disk path for the existence check, the ETag and
+// the range processing pdf.js and <video> depend on. So an S3 install uploads successfully and
+// then 404s every welfare photograph, every visitor badge and every signage image, with nothing
+// anywhere saying why. Serving from a bucket is real work that has never been run against one,
+// and shipping it unexercised would be worse than saying so; until then this is the warning.
+// Logged, not fatal, the same call as the key ring above.
+var storageProvider = builder.Configuration["MediaStorage:Provider"];
+if (!string.IsNullOrWhiteSpace(storageProvider) && !storageProvider.Equals("Local", StringComparison.OrdinalIgnoreCase) && !storageProvider.Equals("LocalDisk", StringComparison.OrdinalIgnoreCase))
+{
+    Log.Error(
+        "MediaStorage:Provider is {Provider}, so uploads are written to that provider — but UploadsController serves every file from the LOCAL store and will answer 404 for all of them. " +
+        "Uploads will appear to succeed and every image, attachment and badge will then be missing. Set MediaStorage:Provider back to Local until UploadsController can stream from the provider.",
+        storageProvider);
+}
+
 // Add API services
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
