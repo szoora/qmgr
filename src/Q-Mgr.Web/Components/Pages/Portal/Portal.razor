@@ -93,6 +93,20 @@
                        Variant="@(portal.OpenItems.Any(i => i.IsOverdue) ? "danger" : "default")" />
         </QStatRow>
 
+        @* ---- THE TABS -------------------------------------------------------------------
+             My Workspace was one scroll of sixteen cards behind a single GetPortalAsync() that
+             returned nine collections. On Blazor Server every one of those cards is diffed and
+             shipped down a SignalR circuit on each render, so the cost is paid on the school's
+             connection whether or not anybody scrolls that far.
+
+             A hub IS the lazy loading: a section renders only when its tab is open, which is the
+             rule the Staff and Administration hubs already follow. HubTabs owns ?tab=, so every
+             tab deep-links and a notification can point at the part of the page it is about. *@
+        <QTabs Tabs="@PortalTabs" ActiveKey="@hubTab" ActiveKeyChanged="@OnTabChanged" AriaLabel="My Workspace" />
+
+        @* ---- TODAY ---------------------------------------------------------------------- *@
+        @if (hubTab == "today")
+        {
         @* ---- Coming up ---------------------------------------------------------------------- *@
         @* ---- My Day (duty rota plan §7.2, §10): today's lessons at a glance; the full day is /my-day ---- *@
         @if (myDay != null && (myDay.Lessons.Any() || myDay.Unrecorded.Any() || myDay.RecoveryOwed.Any()))
@@ -234,10 +248,6 @@
             </QCard>
         }
 
-        @* ---- My teaching (duty rota plan §10): hidden for somebody who teaches nothing ------------- *@
-        <TeachingSummaryCard BranchId="@portal.BranchId" HideWhenEmpty="true" Class="portal-card" />
-        <MyTimetableCard BranchId="@portal.BranchId" UserId="@portal.Me.UserId" Class="portal-card" />
-
         <div class="portal-grid">
             @* ---- Reminders & to-do ---------------------------------------------------------- *@
             <QCard Title="Reminders & to-do" Subtitle="What you still owe, soonest first" Icon="list-check" Class="portal-card">
@@ -335,6 +345,26 @@
                 }
             </QCard>
 
+        </div>
+        }
+
+        @* ---- MY TEACHING --------------------------------------------------------------
+             What this person teaches, when they teach it, and — where the school allows it —
+             what they may change about that themselves. The self-service section loads only
+             when this tab is opened, which is the whole reason the page has tabs at all. *@
+        @if (hubTab == "teaching")
+        {
+        @* ---- My teaching (duty rota plan §10): hidden for somebody who teaches nothing ------------- *@
+        <TeachingSummaryCard BranchId="@portal.BranchId" HideWhenEmpty="true" Class="portal-card" />
+        <MyTimetableCard BranchId="@portal.BranchId" UserId="@portal.Me.UserId" Class="portal-card" />
+
+            <SelfServiceSection BranchId="@portal.BranchId" />
+        }
+
+        @* ---- MY PERFORMANCE ------------------------------------------------------------ *@
+        @if (hubTab == "performance")
+        {
+        <div class="portal-grid">
             @* ---- My breakdown ---------------------------------------------------------------- *@
             <QCard Title="My breakdown" Subtitle="Score per parameter, out of 100, with its weight" Icon="bar-chart-line" Class="portal-card">
                 @if (!score.Breakdown.Any())
@@ -448,6 +478,11 @@
             </QCard>
         }
 
+        }
+
+        @* ---- MY FILE ------------------------------------------------------------------ *@
+        @if (hubTab == "file")
+        {
         @* ---- My details ---------------------------------------------------------------------
              The staff record the school holds, and the contact half I maintain myself. Until
              2026-09-19 nothing in the product could show a person their own file. *@
@@ -589,6 +624,8 @@
                 <QPager Count="@myActivity.TotalCount" PageSize="@ActivityPageSize" PageIndex="@activityPageIndex" PageIndexChanged="@OnActivityPageChanged" ItemLabel="actions" />
             }
         </QCard>
+
+        }
 
         <footer class="portal-footer">
             <a href="/notifications"><QIcon Name="bell" Size="sm" /> Notification centre</a>
@@ -758,6 +795,51 @@
 </style>
 
 @code {
+    // ---- The hub -----------------------------------------------------------------------------
+    //
+    // FOUR TABS, and a section renders only when its own tab is open. That is the lazy loading: on
+    // Blazor Server every card's render tree is diffed and shipped down a SignalR circuit, so a
+    // sixteen-card scroll pays for all sixteen on every render whether or not anybody reads that far.
+    //
+    // No permission gates on these tabs, unlike the Staff and Administration hubs: every one of them
+    // is the caller's OWN file, and self is always visible and is not scope.
+    private const string TodayTab = "today";
+    private const string TeachingTab = "teaching";
+    private const string PerformanceTab = "performance";
+    private const string FileTab = "file";
+
+    private static readonly IReadOnlyList<QTab> PortalTabs = new[]
+    {
+        new QTab(TodayTab, "Today", "sunrise"),
+        new QTab(TeachingTab, "My teaching", "easel"),
+        new QTab(PerformanceTab, "My performance", "graph-up"),
+        new QTab(FileTab, "My file", "folder2-open"),
+    };
+
+    private string hubTab = TodayTab;
+
+    [SupplyParameterFromQuery(Name = "tab")] public string? TabParam { get; set; }
+
+    /// <summary>The last ?tab= this hub ACTED ON — never the active tab, or clicking a tab snaps
+    /// the reader back to whatever the URL still said. See HubTabs.FollowQuery.</summary>
+    private string? appliedTab;
+
+    protected override void OnParametersSet()
+    {
+        HubTabs.FollowQuery(PortalTabs, TabParam, ref appliedTab, ref hubTab);
+    }
+
+    /// <summary>
+    /// A tab click writes the URL as well as the state, so the address bar always says which part of
+    /// the page is open — which is what makes a notification able to point at one.
+    /// </summary>
+    private void OnTabChanged(string key)
+    {
+        hubTab = key;
+        appliedTab = key;
+        Navigation.NavigateTo(key == TodayTab ? "/portal" : $"/portal?tab={key}", replace: true);
+    }
+
     private bool isLoading = true;
     private string? loadError;
     private StaffPortalDto? portal;

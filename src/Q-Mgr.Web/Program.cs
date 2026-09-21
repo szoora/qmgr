@@ -100,6 +100,7 @@ builder.Services.AddScoped<IStaffPerformanceApiService, StaffPerformanceApiServi
 builder.Services.AddScoped<IStaffOnboardingApiService, StaffOnboardingApiService>();
 builder.Services.AddScoped<IModuleApiService, ModuleApiService>();
 builder.Services.AddScoped<IPaymentApiService, PaymentApiService>();
+builder.Services.AddScoped<ISelfServiceApiService, SelfServiceApiService>();
 builder.Services.AddScoped<IMarketingApiService, MarketingApiService>();
 builder.Services.AddScoped<IContentApiService, ContentApiService>();
 builder.Services.AddScoped<IDocumentShareApiService, DocumentShareApiService>();

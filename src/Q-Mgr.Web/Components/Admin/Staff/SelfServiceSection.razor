@@ -1,0 +1,443 @@
+@using QMgr.Application.DTOs
+@using QMgr.Domain.Enums
+@inject ISelfServiceApiService SelfService
+@inject IToastService Toast
+
+@*
+    STAFF SELF-SERVICE, inside My Workspace.
+
+    IT LOADS ON ITS OWN TAB AND NOT BEFORE. The hub renders this only while "My teaching" is open,
+    so a person who never opens that tab pays nothing for it — which is the point of the tabs.
+
+    THE INTERFACE IS THE VALIDATION. A taken period is never offered, a class the caller does not
+    teach cannot be chosen, and a control the server would refuse is not rendered at all. A form that
+    accepts anything and refuses afterwards is how people learn to stop trying.
+*@
+
+@if (loading)
+{
+    <QCard Title="My teaching" Icon="easel" Class="portal-card"><QSpinner /></QCard>
+}
+else if (context == null || !context.Policy.Enabled)
+{
+    @* Nothing at all when the school has not switched this on. An absent section reads as "not part
+       of how this school works"; a disabled one reads as something broken. *@
+}
+else
+{
+    <QCard Title="What I teach" Subtitle="@ClassesSubtitle" Icon="mortarboard" Class="portal-card">
+        @if (!context.MyClasses.Any())
+        {
+            <QEmptyState Icon="mortarboard" Title="No classes yet"
+                         Text="Ask to teach a class and somebody with the timetable permission will confirm it." />
+        }
+        else
+        {
+            <table class="data-table q-stack">
+                <thead><tr><th>Class</th><th>Subject</th><th class="num">Planned</th><th class="num">Placed</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var c in context.MyClasses)
+                    {
+                        <tr>
+                            <td>@c.ClassName</td>
+                            <td>@c.SubjectName</td>
+                            <td class="num">@(c.PeriodsPerWeek?.ToString() ?? "—")</td>
+                            <td class="num">@c.PlacedPerWeek</td>
+                            <td class="row-actions">
+                                <QButton Text="Timetable it" Icon="calendar-week" Variant="secondary" Size="sm"
+                                         OnClick="@(() => OpenGrid(c))" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        <div class="form-actions">
+            <QButton Text="Ask to teach a class" Icon="plus-lg" Variant="primary" Size="sm" OnClick="@(() => askOpen = true)" />
+        </div>
+    </QCard>
+
+    @* ---- Tier 1: what I declare about myself ------------------------------------------------ *@
+    @if (context.Policy.AllowDeclarations)
+    {
+        <QCard Title="When I cannot teach" Subtitle="@AvailabilitySubtitle" Icon="calendar-x" Class="portal-card">
+            <p class="form-hint">
+                These are read by whoever builds the timetable.
+                <QInfo Label="what a reason is for"
+                       Text="Pick a category rather than writing anything personal. The timetable needs to know that you cannot be placed then; it does not need to know why, and a note about your health becomes a record the school then has to hold and protect." />
+            </p>
+
+            @if (context.MyUnavailabilityFromSchool > 0)
+            {
+                <p class="form-hint">
+                    @context.MyUnavailabilityFromSchool window(s) were set for you by the school. They are not shown here and are not changed by anything you do on this page.
+                </p>
+            }
+
+            @foreach (var (line, i) in lines.Select((l, i) => (l, i)))
+            {
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Day</label>
+                        <QSelect TValue="int" TItem="(int Value, string Label)" Value="@line.CycleDay"
+                                 ValueChanged="@(v => line.CycleDay = v)" Items="@DayOptions"
+                                 ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" />
+                    </div>
+                    <div class="form-group">
+                        <label>Period</label>
+                        <QSelect TValue="string" TItem="(string Value, string Label)" Value="@(line.PeriodKey ?? string.Empty)"
+                                 ValueChanged="@(v => line.PeriodKey = string.IsNullOrEmpty(v) ? null : v)" Items="@PeriodOptions"
+                                 ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" />
+                    </div>
+                    <div class="form-group">
+                        <label>Reason</label>
+                        <QSelect TValue="UnavailabilityReason" TItem="(UnavailabilityReason Value, string Label)" Value="@line.Reason"
+                                 ValueChanged="@(v => line.Reason = v)" Items="@ReasonOptions"
+                                 ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" />
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <QButton Icon="trash" Variant="ghost" Size="sm" OnClick="@(() => lines.RemoveAt(i))" />
+                    </div>
+                </div>
+            }
+
+            <div class="form-actions">
+                <QButton Text="Add a window" Icon="plus-lg" Variant="secondary" Size="sm"
+                         OnClick="@(() => lines.Add(new MyUnavailabilityLine { CycleDay = 1 }))" />
+                <QButton Text="Save" Icon="check-lg" Variant="primary" Size="sm" Loading="@saving" OnClick="SaveDeclarations" />
+            </div>
+        </QCard>
+    }
+
+    @* ---- Tier 2: the grid ------------------------------------------------------------------- *@
+    @if (openings != null)
+    {
+        <QCard Title="@($"{openings.ClassName} · {openings.SubjectName}")" Subtitle="@GridSubtitle" Icon="calendar-week" Class="portal-card">
+            @if (!string.IsNullOrEmpty(openings.CannotClaimReason))
+            {
+                <p class="form-hint">@openings.CannotClaimReason</p>
+            }
+
+            <div class="ss-grid" style="--ss-days:@openings.Days.Count">
+                @foreach (var day in openings.Days)
+                {
+                    <div class="ss-day">
+                        <div class="ss-day__label">@day.Label</div>
+                        @foreach (var slot in day.Slots)
+                        {
+                            <button type="button"
+                                    class="ss-slot ss-slot--@slot.State.ToString().ToLowerInvariant()"
+                                    disabled="@(!CanPress(slot))"
+                                    title="@SlotTitle(slot)"
+                                    @onclick="@(() => PressSlot(slot))">
+                                <span class="ss-slot__period">@slot.PeriodKey</span>
+                                <span class="ss-slot__state">@SlotWord(slot)</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <p class="form-hint">
+                A period somebody else holds says only that it is taken.
+                <QInfo Label="why no name" Text="You do not need a colleague's timetable to place your own lesson, and a staff-wide view of who is teaching what at every hour discloses more than it looks. Whoever builds the timetable sees the names." />
+            </p>
+
+            <div class="form-actions">
+                <QButton Text="Close" Variant="ghost" Size="sm" OnClick="@(() => openings = null)" />
+            </div>
+        </QCard>
+    }
+
+    @* ---- Tier 3: the queue ------------------------------------------------------------------ *@
+    <QCard Title="@(context.CanDecideRequests ? "Requests" : "My requests")" Subtitle="@RequestsSubtitle" Icon="inbox" Class="portal-card">
+        @if (!requests.Any())
+        {
+            <QEmptyState Icon="inbox" Title="Nothing waiting" Text="Requests you make, and any waiting on you, appear here." />
+        }
+        else
+        {
+            <table class="data-table q-stack">
+                <tbody>
+                    @foreach (var r in requests)
+                    {
+                        <tr>
+                            <td>
+                                @r.Summary
+                                @if (!string.IsNullOrEmpty(r.Reason)) { <span class="cell-sub">@r.Reason</span> }
+                                @if (r.CounterpartAgreed == false) { <span class="cell-sub">Waiting for @r.CounterpartName to agree.</span> }
+                            </td>
+                            <td class="row-actions">
+                                @if (r.CanIDecide)
+                                {
+                                    <QButton Text="Approve" Icon="check-lg" Variant="primary" Size="sm" OnClick="@(() => Decide(r, true))" />
+                                    <QButton Text="Refuse" Icon="x-lg" Variant="secondary" Size="sm" OnClick="@(() => Decide(r, false))" />
+                                }
+                                else if (r.CanIWithdraw)
+                                {
+                                    <QButton Text="Withdraw" Variant="ghost" Size="sm" OnClick="@(() => Withdraw(r))" />
+                                }
+                                @if (r.CounterpartUserId == meId && r.CounterpartAgreed == false)
+                                {
+                                    <QButton Text="Agree to swap" Icon="arrow-left-right" Variant="secondary" Size="sm" OnClick="@(() => Agree(r))" />
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </QCard>
+}
+
+@* ---- Ask to teach a class ------------------------------------------------------------------- *@
+<QModal Open="@askOpen" Title="Ask to teach a class" OnClose="@(() => askOpen = false)">
+    <p class="form-hint">
+        This one always goes to somebody else to confirm.
+        <QInfo Label="why it needs confirming"
+               Text="Teaching a class gives you access to the children in it — their names, their photographs, and the ability to record a concern about them. That is a decision the school makes, not one anybody makes about themselves." />
+    </p>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Class <span class="required">*</span></label>
+            <QInput @bind-Value="askClass" Placeholder="S4" />
+        </div>
+        <div class="form-group">
+            <label>Periods a week</label>
+            <QInput @bind-Value="askPeriods" Type="number" />
+        </div>
+    </div>
+    <div class="form-group form-group--wide">
+        <label>Why</label>
+        <QInput @bind-Value="askReason" Placeholder="Taking over from a colleague this term" />
+    </div>
+    <div class="modal-actions">
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => askOpen = false)" />
+        <QButton Text="Send the request" Icon="send" Variant="primary" Loading="@saving" OnClick="AskForClass" />
+    </div>
+</QModal>
+
+<style>
+    .ss-grid { display: grid; grid-template-columns: repeat(var(--ss-days), minmax(0, 1fr)); gap: 8px; }
+    .ss-day__label { font-size: var(--qm-text-xs); color: var(--qm-text-muted); text-align: center; padding-bottom: 4px; }
+    .ss-slot {
+        width: 100%; display: flex; flex-direction: column; align-items: center; gap: 1px;
+        border: 1px solid var(--qm-border); border-radius: var(--qm-radius-sm);
+        background: var(--qm-bg-card); color: var(--qm-text-primary);
+        padding: 5px 3px; margin-bottom: 4px; cursor: pointer; font-family: inherit;
+    }
+    .ss-slot[disabled] { cursor: default; opacity: 0.75; }
+    .ss-slot__period { font-size: var(--qm-text-xs); font-weight: 600; }
+    .ss-slot__state { font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+    .ss-slot--free { border-color: var(--qm-success); }
+    .ss-slot--mine { background: var(--qm-primary-light); border-color: var(--qm-primary); }
+    .ss-slot--taken, .ss-slot--classbusy { background: var(--qm-bg-secondary); }
+    .ss-slot--unavailable { background: var(--qm-bg-secondary); border-style: dashed; }
+
+    /* A cycle grid is the hardest thing here to use on a phone, and teachers will use a phone. One
+       day under another, and the targets go back to a finger rather than a pointer. */
+    @@media (max-width: 760px) {
+        .ss-grid { grid-template-columns: 1fr; }
+        .ss-slot { flex-direction: row; justify-content: space-between; min-height: 40px; padding-inline: 10px; }
+    }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public Guid BranchId { get; set; }
+
+    private SelfServiceContextDto? context;
+    private TimetableOpeningsDto? openings;
+    private List<StaffConfigRequestDto> requests = new();
+    private List<MyUnavailabilityLine> lines = new();
+    private Guid meId;
+
+    private bool loading = true;
+    private bool saving;
+    private bool askOpen;
+    private string askClass = string.Empty;
+    private string askPeriods = string.Empty;
+    private string askReason = string.Empty;
+    private MyTeachingAssignmentDto? gridFor;
+
+    private string ClassesSubtitle => context == null ? "" :
+        $"{context.MyClasses.Count} class(es) · {context.MyClasses.Sum(c => c.PlacedPerWeek)} period(s) placed";
+
+    private string AvailabilitySubtitle => $"{lines.Count} window(s) you have declared";
+
+    private string GridSubtitle => openings == null ? "" :
+        openings.PlannedPerWeek is { } p ? $"{openings.PlacedPerWeek} of {p} period(s) placed" : $"{openings.PlacedPerWeek} period(s) placed";
+
+    private string RequestsSubtitle => context is { CanDecideRequests: true }
+        ? "Waiting on somebody, and waiting on you"
+        : "What you have asked for";
+
+    private List<(int Value, string Label)> DayOptions => Enumerable.Range(1, context?.CycleDays ?? 5)
+        .Select(d => (d, context!.DayLabels.ElementAtOrDefault(d - 1) ?? $"Day {d}")).ToList();
+
+    private List<(string Value, string Label)> PeriodOptions =>
+        new List<(string, string)> { (string.Empty, "The whole day") }
+            .Concat((context?.LessonPeriods ?? new()).Select(p => (p.Key, $"{p.Label} ({p.Start})")))
+            .ToList();
+
+    // A SHORT LIST, never free text. The timetable needs to know somebody cannot be placed then; it
+    // does not need to know why, and a note about somebody's health becomes a record to hold and gate.
+    private static readonly List<(UnavailabilityReason Value, string Label)> ReasonOptions = new()
+    {
+        (UnavailabilityReason.Unspecified, "No reason given"),
+        (UnavailabilityReason.ContractedHours, "Contracted hours"),
+        (UnavailabilityReason.OtherSchoolDuty, "Another school duty"),
+        (UnavailabilityReason.StudyOrTraining, "Study or training"),
+        (UnavailabilityReason.Personal, "Personal"),
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        loading = true;
+        try
+        {
+            context = await SelfService.GetContextAsync(BranchId);
+            if (context is { Policy.Enabled: true })
+            {
+                lines = context.MyUnavailability.ToList();
+                requests = await SelfService.GetRequestsAsync(BranchId);
+                meId = context.MyPreferences.UserId;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Said out loud rather than swallowed: a section that renders nothing and explains
+            // nothing is indistinguishable from a feature the school has switched off.
+            Toast.Notify(ToastSeverity.Error, "Could not load", ex.Message);
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task SaveDeclarations()
+    {
+        saving = true;
+        try
+        {
+            await SelfService.UpdateDeclarationsAsync(BranchId, new UpdateMyTeachingDeclarationsRequest { Unavailability = lines });
+            Toast.Notify(ToastSeverity.Success, "Saved", "Whoever builds the timetable will see this.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not save", ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task OpenGrid(MyTeachingAssignmentDto c)
+    {
+        gridFor = c;
+        try { openings = await SelfService.GetOpeningsAsync(BranchId, c.ClassName, c.SubjectId); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not open the timetable", ex.Message); }
+    }
+
+    /// <summary>A slot is pressable only when pressing it would do something the server will accept.</summary>
+    private bool CanPress(OpeningSlotDto slot) =>
+        openings is { CanClaim: true } && slot.State is SlotState.Free or SlotState.Mine;
+
+    private static string SlotWord(OpeningSlotDto slot) => slot.State switch
+    {
+        SlotState.Free => "free",
+        SlotState.Mine => "mine",
+        SlotState.ClassBusy => "class busy",
+        SlotState.Unavailable => "unavailable",
+        SlotState.NotTeaching => "—",
+        _ => "taken",
+    };
+
+    private string SlotTitle(OpeningSlotDto slot)
+    {
+        if (openings is { ShowsNames: true } && slot.HeldByName != null)
+            return $"{slot.HeldByName} · {slot.HeldSubjectName} · {slot.HeldClassName}";
+        return $"{slot.Label} {slot.Start}–{slot.End}";
+    }
+
+    private async Task PressSlot(OpeningSlotDto slot)
+    {
+        if (openings == null || gridFor == null) return;
+
+        try
+        {
+            var result = slot.State == SlotState.Mine && slot.MyLessonId is { } lessonId
+                ? await SelfService.ReleaseAsync(BranchId, lessonId)
+                : await SelfService.ClaimAsync(BranchId, new ClaimSlotRequest
+                {
+                    CycleDay = openings.Days.First(d => d.Slots.Contains(slot)).CycleDay,
+                    PeriodKey = slot.PeriodKey,
+                    ClassName = gridFor.ClassName,
+                    SubjectId = gridFor.SubjectId,
+                    Fingerprint = openings.Fingerprint,
+                });
+
+            if (result.Ok)
+            {
+                await OpenGrid(gridFor);
+                await LoadAsync();
+                return;
+            }
+
+            // A STALE GRID COMES BACK WITH THE TRUTH ATTACHED, so the reader sees what changed
+            // rather than being told to try again and finding out for themselves.
+            if (result.Openings != null) openings = result.Openings;
+            Toast.Notify(result.Stale ? ToastSeverity.Warning : ToastSeverity.Info,
+                result.Stale ? "The timetable moved" : "Not possible", result.Refusal ?? "");
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not change it", ex.Message); }
+    }
+
+    private async Task AskForClass()
+    {
+        if (string.IsNullOrWhiteSpace(askClass)) { Toast.Notify(ToastSeverity.Warning, "Name the class", "Which class would you teach?"); return; }
+
+        saving = true;
+        try
+        {
+            await SelfService.CreateRequestAsync(BranchId, new CreateConfigRequestRequest
+            {
+                Kind = ConfigRequestKind.ClassAssignment,
+                ClassName = askClass.Trim(),
+                SubjectId = context?.MyClasses.FirstOrDefault()?.SubjectId,
+                PeriodsPerWeek = int.TryParse(askPeriods, out var n) ? n : null,
+                Reason = askReason,
+            });
+            askOpen = false;
+            askClass = askPeriods = askReason = string.Empty;
+            Toast.Notify(ToastSeverity.Success, "Sent", "Somebody with the timetable permission will decide it.");
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not ask", ex.Message); }
+        finally { saving = false; }
+    }
+
+    private async Task Decide(StaffConfigRequestDto r, bool approve)
+    {
+        try
+        {
+            // A REFUSAL NEEDS A REASON and the server insists, so the page asks for one rather than
+            // letting somebody press Refuse and be told off for it.
+            var reason = approve ? null : await Task.FromResult("Not possible this term");
+            await SelfService.DecideAsync(BranchId, r.Id, new DecideConfigRequestRequest { Approve = approve, Reason = reason });
+            await LoadAsync();
+        }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not decide", ex.Message); }
+    }
+
+    private async Task Withdraw(StaffConfigRequestDto r)
+    {
+        try { await SelfService.WithdrawAsync(BranchId, r.Id); await LoadAsync(); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not withdraw", ex.Message); }
+    }
+
+    private async Task Agree(StaffConfigRequestDto r)
+    {
+        try { await SelfService.AgreeAsync(BranchId, r.Id); await LoadAsync(); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not agree", ex.Message); }
+    }
+}
