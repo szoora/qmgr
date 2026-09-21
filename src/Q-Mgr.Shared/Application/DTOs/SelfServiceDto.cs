@@ -313,3 +313,59 @@ public record SelfServicePolicyDto
     /// <summary>Stops one person filling the settings blob. 0 uses the default.</summary>
     [Range(0, 200)] public int MaxUnavailabilityLinesPerTeacher { get; set; }
 }
+
+/// <summary>
+/// Everything My Workspace needs to decide what to RENDER, in one call. A page that shows a control
+/// the server will refuse is worse than one that does not show it at all — the same reasoning that
+/// withheld Welfare Reports' Import History button from a scoped caller, where a button opening a
+/// permanently empty modal reads as broken while an absent button reads as an absent permission.
+/// </summary>
+public record SelfServiceContextDto
+{
+    public Guid BranchId { get; set; }
+    public SelfServicePolicyDto Policy { get; set; } = new();
+
+    /// <summary>True when this caller holds timetable.manage: they see names, and they may decide requests.</summary>
+    public bool CanDecideRequests { get; set; }
+
+    /// <summary>What the caller already teaches. The grid can only ever be asked for one of these.</summary>
+    public List<MyTeachingAssignmentDto> MyClasses { get; set; } = new();
+
+    /// <summary>The caller's own declared windows — the ones they may edit.</summary>
+    public List<MyUnavailabilityLine> MyUnavailability { get; set; } = new();
+
+    /// <summary>
+    /// How many windows the timetable master set for this person. Shown as a count and NOT editable
+    /// here: a teacher clearing their own declarations must not quietly undo a constraint the school
+    /// put on them.
+    /// </summary>
+    public int MyUnavailabilityFromSchool { get; set; }
+
+    public StaffTeachingPreferenceDto MyPreferences { get; set; } = new();
+
+    public int CycleDays { get; set; }
+    public List<string> DayLabels { get; set; } = new();
+    public List<SelfServicePeriodDto> LessonPeriods { get; set; } = new();
+}
+
+public record MyTeachingAssignmentDto
+{
+    public Guid AssignmentId { get; set; }
+    public string ClassName { get; set; } = string.Empty;
+    public Guid SubjectId { get; set; }
+    public string SubjectName { get; set; } = string.Empty;
+
+    /// <summary>What the school planned. Null means nobody said, and then nothing caps the claim.</summary>
+    public int? PeriodsPerWeek { get; set; }
+
+    /// <summary>How many are on the timetable already. The gap is what the teacher still has to place.</summary>
+    public int PlacedPerWeek { get; set; }
+}
+
+public record SelfServicePeriodDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string Start { get; set; } = string.Empty;
+    public string End { get; set; } = string.Empty;
+}

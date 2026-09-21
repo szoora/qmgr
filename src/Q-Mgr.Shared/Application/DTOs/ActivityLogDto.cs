@@ -72,6 +72,15 @@ public static class ActivityActions
     public const string MinutesCorrected = "staff.duty.minutes-corrected";
     public const string MinuteActionCompleted = "staff.duty.minute-action-completed";
 
+    // Staff self-service configuration (2026-09-21). Every write a member of staff makes to shared
+    // data is attributable: forty writers instead of one means "who changed this" starts being asked.
+    public const string SelfServiceDeclared = "staff.self-service.declared";
+    public const string SelfServiceClaimed = "staff.self-service.claimed";
+    public const string SelfServiceReleased = "staff.self-service.released";
+    public const string SelfServiceRequested = "staff.self-service.requested";
+    public const string SelfServiceDecided = "staff.self-service.decided";
+    public const string SelfServiceWithdrawn = "staff.self-service.withdrawn";
+
     public const string AppraisalOpened = "staff.appraisal.opened";
     public const string AppraisalTargetsSet = "staff.appraisal.targets-set";
     public const string AppraisalSelfSubmitted = "staff.appraisal.self-submitted";
