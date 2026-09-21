@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- See Q-Mgr.API.csproj for why these four are errors and the nullable warnings are not. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS0649;CS0472;CS0168;RZ10012</WarningsAsErrors>
     <RootNamespace>QMgr</RootNamespace>
   </PropertyGroup>
 

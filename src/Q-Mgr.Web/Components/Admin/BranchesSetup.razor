@@ -10,6 +10,7 @@
 @inject IAppointmentApiService AppointmentApi
 @inject IModuleApiService ModuleApi
 @inject IModuleStateService ModuleState
+@inject ILogger<BranchesSetup> Logger
 @using QMgr.Domain.Constants
 @using QMgr.Web.Components.Shared.UI
 
@@ -495,7 +496,11 @@ else
         }
         catch (Exception ex)
         {
-            NotificationService.Notify(ToastSeverity.Error, "Error", "Failed to load branches");
+            // The API services throw InvalidOperationException carrying the server's OWN message,
+            // so "Failed to load branches" was discarding the only thing that said why. Same shape
+            // as the Subscription.razor DTO mismatch, which hid an empty plan list for weeks.
+            Logger.LogError(ex, "Failed to load branches");
+            NotificationService.Notify(ToastSeverity.Error, "Error", $"Failed to load branches: {ex.Message}");
         }
         finally
         {

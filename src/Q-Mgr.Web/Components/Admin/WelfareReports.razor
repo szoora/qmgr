@@ -213,6 +213,15 @@
                     </div>
                 }
             </div>
+
+            @* A SAFEGUARDING SEARCH THAT TRUNCATES IN SILENCE IS THE WORST PLACE FOR IT. pageIndex
+               was declared and never assigned (CS0649 on every build) and no pager was ever
+               rendered, so SafePageIndex was permanently 0: a search matching two hundred records
+               showed fifty of them, with no control, no count and nothing saying the list was cut.
+               Select-all still reaches every record matching the filters, not just this page —
+               that is what the header checkbox says it does, and the batch bar states the count. *@
+            <QPager Count="@VisibleSearchResults.Count" PageSize="@PageSize" PageIndex="@SafePageIndex"
+                    PageIndexChanged="@(i => pageIndex = i)" ItemLabel="records" />
         }
     }
 
@@ -566,6 +575,7 @@
     private void ClearDueView()
     {
         dueView = null;
+        pageIndex = 0;
         Navigation.NavigateTo("/admin/welfare-reports?tab=search", replace: true);
     }
 
@@ -952,7 +962,10 @@
 
             var response = await Http.GetAsync(url);
             if (response.IsSuccessStatusCode)
+            {
                 searchResults = await response.Content.ReadFromJsonAsync<List<WelfareRecordDto>>(JsonOptions) ?? new();
+                pageIndex = 0;   // a new result set starts at its first page, not wherever the last one ended
+            }
             else
             {
                 var (title, detail) = await ApiErrorService.GetErrorDetailsAsync(response);

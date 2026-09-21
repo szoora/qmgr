@@ -7,6 +7,7 @@
 @inject JsonSerializerOptions JsonOptions
 @inject IToastService NotificationService
 @inject NavigationManager Navigation
+@inject ILogger<FeedbackPage> Logger
 
 <PageTitle>Give Feedback - Q-Mgr</PageTitle>
 
@@ -986,6 +987,10 @@
         }
         catch (Exception ex)
         {
+            // This page is PUBLIC, so the visitor gets the friendly wording and never the exception.
+            // But discarding it entirely is why "the feedback link is broken" had no answer on this
+            // side — the reason belongs in the log, not on a stranger's screen.
+            Logger.LogError(ex, "Feedback link load failed");
             error = "Connection Error";
             errorDetail = "Unable to connect to the server. Please check your connection and try again.";
         }

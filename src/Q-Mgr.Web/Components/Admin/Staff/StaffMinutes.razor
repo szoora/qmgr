@@ -474,6 +474,12 @@
             if (branchId == Guid.Empty)
                 branchId = (await StaffApi.GetPortalAsync()).BranchId;
 
+            // WITHOUT THIS meId STAYS Guid.Empty and "Mark done" never renders for anybody. It was
+            // declared and never assigned from the first build — CS0649 on every build — so
+            // `a.AssignedUserId == meId` was false for every person on every row, and the one control
+            // that lets an assignee close their own action point has never once been on screen.
+            meId = (await AuthService.GetCurrentUserAsync())?.Id ?? Guid.Empty;
+
             minutes = await StaffApi.GetMinutesAsync(branchId, Id);
             Adopt(minutes);
 

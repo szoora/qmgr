@@ -4,6 +4,21 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- THESE FOUR HAVE EACH PRODUCED A SILENT, USER-VISIBLE BUG IN THIS CODEBASE, and every one of
+         them was reported on every build while nobody acted on it. They are errors now.
+           CS0649  a field declared and never assigned. StaffMinutes.meId stayed Guid.Empty, so the
+                   control letting an assignee close their own action point never rendered for
+                   anybody; WelfareReports.pageIndex stayed 0, so a safeguarding search showed the
+                   first fifty records and said nothing; the roster import recorded a null file name.
+           CS0472  a comparison that is always true. The minutes attendance filtered Outcome != null
+                   on a non-nullable enum, so records carrying no mark entered the register's figures.
+           CS0168  an exception caught into a variable nothing reads — how Subscription.razor hid an
+                   empty plan list for weeks.
+           RZ10012 an unresolved component tag. <RedirectToLogin /> rendered as inert literal HTML
+                   for weeks because Routes.razor never imported its namespace.
+         The ~24 nullable-reference warnings (CS86xx) stay warnings: they are a different class,
+         they are noisy, and none of them has cost anything here. -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS0649;CS0472;CS0168;RZ10012</WarningsAsErrors>
     <RootNamespace>QMgr</RootNamespace>
     <UserSecretsId>f51daa79-da10-4d90-812e-cf769641b597</UserSecretsId>
   </PropertyGroup>

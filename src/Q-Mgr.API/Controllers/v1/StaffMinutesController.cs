@@ -495,7 +495,11 @@ public class StaffMinutesController : StaffPerformanceControllerBase
                           ?? await StaffLookups.BranchStaff(Db, organizationId, branchId).Select(u => u.Id).ToListAsync();
 
         var marks = await Db.StaffPerformanceRecords.AsNoTracking()
-            .Where(r => r.DutyId == duty.Id && r.Status == StaffRecordStatus.Final && r.Outcome != null)
+            // NOT `r.Outcome != null`: Outcome is a non-nullable DutyOutcome, so that comparison is
+            // always true (CS0472 on every build) and every Final record on the duty entered the
+            // attendance — including ones carrying no mark at all, which default to NotApplicable.
+            // Attendance IS the register and nothing else, so a record that is not a mark is not a row.
+            .Where(r => r.DutyId == duty.Id && r.Status == StaffRecordStatus.Final && r.Outcome != DutyOutcome.NotApplicable)
             .Select(r => new { r.SubjectUserId, r.Outcome })
             .ToListAsync();
 
