@@ -490,6 +490,18 @@ public class StaffSelfServiceController : StaffPerformanceControllerBase
         if (await RefuseRequestAsync(branchId, me, row, request) is { } refusal)
             return BadRequestProblem("Cannot ask for that", refusal);
 
+        // Computed AFTER the refusals, because a swap fills in its own slot from the lesson it names.
+        // Never null, so the unique index can actually see a duplicate — see DedupeKey's own note.
+        row.DedupeKey = string.Join('|', new[]
+        {
+            row.Kind.ToString(),
+            row.CycleDay?.ToString() ?? "-",
+            (row.PeriodKey ?? "-").ToLowerInvariant(),
+            row.ClassNameNormalized ?? "-",
+            row.SubjectId?.ToString() ?? "-",
+            row.TheirLessonId?.ToString() ?? "-",
+        });
+
         Db.StaffConfigRequests.Add(row);
         try
         {

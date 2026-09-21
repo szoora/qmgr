@@ -993,5 +993,21 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 18 did not run\n'
 fi
 
+hdr "21. STAFF SELF-SERVICE CONFIGURATION (Node)"
+# Node because the point is concurrency: it fires the same claim and the same request from several
+# callers at once and checks the invariant. It seeds what it needs — a subject-teacher assignment
+# and a draft timetable — and removes both, and it leaves self-service switched OFF, which is the
+# product default rather than whatever the previous run happened to leave.
+if command -v node > /dev/null 2>&1; then
+  SS_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/self-service-e2e.mjs" 2>&1)
+  echo "$SS_OUT" | sed 's/^/  /'
+  SS_PASS=$(echo "$SS_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  SS_FAIL=$(echo "$SS_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$SS_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 21 did not report a summary\n'
+  else PASS=$((PASS+SS_PASS)); FAIL=$((FAIL+SS_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 21 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

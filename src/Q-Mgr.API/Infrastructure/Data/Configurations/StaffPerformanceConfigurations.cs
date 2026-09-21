@@ -394,11 +394,18 @@ public class StaffConfigRequestConfiguration : IEntityTypeConfiguration<StaffCon
             .HasFilter("\"CounterpartUserId\" IS NOT NULL")
             .HasDatabaseName("idx_staff_config_requests_counterpart");
 
+        b.Property(r => r.DedupeKey).HasMaxLength(200).IsRequired();
+
         // DUPLICATE DETECTION, IN THE DATABASE. One open request per person per thing. A teacher who
         // presses twice, or has the page open in two tabs, gets one row and one clear refusal rather
         // than two rows a decider has to reconcile. State 0 is Pending; a decided request is history
-        // and must never block a later request for the same slot.
-        b.HasIndex(r => new { r.BranchId, r.RequestedByUserId, r.Kind, r.CycleDay, r.PeriodKey, r.ClassNameNormalized, r.SubjectId })
+        // and must never block a later request for the same thing.
+        //
+        // ON DedupeKey RATHER THAN THE PAYLOAD COLUMNS: PostgreSQL treats NULLs as DISTINCT in a
+        // unique index, and a ClassAssignment request carries a null CycleDay and PeriodKey — so the
+        // first version of this index never fired for one, and four simultaneous identical requests
+        // made four rows. The e2e caught it by firing them at once.
+        b.HasIndex(r => new { r.BranchId, r.RequestedByUserId, r.DedupeKey })
             .IsUnique()
             .HasFilter("\"State\" = 0")
             .HasDatabaseName("ux_staff_config_requests_open");

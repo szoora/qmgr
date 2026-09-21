@@ -86,6 +86,21 @@ public class StaffConfigRequest : BaseAuditableEntity
     public Guid? ResultAssignmentId { get; set; }
 
     /// <summary>
+    /// ONE STRING THAT SAYS WHAT THIS REQUEST IS ABOUT, so "one open request per person per thing"
+    /// can be a unique index rather than a handler check.
+    ///
+    /// IT EXISTS BECAUSE POSTGRESQL TREATS NULLS AS DISTINCT IN A UNIQUE INDEX. The first attempt
+    /// indexed the seven payload columns directly, and it never fired for a ClassAssignment — which
+    /// carries a null CycleDay and a null PeriodKey — so four simultaneous identical requests made
+    /// four rows. Found by the e2e firing them at once, which is the only way that shows.
+    ///
+    /// A single never-null column is the fix rather than NULLS NOT DISTINCT: it needs no minimum
+    /// PostgreSQL version, and it makes the dedupe rule something you can read instead of something
+    /// that emerges from a seven-column index.
+    /// </summary>
+    public string DedupeKey { get; set; } = string.Empty;
+
+    /// <summary>
     /// Claimed by the reminder ladder with a conditional update before anything is sent, so two
     /// workers cannot both chase the same request. Never read-modify-write.
     /// </summary>
