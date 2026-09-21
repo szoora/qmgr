@@ -328,6 +328,7 @@
                       BuildRow="@BuildWelfareRow"
                       TemplateRows="@WelfareTemplateRows"
                       TemplateFileStem="welfare-history-import-template"
+                      MappingKey="welfare"
                       StartAsync="@StartWelfareImport"
                       LoadJobAsync="@LoadWelfareJob"
                       LoadEntriesAsync="@LoadWelfareEntries"
@@ -859,7 +860,7 @@
 
     private static string Shorten(string s) => s.Length <= 60 ? s : s[..57] + "…";
 
-    private async Task<Guid> StartWelfareImport(List<WelfareImportRow> rows)
+    private async Task<Guid> StartWelfareImport(List<WelfareImportRow> rows, ImportOptions options)
     {
         var started = await StudentApi.StartWelfareImportAsync(branchId,
             new StartWelfareImportRequest { SourceFileName = importFileName, Rows = rows });

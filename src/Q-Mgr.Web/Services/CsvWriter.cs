@@ -1,4 +1,5 @@
 using System.Text;
+using QMgr.Application.Import;
 
 namespace QMgr.Web.Services;
 
@@ -14,7 +15,8 @@ public static class CsvWriter
     /// quoting is deliberate: a comment containing a comma, a newline or a leading <c>=</c> is
     /// ordinary in feedback text, and quoting only "when necessary" is where that goes wrong.
     /// </summary>
-    public static string Field(string? value) => "\"" + (value ?? string.Empty).Replace("\"", "\"\"") + "\"";
+    public static string Field(string? value)
+        => "\"" + ImportRules.NeutraliseFormula(value).Replace("\"", "\"\"") + "\"";
 
     /// <summary>One row, already quoted.</summary>
     public static string Row(params string?[] fields) => string.Join(",", fields.Select(Field));

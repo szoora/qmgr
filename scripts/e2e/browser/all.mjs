@@ -23,9 +23,9 @@ const CDP = 'http://127.0.0.1:9333';
 // Pass/fail. Each prints "N passed, M failed" and exits non-zero on a failure.
 const SUITES = [
   'action-location', 'billing-hub', 'daterange-check', 'density-and-staff', 'empty-state-check',
-  'hub-nav', 'list-sweep', 'minutes-ui', 'payments-ui', 'register-and-duty-sheet',
+  'hub-nav', 'import-wizard', 'list-sweep', 'minutes-ui', 'payments-ui', 'portal-tabs', 'register-and-duty-sheet',
   'registration-doors', 'roles-and-branch-ui', 'rooms-ui', 'select-verify', 'staff-hub',
-  'staff-nav-hubs', 'timetable-print', 'type-audit', 'type-sweep-all', 'uniform-check',
+  'staff-nav-hubs', 'timetable-print', 'timetable-views', 'type-audit', 'type-sweep-all', 'uniform-check',
   'white-label-ui',
 ];
 

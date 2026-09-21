@@ -88,10 +88,11 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
         var result = await RunHelperAsync("enable", domain, cancellationToken);
         if (result.Ok && result.CertificateExpiresAt is { } expiry)
         {
-            // The shared certificate's own expiry, in the server log where the person who
-            // maintains it will look. Not stored: see DomainActivationResult.
+            // The expiry of whichever certificate the helper chose — the shared one for a
+            // subdomain of the platform host, the domain's own otherwise — in the server log where
+            // the person who maintains it will look. Not stored: see DomainActivationResult.
             _logger.LogInformation(
-                "{Domain} is served by this server's certificate, which expires {Expiry:yyyy-MM-dd}.", domain, expiry);
+                "{Domain} is served by a certificate that expires {Expiry:yyyy-MM-dd}.", domain, expiry);
         }
         return result;
     }

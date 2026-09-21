@@ -793,10 +793,11 @@ server {
 EOF
     reload
 
-    # The expiry of the certificate this domain is now served with, so the application can show a
-    # date it did not invent. It is the SHARED certificate's expiry — every tenant domain and the
-    # platform host share it — which is exactly what a platform administrator needs to know.
-    CERT_END=`$(openssl x509 -noout -enddate -in "`$CERT_FILE" 2>/dev/null | cut -d= -f2- || true)
+    # The expiry of the certificate THIS domain is now served with — whichever branch above chose
+    # it — so the application can log a date it did not invent. Reading the shared certificate on
+    # both branches would report the platform's own expiry for a tenant served off its own
+    # certificate: a date that is real, confident and about a different certificate entirely.
+    CERT_END=`$(openssl x509 -noout -enddate -in "`$CERT_USE" 2>/dev/null | cut -d= -f2- || true)
     if [ -n "`$CERT_END" ]; then
         echo "expires=`$(date -u -d "`$CERT_END" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '')"
     fi
@@ -804,9 +805,11 @@ EOF
     ;;
 
   disable)
-    # Only the server block goes. The certificate is shared with the platform host and every other
-    # application on this box, so there is nothing here to revoke or stop renewing — which is one
-    # of the quieter benefits of not issuing per-domain certificates in the first place.
+    # Only the server block goes, and that is deliberate on both branches. The shared certificate
+    # belongs to the platform host and every other application on this box, so there is nothing to
+    # revoke. A certificate issued for the tenant's OWN domain is LEFT IN PLACE and left renewing:
+    # withdrawing a domain is usually temporary, a kept certificate makes re-enabling instant, and
+    # revoking one on a withdrawal would spend the issuance budget again on every re-enable.
     rm -f "`$CONF"
     nginx -t && systemctl reload nginx
     echo "`$DOMAIN withdrawn"

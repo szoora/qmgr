@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using QMgr.Domain.Enums;
+using QMgr.Domain.Identity;
 
 namespace QMgr.Application.DTOs;
 
@@ -968,6 +969,15 @@ public record StaffImportRow
 {
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The name EXACTLY as the file wrote it, when the sheet carried one combined name column rather
+    /// than two. Kept for two reasons: the import log can show what the file actually said, and a
+    /// caller that posts only this — an integration rather than the browser — is still legal, because
+    /// the server splits it with the batch's NameOrder instead of refusing the row. See
+    /// docs/plans/BULK_IMPORT_SYSTEM.md §4.1 and QMgr.Domain.Identity.PersonName.
+    /// </summary>
+    public string? FullName { get; set; }
     public string Email { get; set; } = string.Empty;
     public string? Username { get; set; }
     public string? Phone { get; set; }
@@ -1020,6 +1030,23 @@ public record StaffImportRow
 public record StartStaffImportRequest
 {
     public List<StaffImportRow> Rows { get; set; } = new();
+
+    /// <summary>
+    /// Which way round a combined name column was written, for any row carrying FullName and no
+    /// first/last pair. There is no way to detect this from the data — "Abaho Jude" is surname-first
+    /// in Kampala and given-name-first in Cork — so the person importing chooses it, and the choice
+    /// travels with the batch so the server splits exactly as the preview showed.
+    /// </summary>
+    public NameOrder NameOrder { get; set; } = NameOrder.GivenFirst;
+
+    /// <summary>
+    /// What to do with somebody already on file. FALSE is the old behaviour and stays the default for
+    /// any caller that does not say: a row whose email already exists is reported and left untouched.
+    /// True updates their details from the file — never their role, their permissions, their branch or
+    /// their password, which are not an import's to change (RoleAssignmentGuard owns the first three).
+    /// The browser asks before sending; see docs/plans/BULK_IMPORT_SYSTEM.md §6.
+    /// </summary>
+    public bool UpdateExisting { get; set; }
     /// <summary>Kept for older callers: true means <see cref="StaffImportDeliveryMode.Invitation"/> when no mode is given.</summary>
     public bool SendInvites { get; set; } = true;
     /// <summary>How people get in. Null follows <see cref="SendInvites"/> (Invitation when true, no delivery when false).</summary>
@@ -1036,12 +1063,22 @@ public record StartStaffImportRequest
 public record StaffImportPrecheckRequest
 {
     public List<string> Emails { get; set; } = new();
+
+    /// <summary>
+    /// The school's own staff numbers, for the people in the file who have no email address — which
+    /// on a Ugandan school roll is most of them. Without this half, "is this person already here?"
+    /// has no answer at all for them.
+    /// </summary>
+    public List<string> EmployeeNumbers { get; set; } = new();
 }
 
 /// <summary>One person the import would land on rather than create.</summary>
 public record StaffImportExistingDto
 {
     public string NormalizedEmail { get; init; } = string.Empty;
+
+    /// <summary>Set when this person was matched by staff number rather than by address.</summary>
+    public string? EmployeeNumber { get; init; }
     public string FullName { get; init; } = string.Empty;
     public string RoleName { get; init; } = string.Empty;
     public bool IsActive { get; init; }

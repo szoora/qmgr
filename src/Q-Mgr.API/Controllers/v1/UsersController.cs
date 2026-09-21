@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using QMgr.API.Application.Services;
 using QMgr.API.Authorization;
+using QMgr.Application.Import;
 using QMgr.Application.Tenant;
 using QMgr.Application.Interfaces;
 using QMgr.Domain.Constants;
@@ -106,7 +107,7 @@ public class UsersController : ControllerBase
             {
                 Id = u.Id,
                 Username = u.Username,
-                Email = u.Email,
+                Email = u.Email ?? string.Empty,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 FullName = (u.FirstName ?? "") + " " + (u.LastName ?? ""),
@@ -167,7 +168,7 @@ public class UsersController : ControllerBase
             {
                 Id = u.Id,
                 Username = u.Username,
-                Email = u.Email,
+                Email = u.Email ?? string.Empty,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 FullName = (u.FirstName ?? "") + " " + (u.LastName ?? ""),
@@ -217,11 +218,15 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
-        if (string.IsNullOrWhiteSpace(request.Email))
+        // AN EMAIL ADDRESS IS OPTIONAL. Most staff on a Ugandan school roll have none — 133 of the
+        // first 184 imported — and this product's login has always accepted a username instead. What
+        // is NOT optional is being able to reach them with a first password, which is the caller's
+        // job: a slip, or a phone number for SMS. See docs/plans/STAFF_WITHOUT_EMAIL.md.
+        if (!string.IsNullOrWhiteSpace(request.Email) && !ImportRules.LooksLikeEmail(request.Email))
             return BadRequest(new ProblemDetails
             {
                 Title = "Validation failed",
-                Detail = "Email is required.",
+                Detail = $"\"{request.Email}\" is not an email address. Leave it empty if this person has none.",
                 Status = StatusCodes.Status400BadRequest
             });
 
@@ -237,7 +242,7 @@ public class UsersController : ControllerBase
         var passwordValidation = await _passwordValidation.ValidatePasswordAsync(
             request.Password,
             request.Username,
-            request.Email);
+            request.Email ?? string.Empty);
 
         if (!passwordValidation.IsValid)
             return BadRequest(new ProblemDetails
@@ -282,8 +287,9 @@ public class UsersController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
 
-        // Check for duplicate email within organization
-        var existingEmail = await _dbContext.Users
+        // Check for duplicate email within organization. Nobody collides with "no address": that is
+        // what NULL is for, and the unique indexes treat every one of them as distinct.
+        var existingEmail = !string.IsNullOrWhiteSpace(request.Email) && await _dbContext.Users
             .AnyAsync(u => u.Email == request.Email && u.OrganizationId == organizationId);
         if (existingEmail)
             return BadRequest(new ProblemDetails
@@ -374,7 +380,9 @@ public class UsersController : ControllerBase
             Id = Guid.NewGuid(),
             OrganizationId = organizationId, // SECURITY: Always from tenant context or SuperAdmin decision
             Username = request.Username.ToLowerInvariant(),
-            Email = request.Email.ToLowerInvariant(),
+            // Null, never "": two people with no address must both be storable, and an empty string
+            // would collide on the unique index the second time.
+            Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.ToLowerInvariant(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             FirstName = request.FirstName,
             LastName = request.LastName,
@@ -396,7 +404,7 @@ public class UsersController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,
@@ -594,7 +602,7 @@ public class UsersController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,
@@ -674,7 +682,7 @@ public class UsersController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,

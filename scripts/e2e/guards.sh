@@ -17,7 +17,7 @@ set -u
 cd "$(dirname "$0")/../.."
 
 # Pass/fail: each exits non-zero on a finding.
-GUARDS="css-token-check style-leak-check section-actions-check suite-route-check route-audit list-page-audit purge-manifest-check"
+GUARDS="css-token-check component-param-check style-leak-check section-actions-check suite-route-check route-audit list-page-audit purge-manifest-check"
 
 # Advisory: refusal-audit prints a shortlist for a human to read and says so itself — "a page WITH a
 # check still needs a human to ask whether it covers the refusal that matters". It has no pass state

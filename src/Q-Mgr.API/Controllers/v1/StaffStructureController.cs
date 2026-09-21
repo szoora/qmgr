@@ -6,6 +6,8 @@ using QMgr.API.Authorization;
 using QMgr.Application.DTOs;
 using QMgr.Application.Interfaces;
 using QMgr.Application.Tenant;
+using QMgr.Application.Import;
+using QMgr.Domain.Identity;
 using QMgr.Domain.Constants;
 using QMgr.Domain.Entities.Identity;
 using QMgr.Domain.Entities.Notification;
@@ -353,12 +355,24 @@ public class StaffStructureController : StaffPerformanceControllerBase
 
         if (firstName.Length == 0) return BadRequestProblem("A first name is needed");
         if (lastName.Length == 0) return BadRequestProblem("A last name is needed");
-        if (email.Length == 0 || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@'))
-            return BadRequestProblem("An email address is needed", "Staff sign in with it, and it is where their invitation goes.");
+        // AN EMAIL ADDRESS IS OPTIONAL (docs/plans/STAFF_WITHOUT_EMAIL.md). Most staff on a school
+        // roll have none; they sign in with the username below and are handed the temporary password
+        // on a slip. What is refused is a MALFORMED one, because that is a typo rather than a choice.
+        if (email.Length > 0 && !ImportRules.LooksLikeEmail(email))
+            return BadRequestProblem("That is not an email address",
+                "Leave it empty if this person has none — they will sign in with a username instead.");
 
-        if (await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Email == email))
+        if (email.Length > 0 && await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.Email == email))
             return BadRequestProblem("Somebody already uses that email address",
                 "Two accounts in one organization cannot share an email address. Search the directory for them instead.");
+
+        // The staff number is an IDENTITY for anybody with no address, so a repeat is refused here in
+        // words rather than left to surface as a unique-index violation nobody can read.
+        var employeeNumber = string.IsNullOrWhiteSpace(request.EmployeeNumber) ? null : request.EmployeeNumber.Trim();
+        if (employeeNumber != null &&
+            await Db.Users.AnyAsync(u => u.OrganizationId == organizationId && u.EmployeeNumber == employeeNumber))
+            return BadRequestProblem("Somebody already has that staff number",
+                "A staff number identifies one person in this organization — it is how anybody with no email address is recognised.");
 
         // SECURITY: nobody chooses their own privilege. Same guard as UsersController.CreateUser —
         // without it a caller holding staff.structure.manage could post the seeded super-admin
@@ -386,10 +400,10 @@ public class StaffStructureController : StaffPerformanceControllerBase
                 "The line manager must be an active member of staff in this organization.");
         }
 
-        // Username: the email's local part, made unique with a numeric suffix because the username
-        // index is global. Exactly what the staff import does, so the two agree.
-        var baseUsername = new string(email[..email.IndexOf('@')].Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-').ToArray());
-        if (baseUsername.Length < 3) baseUsername = $"user{Guid.NewGuid():N}"[..12];
+        // Username: the email's local part where there is one, otherwise the person's own name —
+        // PersonName.SuggestUsername is the one home for that, so this and the staff import cannot
+        // disagree. Made unique with a numeric suffix because the username index is global.
+        var baseUsername = PersonName.SuggestUsername(firstName, lastName, email, employeeNumber);
         var username = baseUsername;
         for (var n = 2; await Db.Users.AnyAsync(u => u.Username == username); n++) username = $"{baseUsername}{n}";
 
@@ -403,13 +417,14 @@ public class StaffStructureController : StaffPerformanceControllerBase
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             Username = username,
-            Email = email,
+            Email = email.Length == 0 ? null : email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
             MustChangePassword = true,
             TemporaryPasswordExpiresAt = DateTime.UtcNow.Add(TemporaryPasswords.Lifetime),
             FirstName = firstName,
             LastName = lastName,
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
+            EmployeeNumber = employeeNumber,
             JobTitle = string.IsNullOrWhiteSpace(request.JobTitle) ? null : request.JobTitle.Trim(),
             RoleId = role.Id,
             AssignedBranchId = branchId,
@@ -433,7 +448,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
             UserId = user.Id,
             FullName = StaffPerformanceMapping.FullName(user),
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             TemporaryPassword = temporaryPassword
         });
     }
@@ -572,7 +587,7 @@ public class StaffStructureController : StaffPerformanceControllerBase
         {
             UserId = user.Id,
             FullName = StaffPerformanceMapping.FullName(user),
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             Username = user.Username,
             RoleName = user.Role?.Name ?? string.Empty,
             IsActive = user.IsActive,

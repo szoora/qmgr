@@ -5,77 +5,234 @@ Living list of work requested across sessions. Update status inline as work prog
 Status legend: `[ ]` queued · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
 ---
-## ▶▶ HANDOVER — read this first (written 2026-09-20 21:35; see the 2026-09-21 section below first)
+## ▶▶ HANDOVER — read this first (rewritten 2026-09-21 15:20, replacing the 2026-09-20 21:35 block)
 
-### The one thing that matters
+### The tree is clean, pushed, and healthy
 
-**Nothing has been committed since `803ece4` (2026-09-18).** The working tree carries
-**221 modified files and 78 new ones** — roughly five sessions of work: payments through the sacc.ug
-gateway, the billing hub, the UI compaction and type scale, minutes of meetings, the list-page sweep,
-the registration doors, white label + custom domains, and the tenant lifecycle and purge.
+**Everything is committed through `75b1d0c` and `origin/master` has it.** The previous handover
+opened with *"nothing has been committed since `803ece4` … 221 modified files … a `git checkout` of
+any file could destroy a lot"* — **all of that is finished and none of it is true any more.** It was
+left standing for a day after the commit landed, which is the stale-note trap this project keeps
+rediscovering; that is why it has been rewritten rather than appended to.
 
-**Do not offer to commit or deploy unprompted** — both are the user's call, and they have been asked
-several times and deferred each time. But the next session should know the tree is this large before
-touching anything, and that a `git checkout` of any file could destroy a lot.
+Measured on 2026-09-21 afternoon, not recalled:
 
-**Four migrations are in that tree and are additive**, in order:
-`20260919160000_UgxDefaultAndStripeOff`, `20260920084558_AddMeetingMinutes`,
-`20260920142127_AddCustomDomainVerification`, `20260920153902_AddTenantLifecycleAndPurge`.
-All four are applied to the dev database already.
+    git status                 clean - no untracked - no stash - level with origin/master
+    dotnet build Q-Mgr.slnx    0 errors - 21 warnings (nullable-reference noise only)
+    bash scripts/e2e/guards.sh 7/7 pass - 1 advisory (refusal-audit)
 
-### State: everything asked for is built and verified
+### Two abrupt shutdowns on 2026-09-21, and neither cost anything
 
-The last four requests were each "implement the plan fully", and each is finished, run against the
-dev tenant, and written up in its own section below. Nothing is half-done and there is no resume
-point to pick up. Current package: **`scripts/deploy/dist/qmgr-0.2.0-20260920.2129.tar.gz`**
-(112 MB, ports 8586/8587) — superseded tarballs were deleted so there is only one to pick up.
+One at **11:47** (session `be2b6796`, mid-command) and one at about **14:30**, half an hour after
+`75b1d0c` was pushed. Both were traced: every edit was already on disk, nothing was staged and
+nothing was stashed. Worth knowing only because the machine has now done this twice in a day —
+**commit early, and write the session's rules down as it goes rather than at the end.** The second
+shutdown cost nothing in code and did cost two undocumented commits, which this session fixed.
 
-### How to verify it all in one go
+### Where the completion plan stands
 
-    # API with the two Development-only stubs the suites need
-    Dns__Stub=true CustomDomains__SkipCertificate=true Cors__AllowedOrigins__4=http://127.0.0.1:5003 \
-      dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
-    ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj \
-      --urls "http://127.0.0.1:5003" --no-build
+Artifact: **https://claude.ai/artifact/3WCYkNeW6smKKCa7ZUKNBy** (revision 2). Status verified against
+the code, not the commit titles:
 
-    API=http://127.0.0.1:5001 BRANCH=<branch guid> SA_USER=superadmin SA_PASS=admin \
-      bash scripts/e2e/class-teacher-e2e.sh
+| Workstream | State |
+|---|---|
+| **A1–A3** docs, stale notes, one commit | done — `f1aed03` |
+| **C1–C5** three defects + the warnings bar | done — `aaff050` |
+| **D1, D2, D4** `guards.sh`, `browser/all.mjs`, the wiring rule | done — `369aff6` |
+| **D3** one full green run, counts recorded | **NOT DONE — the next thing to do** |
+| **B0** is an ACME client available | answered by reading the live host: yes |
+| **B1, B3–B6** routing record, hybrid issuance, two-phase enable, wording | done — `1f01249` |
+| **B2** wildcard server block | **deliberately superseded** — per-tenant blocks instead |
+| **B7, B8** | open, both need the server |
+| **F1, F2** design-decision pass, residue inventory | not started |
+| **E1–E5** | open, need real money / a real restore / a real mailbox |
 
-**Sections 15, 17 and 18 were wired into that runner on 2026-09-20 and had never been.**
-`duty-rota-e2e.mjs`, `minutes-e2e.mjs` and `registration-doors-e2e.mjs` each existed and each passed
-standalone, but the shell suite never called them — so a "full run" under-reported by about ninety
-assertions and a regression in any of the three would not have shown up in one. All seven Node
-suites now run from the single command. **If you add a Node suite, wire it there in the same commit.**
+Staff self-service (`4ab5ec2`…`75b1d0c`) was a **new request that interrupted the plan**; it is
+finished, verified and written up in its own section below.
+
+### What to do next, in order
+
+1. **D3 — the full green run.** All three doors exist and have never been run together. The last
+   recorded full run predates the type scale, the billing hub, minutes, the doors, white label, the
+   purge, and workstreams B and C. Record the counts here afterwards, with a stated reason for every
+   SKIP.
+2. **B8 has a live clock.** The shared Sectigo certificate expires **9 October 2026**, it is renewed
+   by something outside Q-Mgr, and the product now reads it and matches against it — so every
+   `*.cashbook.ug` tenant's fast path fails when it lapses. The renewal owner and date belong in the
+   deploy notes. **This needs one question to whoever owns the box** (`74.208.201.32`, SSH port 2285).
+3. **B7** — exercise both certificate branches on the host. Nothing in that path has ever run on a
+   server and no certificate has ever been issued.
+4. **F1 / F2**, then **E** as the gateway, the server and your timing allow.
+
+### The three doors
+
+    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 21 sections, 7 Node suites inside it
+    bash scripts/e2e/guards.sh              # the 8 static guards - no server, seconds
+    node scripts/e2e/browser/all.mjs        # the 23 browser suites, local headless Chrome
+
+The API needs the two Development-only stubs the suites use:
+
+    Dns__Stub=true CustomDomains__SkipCertificate=true Cors__AllowedOrigins__4=http://127.0.0.1:5003
+    dotnet run --project src/Q-Mgr.API/Q-Mgr.API.csproj --urls "http://127.0.0.1:5001" --no-build
+    ApiBaseUrl="http://127.0.0.1:5001" dotnet run --project src/Q-Mgr.Web/Q-Mgr.Web.csproj --urls "http://127.0.0.1:5003" --no-build
+
+    API=http://127.0.0.1:5001 BRANCH=<branch guid> SA_USER=superadmin SA_PASS=admin bash scripts/e2e/class-teacher-e2e.sh
 
 `scripts/rebuild.sh` stops the running API/Web before building — MSBuild cannot overwrite a DLL a
-running process holds, and that failure reads exactly like a compile error when it is not.
+running process holds, and that failure reads exactly like a compile error when it is not. It runs
+`guards.sh` after a successful build.
 
-### Four things that are true and easy to get wrong
+### Five things that are true and easy to get wrong
 
+- **`CS0649`, `CS0472`, `CS0168` and `RZ10012` are BUILD ERRORS now**, in all three project files.
+  Do not remove the bar to get a build through — each of the four has already shipped a silent,
+  user-visible bug here. See CLAUDE.md, "Four warning codes are BUILD ERRORS".
 - **`TenantPurgeModelGuard` fails STARTUP on an unclassified table.** Add an entity and the API will
-  not start until it is in `TenantDataManifest`. That is deliberate — the alternative is a purge that
-  reports success and leaves rows behind — and the error names the entity and the four options.
-- **The purge suite creates its own tenant and destroys it.** It cannot be pointed at the dev tenant.
-  It also resets its own sign-up budget through a Development-only endpoint, because registration is
-  capped at three an hour per address.
-- **A fallback literal hides a wrong token name.** `var(--qm-bg-subtle, #f4f4f5)` and
-  `var(--qm-surface, #fff)` both named tokens that do not exist, so both silently took the literal —
-  one of them made the DNS record on the tenant dialog invisible in dark mode. **Real tokens only, no
-  fallback literal**, and check a colour change in BOTH themes.
-- **Run the deploy build after touching `build-linux.ps1`.** A `` `$genDir `` escape inside ordinary
-  PowerShell (not a here-string) produced a literal path segment and step 7 threw. The PowerShell
-  parser said `parse ok` — the string was syntactically fine and semantically wrong.
+  not start until it is in `TenantDataManifest`. `scripts/e2e/purge-manifest-check.mjs` says so
+  before the API does.
+- **The purge suite creates its own tenant and destroys it.** It cannot be pointed at the dev tenant,
+  and it resets its own sign-up budget through a Development-only endpoint.
+- **A fallback literal hides a wrong token name.** `var(--qm-bg-subtle, #f4f4f5)` named a token that
+  has never existed and silently took the literal. Real tokens only, no fallback literal, and check
+  a colour change in BOTH themes. `css-token-check.mjs` is the guard.
+- **Run the deploy build after touching `build-linux.ps1`.** An escaped variable inside ordinary
+  PowerShell produced a literal path segment and step 7 threw, while the parser said `parse ok`.
 
 ### Not exercised, and stated rather than claimed
 
-- **No certificate has ever been issued** for a tenant domain. The suites run with
-  `CustomDomains__SkipCertificate=true`; certbot, the nginx include and the sudoers drop-in were
-  verified by rendering the generated scripts and `bash -n`, never on a host.
+- **No certificate has ever been issued** for a tenant domain, on either branch of the hybrid. The
+  suites run with `CustomDomains__SkipCertificate=true`; the helper was verified by rendering it out
+  of `build-linux.ps1` and `bash -n`, never against a host.
 - **`suppression_reapply` needs a real `pg_restore`** on the server to be exercised.
 - **No real money has moved** through the sacc.ug gateway; the payments suites run against a stub.
   The first real prompt is the platform's own "Send UGX 500" test on `/platform/payments`.
 - The 104-day lifecycle clock has only been exercised by forcing transitions plus one genuine
   elapsed `Pending` window (the sweep moved four stale dev tenants `Pending` → `Suspended`).
+- **No live password-reset email has been read** since the public-base-URL consolidation touched
+  every transactional message (E4 — five minutes, and the cheapest check in the backlog).
+
+### Migrations and the package
+
+**Four migrations are committed and applied to the dev database**, in order:
+`20260919160000_UgxDefaultAndStripeOff`, `20260920084558_AddMeetingMinutes`,
+`20260920142127_AddCustomDomainVerification`, `20260920153902_AddTenantLifecycleAndPurge`, plus
+self-service's own. All additive.
+
+**Deployment is the user's call and is not a backlog item.** As facts only:
+
+`scripts/deploy/dist` held **three** packages (`20260920.2129`, `20260921.1145`, `20260921.1312`)
+and **all three were built with `-SkipPublish`**, so every one carried 20 Sep binaries under 21 Sep
+config — none contained workstreams B, C or D or staff self-service. A full build was run on
+2026-09-21 15:18 at `75b1d0c`, producing
+**`scripts/deploy/dist/qmgr-0.2.0-20260921.1518.tar.gz` (111.5 MB, ports 8586/8587)** — the first
+package that actually contains this day's code. The three stale ones are gone.
+
+**`-SkipPublish` without `-SkipClean` destroys the output directory.** Step 1 removes `dist`
+wholesale, and skipping the publish then never recreates `api/` and `web/`, so step 6 fails on a
+missing path and any tarballs that were sitting there are already deleted. Pass **both** switches,
+or just run the full build — it takes under two minutes with a warm obj/.
+
+---
+## ▶ (2026-09-21, night) — a staff member with no email address
+
+The bulk-import work found that **133 of the 184 staff in the school's own file have no email
+address**, and Q-Mgr treated an address as a staff member's identity — so they could not exist at
+all. Scoped first (artifact + `docs/plans/STAFF_WITHOUT_EMAIL.md`), then built in full on the same
+instruction.
+
+- **Schema**: `Email` and `NormalizedEmail` nullable; a partial unique index on
+  `(OrganizationId, EmployeeNumber)`; `IX_users_OrganizationId` kept explicitly because EF drops a
+  convention index the moment a composite starts with the same column — and the new one is PARTIAL,
+  so it cannot serve the tenant lookups every query makes. Migration
+  `20260921191054_StaffMayHaveNoEmailAddress`, applied to the dev database.
+- **Identity**: the null test comes first in the sign-in predicate; ~35 dereferences audited, the
+  compiler producing the list once the column was nullable; the JWT email claim, the reset link and
+  every sender guarded.
+- **Creating one**: optional on the API and in both forms; `PersonName.SuggestUsername` is the one
+  home for the account name; the **staff number became settable at all** — it had no field on
+  `CreateStaffMemberRequest`, so the key this design leans on was unreachable from the dialog.
+- **Importing**: a missing address warns and names the username; an invitation row still refuses;
+  the duplicate key is email → staff number → name; the precheck asks with both keys; a line manager
+  can be named by staff number.
+- **Verified**: section 22 (`staff-no-email-e2e.mjs`, **17 checks**) and `import-wizard.mjs`
+  (**22 checks**), both 0 failed. **49 ready / 135 refused → 182 ready / 2 refused**, the two being
+  genuine typos in the school's file (`@gmail`, `@gmailcom`). Guards 8/8; the registration-door
+  suites re-run because sign-up and sign-in were touched.
+
+---
+## ▶ (2026-09-21, evening) — two pages reported from production, and the two guards that were missing
+
+
+Both came in as screenshots of `qmgr.cashbook.ug`, one page each, minutes apart. Neither was visible
+in a build, a type check or a code read, and neither could have been caught by a curl suite.
+
+### 1 · the timetable's Class tab could not be pressed
+
+*"see that class tab not working. previously default tab was class."* `ChooseDefaultKey` carried the
+editor's OPENING default — a teacher arriving sees their own week — and `OnViewChanged` called it on
+every press. Class clears the key; the next line saw an empty key and flipped the axis back to
+Teacher. So the tab was unpressable for anybody who taught one lesson, and the administrator building
+the timetable was opening on their own two lessons rather than on the week.
+
+- `ChooseDefaultKey(bool opening = false)`; only `OnInitializedAsync` passes `opening: true`
+  (`LoadAsync` carries it through). A view change, a version switch and a new draft now pick a usable
+  key and leave the axis alone.
+- A timetable master is excluded from the own-week default as well: `!detail.CanManage`.
+- **`scripts/e2e/browser/timetable-views.mjs` — 14 checks, 0 failed.** It refuses to run when the
+  teacher it signs in as teaches nothing in the version on screen (the flip would never arm and every
+  check would pass vacuously), and it seeds a lesson of the administrator's own for the manager half,
+  because the dev tenant's administrator teaches nothing. Proven to FAIL against the old code.
+
+### 2 · My Workspace's teaching tab killed the circuit
+
+*"fix this page also"* — `/portal?tab=teaching`, "An unhandled error has occurred", nothing on the
+page. `SelfServiceSection` rendered `<QModal Open="@askOpen">`; **QModal takes `Visible`**, and an
+unknown parameter is not a compile error, so Blazor threw
+`InvalidOperationException: … does not have a property matching the name 'Open'` on the component's
+first render and tore the circuit down. Shipped that afternoon with a clean build and a passing API
+suite (section 21 is curl; a tab is client-side).
+
+- Fixed to `@bind-Visible="askOpen"`, the house pattern the other 60-odd call sites use.
+- **`scripts/e2e/component-param-check.mjs` (new, in `guards.sh` — now 9 guards)**: every parameter
+  passed to one of our own components must exist on it. 209 components known. It skips a component
+  that captures unmatched values and skips attribute VALUES including quotes nested inside `@( … )` —
+  reading a lambda's `=>` as a parameter name made its first draft report 200 findings that were not
+  there. Proven to FAIL on the real line before the fix went in.
+- **`scripts/e2e/browser/portal-tabs.mjs` (new)**: the layer above the static guard — a tab can be
+  killed by any exception on its first render. All four tabs, by deep link and by press, as a teacher
+  and as an administrator, failing on a visible `#blazor-error-ui`.
+
+**The rule both halves share: a hub's tab is not verified until something OPENS it.** Four Workspace
+tabs and four timetable view tabs shipped with nothing in any browser suite touching them.
+
+### 3 · the bulk import became a wizard, against two real school files
+
+Asked for in four messages the same evening: map columns dynamically, show the mandatory fields, split
+and concatenate columns, validate in the UI *and* the backend, support JSON, prompt to update
+duplicates. Plan: `docs/plans/BULK_IMPORT_SYSTEM.md` and the artifact linked at its top, written
+against OneSchema's and CSVBox's published practice, 1EdTech OneRoster's schema discipline, W3C's
+guidance on personal names and OWASP's on CSV injection.
+
+**The acceptance test was the school's own files, and both defeated the old importer.**
+`Staff List.xlsx`: a TITLE in row 1, headers on row 2, one name column written surname first.
+`Students_2026-09-21.xls`: an HTML table wearing an `.xls` name, 1,711 SHOUTED names, and the class
+split across `Class` + `Stream`.
+
+- `PersonName` (Shared) — the one home for a name split: comma wins, particles keep, one word warns,
+  **order asked with the file's own first name in the question**, family first by default.
+- `ImportGrid` / `ImportMapping` / `ImportBinding` — header-row detection, a field fed by one column or
+  two with a joiner, `SatisfiedBy` for "this or that", field kinds that decide the cleaning.
+- `QImportPanel` is three steps now; `rosterImport.js` lists sheets and reads JSON/NDJSON.
+- Duplicates are asked about before sending, and *update* moves a person's details only.
+- `ImportRules` (Shared) is run by the browser AND the job; `CsvWriter.Field` neutralises formulas.
+- **`scripts/e2e/browser/import-wizard.mjs`, 19 checks, 0 failed**: 49 ready / 135 refused for a
+  missing email out of 184, 164 phone numbers normalised, `S1A` joined, 1,711 rows validated.
+
+**Open, and it is the school's question rather than the code's: 133 of the 184 staff have no email
+address**, which this product treats as a staff member's identity. Three ways out are set out in §11
+of the plan; the recommended one is collecting the addresses, and the real product change would be
+letting a staff member exist with a username and no email at all.
+
 
 ---
 ## ▶ (2026-09-21, afternoon) — staff self-service configuration, built in full
@@ -126,6 +283,87 @@ built and compile, and the browser suites were deferred to the end of the sessio
 `scripts/e2e/browser/all.mjs` is the door for that.
 
 ---
+## ▶ (2026-09-21, midday) — the completion plan's workstreams C, D and B
+
+Completion plan artifact: **https://claude.ai/artifact/3WCYkNeW6smKKCa7ZUKNBy** (revision 2).
+**These three commits landed with no tracker entry** — `aaff050` and `1f01249` touched no docs at
+all — and this section is the missing record, reconstructed by reading the code on 2026-09-21
+afternoon, not recalled.
+
+### A · the trail (`f1aed03`)
+
+**One commit, 308 paths**, naming all six features and pointing at the sections below that carry the
+per-feature record. The user chose one commit over six: the features interleave inside the same
+files, so a split history would describe a sequence that did not happen. The tree had been
+uncommitted since `803ece4` (2026-09-18) — five sessions.
+
+### C · three defects the compiler had been reporting for days (`aaff050`)
+
+All three compiled cleanly and were reported on **every build**, as warnings nobody read.
+
+- **Nobody could close their own minute action point.** `StaffMinutes.meId` was declared and never
+  assigned, so it was always `Guid.Empty` and `a.AssignedUserId == meId` was false for every person
+  on every row. The control had never rendered for anyone. **CS0649.**
+- **A welfare search showed the first 50 records and said nothing.** `WelfareReports.pageIndex` was
+  never assigned either, and there was no pager on the page at all — so a search matching 200
+  safeguarding records rendered 50 with no count and nothing saying the list was cut. `QPager` now
+  renders and the count on screen is the true total. **CS0649.**
+- **The minutes attendance filter was a no-op.** `r.Outcome != null` on a non-nullable
+  `DutyOutcome` defaulting to `NotApplicable` is always true, so every Final record on the meeting
+  duty entered the attendance including ones carrying no mark — undercutting the rule the feature
+  rests on: attendance is the register, never retyped. Now `!= DutyOutcome.NotApplicable`. **CS0472.**
+- Two swallowed exceptions (`BranchesSetup.razor`, `FeedbackPage.razor`) each caught into a variable
+  they never read.
+
+**C5, the bar, went in: `CS0649;CS0472;CS0168;RZ10012` are `WarningsAsErrors` in all three project
+files.** Rules and the reasoning in CLAUDE.md, "Four warning codes are BUILD ERRORS". The remaining
+~21 warnings are nullable-reference noise and stay warnings.
+
+### D · one door for each kind of check (`369aff6`)
+
+The repository held **thirty-one checking scripts and one runner, which called seven of them**.
+
+- **`scripts/e2e/guards.sh`** — the eight static guards. No server, no database, seconds. Called
+  from `rebuild.sh` after a successful build.
+- **`scripts/e2e/browser/all.mjs`** — the twenty-three browser suites, sequential against one
+  headless Chrome, honouring the module-redirect SKIP convention.
+- **Three suites could not fail**: `rooms-ui`, `select-verify` and `uniform-check` each counted
+  their failures, printed the tally and then always exited 0. They set `process.exitCode` now.
+  The genuine exceptions are declared in the runners with their reason — `refusal-audit` is
+  advisory, `density-check` and `furniture-check` measure rather than assert.
+- The wiring rule (D4) is in CLAUDE.md: **a suite is wired into its runner in the same commit that
+  creates it.**
+
+### B · a tenant's own domain can reach a padlock (`1f01249`)
+
+The hybrid. **B0 was answered by reading the live internet rather than asking**: the box already
+runs an ACME client and `admissions.maryhillug.net` already carries its own Let's Encrypt
+certificate beside Q-Mgr, so per-domain issuance adds no OS package and the standing
+no-server-dependencies rule is intact. **Full rules in CLAUDE.md**, under the certificate section —
+the coverage check as the fast path, the two-phase enable that solves the http-01 chicken-and-egg,
+the failed-issuance cleanup, the ACME back-off, and why validation lives in the root-owned helper.
+
+- **B1** — the panel asked for a TXT record **and nothing else**, so a tenant could prove they owned
+  a hostname that went on resolving to their old web host. `RoutingRecordName`/`RoutingRecordValue`
+  sit beside the TXT pair now and verification checks the name resolves here (`PointsHere`,
+  `RoutingHint`). It **warns, never refuses** — `null` means the check could not be made, which is
+  not `false`.
+- **B2 was deliberately NOT done and is superseded.** The plan called for a `*.cashbook.ug` server
+  block. Instead every tenant domain, subdomain or not, gets its own block: a wildcard on a box
+  shared with ERP, CashBook and the rest would quietly catch hostnames belonging to somebody else.
+  The reasoning is in `build-linux.ps1` where the decision lives.
+- **B3–B6** — issuance restored under the coverage check, the two-phase enable, `-CertEmail` back in
+  the build, and the wording made honest in both branches.
+- **B7 and B8 remain** and both need the server. See the handover.
+
+**One defect found while writing this up (2026-09-21 afternoon), fixed in the same pass:** the
+helper reported the **shared** certificate's expiry on both branches, while the C# contract and the
+log line said it was "the certificate now serving this domain". For an externally-issued domain that
+is a real, confident date about a different certificate entirely — the exact failure the morning's
+decision removed a stored renewal date to avoid. It now reads `$CERT_USE`, and the `disable` comment
+no longer claims there is never anything to revoke.
+
+---
 ## ▶ (2026-09-21) — the four traps, three UI reports, and a certificate decision taken twice
 
 **The machine shut down abruptly at 11:47 mid-command.** Nothing was lost: every edit was on disk,
@@ -158,7 +396,8 @@ DI, `CustomDomainService`, `CustomDomainDto` and the tenant UI; solution builds 
 the reason for whitelabelling"*): the installed certificate is Sectigo DV answering for
 `*.cashbook.ug` and `cashbook.ug` only — read off the live host — so it can never cover somebody's own
 domain. The morning's work becomes the **fast path** of a hybrid; per-domain issuance returns as the
-branch underneath the coverage check. **That is workstream B of the completion plan and is in flight.**
+branch underneath the coverage check. **That is workstream B of the completion plan; it landed the
+same day as `1f01249` — see the midday section above.**
 
 ### The three UI reports
 
@@ -227,7 +466,7 @@ Written up in full in the completion plan artifact: **https://claude.ai/artifact
   shape as sections 15/17/18, which passed standalone for weeks while the one command skipped them.
 
 ---
-## ▶ (2026-09-20) — tenant lifecycle and complete purge, all seven phases. NOT COMMITTED.
+## ▶ (2026-09-20) — tenant lifecycle and complete purge, all seven phases — committed in `f1aed03`.
 
 Plan artifact: https://claude.ai/artifact/33y4u5jAA8zmWYtyWR49To. Rules in CLAUDE.md, "A tenant has
 a life, and the end of it leaves nothing".
@@ -269,7 +508,7 @@ each step, with the backup window (30 days) and the two exceptions stated honest
   touching `build-linux.ps1`; parsing it is not enough.**
 
 ---
-## ▶ (2026-09-20) — the white-label plan, all nine phases. NOT COMMITTED.
+## ▶ (2026-09-20) — the white-label plan, all nine phases — committed in `f1aed03`.
 
 Plan artifact: https://claude.ai/artifact/Q5GWUjaCRBfZm9ANY6FVfp — built word for word, phases 0-8.
 Rules in CLAUDE.md, "White label: a tenant's own domain, its own assets, and our name coming off".
@@ -320,7 +559,7 @@ and the API enforces the same rules field by field so a refusal names the box. "
 "Surname".
 
 ---
-## ▶ (2026-09-20, night) — two doors on the sign-in page. NOT COMMITTED.
+## ▶ (2026-09-20, night) — two doors on the sign-in page — committed in `f1aed03`.
 
 Reported from the login screen: *"Don't have an account? Create one"* led to registering a whole new
 ORGANIZATION. A teacher at a school that already uses Q-Mgr reads that, tells the truth, and gets a
@@ -349,7 +588,7 @@ duplicate school. All five recommendations built. Rules in CLAUDE.md, "There are
   flagging works. **Suspended** with a reason naming the run; a platform administrator deletes it.
 
 ---
-## ▶ (2026-09-20, night) — the list-page sweep, all four phases. NOT COMMITTED.
+## ▶ (2026-09-20, night) — the list-page sweep, all four phases — committed in `f1aed03`.
 
 Plan `docs/plans/LIST_PAGE_STANDARDISATION.md` implemented end to end. **58 list pages: 23 swept,
 35 ruled out of scope with a reason each, 0 outstanding.** Rules in CLAUDE.md, "A list page has one
@@ -381,7 +620,7 @@ and it is now the dev branch's only live timetable, where before there was none.
 a database-owner action.
 
 ---
-## ▶ (2026-09-20, evening) — minutes of a meeting, built in full. NOT COMMITTED.
+## ▶ (2026-09-20, evening) — minutes of a meeting, built in full — committed in `f1aed03`.
 
 Asked after the register rework: *"what provisions to standardise recording minutes… what is the industry
 standard and what is your recommendation"*, then **"implement the full minutes recommendation, plan the sweep
@@ -418,7 +657,7 @@ lifecycle, ISO 15489 for the qualities, board portals for the product shape) are
 Tier 2's row shape).
 
 ---
-## ▶ (2026-09-20, later) — duties on the teacher sheet, and the register rework. NOT COMMITTED.
+## ▶ (2026-09-20, later) — duties on the teacher sheet, and the register rework — committed in `f1aed03`.
 
 - **Duties on the teacher print sheet.** `TimetablePrint` loads the branch's duties over the timetable's own
   effective range and lists each teacher's under their grid: date, time, duty, where, and what they are there to
@@ -437,7 +676,7 @@ Tier 2's row shape).
   user as recommendations rather than started.
 
 ---
-## ▶ (2026-09-20) — individual timetable extracts (options 1–4). NOT COMMITTED.
+## ▶ (2026-09-20) — individual timetable extracts (options 1–4) — committed in `f1aed03`.
 
 Asked: *"what possibilities to print individual teacher timetable extracts?"*, then **"implement all 1-4"**.
 The four were: (1) a `?key=` filter on the print route, (2) "Print my timetable" on the portal, (3) a picker for a
@@ -472,7 +711,7 @@ name followed the selection. Rules in CLAUDE.md under the duty-rota section, bes
   duty is one somebody will still double-book themselves against.
 
 ---
-## ▶ (2026-09-19, night) — recommendations 11–14 and the item-4 checks. NOT COMMITTED.
+## ▶ (2026-09-19, night) — recommendations 11–14 and the item-4 checks — committed in `f1aed03`.
 
 - **11 Held payments**: "Needs a decision" on Reconciliation, `POST …/platform/payments/{ref}/resolve`, decision kept
   in `Payment.Metadata`. **12 Public address**: one reader, `GetPublicWebBaseUrlAsync`; the SaaS seed is
@@ -485,7 +724,7 @@ name followed the selection. Rules in CLAUDE.md under the duty-rota section, bes
 - **Verified**: payments-e2e 121/121, payments-ui 57/57, billing-hub 57/57, uniform 42/42, empty-state 29/29,
   action-location 191/191, hub-nav 81/81, the four static guards clean.
 
-## ▶ PAYMENTS — the latest work (2026-09-19, late evening). NOT COMMITTED.
+## ▶ PAYMENTS — the latest work (2026-09-19, late evening) — committed in `f1aed03`.
 
 The payment-collection rework, "implemented word for word" from the payments plan: the sacc.ug gateway for
 Mobile Money and cards, a ledger that writes before money moves, a signed webhook, a reconciliation job, UGX
@@ -509,7 +748,8 @@ the ledger moves a payment"**, has every rule.
 
 ## ▶ NEXT SESSION — start here (rewritten 2026-09-19, evening)
 
-**State: BUILT and VERIFIED, NOT COMMITTED.** Everything since `803ece4` is in the working tree. The
+**State: BUILT, VERIFIED and COMMITTED** (`f1aed03`, 2026-09-21 — the whole tree since `803ece4`
+went in as one commit). The
 afternoon handover below still holds for how to run things; this adds what the evening changed. Every rule
 below is written up in CLAUDE.md — read the sections named here before touching the same ground.
 

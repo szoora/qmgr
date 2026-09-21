@@ -8,7 +8,17 @@ public class User : BaseAuditableEntity
 {
     public Guid OrganizationId { get; set; }
     public string Username { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
+
+    /// <summary>
+    /// NULL when this person has no email address, which on a Ugandan school roll is most of the
+    /// staff — 133 of 184 on the first real list this product imported. They sign in with
+    /// <see cref="Username"/> (the login accepts either), receive their first password on a printed
+    /// slip or by SMS, and are identified by <see cref="EmployeeNumber"/> where a duplicate check
+    /// needs a key. Null rather than an empty string on purpose: two unique indexes sit on the
+    /// address, and PostgreSQL treats NULLs as distinct while it would refuse a second "".
+    /// See docs/plans/STAFF_WITHOUT_EMAIL.md.
+    /// </summary>
+    public string? Email { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
 
     public string? FirstName { get; set; }
@@ -22,7 +32,7 @@ public class User : BaseAuditableEntity
     /// Populated by RegistrationIdentity.NormalizeEmail; never shown to the user, who keeps seeing
     /// whatever they typed.
     /// </summary>
-    public string NormalizedEmail { get; set; } = string.Empty;
+    public string? NormalizedEmail { get; set; }
 
     /// <summary>Digits-only form of <see cref="Phone"/>, with the local trunk prefix folded to a
     /// country code so "0753404044" and "+256753404044" compare equal.</summary>

@@ -35,7 +35,7 @@
                 <QAvatar Name="@profile.FullName" Size="md" />
                 <div class="sp-identity__text">
                     <strong>@profile.FullName</strong>
-                    <span>@profile.RoleName · @profile.Email</span>
+                    <span>@profile.RoleName@(string.IsNullOrWhiteSpace(profile.Email) ? "" : " · " + profile.Email)</span>
                 </div>
                 <QChip Text="@(profile.StaffGroup == StaffGroup.SupportStaff ? "Support staff" : "Teaching staff")" Size="sm" />
             </div>

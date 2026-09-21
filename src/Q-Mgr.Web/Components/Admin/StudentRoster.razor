@@ -896,6 +896,7 @@
                       DuplicateNoun="student code"
                       TemplateRows="@RosterTemplateRows"
                       TemplateFileStem="roster-import-template"
+                      MappingKey="roster"
                       StartAsync="@StartRosterImport"
                       LoadJobAsync="@LoadRosterJob"
                       LoadEntriesAsync="@LoadRosterEntries"
@@ -2921,12 +2922,23 @@
 
     private static readonly IReadOnlyList<ImportColumn> RosterImportColumns = new[]
     {
-        new ImportColumn("StudentFullName", true, "Student Name", "Student Full Name", "Name"),
-        new ImportColumn("StudentCode", false, "Student Code", "Admission No", "Admission Number", "Roll No", "Code"),
-        new ImportColumn("ClassName", false, "Class Name", "Class", "Grade", "Stream"),
-        new ImportColumn("GuardianFullName", false, "Guardian Name", "Guardian Full Name", "Parent Name"),
-        new ImportColumn("GuardianPhone", false, "Guardian Phone", "Phone", "Phone Number", "Mobile", "Contact"),
-        new ImportColumn("GuardianEmail", false, "Guardian Email", "Email", "Email Address"),
+        new ImportColumn("StudentFullName", true, "Student Name", "Student Full Name", "Name", "Pupil Name", "Learner Name")
+            { Kind = ImportFieldKind.Name,
+              Hint = "Kept whole, never split into first and last — W3C's own guidance, and the roll is read as written." },
+        new ImportColumn("StudentCode", false, "Student Code", "Admission No", "Admission Number", "Roll No", "Code", "Account")
+            { Kind = ImportFieldKind.Code },
+        // A school export writes the class in two columns — "Class" = S1 and "Stream" = A — and Q-Mgr
+        // stores the one value S1A. The join is the automatic guess and is shown in the mapping step,
+        // so a school that writes one column, or wants a separator, can say so (user decision 2026-09-21).
+        new ImportColumn("ClassName", false, "Class Name", "Class", "Grade", "Form")
+            { Kind = ImportFieldKind.Code, AlsoJoin = new[] { "Stream", "Section", "Arm" }, DefaultJoiner = "",
+              Hint = "Class and Stream are joined into one class name — S1 + A becomes S1A." },
+        new ImportColumn("GuardianFullName", false, "Guardian Name", "Guardian Full Name", "Parent Name")
+            { Kind = ImportFieldKind.Name },
+        new ImportColumn("GuardianPhone", false, "Guardian Phone", "Phone", "Phone Number", "Mobile", "Contact")
+            { Kind = ImportFieldKind.Phone },
+        new ImportColumn("GuardianEmail", false, "Guardian Email", "Email", "Email Address")
+            { Kind = ImportFieldKind.Email },
         new ImportColumn("Relationship", false, "Relation")
     };
 
@@ -3002,7 +3014,12 @@
         <span class="import-preview-sub">@(string.IsNullOrWhiteSpace(row.StudentCode) ? "no code" : row.StudentCode)@(string.IsNullOrWhiteSpace(row.ClassName) ? "" : " · " + row.ClassName)@(string.IsNullOrWhiteSpace(row.GuardianFullName) ? "" : " · " + row.GuardianFullName)</span>
     };
 
-    private async Task<Guid> StartRosterImport(List<RosterImportRow> rows)
+    /// <summary>
+    /// The roster import has always matched an existing student by code and refreshed their row, so
+    /// there is nothing to ask here: options carries the reader's answer for imports that DO ask, and
+    /// this one has no separate "add only" mode to offer. See docs/plans/BULK_IMPORT_SYSTEM.md §6.
+    /// </summary>
+    private async Task<Guid> StartRosterImport(List<RosterImportRow> rows, ImportOptions options)
     {
         var started = await StudentApi.StartImportAsync(branchId, new StartRosterImportRequest
         {

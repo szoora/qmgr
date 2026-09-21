@@ -577,7 +577,7 @@
         // The hub owns the URL; the sections carry no routes.
         hubTab = HubTabs.Resolve(hubTabs, TabParam);
         appliedTab = TabParam;
-        await LoadAsync(QueryTimetable);
+        await LoadAsync(QueryTimetable, opening: true);
     }
 
     /// <summary>
@@ -594,7 +594,7 @@
     }
 
 
-    private async Task LoadAsync(Guid? preferred)
+    private async Task LoadAsync(Guid? preferred, bool opening = false)
     {
         isLoading = true;
         try
@@ -616,7 +616,7 @@
                 }
                 catch { rooms = new(); classes = new(); }
             }
-            ChooseDefaultKey();
+            ChooseDefaultKey(opening);
         }
         catch (Exception ex)
         {
@@ -635,12 +635,20 @@
         versions = await StaffApi.GetTimetablesAsync(branchId);
     }
 
-    /// <summary>A teacher opening the page sees their own week; everybody else the first class.</summary>
-    private void ChooseDefaultKey()
+    /// <summary>
+    /// Picks a usable key for the view in front of the person. <paramref name="opening"/> is what also
+    /// lets a teacher's own week be the OPENING view: that is a default for ARRIVING at the page, never
+    /// a rule that may apply to a tab somebody has just pressed. Applying it on every call made the
+    /// Class tab unclickable for anyone who teaches - OnViewChanged clears the key, so the next line
+    /// flipped the axis straight back to Teacher and the press looked as though it had done nothing.
+    /// A timetable master is excluded as well: they opened the page to build the week, not to read
+    /// their own two lessons.
+    /// </summary>
+    private void ChooseDefaultKey(bool opening = false)
     {
         if (detail == null || by == "master") return;
         if (!string.IsNullOrEmpty(key) && KeyOptions.Any(o => o.Key == key)) return;
-        if (by == "class" && string.IsNullOrEmpty(QueryBy) && detail.Lessons.Any(l => l.TeacherUserId == me))
+        if (opening && !detail.CanManage && by == "class" && string.IsNullOrEmpty(QueryBy) && detail.Lessons.Any(l => l.TeacherUserId == me))
         {
             by = "teacher";
             key = me.ToString();

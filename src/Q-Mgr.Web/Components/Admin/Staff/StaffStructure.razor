@@ -7,6 +7,7 @@
 @using QMgr.Application.DTOs
 @using QMgr.Domain.Constants
 @using QMgr.Domain.Enums
+@using QMgr.Domain.Identity
 @using QMgr.Web.Services
 @using QMgr.Web.Components.Admin.Staff
 @inject IStaffPerformanceApiService StaffApi
@@ -180,22 +181,41 @@
                     An email already on file is left alone, not overwritten — the preview says so before you commit.
                 </p>
 
-                <QImportPanel TRow="StaffImportRow"
+                <QImportPanel TRow="StaffImportRow" @ref="importPanel" OnFileChosen="@(_ => firstFullName = null)"
                               BranchId="@branchId"
                               InputId="ss-import-file"
                               Noun="person"
                               Columns="@StaffImportColumns"
                               BuildRow="@BuildStaffRow"
-                              DuplicateKey="@(r => r.Email?.Trim().ToLowerInvariant())"
+                              DuplicateKey="@StaffDuplicateKey"
                               DuplicateNoun="email address"
                               TemplateRows="@StaffTemplateRows"
                               TemplateFileStem="staff-import-template"
+                              MappingKey="staff"
+                              CheckExistingAsync="@CheckStaffExisting"
                               StartAsync="@StartStaffImport"
                               LoadJobAsync="@LoadStaffJob"
                               LoadEntriesAsync="@LoadStaffEntries"
                               OnCompleted="@OnImportCompleted"
                               RowSummary="@StaffRowSummary">
                     <Options>
+                        @* ONE NAME COLUMN OR TWO. Nothing in "Abaho Jude" says which word is the
+                           surname — it is surname-first on a Ugandan roll and given-name-first on an
+                           Irish one — so this is asked, with the file's own first rows shown both
+                           ways, and never inferred. It only appears once a file has been read and it
+                           turns out to carry a single name column. *@
+                        @if (NameOrderMatters)
+                        {
+                            <fieldset class="ss-delivery">
+                                <legend>How the name column is written</legend>
+                                <label class="ss-radio"><input type="radio" name="ss-name-order" checked="@(nameOrder == NameOrder.FamilyFirst)" @onchange="@(() => SetNameOrder(NameOrder.FamilyFirst))" />
+                                    <span><strong>Surname first</strong> — @NameExample(NameOrder.FamilyFirst)</span></label>
+                                <label class="ss-radio"><input type="radio" name="ss-name-order" checked="@(nameOrder == NameOrder.GivenFirst)" @onchange="@(() => SetNameOrder(NameOrder.GivenFirst))" />
+                                    <span><strong>First name first</strong> — @NameExample(NameOrder.GivenFirst)</span></label>
+                                <p class="ss-sub">Taken from the first name in your file. A cell written
+                                    <em>Surname, First</em> with a comma is read that way whichever of these is chosen.</p>
+                            </fieldset>
+                        }
                         <fieldset class="ss-delivery">
                             <legend>How people get in</legend>
                             <label class="ss-radio"><input type="radio" name="ss-delivery" checked="@(deliveryMode == StaffImportDeliveryMode.Slips)" @onchange="@(() => deliveryMode = StaffImportDeliveryMode.Slips)" />
@@ -605,11 +625,24 @@
     /// </summary>
     private static readonly IReadOnlyList<ImportColumn> StaffImportColumns = new[]
     {
-        new ImportColumn("FirstName", true, "First Name", "First", "Given Name", "Forename"),
-        new ImportColumn("LastName", true, "Last Name", "Last", "Surname", "Family Name"),
-        new ImportColumn("Email", true, "E-mail", "Email Address", "Mail"),
-        new ImportColumn("Username", false, "User Name", "Login"),
-        new ImportColumn("Phone", false, "Telephone", "Mobile", "Phone Number", "Tel"),
+        new ImportColumn("FirstName", true, "First Name", "First", "Given Name", "Forename")
+            { Kind = ImportFieldKind.Name, SatisfiedBy = "FullName" },
+        new ImportColumn("LastName", true, "Last Name", "Last", "Surname", "Family Name")
+            { Kind = ImportFieldKind.Name, SatisfiedBy = "FullName" },
+        // Most school exports carry ONE name column, not two — "Staff Name: Abaho Jude". Mapping it
+        // satisfies the two above, and the order it is written in is asked rather than guessed: see
+        // the Options fieldset on this page and docs/plans/BULK_IMPORT_SYSTEM.md §4.1.
+        new ImportColumn("FullName", false, "Name", "Staff Name", "Full Name", "Names", "Employee Name", "Teacher Name")
+            { Kind = ImportFieldKind.Name, Label = "Full name (instead of the two above)",
+              Hint = "One column holding the whole name. Choose which way round it is written." },
+        // NOT required: most staff on a school roll have no address (133 of the first 184 imported).
+        // They sign in with a username and are handed a temporary password on a slip or by SMS. An
+        // INVITATION is the one delivery that needs one, and that row is refused with its reason.
+        new ImportColumn("Email", false, "E-mail", "Email Address", "Mail")
+            { Kind = ImportFieldKind.Email,
+              Hint = "Optional. Without one, the person signs in with a username and a temporary password." },
+        new ImportColumn("Username", false, "User Name", "Login") { Kind = ImportFieldKind.Code },
+        new ImportColumn("Phone", false, "Telephone", "Mobile", "Phone Number", "Tel") { Kind = ImportFieldKind.Phone },
         new ImportColumn("EmployeeNumber", false, "Employee No", "Staff Number", "Staff No", "Payroll Number"),
         new ImportColumn("JobTitle", false, "Job Title", "Title", "Position", "Designation"),
         new ImportColumn("RoleCode", false, "Role", "Role Code"),
@@ -633,10 +666,10 @@
     /// <summary>Two example rows, so the template shows the shape rather than only naming it.</summary>
     private static readonly IReadOnlyList<IReadOnlyList<string>> StaffTemplateRows = new[]
     {
-        new[] { "Grace", "Nakato", "g.nakato@school.ug", "", "0770123456", "EMP-014", "Teacher of Mathematics",
+        new[] { "Grace", "Nakato", "", "g.nakato@school.ug", "", "0770123456", "EMP-014", "Teacher of Mathematics",
                 "teacher", "MATH", "d.okello@school.ug", "", "S2A", "MATH:S2A,S2B", "15/01/2020", "",
                 "Permanent", "BSc Ed", "TRN-88213", "04/06/1988", "F", "CM00012345ABCD", "John Nakato", "0770987654" },
-        new[] { "Daniel", "Okello", "d.okello@school.ug", "", "0782555111", "EMP-002", "Head of Mathematics",
+        new[] { "Daniel", "Okello", "", "d.okello@school.ug", "", "0782555111", "EMP-002", "Head of Mathematics",
                 "head-of-department", "MATH", "", "", "", "MATH:S4A", "03/09/2015", "",
                 "Permanent", "MEd", "TRN-44120", "22/11/1980", "M", "", "Sarah Okello", "0782555112" }
     };
@@ -655,19 +688,56 @@
 
         var first = C("FirstName");
         var last = C("LastName");
+        var full = C("FullName");
         var email = C("Email");
+
+        // ONE COLUMN OR TWO. A file carrying a single name column fills the pair here, by the shared
+        // rule in PersonName, in the order the person chose above — the browser and the server split
+        // identically because they call the same function, so the preview is the import.
+        if (full.Length > 0 && (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(last)))
+        {
+            firstFullName ??= full;
+            var parts = PersonName.Split(full, nameOrder);
+            if (string.IsNullOrWhiteSpace(first)) first = parts.GivenName;
+            if (string.IsNullOrWhiteSpace(last)) last = parts.FamilyName;
+
+            // A one-word name is a real name, not a broken row: W3C's guidance is not to require a
+            // family name, and both name columns on the user are nullable. Say what was read and
+            // import it.
+            if (parts.SingleWord)
+                warnings.Add($"\"{full}\" is one word, so it was read as a first name with no surname.");
+        }
 
         if (string.IsNullOrWhiteSpace(first) && string.IsNullOrWhiteSpace(last) && string.IsNullOrWhiteSpace(email))
             return (null, "The row is empty.", warnings);
+        if (string.IsNullOrWhiteSpace(first) && string.IsNullOrWhiteSpace(last))
+            return (null, "The name is missing.", warnings);
         if (string.IsNullOrWhiteSpace(first)) return (null, "First name is missing.", warnings);
-        if (string.IsNullOrWhiteSpace(last)) return (null, "Last name is missing.", warnings);
-        if (string.IsNullOrWhiteSpace(email)) return (null, "Email is missing — it is how this person signs in.", warnings);
-        if (!ImportParsing.LooksLikeEmail(email)) return (null, $"\"{email}\" is not an email address.", warnings);
+        if (string.IsNullOrWhiteSpace(last) && full.Length == 0) return (null, "Last name is missing.", warnings);
+
+        // NO EMAIL ADDRESS IS NORMAL HERE, and the client refuses exactly what the server refuses:
+        // an invitation has nowhere to go without one. On a slip or by SMS the row imports and the
+        // warning says what will happen, naming the username they will actually type.
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            if (deliveryMode == StaffImportDeliveryMode.Invitation)
+                return (null, "No email address, so an invitation cannot be sent. Choose password slips or SMS, or add an address.", warnings);
+
+            var suggested = PersonName.SuggestUsername(first, last, null, C("EmployeeNumber"));
+            warnings.Add($"No email address — they will sign in as \"{suggested}\" with a temporary password.");
+        }
+        else if (!ImportParsing.LooksLikeEmail(email))
+        {
+            return (null, $"\"{email}\" is not an email address. Leave the cell empty if they have none.", warnings);
+        }
 
         var row = new StaffImportRow
         {
             FirstName = first,
             LastName = last,
+            // What the sheet actually said, kept so the import log can show it and so a row posted
+            // straight at the API without a split is still legal.
+            FullName = full.Length > 0 ? full : null,
             Email = email.Trim(),
             Username = C("Username") is { Length: > 0 } u ? u : null,
             EmployeeNumber = C("EmployeeNumber") is { Length: > 0 } en ? en : null,
@@ -735,7 +805,7 @@
     private RenderFragment<StaffImportRow> StaffRowSummary => row => __builder =>
     {
         <span class="ss-preview-name">@($"{row.FirstName} {row.LastName}".Trim())</span>
-        <span class="ss-preview-sub">@row.Email · @row.RoleCode@(row.DepartmentCodes.Count > 0 ? " · " + string.Join("/", row.DepartmentCodes) : "")</span>
+        <span class="ss-preview-sub">@(string.IsNullOrWhiteSpace(row.Email) ? "no email" : row.Email) · @row.RoleCode@(row.DepartmentCodes.Count > 0 ? " · " + string.Join("/", row.DepartmentCodes) : "")</span>
     };
 
     /// <summary>Emails the organization already has, keyed lower-case, filled by the precheck.</summary>
@@ -744,25 +814,101 @@
     /// <summary>The slips are offered only once the job has landed — before that the usernames are not settled.</summary>
     private bool importFinished;
 
-    private async Task<Guid> StartStaffImport(List<StaffImportRow> rows)
+    /// <summary>
+    /// What must not repeat within one file. The address where there is one — but most staff have
+    /// none, so it falls through to the school's own staff number and then to the name. Returning
+    /// null for a row with nothing to key on is deliberate: an unidentifiable row is never reported
+    /// as a duplicate of another unidentifiable row.
+    /// </summary>
+    private static string? StaffDuplicateKey(StaffImportRow r)
     {
-        // Ask the server who already exists BEFORE sending, so the summary afterwards cannot be the
-        // first time anybody learns that a third of the file was already on file. The answer is
-        // advisory — the import re-checks under its own transaction — so a failure here never blocks.
+        if (!string.IsNullOrWhiteSpace(r.Email)) return "e:" + r.Email.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(r.EmployeeNumber)) return "n:" + r.EmployeeNumber.Trim().ToLowerInvariant();
+        var name = PersonName.Join(r.FirstName, r.LastName).Trim().ToLowerInvariant();
+        return name.Length == 0 ? null : "p:" + name;
+    }
+
+    // ---- one name column or two ---------------------------------------------------------------
+    private QImportPanel<StaffImportRow>? importPanel;
+
+    /// <summary>
+    /// Which way round a combined name column is written. Surname first is the default because that
+    /// is how a Ugandan school roll is written and how both files this was built against are written
+    /// — but it is shown on screen with the file's own first name in it, so a school whose export
+    /// disagrees can see that at a glance rather than discovering it afterwards.
+    /// </summary>
+    private NameOrder nameOrder = NameOrder.FamilyFirst;
+
+    /// <summary>
+    /// Only worth asking when the file actually carried one combined name column — and asked at the
+    /// MAPPING step, before any row is built, which is why the value comes from the panel's view of
+    /// the file rather than from a row this page has already made.
+    /// </summary>
+    private bool NameOrderMatters => FirstFullName is { Length: > 0 };
+
+    private string? FirstFullName => importPanel?.FirstValueOf("FullName") ?? firstFullName;
+
+    private string? firstFullName;
+
+    private void SetNameOrder(NameOrder order)
+    {
+        nameOrder = order;
+        importPanel?.RebuildPreview();
+    }
+
+    /// <summary>The first row of THEIR file, split both ways, so the choice is concrete.</summary>
+    private string NameExample(NameOrder order)
+    {
+        var sample = FirstFullName;
+        if (string.IsNullOrWhiteSpace(sample)) return order == NameOrder.FamilyFirst ? "Nakato Grace" : "Grace Nakato";
+        var parts = PersonName.Split(sample, order);
+        return string.IsNullOrWhiteSpace(parts.FamilyName)
+            ? $"\"{sample}\" → {parts.GivenName}"
+            : $"\"{sample}\" → first name {parts.GivenName}, surname {parts.FamilyName}";
+    }
+
+    /// <summary>
+    /// Who in this file is already on the staff list. Asked BEFORE anything is sent — the panel turns
+    /// it into the question "update them, or add only the missing ones?", which is a decision rather
+    /// than a result to be reported afterwards. The answer is advisory: the import re-checks under its
+    /// own transaction, so a failure here never blocks the import.
+    /// </summary>
+    private async Task<ImportExisting> CheckStaffExisting(List<StaffImportRow> rows)
+    {
         try
         {
-            var precheck = await StaffApi.PrecheckStaffImportAsync(branchId,
-                new StaffImportPrecheckRequest { Emails = rows.Select(r => r.Email).ToList() });
-            existingEmails = precheck.Existing.ToDictionary(
-                e => e.NormalizedEmail,
-                e => string.IsNullOrWhiteSpace(e.FullName) ? "Somebody" : e.FullName,
-                StringComparer.OrdinalIgnoreCase);
+            var precheck = await StaffApi.PrecheckStaffImportAsync(branchId, new StaffImportPrecheckRequest
+            {
+                Emails = rows.Select(r => r.Email).Where(e => !string.IsNullOrWhiteSpace(e)).ToList(),
+                // The other half of the question, for everybody in the file with no address.
+                EmployeeNumbers = rows.Select(r => r.EmployeeNumber ?? string.Empty)
+                    .Where(n => !string.IsNullOrWhiteSpace(n)).ToList(),
+            });
+            existingEmails = precheck.Existing
+                .GroupBy(e => string.IsNullOrWhiteSpace(e.NormalizedEmail) ? (e.EmployeeNumber ?? string.Empty) : e.NormalizedEmail,
+                         StringComparer.OrdinalIgnoreCase)
+                .Where(g => !string.IsNullOrWhiteSpace(g.Key))
+                .ToDictionary(
+                    g => g.Key,
+                    g => string.IsNullOrWhiteSpace(g.First().FullName) ? "Somebody" : g.First().FullName,
+                    StringComparer.OrdinalIgnoreCase);
         }
-        catch { existingEmails = new(StringComparer.OrdinalIgnoreCase); }
+        catch
+        {
+            existingEmails = new(StringComparer.OrdinalIgnoreCase);
+            return ImportExisting.None;
+        }
 
+        return new ImportExisting(existingEmails.Count, existingEmails.Values.Take(3).ToList());
+    }
+
+    private async Task<Guid> StartStaffImport(List<StaffImportRow> rows, ImportOptions options)
+    {
         var started = await StaffApi.StartStaffImportAsync(branchId, new StartStaffImportRequest
         {
+            UpdateExisting = options.UpdateExisting,
             Rows = rows,
+            NameOrder = nameOrder,
             DeliveryMode = deliveryMode,
             SendInvites = deliveryMode == StaffImportDeliveryMode.Invitation,
             BatchTemporaryPassword = useBatchPassword && !string.IsNullOrWhiteSpace(batchPassword) ? batchPassword : null
@@ -852,7 +998,8 @@
 
     private static readonly IReadOnlyList<ExportColumn<StaffImportRow>> TemplateColumns = new List<ExportColumn<StaffImportRow>>
     {
-        new("FirstName", r => r.FirstName), new("LastName", r => r.LastName), new("Email", r => r.Email),
+        new("FirstName", r => r.FirstName), new("LastName", r => r.LastName),
+        new("FullName", r => r.FullName ?? string.Empty), new("Email", r => r.Email),
         new("Username", r => r.Username), new("Phone", r => r.Phone), new("EmployeeNumber", r => r.EmployeeNumber),
         new("JobTitle", r => r.JobTitle), new("RoleCode", r => r.RoleCode), new("DepartmentCodes", r => string.Join(";", r.DepartmentCodes)),
         new("LineManagerEmail", r => r.LineManagerEmail), new("DeliveryMode", r => r.DeliveryMode?.ToString().ToLowerInvariant()),

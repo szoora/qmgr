@@ -557,10 +557,13 @@ public class QMgrDbContext : DbContext
 
             var user = entry.Entity;
 
-            // Falling back to the raw address keeps the column non-empty for anything the
+            // NO ADDRESS AT ALL leaves both columns null — the unique index tolerates any number of
+            // those, where a shared empty string would let exactly one person exist without email.
+            // Otherwise: falling back to the raw address keeps the column non-empty for anything the
             // normalizer declines to interpret, so the unique index still separates those rows.
-            user.NormalizedEmail = RegistrationIdentity.NormalizeEmail(user.Email)
-                ?? user.Email.Trim().ToLowerInvariant();
+            user.NormalizedEmail = string.IsNullOrWhiteSpace(user.Email)
+                ? null
+                : RegistrationIdentity.NormalizeEmail(user.Email) ?? user.Email.Trim().ToLowerInvariant();
             user.NormalizedPhone = RegistrationIdentity.NormalizePhone(user.Phone);
         }
 

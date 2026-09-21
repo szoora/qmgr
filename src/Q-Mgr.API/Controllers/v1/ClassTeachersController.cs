@@ -265,7 +265,7 @@ public class ClassTeachersController : ControllerBase
                 {
                     UserId = u.Id,
                     FullName = $"{u.FirstName} {u.LastName}".Trim(),
-                    Email = u.Email
+                    Email = u.Email ?? string.Empty
                 })
                 .ToList(),
             UnknownStudentClasses = unknown,

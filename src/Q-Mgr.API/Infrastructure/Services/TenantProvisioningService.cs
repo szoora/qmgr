@@ -411,6 +411,9 @@ public class TenantProvisioningService : ITenantProvisioningService
             footerNote: "If you didn't request this email, you can safely ignore it.",
             showLinkFallback: true);
 
+        // No address, nothing to send: a staff member who signs in with a username and receives their
+        // password another way, not a failure to report. See docs/plans/STAFF_WITHOUT_EMAIL.md.
+        if (string.IsNullOrWhiteSpace(user.Email)) return false;
         return await _emailSender.SendAsync(user.Email, subject, htmlBody, cancellationToken);
     }
 

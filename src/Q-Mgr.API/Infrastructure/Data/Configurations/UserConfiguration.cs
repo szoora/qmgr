@@ -16,9 +16,10 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasMaxLength(100)
             .IsRequired();
 
+        // NOT required. Most staff on a school roll have no email address, and NULL is how that is
+        // stored — never "", which the unique index below would refuse the second time.
         builder.Property(u => u.Email)
-            .HasMaxLength(255)
-            .IsRequired();
+            .HasMaxLength(255);
 
         builder.Property(u => u.PasswordHash)
             .HasMaxLength(255)
@@ -46,6 +47,21 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasIndex(u => u.Email)
             .IsUnique()
             .HasDatabaseName("idx_users_email");
+
+        // Kept explicitly. EF drops a convention index the moment another index starts with the same
+        // column — and the composite below is PARTIAL ("where EmployeeNumber is not null"), so it
+        // cannot serve the tenant-scoped lookups that every single query in this product makes.
+        builder.HasIndex(u => u.OrganizationId)
+            .HasDatabaseName("IX_users_OrganizationId");
+
+        // A staff member with no email address is identified by the school's own staff number, so
+        // that number has to BE a key rather than a label. Partial, because most of the platform's
+        // users (a bank's counter staff, a tenant administrator) carry no employee number at all and
+        // any number of those nulls must be able to coexist.
+        builder.HasIndex(u => new { u.OrganizationId, u.EmployeeNumber })
+            .IsUnique()
+            .HasFilter("\"EmployeeNumber\" IS NOT NULL")
+            .HasDatabaseName("idx_users_employee_number_unique");
 
         builder.HasOne(u => u.Organization)
             .WithMany()

@@ -770,7 +770,7 @@ public class RosterImportProcessorJob
                         try { temporary = protector.Unprotect(sealedPassword); }
                         catch (Exception ex) { _logger.LogWarning(ex, "RosterImportJob {JobId}: a temporary password could not be unsealed (key expired?)", job.Id); }
                     }
-                    return ProcessStaffRowAsync(job, row, rowNumber, mode, temporary, context, created);
+                    return ProcessStaffRowAsync(job, row, rowNumber, mode, temporary, context, created, request.NameOrder, request.UpdateExisting);
                 },
                 row => new RosterImportJobEntry { StudentName = $"{row.FirstName} {row.LastName}".Trim(), StudentCode = row.EmployeeNumber, GuardianName = row.Email });
         }
@@ -801,10 +801,15 @@ public class RosterImportProcessorJob
         {
             try
             {
+                // A line manager is named by their email address, or — since most school staff have
+                // none — by their staff number, which is unique within the organization.
                 var normalized = RegistrationIdentity.NormalizeEmail(managerEmail);
-                if (normalized == null) continue;
+                var byNumber = (managerEmail ?? string.Empty).Trim();
+                if (normalized == null && byNumber.Length == 0) continue;
                 var managerId = await _context.Users.IgnoreQueryFilters().AsNoTracking()
-                    .Where(u => u.OrganizationId == job.OrganizationId && u.NormalizedEmail == normalized && u.IsActive && u.Id != userId)
+                    .Where(u => u.OrganizationId == job.OrganizationId && u.IsActive && u.Id != userId
+                                && ((normalized != null && u.NormalizedEmail == normalized)
+                                    || (byNumber.Length > 0 && u.EmployeeNumber == byNumber)))
                     .Select(u => (Guid?)u.Id)
                     .FirstOrDefaultAsync();
                 if (managerId == null)
@@ -858,11 +863,83 @@ public class RosterImportProcessorJob
         }
     }
 
-    private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, StaffImportDeliveryMode? delivery, string? temporaryPassword, StaffImportContext ctx, List<(Guid, string?)> created)
+    /// <summary>
+    /// The person is already here and the import was told to update them. ONLY their details move, and
+    /// a value the file leaves blank is left alone rather than blanked: a staff list that happens not
+    /// to carry a column must never erase what somebody typed into the product. Role, permissions,
+    /// branch, username, email and password are untouched by design.
+    /// </summary>
+    private async Task UpdateExistingStaffAsync(RosterImportJob job, StaffImportRow row, RosterImportJobEntry entry,
+        Guid userId, string firstName, string lastName)
+    {
+        var user = await _context.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null)
+        {
+            entry.Outcome = RosterImportRowOutcome.Failed;
+            entry.Message = "That account could not be re-read to update it.";
+            job.FailedCount++;
+            _context.RosterImportJobEntries.Add(entry);
+            return;
+        }
+
+        var changed = new List<string>();
+        void Set(string field, string? value, Action<string> apply, string? current)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            var v = value.Trim();
+            if (string.Equals(v, current, StringComparison.Ordinal)) return;
+            apply(v);
+            changed.Add(field);
+        }
+
+        Set("first name", firstName, v => user.FirstName = v, user.FirstName);
+        Set("surname", lastName, v => user.LastName = v, user.LastName);
+        Set("phone", row.Phone, v => user.Phone = v, user.Phone);
+        Set("employee number", row.EmployeeNumber, v => user.EmployeeNumber = v, user.EmployeeNumber);
+        Set("job title", row.JobTitle, v => user.JobTitle = v, user.JobTitle);
+        Set("qualification", row.Qualification, v => user.Qualification = v, user.Qualification);
+        Set("registration number", row.TeachingRegistrationNumber, v => user.TeachingRegistrationNumber = v, user.TeachingRegistrationNumber);
+        Set("national ID", row.NationalId, v => user.NationalId = v, user.NationalId);
+        Set("emergency contact", row.EmergencyContactName, v => user.EmergencyContactName = v, user.EmergencyContactName);
+        Set("emergency phone", row.EmergencyContactPhone, v => user.EmergencyContactPhone = v, user.EmergencyContactPhone);
+
+        if (StaffFieldParsing.Date(row.StartDate) is { } start && user.EmploymentStartDate != start)
+        { user.EmploymentStartDate = start; changed.Add("start date"); }
+        if (StaffFieldParsing.Date(row.EndDate) is { } end && user.EmploymentEndDate != end)
+        { user.EmploymentEndDate = end; changed.Add("end date"); }
+        if (StaffFieldParsing.Date(row.DateOfBirth) is { } dob && user.DateOfBirth != dob)
+        { user.DateOfBirth = dob; changed.Add("date of birth"); }
+        if (StaffFieldParsing.EmploymentType(row.EmploymentType) is { } terms && user.EmploymentType != terms)
+        { user.EmploymentType = terms; changed.Add("employment terms"); }
+        if (StaffFieldParsing.Sex(row.Sex) is { } sex && user.Sex != sex)
+        { user.Sex = sex; changed.Add("sex"); }
+
+        user.UpdatedAt = DateTime.UtcNow;
+        entry.Outcome = RosterImportRowOutcome.Updated;
+        entry.Message = changed.Count == 0
+            ? "Already here, and nothing in the file was different."
+            : "Updated: " + string.Join(", ", changed) + ".";
+        job.UpdatedCount++;
+        _context.RosterImportJobEntries.Add(entry);
+    }
+
+    private async Task ProcessStaffRowAsync(RosterImportJob job, StaffImportRow row, int rowNumber, StaffImportDeliveryMode? delivery, string? temporaryPassword, StaffImportContext ctx, List<(Guid, string?)> created, NameOrder nameOrder = NameOrder.GivenFirst, bool updateExisting = false)
     {
         var sendInvites = delivery == StaffImportDeliveryMode.Invitation;
         var firstName = (row.FirstName ?? "").Trim();
         var lastName = (row.LastName ?? "").Trim();
+
+        // A row may arrive with ONE combined name instead of two — that is how most school exports are
+        // written ("Staff Name: Abaho Jude"), and the browser has usually split it already. This is the
+        // same split, by the same shared rule, for a caller that did not: an integration posting rows
+        // straight at the API, or an older client. The server never invents the order; it uses the one
+        // the batch carries. See docs/plans/BULK_IMPORT_SYSTEM.md §4.1.
+        if ((firstName.Length == 0 || lastName.Length == 0) && !string.IsNullOrWhiteSpace(row.FullName))
+        {
+            var parts = PersonName.Split(row.FullName, nameOrder);
+            if (firstName.Length == 0) firstName = parts.GivenName;
+            if (lastName.Length == 0) lastName = parts.FamilyName;
+        }
         var email = (row.Email ?? "").Trim();
         var entry = new RosterImportJobEntry
         {
@@ -882,13 +959,25 @@ public class RosterImportProcessorJob
         }
 
         var missing = new List<string>();
-        if (firstName.Length == 0) missing.Add("first name");
-        if (lastName.Length == 0) missing.Add("last name");
-        if (email.Length == 0) missing.Add("email");
+        if (firstName.Length == 0 && lastName.Length == 0) missing.Add("name");
         if (missing.Count > 0) { Fail($"Missing required field(s): {string.Join(", ", missing)}."); return; }
 
-        var normalizedEmail = RegistrationIdentity.NormalizeEmail(email);
-        if (normalizedEmail == null || !email.Contains('@') || email.StartsWith('@') || email.EndsWith('@')) { Fail($"'{email}' is not a valid email address."); return; }
+        // AN EMAIL ADDRESS IS OPTIONAL — most staff on a school roll have none. It is required only
+        // for an INVITATION, which has nowhere to go without one; a slip or an SMS needs no address
+        // and the person signs in with the username built below. docs/plans/STAFF_WITHOUT_EMAIL.md.
+        string? normalizedEmail = null;
+        if (email.Length > 0)
+        {
+            normalizedEmail = RegistrationIdentity.NormalizeEmail(email);
+            // The SAME shape check the browser ran (ImportRules), so the preview and the import cannot
+            // disagree about what an address is, plus the normalisation that identity is keyed on.
+            if (normalizedEmail == null || !ImportRules.LooksLikeEmail(email)) { Fail($"'{email}' is not a valid email address."); return; }
+        }
+        else if (delivery == StaffImportDeliveryMode.Invitation)
+        {
+            Fail("No email address, so an invitation cannot be sent. Give them one, or import with temporary password slips or SMS.");
+            return;
+        }
 
         var roleCode = string.IsNullOrWhiteSpace(row.RoleCode) ? RoleCodes.Teacher : row.RoleCode.Trim();
         if (!ctx.RolesByCode.TryGetValue(roleCode, out var role))
@@ -909,16 +998,37 @@ public class RosterImportProcessorJob
             return;
         }
 
-        // Existing account, by email (globally unique) — skipped as a per-row outcome, never overwritten.
-        var existing = await _context.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.NormalizedEmail == normalizedEmail)
-            .Select(u => new { u.Id, u.OrganizationId })
-            .FirstOrDefaultAsync();
+        // Existing account, by email (globally unique). Left untouched unless the person importing
+        // asked for their details to be updated — and even then only their DETAILS: role, permissions,
+        // branch and password are never an import's to change. Somebody belonging to another tenant is
+        // never updated from here whatever was asked, because they are not this organization's to edit.
+        // WHO IS THIS PERSON ALREADY: the address where there is one, otherwise the school's own
+        // staff number, which carries a per-organization unique index for exactly this reason. A row
+        // with neither cannot be recognised at all and is always treated as somebody new.
+        var employeeNumber = string.IsNullOrWhiteSpace(row.EmployeeNumber) ? null : row.EmployeeNumber.Trim();
+        var existing = normalizedEmail != null
+            ? await _context.Users.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => u.NormalizedEmail == normalizedEmail)
+                .Select(u => new { u.Id, u.OrganizationId })
+                .FirstOrDefaultAsync()
+            : employeeNumber == null ? null
+            : await _context.Users.IgnoreQueryFilters().AsNoTracking()
+                .Where(u => u.OrganizationId == job.OrganizationId && u.EmployeeNumber == employeeNumber)
+                .Select(u => new { u.Id, u.OrganizationId })
+                .FirstOrDefaultAsync();
         if (existing != null)
         {
+            if (updateExisting && existing.OrganizationId == job.OrganizationId)
+            {
+                await UpdateExistingStaffAsync(job, row, entry, existing.Id, firstName, lastName);
+                return;
+            }
+
             entry.Outcome = RosterImportRowOutcome.AlreadyExists;
             entry.Message = existing.OrganizationId == job.OrganizationId
-                ? "An account with this email already exists in this organization — left unchanged."
+                ? (normalizedEmail != null
+                    ? "An account with this email already exists in this organization — left unchanged."
+                    : $"Staff number {employeeNumber} already belongs to somebody in this organization — left unchanged.")
                 : "An account with this email already exists elsewhere on the platform — left unchanged.";
             job.DuplicateCount++;
             _context.RosterImportJobEntries.Add(entry);
@@ -927,9 +1037,9 @@ public class RosterImportProcessorJob
 
         // Username: the one given, else the email's local part; made unique with a numeric suffix
         // because idx_users_username is global.
-        var baseUsername = (string.IsNullOrWhiteSpace(row.Username) ? email[..email.IndexOf('@')] : row.Username.Trim()).ToLowerInvariant();
-        baseUsername = new string(baseUsername.Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-').ToArray());
-        if (baseUsername.Length < 3) baseUsername = $"user{Guid.NewGuid():N}"[..12];
+        var baseUsername = string.IsNullOrWhiteSpace(row.Username)
+            ? PersonName.SuggestUsername(firstName, lastName, email, employeeNumber)
+            : PersonName.SuggestUsername(null, null, row.Username.Trim() + "@x", null);
         var username = baseUsername;
         for (var suffix = 2; await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.Username == username); suffix++)
             username = $"{baseUsername}{suffix}";
@@ -950,7 +1060,9 @@ public class RosterImportProcessorJob
             Id = Guid.NewGuid(),
             OrganizationId = job.OrganizationId,
             Username = username,
-            Email = email.ToLowerInvariant(),
+            // Null, never "": two staff with no address must both be storable, and an empty
+            // string would collide on the unique index the second time.
+            Email = email.Length == 0 ? null : email.ToLowerInvariant(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(randomPassword),
             FirstName = firstName,
             LastName = lastName,
@@ -1047,7 +1159,7 @@ public class RosterImportProcessorJob
         {
             if (ctx.BaseUrl == "https://qmgr.app")
                 ctx.BaseUrl = await _platformSettings.GetPublicWebBaseUrlAsync();
-            var resetUrl = $"{ctx.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(user.PasswordResetToken!)}";
+            var resetUrl = $"{ctx.BaseUrl}/reset-password?email={Uri.EscapeDataString(user.Email ?? string.Empty)}&token={Uri.EscapeDataString(user.PasswordResetToken!)}";
 
             var subject = $"You have been added to {ctx.OrganizationName} on {Email.EmailTemplates.AppName} — set your password";
             var html = Email.EmailTemplates.Layout(

@@ -73,7 +73,7 @@ public class AuthController : ControllerBase
         // step and is told, once their password checks out, that they are waiting (plan §12.4).
         var query = _dbContext.Users
             .Include(u => u.Organization)
-            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier)
+            .Where(u => ((u.Email != null && u.Email.ToLower() == identifier) || u.Username.ToLower() == identifier)
                         && (u.IsActive || (u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null)));
 
         // If subdomain is resolved, scope to that organization only
@@ -100,7 +100,7 @@ public class AuthController : ControllerBase
 
         return Ok(new IdentifyResponse
         {
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             OrganizationId = user.OrganizationId,
             OrganizationName = user.Organization?.Name ?? "Unknown",
             OrganizationSlug = user.Organization?.Slug ?? "",
@@ -126,7 +126,7 @@ public class AuthController : ControllerBase
             .ThenInclude(r => r.RolePermissions)
             .ThenInclude(rp => rp.Permission)
             .Include(u => u.Organization)
-            .Where(u => (u.Email.ToLower() == identifier || u.Username.ToLower() == identifier)
+            .Where(u => ((u.Email != null && u.Email.ToLower() == identifier) || u.Username.ToLower() == identifier)
                         && (u.IsActive || (u.PendingApprovalAt != null && u.JoinRequestRejectedAt == null)));
 
         // Priority 1: Subdomain-scoped (tenant resolved from URL)
@@ -218,7 +218,7 @@ public class AuthController : ControllerBase
                 {
                     Id = user.Id,
                     Username = user.Username,
-                    Email = user.Email,
+                    Email = user.Email ?? string.Empty,
                     FullName = user.FullName,
                     RoleId = user.RoleId,
                     RoleCode = user.Role.Code,
@@ -267,7 +267,7 @@ public class AuthController : ControllerBase
             {
                 Id = user.Id,
                 Username = user.Username,
-                Email = user.Email,
+                Email = user.Email ?? string.Empty,
                 FullName = user.FullName,
                 RoleId = user.RoleId,
                 RoleCode = user.Role.Code,
@@ -392,7 +392,7 @@ public class AuthController : ControllerBase
             {
                 Id = user.Id,
                 Username = user.Username,
-                Email = user.Email,
+                Email = user.Email ?? string.Empty,
                 FullName = user.FullName,
                 RoleId = user.RoleId,
                 RoleCode = user.Role.Code,
@@ -442,7 +442,7 @@ public class AuthController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             FullName = user.FullName,
             RoleId = user.RoleId,
             RoleCode = user.Role.Code,
@@ -483,7 +483,9 @@ public class AuthController : ControllerBase
         var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            // A staff member may have no address at all; an empty email claim would be a lie that
+            // anything reading the token has to special-case. It is simply absent instead.
+            new Claim(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new Claim(ClaimTypes.Name, user.Username),
             new Claim(ClaimTypes.Role, user.Role.Code), // Use role code from database
@@ -573,7 +575,7 @@ public class AuthController : ControllerBase
         try
         {
             var email = request.Email.Trim().ToLowerInvariant();
-            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.IsActive);
+            var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email != null && u.Email.ToLower() == email && u.IsActive);
 
             if (user != null)
             {
@@ -582,7 +584,7 @@ public class AuthController : ControllerBase
                 user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1);
                 await _dbContext.SaveChangesAsync();
 
-                await SendPasswordResetEmailAsync(user.Email, user.FirstName, token, user.OrganizationId);
+                await SendPasswordResetEmailAsync(user.Email!, user.FirstName, token, user.OrganizationId);
                 _logger.LogInformation("Password reset requested for {Email}", user.Email);
             }
         }
@@ -627,7 +629,7 @@ public class AuthController : ControllerBase
         }
 
         var email = request.Email.Trim().ToLowerInvariant();
-        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.IsActive);
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email != null && u.Email.ToLower() == email && u.IsActive);
 
         // Deliberately the same "invalid or expired" message whether the email doesn't exist,
         // the token doesn't match, or it's simply expired - never confirms which case applies.

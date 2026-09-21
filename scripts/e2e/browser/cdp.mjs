@@ -15,7 +15,7 @@ export async function openTab() {
     else if (msg.method) listeners.forEach(l => l(msg));
   };
   const send = (method, params = {}) => new Promise((resolve, reject) => { const i = ++id; pending.set(i, { resolve, reject }); ws.send(JSON.stringify({ id: i, method, params })); });
-  await send('Page.enable'); await send('Runtime.enable');
+  await send('Page.enable'); await send('Runtime.enable'); await send('DOM.enable');
   const consoleErrors = [];
   listeners.push(m => {
     if (m.method === 'Runtime.exceptionThrown') consoleErrors.push(m.params.exceptionDetails?.exception?.description ?? m.params.exceptionDetails?.text);
@@ -52,6 +52,15 @@ export async function openTab() {
     async clickText(text, selector = 'button, a') {
       return tab.eval(`(() => { const els = [...document.querySelectorAll(${JSON.stringify(selector)})].filter(e => e.offsetParent !== null && e.textContent.trim().includes(${JSON.stringify(text)}));
         if (!els.length) return false; els[0].click(); return true; })()`);
+    },
+    // Hands a real file to a real <input type="file">. Blazor's InputFile listens for the change
+    // event, which CDP fires itself — this is the only way to drive an import end to end.
+    async setFiles(selector, paths) {
+      const { root } = await send('DOM.getDocument', { depth: 1 });
+      const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector });
+      if (!nodeId) return false;
+      await send('DOM.setFileInputFiles', { files: paths, nodeId });
+      return true;
     },
     close() { ws.close(); }
   };

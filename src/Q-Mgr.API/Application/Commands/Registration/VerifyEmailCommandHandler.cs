@@ -114,7 +114,7 @@ public class ResendVerificationCommandHandler : IRequestHandler<ResendVerificati
         try
         {
             var user = await _unitOfWork.Users.FirstOrDefaultAsync(
-                u => u.Email.ToLower() == request.Email.ToLower(),
+                u => u.Email != null && u.Email.ToLower() == request.Email.ToLower(),
                 cancellationToken);
 
             if (user != null)

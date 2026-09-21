@@ -440,12 +440,12 @@ public class BatchOperationService : IBatchOperationService
         {
             if (u.IsActive == activating)
             {
-                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? u.Email : u.Name, u.Email,
+                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                     RosterImportRowOutcome.Skipped, u.IsActive ? "Active" : "Inactive", null, "No change needed."));
                 continue;
             }
 
-            rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? u.Email : u.Name, u.Email,
+            rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                 RosterImportRowOutcome.Updated, u.IsActive ? "Active" : "Inactive", activating ? "Active" : "Inactive",
                 activating ? "Account enabled" : "Account disabled — they can no longer sign in"));
         }
@@ -485,12 +485,12 @@ public class BatchOperationService : IBatchOperationService
         {
             if (u.RoleId == role.Id)
             {
-                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? u.Email : u.Name, u.Email,
+                rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                     RosterImportRowOutcome.Skipped, u.RoleName, role.Name, "Already on that role."));
                 continue;
             }
 
-            rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? u.Email : u.Name, u.Email,
+            rows.Add(Row(u.Id, string.IsNullOrWhiteSpace(u.Name) ? (u.Email ?? "Unknown") : u.Name, u.Email,
                 RosterImportRowOutcome.Updated, u.RoleId.ToString(), role.Id.ToString(), $"{u.RoleName} → {role.Name}"));
         }
 

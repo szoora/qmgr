@@ -675,8 +675,8 @@ identifier: " with an empty name and returns 401.
 There are three doors and every check lives behind one of them:
 
     bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 20 sections, 7 Node suites inside it
-    bash scripts/e2e/guards.sh              # the 8 static guards — no server, seconds, run by rebuild.sh
-    node scripts/e2e/browser/all.mjs        # the 23 browser suites, against a local headless Chrome
+    bash scripts/e2e/guards.sh              # the 9 static guards — no server, seconds, run by rebuild.sh
+    node scripts/e2e/browser/all.mjs        # the 25 browser suites, against a local headless Chrome
 
 **A suite nothing calls reports nothing.** Sections 15, 17 and 18 each existed, each passed
 standalone, and were never called by the shell runner — so for weeks a "full run" under-reported by
@@ -729,6 +729,84 @@ Two things follow from this that are worth stating plainly:
   has no DELETE endpoint by design — it is append-only. Dummy records created there stay. Label
   them plainly (`Dummy record … Safe to delete`), say so in the handover, and leave removal to the
   database owner rather than reaching for SQL.
+
+### Four warning codes are BUILD ERRORS, and that is deliberate (2026-09-21)
+
+`CS0649;CS0472;CS0168;RZ10012` are in `WarningsAsErrors` in all three project files. **Do not take
+them back out to get a build through** — every one of the four has already produced a silent,
+user-visible bug in this codebase, and in each case the compiler had been reporting it on every
+build for days while nobody read it:
+
+- **CS0649 — field never assigned.** `StaffMinutes.meId` stayed `Guid.Empty`, so
+  `a.AssignedUserId == meId` was false for everybody and **nobody could close their own minute
+  action point**, ever. The roster import's null `SourceFileName` was the same code.
+- **CS0649 again — `WelfareReports.pageIndex`**, never assigned with no pager on the page at all, so
+  a safeguarding search matching 200 records rendered 50 and said nothing.
+- **CS0472 — a comparison that is always true.** `r.Outcome != null` on a non-nullable
+  `DutyOutcome`, which let unmarked records into a meeting's attendance and undercut the rule the
+  whole feature rests on: attendance is the register, never retyped.
+- **RZ10012 — an unresolved component tag**, which renders as inert literal HTML rather than
+  erroring. `<RedirectToLogin />` sat out of tag scope for weeks doing nothing.
+
+The remaining ~21 warnings are nullable-reference noise and stay warnings. The cost of the bar is
+that a half-written field stops the build while you are still writing it; that was accepted
+knowingly. **If a fifth code earns its place, add it here and say which bug bought it.**
+
+## A staff member may have NO EMAIL ADDRESS, and most of them do not (2026-09-21)
+
+`User.Email` and `User.NormalizedEmail` are **nullable**. 133 of the 184 staff on the first real
+school list this product imported have no address, and the old schema could not store that at all —
+two unique indexes sit on those columns, so an empty string would have been refused the second time.
+**NULL, never "": PostgreSQL treats NULLs as distinct, which is the single fact this whole change
+rests on.** The plan is `docs/plans/STAFF_WITHOUT_EMAIL.md`; the rules:
+
+- **Three keys identify a person, in this order: email → employee number → username.** The staff
+  number is no longer a label: `idx_users_employee_number_unique` is a per-organization partial
+  unique index on `(OrganizationId, EmployeeNumber)`, and the import, the precheck and the add-staff
+  dialog all key on it for anybody with no address. `PersonName.SuggestUsername` is the ONE home for
+  what an account is called when there is no address to take it from.
+- **Sign-in already worked and still does** — `Email == identifier OR Username == identifier`, a
+  2026-08-21 decision. But the null test comes FIRST in that predicate now: `u.Email.ToLower() == ""`
+  would otherwise match every emailless person the moment an empty identifier was posted.
+- **A missing address is never a refusal; a MALFORMED one always is.** The importer warns and names
+  the username the person will type; the only refusal is an INVITATION delivery, which has nowhere
+  to go. The client refuses exactly what the server refuses, in the same words.
+- **Sending degrades, it does not fail.** A null address means the email channel is *skipped with a
+  reason* — never `Success = false`, which is the delivery log's standing rule. Every sender is
+  guarded at the point of send (`TenantProvisioningService`, `StaffOnboardingController`), not hoped
+  for.
+- **An empty cell in a list is a bug; "No email address" is a fact.** Users & Roles, the staff
+  record, the class-teacher card and the import preview all say it.
+- **The one real loss, and the school must be told: they cannot reset their own password.** Every
+  reset for those 133 is an administrator issuing a temporary one — by SMS where there is a number
+  (164 of the 184 rows carry one), on a printed slip where there is not.
+- **`EmployeeNumber` on a create request is load-bearing**, and a duplicate is refused in words
+  rather than left to surface as a unique-index violation nobody can read.
+- Verified by **section 22** (`staff-no-email-e2e.mjs`, 17 checks) and the import wizard's browser
+  suite (22 checks). The staff list went **49 ready → 182 ready**; the two remaining refusals are
+  typos in the school's own file.
+
+### A component parameter Razor never checks, and the guard that does (2026-09-21)
+
+
+**`<QModal Open="@askOpen">` compiled, shipped, and killed My Workspace's teaching tab.** QModal
+takes `Visible`. An unknown parameter is not a compile error of any kind, so Blazor threw *"Object of
+type 'QMgr.Web.Components.Shared.UI.QModal' does not have a property matching the name 'Open'"* the
+first time the component rendered, the circuit was torn down, and the whole page became "An unhandled
+error has occurred" with nothing left on it. The build was clean and the self-service API suite
+(section 21) passed throughout — it is a curl suite, and a tab is client-side.
+
+- **`scripts/e2e/component-param-check.mjs` is the guard**, in `guards.sh`: every parameter passed to
+  one of our own components must exist on it. It skips a component that captures unmatched values,
+  and it skips attribute VALUES including the quotes that nest inside an `@( … )` — reading a
+  lambda's own `=>` as a parameter name is what made its first draft report 200 findings that were
+  not there. It is the same class as RZ10012, except that the compiler says nothing at all.
+- **`scripts/e2e/browser/portal-tabs.mjs` is the layer above it.** A tab can be killed by any
+  exception on its first render, not only by a bad parameter name, and the only way to see that is to
+  open it: all four My Workspace tabs, by deep link and by press, as a teacher and as an
+  administrator, failing on a visible `#blazor-error-ui`.
+- **The rule this belongs to: a hub's tab is not verified until something OPENS it.** Four tabs
+  shipped with nothing in any browser suite touching them, on a page every member of staff lands on.
 
 ### Running it locally — and the browser DOES work, found 2026-09-09
 
@@ -850,6 +928,60 @@ SECOND alias map in the same file. The roster and the staff list moved to the sh
   no Excel library — that part is the standing no-server-dependencies rule and is unchanged.
 - **The aliases a spreadsheet may use are carried across verbatim** whenever an import moves, so no
   sheet that used to import stops importing. The welfare set is in `WelfareReports.razor`.
+### The import is a WIZARD now, and the mapping is the reader's (2026-09-21)
+
+Built against two files a real school exports, both of which the old importer could not read at all:
+`Staff List.xlsx` (184 staff — a TITLE in row 1, headers on row 2, one name column written surname
+first) and `Students_2026-09-21.xls` (1,711 students — an **HTML table wearing an .xls name**, SHOUTED
+names, and the class split over `Class` + `Stream`). The plan is `docs/plans/BULK_IMPORT_SYSTEM.md`;
+the rules that are easy to break:
+
+- **Three steps, and the middle one is the feature**: choose a file → **match the columns** → check and
+  import. Alias matching is only the first GUESS; the reader sees every match, can change it, and is
+  told which of their columns were read and ignored. A header we do not recognise used to be lost in
+  silence, which is how a school's own export becomes "the import does not work".
+- **`ImportParsing.ReadGrid` finds the header ROW**, scanning the first twelve for the one that matches
+  the most declared columns. Assuming row 1 is why a file with a title in A1 refused every row.
+- **A field can take TWO columns** (`ImportBinding.Sources` + `Joiner`): `Class` + `Stream` → `S1A`,
+  declared as `AlsoJoin` on the column so the join is automatic and still visible. And ONE column can
+  fill two fields — a combined name — through `PersonName`, never a generic "split on character N",
+  which produces silent rubbish.
+- **`PersonName` in `Q-Mgr.Shared` is the ONE home for a name split.** A comma always wins and always
+  means `Family, Given`; particles stay with the family name; a one-word name WARNS rather than
+  refusing (W3C: never require a family name). **The order is ASKED, never guessed** — the picker shows
+  the file's own first name split both ways — because "Abaho Jude" is surname-first in Kampala and
+  given-name-first in Cork. Default: family first. **A student is never split at all**; they keep one
+  `FullName`, which is what the schema already did and is now a cited decision.
+- **`ImportColumn.SatisfiedBy` is how REQUIRED means "this, or that"**: first and last name are required
+  unless a combined name column is mapped, and the badge then reads *Covered*.
+- **Cleaning is two tiers and it is SAID.** Always and unswitchable: trim, collapse, strip zero-width
+  and control characters (an invisible `U+200B` is how one person is imported twice). Switchable, with
+  a count shown — un-SHOUTING a name (never touching one already mixed case, so `McDonald` survives),
+  normalising a phone number, folding an email's case. The panel prints *"164 phone numbers normalised
+  · 2 names tidied out of capitals"*.
+- **`ImportRules` in `Q-Mgr.Shared` is what BOTH sides run.** A row the preview called good and the
+  import then refuses, in different words, is the worst answer an import can give. `CsvWriter.Field`
+  also neutralises a leading `=`, `+`, `@`, tab or CR (OWASP CSV injection / CWE-1236) — quoting does
+  not stop Excel running a formula; only the apostrophe does. A leading minus is left alone when the
+  value parses as a number, or every negative figure in every export would be mangled.
+- **Duplicates are a QUESTION, asked before anything is sent** (`CheckExistingAsync` → "23 of these are
+  already here"), not a result reported afterwards. Answering *update* updates a person's DETAILS only:
+  **role, permissions, branch, username, email and password are never an import's to change**, a blank
+  cell never blanks a stored value, and somebody belonging to another tenant is never touched whatever
+  was asked.
+- **JSON and NDJSON are read too**, flattened to dot paths onto the same grid, so nothing downstream
+  knows. An array inside a row is joined and warned about rather than becoming rows — inventing rows
+  silently changes the record count.
+- **A page's `Options` render on every step except the running one.** The name-order question was first
+  put on the FILE step, where no row has been read yet and the question cannot be asked; an option that
+  changes how a row is BUILT belongs beside the rows. `QImportPanel.FirstValueOf(field)` is how a page
+  asks a question about the data at the mapping step.
+- **Verified by `scripts/e2e/browser/import-wizard.mjs` — 19 checks, 0 failed, against the two real
+  files.** It stops before pressing Import: reading the file correctly is what is under test, and
+  importing 1,711 students on every run leaves a mess for somebody. **133 of the 184 staff have no
+  email address**, which the staff import treats as identity — that is a question for the school, and
+  it is §11 of the plan, not a bug.
+
 - **`OnFileChosen` is how the page learns the file name** for `SourceFileName` on the job. The roster
   passed a field nothing ever assigned once its own file picker moved into the panel — CS0649 on
   every build — so every roster import since has recorded a null name in the Import History.
@@ -2575,6 +2707,25 @@ The plan is `docs/plans/DUTY_ROTA_AND_TIMETABLE.md`; progress and the resume poi
     The toggle is deliberately NOT in the URL — `?key=` is the *selection*, which must be linkable; this is a
     preference about the same selection.
 
+### An opening default is not a rule about a tab somebody just pressed (2026-09-21)
+
+Reported from production as *"that class tab not working. previously default tab was class"*.
+`ChooseDefaultKey` carried the editor's OPENING default — a teacher arriving at `/admin/timetable`
+sees their own week — and `OnViewChanged` called it on every press. Pressing **Class** clears the
+key, the next line saw an empty key, and the axis flipped straight back to **Teacher**: the Class tab
+was unpressable for anybody who taught a single lesson, the timetable master included. Nothing looked
+broken, which is why it survived — the press simply appeared to do nothing.
+
+- **A default belongs to ARRIVING at a page.** `ChooseDefaultKey(opening: true)` is passed only from
+  `OnInitializedAsync`; every other caller — a view change, a version switch, a new draft — picks a
+  usable key and leaves the axis where the person put it.
+- **A timetable master opens on Class**, never on their own two lessons: they came to build the week.
+  The own-week default is for somebody who cannot manage the timetable.
+- **`scripts/e2e/browser/timetable-views.mjs` covers it** and REFUSES to run when the teacher it signs
+  in as teaches nothing in the version on screen — the flip would never arm and all fourteen checks
+  would pass while proving nothing. The manager half seeds a lesson of the administrator's own and
+  removes it afterwards, for the same reason: the dev tenant's administrator teaches nothing.
+
 ### A register is taken at the size of a staff meeting, not a five-person duty (2026-09-20)
 
 `StaffRegister.razor` is ONE page and serves every register — a session, a meeting, a **rota slot** ("Teacher on
@@ -3045,8 +3196,84 @@ SANs plus the common name, the latter for an older certificate carrying no SAN e
 reason for whitelabelling."* The installed certificate answers for `*.cashbook.ug` and `cashbook.ug`
 only (Sectigo DV, read off the live host on 2026-09-21), so it can never cover somebody's own domain.
 The morning's work therefore becomes the **fast path** of a hybrid rather than the whole answer, with
-per-domain issuance restored as the branch underneath the coverage check. That build is workstream B
-of the completion plan; its rules are written up where it lands, not here.
+per-domain issuance restored as the branch underneath the coverage check. **That build landed the same
+day; its rules are below.**
+
+### The hybrid, and the order inside it
+
+`/usr/local/bin/qmgr-tenant-domain` (generated by `build-linux.ps1`, run through the narrow sudoers
+drop-in) decides per domain, and **the order is the whole design**:
+
+- **Covered by the installed certificate → the FAST PATH.** Nothing is issued, nothing renews and
+  nothing can be rate-limited. A tenant on a subdomain of the platform's base domain goes live in one
+  reload. This is the common case and the morning's work is exactly what serves it.
+- **Not covered → a certificate of its own**, over http-01. A tenant's own domain can never be on the
+  platform's certificate, so this is the only way `dashboard.maryhillug.net` reaches a padlock.
+- **The shared certificate is only a CANDIDATE.** Missing or expired is no longer fatal: a domain it
+  could not have covered was always going to be issued one of its own.
+- **Taking a domain live behind a name mismatch is the one outcome neither branch may produce**, so
+  every failure names its step and stops.
+
+**Q-Mgr still installs nothing.** If certbot is absent the helper **refuses** — naming both ways out
+(install an ACME client, or add the domain to the shared certificate) and listing the names that
+certificate actually answers for. The standing no-server-dependencies rule is intact, and it is not
+hypothetical that the box already has one: `admissions.maryhillug.net` carries its own Let's Encrypt
+certificate on that same host, read off the live internet on 2026-09-21.
+
+### The rules that are easy to break
+
+- **THE CHICKEN AND THE EGG, and it is the reason for the two-phase enable.** http-01 asks for a file
+  over **port 80 at that hostname** — and the server block that would serve it is the one the helper
+  is there to write. So it writes the **port-80 half first, reloads, issues, then rewrites the whole
+  block with TLS and reloads again.** Without that, a FIRST issuance can never succeed while renewals
+  always would, because by then the block exists: the shape of bug that passes every test and fails
+  on the first real customer.
+- **A failed issuance leaves NOTHING behind.** The conf is removed and nginx reloaded, because a
+  stranded port-80 block answers 503 for a domain that is not live — which reads worse than the
+  domain simply not resolving yet.
+- **There is no wildcard `server_name` anywhere and there must not be.** Every tenant domain,
+  subdomain or not, gets its own block in `/etc/nginx/qmgr-tenants`. A wildcard on a box shared with
+  ERP, CashBook and the rest would quietly catch hostnames belonging to somebody else. (A wildcard
+  server block was the obvious shortcut for the covered case; this is why it was not taken.)
+- **The back-off must not be deleted a second time.** `--keep-until-expiring` makes a repeat run a
+  no-op rather than a request against Let's Encrypt's five-duplicates-a-week limit, but that only
+  covers a SUCCEEDING domain; the caller's own back-off — daily sweep, skip anything tried within
+  the hour, give up after seven failures, a human pressing Check now never throttled — is what stops
+  a FAILING domain spending the box's budget for every other tenant. Five failed validations per
+  hostname per hour is the real ACME number.
+- **`--cert-name` and Q-Mgr's own webroot (`/var/www/qmgr-acme`) keep this clear of whatever else
+  renews on that box.** Q-Mgr must not become a second thing editing another application's renewals.
+- **Validation lives in the helper, because that is the privilege boundary.** Lower-case letters,
+  digits, hyphens and dots; at least three labels (an apex cannot be CNAMEd, so it is never a tenant
+  domain); and never the platform's own host, which would overwrite the real site's server block.
+- **The proxy rules are DUPLICATED into each tenant block, not `include`d.** A shared fragment would
+  make a change to the main site silently change every tenant's site too.
+- **The reported expiry is the certificate ACTUALLY serving that domain**, not the shared one. Reading
+  the shared certificate on both branches reports the platform's expiry for a tenant served off its
+  own — real, confident and about a different certificate (fixed 2026-09-21, found while writing this
+  section). It is still **logged and never stored**, for the morning's reason.
+- **Withdrawal removes the server block only.** An issued certificate is left in place and left
+  renewing: withdrawing is usually temporary, a kept certificate makes re-enabling instant, and
+  revoking would spend the issuance budget again on every re-enable.
+
+### Proving ownership is not the same as pointing the domain here
+
+Until 2026-09-21 the panel asked for a **TXT record and nothing else**, so a tenant could prove they
+owned a hostname that went on resolving to their old web host — and the first anybody heard of it was
+a certificate that could not be issued for a domain nobody could reach. `CustomDomainStatusDto` now
+carries `RoutingRecordName`/`RoutingRecordValue` beside the TXT pair, and verification checks the name
+actually resolves here (`PointsHere`, `RoutingHint`).
+
+**`PointsHere` WARNS, it never refuses**, and `null` means the check could not be made — which is not
+the same as `false` and must not be shown as a problem. DNS propagates for up to a day and a
+split-horizon or CDN answer can be legitimately different; the real gate is the certificate step,
+which fails with its own reason. Refusing on a stale lookup would block a tenant who had done
+everything right twenty minutes ago. Same call as the sign-up duplicate check.
+
+**Still unexercised, and stated rather than claimed: no certificate has ever been issued by this
+path.** The suites run with `CustomDomains__SkipCertificate=true` (Development only); the helper was
+verified by rendering it out of `build-linux.ps1` and `bash -n`, never against a host. B7 in the
+completion plan is the run that would change that.
 
 ## Staff self-service: what a teacher may take, and what they may only ask for (built 2026-09-21)
 

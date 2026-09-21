@@ -813,7 +813,10 @@
                     <div class="ct-title">@t.JobTitle</div>
                 }
                 <div class="ct-contact">
-                    <span><QIcon Name="envelope" /> <a href="mailto:@t.Email">@t.Email</a></span>
+                    @if (!string.IsNullOrWhiteSpace(t.Email))
+                    {
+                        <span><QIcon Name="envelope" /> <a href="mailto:@t.Email">@t.Email</a></span>
+                    }
                     @if (!string.IsNullOrWhiteSpace(t.Phone))
                     {
                         <span><QIcon Name="telephone" /> <a href="tel:@t.Phone">@t.Phone</a></span>

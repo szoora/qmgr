@@ -31,7 +31,7 @@
 
                 <dl class="as-creds">
                     <div><dt>Username</dt><dd>@created.Username</dd></div>
-                    <div><dt>Email</dt><dd>@created.Email</dd></div>
+                    <div><dt>Email</dt><dd>@(string.IsNullOrWhiteSpace(created.Email) ? "None — they sign in with the username above" : created.Email)</dd></div>
                     <div><dt>Temporary password</dt><dd class="as-pw">@created.TemporaryPassword</dd></div>
                 </dl>
 
@@ -51,12 +51,20 @@
                     <QInput TValue="string" Label="Last name" @bind-Value="form.LastName" Required="true" />
                 </div>
                 <div class="form-group form-group--wide">
-                    <QInput TValue="string" Label="Email" Type="email" @bind-Value="form.Email" Required="true"
+                    <QInput TValue="string" Label="Email (optional)" Type="email" @bind-Value="form.Email"
                             Placeholder="name@school.ac.ug" />
-                    <p class="form-hint">They sign in with this, and it is where an invitation would go.</p>
+                    <p class="form-hint">
+                        Leave it empty if they have none — they will sign in with the username shown after you save,
+                        using the temporary password on their slip. An address is only needed to email them.
+                    </p>
                 </div>
                 <div class="form-group">
                     <QInput TValue="string" Label="Phone" @bind-Value="form.Phone" Placeholder="0770 000 000" />
+                </div>
+                <div class="form-group">
+                    <QInput TValue="string" Label="Staff number" @bind-Value="form.EmployeeNumber" Placeholder="700001" />
+                    <p class="form-hint">The school's own number. It is how somebody with no email address is
+                        recognised when the staff list is imported again.</p>
                 </div>
                 <div class="form-group">
                     <QInput TValue="string" Label="Job title" @bind-Value="form.JobTitle" Placeholder="Teacher of Maths" />
@@ -165,11 +173,6 @@
         if (string.IsNullOrWhiteSpace(form.FirstName) || string.IsNullOrWhiteSpace(form.LastName))
         {
             Toast.Notify(ToastSeverity.Warning, "A name is needed", "Both a first and a last name.");
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(form.Email))
-        {
-            Toast.Notify(ToastSeverity.Warning, "An email address is needed", "Staff sign in with it.");
             return;
         }
         if (form.RoleId == Guid.Empty)

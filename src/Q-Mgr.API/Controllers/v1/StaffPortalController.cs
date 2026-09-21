@@ -182,7 +182,7 @@ public class StaffPortalController : StaffPerformanceControllerBase
         {
             UserId = me.Id,
             FullName = StaffPerformanceMapping.FullName(me),
-            Email = me.Email,
+            Email = me.Email ?? string.Empty,
             Username = me.Username,
             RoleName = me.Role?.Name ?? string.Empty,
             IsActive = me.IsActive,

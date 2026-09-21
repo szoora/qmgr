@@ -13,7 +13,9 @@ public class UserIdentityConfiguration : IEntityTypeConfiguration<User>
 {
     public void Configure(EntityTypeBuilder<User> builder)
     {
-        builder.Property(u => u.NormalizedEmail).HasMaxLength(256).IsRequired();
+        // NOT required: a staff member may have no email address at all, and NULL is how that is stored
+        // (PostgreSQL treats NULLs as distinct, so the unique index below still lets many exist).
+        builder.Property(u => u.NormalizedEmail).HasMaxLength(256);
         builder.Property(u => u.NormalizedPhone).HasMaxLength(32);
 
         // The real guard. An application-level check alone loses to two simultaneous sign-ups, and

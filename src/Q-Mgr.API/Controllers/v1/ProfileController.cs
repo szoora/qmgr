@@ -69,7 +69,7 @@ public class ProfileController : ControllerBase
             {
                 Id = u.Id,
                 Username = u.Username,
-                Email = u.Email,
+                Email = u.Email ?? string.Empty,
                 FirstName = u.FirstName,
                 LastName = u.LastName,
                 FullName = (u.FirstName ?? "") + " " + (u.LastName ?? ""),
@@ -167,7 +167,7 @@ public class ProfileController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            Email = user.Email,
+            Email = user.Email ?? string.Empty,
             FirstName = user.FirstName,
             LastName = user.LastName,
             FullName = user.FullName,

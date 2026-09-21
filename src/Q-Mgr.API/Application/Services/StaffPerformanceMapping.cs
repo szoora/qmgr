@@ -58,7 +58,7 @@ public static class StaffPerformanceMapping
         {
             UserId = u.Id,
             FullName = FullName(u),
-            Email = u.Email,
+            Email = u.Email ?? string.Empty,
             Username = u.Username,
             RoleCode = u.Role?.Code ?? string.Empty,
             RoleName = u.Role?.Name ?? string.Empty,

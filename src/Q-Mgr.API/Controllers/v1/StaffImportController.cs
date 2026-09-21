@@ -145,13 +145,20 @@ public class StaffImportController : ControllerBase
         var refusal = await ScopedCallerRefusalAsync();
         if (refusal != null) return refusal;
 
-        if (request.Emails == null || request.Emails.Count == 0)
+        var numbers = (request.EmployeeNumbers ?? new List<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct()
+            .Take(MaxPrecheckEmails)
+            .ToList();
+
+        if ((request.Emails == null || request.Emails.Count == 0) && numbers.Count == 0)
             return Ok(new StaffImportPrecheckDto());
 
         // The same normalization the duplicate-detection guard and the unique index use, so
         // "A.Okello@School.UG " and "a.okello@school.ug" are one person here exactly as they are
         // at sign-up. RegistrationIdentity is the one home for that rule.
-        var wanted = request.Emails
+        var wanted = (request.Emails ?? new List<string>())
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .Select(e => RegistrationIdentity.NormalizeEmail(e))
             .Where(e => !string.IsNullOrWhiteSpace(e))
@@ -162,10 +169,15 @@ public class StaffImportController : ControllerBase
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         var existing = await _context.Users.IgnoreQueryFilters().AsNoTracking()
-            .Where(u => u.OrganizationId == organizationId && wanted.Contains(u.NormalizedEmail))
+            // Matched by address where the file gave one, and by the school's own staff number where
+            // it did not — the same two keys the import itself uses to decide who is already here.
+            .Where(u => u.OrganizationId == organizationId
+                        && ((u.NormalizedEmail != null && wanted.Contains(u.NormalizedEmail))
+                            || (u.EmployeeNumber != null && numbers.Contains(u.EmployeeNumber))))
             .Select(u => new StaffImportExistingDto
             {
-                NormalizedEmail = u.NormalizedEmail,
+                NormalizedEmail = u.NormalizedEmail ?? string.Empty,
+                EmployeeNumber = u.EmployeeNumber,
                 FullName = ((u.FirstName ?? "") + " " + (u.LastName ?? "")).Trim(),
                 RoleName = u.Role.Name,
                 IsActive = u.IsActive,
@@ -208,7 +220,7 @@ public class StaffImportController : ControllerBase
         var organizationId = await ResolveOrganizationIdAsync(branchId);
 
         // Delivery per row (plan §12.2): the row's own mode, else the import's, else the legacy SendInvites flag.
-        var payload = new StaffImportJobPayload { Rows = request.Rows, SendInvites = request.SendInvites, DeliveryMode = request.DeliveryMode };
+        var payload = new StaffImportJobPayload { Rows = request.Rows, SendInvites = request.SendInvites, DeliveryMode = request.DeliveryMode, NameOrder = request.NameOrder, UpdateExisting = request.UpdateExisting };
         for (var i = 0; i < request.Rows.Count; i++)
             payload.ResolvedDelivery[i] = request.Rows[i].DeliveryMode ?? request.DeliveryMode ?? (request.SendInvites ? StaffImportDeliveryMode.Invitation : null);
 

@@ -1009,5 +1009,20 @@ else
   printf '  \033[33mSKIP\033[0m  node is not installed; section 21 did not run\n'
 fi
 
+hdr "22. A STAFF MEMBER WITH NO EMAIL ADDRESS (Node)"
+# 133 of the 184 staff on the first real school list have no address, and until 2026-09-21 that meant
+# they could not exist here at all. The assertion the whole schema change turns on is the SECOND one
+# created: an empty string would have let exactly one through and then collided on the unique index.
+if command -v node > /dev/null 2>&1; then
+  NE_OUT=$(API="$API" BRANCH="$BRANCH" SA_USER="$SA_USER" SA_PASS="$SA_PASS" node "$(dirname "$0")/staff-no-email-e2e.mjs" 2>&1)
+  echo "$NE_OUT" | sed 's/^/  /'
+  NE_PASS=$(echo "$NE_OUT" | grep -o '[0-9]* passed, [0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  NE_FAIL=$(echo "$NE_OUT" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*')
+  if [ -z "$NE_PASS" ]; then printf '  \033[33mSKIP\033[0m  section 22 did not report a summary\n'
+  else PASS=$((PASS+NE_PASS)); FAIL=$((FAIL+NE_FAIL)); fi
+else
+  printf '  \033[33mSKIP\033[0m  node is not installed; section 22 did not run\n'
+fi
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 exit "$FAIL"

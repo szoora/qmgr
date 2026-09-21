@@ -114,6 +114,14 @@ public record CreateStaffMemberRequest
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string? Phone { get; set; }
+
+    /// <summary>
+    /// The school's own staff number. It is not decoration: for somebody with no email address it is
+    /// what identifies them to an import, so it carries a per-organization unique index.
+    /// See docs/plans/STAFF_WITHOUT_EMAIL.md.
+    /// </summary>
+    public string? EmployeeNumber { get; set; }
+
     public Guid RoleId { get; set; }
     public string? JobTitle { get; set; }
     public List<Guid> DepartmentIds { get; set; } = new();

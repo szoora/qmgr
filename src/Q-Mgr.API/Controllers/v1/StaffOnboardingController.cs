@@ -287,7 +287,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                 UserId = r.Id,
                 FirstName = r.FirstName ?? "",
                 LastName = r.LastName ?? "",
-                Email = r.Email,
+                Email = r.Email ?? string.Empty,
                 Phone = r.Phone,
                 EmployeeNumber = r.EmployeeNumber,
                 JobTitle = r.JobTitle,
@@ -439,7 +439,8 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
         try { await _profileChanges.RoleChangedAsync(orgId.Value, userId, null, role.Id, CurrentUserId(), "join request approval"); }
         catch (Exception ex) { _logger.LogWarning(ex, "Profile-change notification failed after approving {UserId}", userId); }
 
-        await SendApprovedAsync(orgId.Value, applicant.Email, applicant.FirstName, applicant.Phone);
+        if (!string.IsNullOrWhiteSpace(applicant.Email))
+            await SendApprovedAsync(orgId.Value, applicant.Email, applicant.FirstName, applicant.Phone);
 
         return Ok(new { approved = true, messages });
     }
@@ -477,6 +478,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                 $"Your request to join {EmailTemplates.B(orgName)} was not approved.",
                 string.IsNullOrWhiteSpace(request?.Reason) ? "If you think this is a mistake, speak to the school's administrator." : $"The administrator wrote: {EmailTemplates.P(request!.Reason!.Trim())}"
             }, brand: brand);
+            if (!string.IsNullOrWhiteSpace(applicant.Email))
             await _email.SendAsync(applicant.Email, $"Your request to join {orgName}", html);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Could not send the rejection email"); }
@@ -552,7 +554,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
             UserId = u.Id,
             FullName = $"{u.FirstName} {u.LastName}".Trim(),
             Username = u.Username,
-            Email = u.Email,
+            Email = u.Email ?? string.Empty,
             Phone = u.Phone,
             RoleName = u.RoleName,
             CreatedAt = u.CreatedAt,
@@ -626,7 +628,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                 user.PasswordResetTokenExpiry = DateTime.UtcNow.AddDays(7);
                 await Db.SaveChangesAsync();
 
-                var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(user.Email)}&token={Uri.EscapeDataString(user.PasswordResetToken)}";
+                var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(user.Email ?? string.Empty)}&token={Uri.EscapeDataString(user.PasswordResetToken)}";
                 var brand = await _emailBrands.ForOrganizationAsync(orgId);
                 var html = EmailTemplates.Layout($"Your access to {orgName}", user.FirstName, new[]
                 {
@@ -667,7 +669,7 @@ public class StaffOnboardingController : StaffPerformanceControllerBase
                     UserId = user.Id,
                     FullName = user.FullName,
                     Username = user.Username,
-                    Email = user.Email,
+                    Email = user.Email ?? string.Empty,
                     TemporaryPassword = temporary,
                     ExpiresAt = expires
                 });

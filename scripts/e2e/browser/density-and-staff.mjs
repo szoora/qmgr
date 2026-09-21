@@ -91,7 +91,10 @@ if (infoCount >= 1) {
 // ---------------------------------------------------------------- 3. timeline paging
 post('\n== A timeline renders a page at a time ==');
 
-await settle('/portal', 3500);
+// The portal is a four-tab hub since 2026-09-21 and a section renders only while its own
+// tab is open — that lazy render IS the point of the hub. #my-timeline and #my-details both
+// live under "My file", so a bare /portal reads an empty Today tab and reports nothing.
+await settle('/portal?tab=file', 3500);
 const tl = JSON.parse(await t.eval(`(() => {
   const items = document.querySelectorAll('#my-timeline .q-timeline__item, #my-timeline .q-timeline .q-timeline__item');
   const more = [...document.querySelectorAll('#my-timeline button')].find(b => /show older/i.test(b.innerText));
@@ -176,7 +179,10 @@ else {
 // ---------------------------------------------------------------- 7. my own details
 post('\n== A person can maintain their own contact detail ==');
 
-await settle('/portal', 3500);
+// The portal is a four-tab hub since 2026-09-21 and a section renders only while its own
+// tab is open — that lazy render IS the point of the hub. #my-timeline and #my-details both
+// live under "My file", so a bare /portal reads an empty Today tab and reports nothing.
+await settle('/portal?tab=file', 3500);
 const mine = JSON.parse(await t.eval(`(() => {
   const card = document.querySelector('#my-details');
   if (!card) return JSON.stringify({ card: false });

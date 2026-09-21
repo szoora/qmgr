@@ -27,14 +27,25 @@
 
 <div class="q-import">
 
+    @* ---------- The steps. A file becomes rows through four of them, and the reader can go back
+         one at any time before anything is sent: nothing leaves the browser until Import. ---------- *@
+    @if (stage != Stage.Running)
+    {
+        <ol class="q-import__steps" aria-label="Import steps">
+            <li class="@StepClass(Stage.Pick)"><span>1</span> Choose a file</li>
+            <li class="@StepClass(Stage.Map)"><span>2</span> Match the columns</li>
+            <li class="@StepClass(Stage.Review)"><span>3</span> Check and import</li>
+        </ol>
+    }
+
     @* ---------- 1. Choose a file ---------- *@
-    @if (job == null)
+    @if (stage == Stage.Pick)
     {
         <div class="q-import__pick">
             <label class="q-import__drop" for="@InputId">
                 <QIcon Name="file-earmark-spreadsheet" />
                 <span class="q-import__drop-main">@(preview == null ? "Choose an Excel or CSV file" : FileName)</span>
-                <span class="q-import__drop-sub">.xlsx, .xls or .csv — read in your browser, nothing is uploaded until you press Import</span>
+                <span class="q-import__drop-sub">.xlsx, .xls, .csv, .json or .ndjson — read in your browser, nothing is uploaded until you press Import</span>
             </label>
             <InputFile id="@InputId" OnChange="OnFileSelected" accept=".csv,.xlsx,.xls,text/csv" class="q-import__file" />
 
@@ -46,13 +57,113 @@
             }
         </div>
 
-        @if (Options is not null)
-        {
-            <div class="q-import__options">@Options</div>
-        }
     }
 
-    @* ---------- 2. What is wrong with the FILE ---------- *@
+    @if (Options is not null && stage != Stage.Running)
+    {
+        <div class="q-import__options">@Options</div>
+    }
+
+    @* ---------- 2. Match the columns ----------
+         The step this whole component exists for. Alias matching makes the first guess; everything
+         here is the reader correcting it, because a header we do not recognise would otherwise be
+         silently lost and a school's own export names half its columns something we never listed. *@
+    @if (stage == Stage.Map && grid is not null)
+    {
+        <div class="q-import__map">
+
+            <div class="q-import__map-file">
+                <div>
+                    <strong>@FileName</strong>
+                    <span class="q-import__map-sub">@dataRowCount row(s) · @grid.ColumnCount column(s)</span>
+                </div>
+                @if (sheetNames.Count > 1)
+                {
+                    <label class="q-import__map-inline">
+                        <span>Sheet</span>
+                        <QSelect TValue="string" TItem="string" Items="@sheetNames" Value="@sheetName"
+                                 ValueChanged="@OnSheetChanged" ValueSelector="@(n => n)" TextSelector="@(n => n)" />
+                    </label>
+                }
+                <label class="q-import__map-inline">
+                    <span>Header row</span>
+                    <QSelect TValue="int" TItem="ColumnOption" Items="@headerRowOptions" Value="@grid.HeaderRowIndex"
+                             ValueChanged="@OnHeaderRowChanged" ValueSelector="@(o => o.Index)" TextSelector="@(o => o.Label)" />
+                </label>
+            </div>
+
+            @if (mappingProblems.Count > 0)
+            {
+                <div class="q-import__banner q-import__banner--error">
+                    <strong><QIcon Name="exclamation-octagon" /> Still to match</strong>
+                    <ul class="q-import__problems">
+                        @foreach (var p in mappingProblems) { <li>@p</li> }
+                    </ul>
+                </div>
+            }
+
+            <div class="q-import__map-rows">
+                @foreach (var column in Columns)
+                {
+                    var binding = mapping.For(column.Name);
+                    <div class="q-import__map-row @(IsUnfilled(column) ? "q-import__map-row--missing" : "")">
+                        <div class="q-import__map-field">
+                            <span class="q-import__map-name">@column.DisplayName</span>
+                            @if (column.Required)
+                            {
+                                <span class="q-import__req">@(CoveredByAlternative(column) ? "Covered" : "Required")</span>
+                            }
+                            @if (!string.IsNullOrEmpty(column.Hint))
+                            {
+                                <span class="q-import__map-hint">@column.Hint</span>
+                            }
+                        </div>
+
+                        <div class="q-import__map-pick">
+                            <QSelect TValue="int" TItem="ColumnOption" Items="@columnOptions" Value="@binding.Primary"
+                                     ValueChanged="@(i => SetSource(column.Name, 0, i))"
+                                     ValueSelector="@(o => o.Index)" TextSelector="@(o => o.Label)" />
+
+                            @if (binding.Sources.Count > 1)
+                            {
+                                <div class="q-import__join">
+                                    <span class="q-import__join-label">joined with</span>
+                                    <QSelect TValue="string" TItem="JoinerOption" Items="@joinerOptions" Value="@binding.Joiner"
+                                             ValueChanged="@(j => SetJoiner(column.Name, j))"
+                                             ValueSelector="@(o => o.Value)" TextSelector="@(o => o.Label)" />
+                                    <QSelect TValue="int" TItem="ColumnOption" Items="@columnOptions" Value="@binding.Sources[1]"
+                                             ValueChanged="@(i => SetSource(column.Name, 1, i))"
+                                             ValueSelector="@(o => o.Index)" TextSelector="@(o => o.Label)" />
+                                </div>
+                            }
+                            else if (binding.IsMapped)
+                            {
+                                <QButton Text="Join another column" Icon="plus-lg" Size="sm" Variant="ghost"
+                                         OnClick="@(() => AddJoin(column.Name))" />
+                            }
+
+                            <span class="q-import__sample">@SampleFor(binding)</span>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (UnusedHeaders.Count > 0)
+            {
+                <p class="q-import__headers">
+                    Read and ignored: @string.Join(", ", UnusedHeaders)
+                </p>
+            }
+
+            <div class="q-import__actions">
+                <QButton Text="Choose a different file" Icon="arrow-counterclockwise" Variant="ghost" OnClick="Reset" />
+                <QButton Text="Continue" Icon="arrow-right" Variant="primary" OnClick="ContinueToReview"
+                         Disabled="@(mappingProblems.Count > 0)" Loading="@checkingExisting" />
+            </div>
+        </div>
+    }
+
+    @* ---------- 3. What is wrong with the FILE ---------- *@
     @if (preview is not null && preview.FileProblems.Count > 0)
     {
         <div class="q-import__banner q-import__banner--error">
@@ -67,8 +178,30 @@
     }
 
     @* ---------- 3. The preview and its tally ---------- *@
-    @if (preview is not null && preview.Rows.Count > 0 && job == null)
+    @if (stage == Stage.Review && preview is not null && preview.Rows.Count > 0)
     {
+        @* ALREADY HERE. Asked before anything is sent, not reported afterwards: a person importing a
+             whole staff list needs to say whether this file is the new truth for people already on
+             file, or whether it is only adding the ones who are missing. *@
+        @if (existing is { Count: > 0 })
+        {
+            <div class="q-import__banner q-import__banner--info">
+                <strong><QIcon Name="people" /> @existing.Count of these @Noun@(existing.Count == 1 ? " is" : "s are") already here</strong>
+                @if (existing.Sample.Count > 0)
+                {
+                    <p class="q-import__map-sub">@string.Join(" · ", existing.Sample)@(existing.Count > existing.Sample.Count ? " and others" : "")</p>
+                }
+                <label class="q-import__radio">
+                    <input type="radio" name="q-import-existing" checked="@updateExisting" @onchange="@(() => updateExisting = true)" />
+                    <span><strong>Update them</strong> with what is in this file. Their role, permissions and password are never changed by an import.</span>
+                </label>
+                <label class="q-import__radio">
+                    <input type="radio" name="q-import-existing" checked="@(!updateExisting)" @onchange="@(() => updateExisting = false)" />
+                    <span><strong>Leave them as they are</strong> — add only the @(Noun)s who are missing.</span>
+                </label>
+            </div>
+        }
+
         <div class="q-import__tally">
             <div class="q-import__tile q-import__tile--ok">
                 <span class="value">@preview.Importable</span><span class="label">Ready to import</span>
@@ -89,11 +222,21 @@
 
         @if (preview.Headers.Count > 0)
         {
-            <p class="q-import__headers">Columns read: @string.Join(", ", preview.Headers)</p>
+            <p class="q-import__headers">
+                Columns read@(headerLine > 1 ? $" from row {headerLine}" : ""): @string.Join(", ", preview.Headers)
+            </p>
         }
         else
         {
             <p class="q-import__headers">No header row found — columns were read in the template's order.</p>
+        }
+
+        @* What the cleaning changed, counted. A transformation is a statement, not a secret. *@
+        @if (preview.Cleaned.Count > 0)
+        {
+            <p class="q-import__headers">
+                Tidied on the way in: @string.Join(" · ", preview.Cleaned.OrderByDescending(c => c.Value).Select(c => $"{c.Value} {c.Key}"))
+            </p>
         }
 
         <div class="q-import__table-wrap">
@@ -145,6 +288,7 @@
         </div>
 
         <div class="q-import__actions">
+            <QButton Text="Back to the columns" Icon="arrow-left" Variant="ghost" OnClick="@(() => stage = Stage.Map)" Disabled="@starting" />
             <QButton Text="Choose a different file" Icon="arrow-counterclockwise" Variant="ghost" OnClick="Reset" Disabled="@starting" />
             <QButton Text="@ImportButtonText" Icon="cloud-upload" Variant="primary"
                      OnClick="Start" Loading="@starting" Disabled="@(!preview.CanImport || starting)" />
@@ -216,6 +360,105 @@
     }
 </div>
 
+@* Panel-owned names only (q-import__*): a component <style> is NOT scoped in Blazor, so redefining a
+   shared class here would restyle it app-wide for as long as this page is open — the trap
+   scripts/e2e/style-leak-check.mjs exists to catch. Every value is a --qm-* token. *@
+<style>
+    .q-import { display: flex; flex-direction: column; gap: var(--qm-block-gap, 10px); }
+
+    .q-import__steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+    .q-import__step { display: flex; align-items: center; gap: 6px; font-size: var(--qm-text-sm);
+                      color: var(--qm-text-muted); padding: 4px 10px; border: 1px solid var(--qm-border);
+                      border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .q-import__step span { display: inline-flex; align-items: center; justify-content: center;
+                           width: 18px; height: 18px; border-radius: 50%; font-size: var(--qm-text-xs);
+                           background: var(--qm-border); color: var(--qm-text-secondary); }
+    .q-import__step--now { color: var(--qm-text-primary); border-color: var(--qm-primary); }
+    .q-import__step--now span { background: var(--qm-primary); color: var(--qm-text-on-primary); }
+    .q-import__step--done { color: var(--qm-text-secondary); }
+    .q-import__step--done span { background: var(--qm-success); color: var(--qm-text-on-primary); }
+
+    .q-import__pick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--q-row-gap, 8px); }
+    .q-import__drop { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+                      align-items: center; text-align: center; cursor: pointer; padding: 18px;
+                      border: 1px dashed var(--qm-border); border-radius: var(--qm-radius-lg);
+                      background: var(--qm-bg-secondary); }
+    .q-import__drop:hover { border-color: var(--qm-primary); }
+    .q-import__drop-main { font-family: var(--qm-font-display); font-weight: 600; }
+    .q-import__drop-sub, .q-import__map-sub, .q-import__sample, .q-import__headers, .q-import__more,
+    .q-import__note { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+    .q-import__file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    .q-import__options { display: flex; flex-direction: column; gap: var(--qm-field-gap, 12px); }
+
+    .q-import__map { display: flex; flex-direction: column; gap: var(--qm-block-gap, 10px); }
+    .q-import__map-file { display: flex; flex-wrap: wrap; align-items: end; gap: var(--q-row-gap, 8px) 16px;
+                          padding: 10px 12px; border: 1px solid var(--qm-border);
+                          border-radius: var(--qm-radius-md); background: var(--qm-bg-secondary); }
+    .q-import__map-file > div:first-child { display: flex; flex-direction: column; margin-right: auto; min-width: 0; }
+    .q-import__map-inline { display: flex; flex-direction: column; gap: 2px; font-size: var(--qm-text-sm);
+                            color: var(--qm-text-secondary); min-width: 180px; }
+
+    .q-import__map-rows { display: flex; flex-direction: column; }
+    .q-import__map-row { display: grid; grid-template-columns: minmax(150px, 230px) minmax(0, 1fr);
+                         gap: 10px 16px; padding: 9px 0; border-bottom: 1px solid var(--qm-border); }
+    .q-import__map-row:last-child { border-bottom: 0; }
+    .q-import__map-row--missing { background: rgba(var(--qm-danger-rgb), .07); }
+    .q-import__map-field { display: flex; flex-direction: column; gap: 2px; }
+    .q-import__map-name { font-family: var(--qm-font-display); font-weight: 600; font-size: var(--qm-text-base); }
+    .q-import__map-hint { font-size: var(--qm-text-xs); color: var(--qm-text-muted); }
+    .q-import__map-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+    .q-import__map-pick > * { min-width: 0; }
+    .q-import__req { align-self: flex-start; font-size: var(--qm-text-xs); font-weight: 600;
+                     letter-spacing: .04em; text-transform: uppercase; color: var(--qm-danger);
+                     background: rgba(var(--qm-danger-rgb), .12); border-radius: 999px; padding: 1px 8px; }
+    .q-import__join { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .q-import__join-label { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
+
+    .q-import__banner { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px;
+                        border-radius: var(--qm-radius-md); border: 1px solid var(--qm-border);
+                        background: var(--qm-bg-secondary); font-size: var(--qm-text-base); }
+    .q-import__banner--error { border-left: 3px solid var(--qm-danger); }
+    .q-import__banner--info { border-left: 3px solid var(--qm-primary); }
+    .q-import__problems { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
+                          font-size: var(--qm-text-sm); }
+    .q-import__radio { display: flex; align-items: flex-start; gap: 8px; font-size: var(--qm-text-sm); }
+
+    .q-import__tally { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); }
+    .q-import__tile { flex: 1 1 120px; display: flex; flex-direction: column; padding: 10px 12px;
+                      border: 1px solid var(--qm-border); border-radius: var(--qm-radius-md);
+                      background: var(--qm-bg-card); }
+    .q-import__tile .value { font-family: var(--qm-font-display); font-size: var(--qm-text-stat); font-weight: 700;
+                             font-variant-numeric: tabular-nums; }
+    .q-import__tile .label { font-size: var(--qm-text-xs); color: var(--qm-text-muted);
+                             text-transform: uppercase; letter-spacing: .04em; }
+    .q-import__tile--ok .value { color: var(--qm-success); }
+    .q-import__tile--warn .value { color: var(--qm-warning); }
+    .q-import__tile--bad .value { color: var(--qm-danger); }
+
+    .q-import__table-wrap { overflow-x: auto; }
+    .q-import__row--bad td { background: rgba(var(--qm-danger-rgb), .08); }
+    .q-import__row--warn td { background: rgba(var(--qm-warning-rgb), .10); }
+    .q-import__ok { color: var(--qm-success); }
+    .q-import__warn { color: var(--qm-warning); }
+    .q-import__bad { color: var(--qm-danger); }
+    .q-import__actions { display: flex; flex-wrap: wrap; gap: var(--q-row-gap, 8px); }
+
+    .q-import__progress { display: flex; flex-direction: column; gap: var(--qm-block-gap, 10px); }
+    .q-import__progress-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+                               font-size: var(--qm-text-sm); color: var(--qm-text-secondary); }
+    .q-import__status { font-weight: 600; color: var(--qm-text-primary); }
+    .q-import__live { color: var(--qm-success); font-size: var(--qm-text-xs); text-transform: uppercase;
+                      letter-spacing: .06em; }
+    .q-import__bar { height: 8px; border-radius: 999px; background: var(--qm-bg-secondary); overflow: hidden; }
+    .q-import__bar-fill { height: 100%; background: var(--qm-primary); transition: width .3s ease; }
+    .q-import__bar-fill.done { background: var(--qm-success); }
+    .q-import__outcome { font-size: var(--qm-text-xs); }
+
+    @@media (max-width: 640px) {
+        .q-import__map-row { grid-template-columns: 1fr; gap: 6px; }
+    }
+</style>
+
 @code {
     /// <summary>The branch whose SignalR group carries this job's progress.</summary>
     [Parameter, EditorRequired] public Guid BranchId { get; set; }
@@ -239,8 +482,25 @@
     /// <summary>What that key is called in the refusal — "email address", "student code".</summary>
     [Parameter] public string DuplicateNoun { get; set; } = "value";
 
-    /// <summary>Sends the importable rows and returns the job id.</summary>
-    [Parameter, EditorRequired] public Func<List<TRow>, Task<Guid>> StartAsync { get; set; } = default!;
+    /// <summary>
+    /// Sends the importable rows and returns the job id. The options carry what the reader decided on
+    /// the review step — today, whether rows that already exist are updated or left alone.
+    /// </summary>
+    [Parameter, EditorRequired] public Func<List<TRow>, ImportOptions, Task<Guid>> StartAsync { get; set; } = default!;
+
+    /// <summary>
+    /// Asks the server which of these rows already exist, so the reader is asked BEFORE anything is
+    /// sent rather than told afterwards. Optional: a page with no cheap way to ask simply does not
+    /// show the question, and the import behaves as it always did.
+    /// </summary>
+    [Parameter] public Func<List<TRow>, Task<ImportExisting>>? CheckExistingAsync { get; set; }
+
+    /// <summary>
+    /// Names this import kind so a mapping can be remembered for it — "staff", "roster", "welfare".
+    /// A remembered mapping is only ever re-applied to a file whose header row is the same shape, so
+    /// a different export gets the automatic guess rather than somebody else's answer.
+    /// </summary>
+    [Parameter] public string? MappingKey { get; set; }
 
     /// <summary>Re-reads the job — used by the reconciling poll and once when it lands.</summary>
     [Parameter, EditorRequired] public Func<Guid, Task<RosterImportJobDto?>> LoadJobAsync { get; set; } = default!;
@@ -279,7 +539,42 @@
     /// </summary>
     [Parameter] public EventCallback<string?> OnFileChosen { get; set; }
 
+    /// <summary>Where the reader is. Running covers the job and its result, which have no way back.</summary>
+    private enum Stage { Pick, Map, Review, Running }
+
+    private Stage stage = Stage.Pick;
+    private ImportGrid? grid;
+    private List<string> sheetNames = new();
+    private string? sheetName;
+    private List<ColumnOption> columnOptions = new();
+    private List<ColumnOption> headerRowOptions = new();
+    /// <summary>What can go between two joined columns. "Nothing" is first because S1 + A is S1A.</summary>
+    private static readonly List<JoinerOption> joinerOptions = new()
+    {
+        new JoinerOption(string.Empty, "nothing"), new JoinerOption(" ", "a space"),
+        new JoinerOption("-", "a dash"), new JoinerOption("/", "a slash"), new JoinerOption(", ", "a comma"),
+    };
+
+    public sealed record JoinerOption(string Value, string Label);
+    private List<string> mappingProblems = new();
+    private int dataRowCount;
+    private ImportExisting? existing;
+    private bool updateExisting = true, checkingExisting;
+
+    /// <summary>An option in one of the mapping step's pickers: a file column, or a row of the sheet.</summary>
+    public sealed record ColumnOption(int Index, string Label);
+
     private ImportPreview<TRow>? preview;
+    private ImportMapping mapping = new();
+
+    /// <summary>
+    /// The sheet as text, kept so a change to an import OPTION can re-validate the rows already read
+    /// rather than making somebody choose the file again. Changing which way round a name column is
+    /// written is exactly that: the file has not changed, the reading of it has.
+    /// </summary>
+    private string? lastCsv;
+    /// <summary>Which line of the file turned out to be the header, so the panel can say so.</summary>
+    private int headerLine;
     private RosterImportJobDto? job;
     private List<RosterImportJobEntryDto> entries = new();
     private string? FileName;
@@ -323,10 +618,15 @@
 
             FileName = e.File.Name;
             await OnFileChosen.InvokeAsync(FileName);
-            // Excel and CSV alike are read in the BROWSER by SheetJS; only text comes back, which is
-            // why this product needs no server-side Excel library (a standing constraint).
-            var csv = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId);
-            Build(csv);
+
+            // Excel, CSV and JSON alike are read in the BROWSER; only text comes back, which is why
+            // this product needs no server-side Excel library (a standing constraint) and why nothing
+            // leaves the machine until Import is pressed.
+            var sheets = await JS.InvokeAsync<SheetInfo[]>("rosterImport.sheets", InputId);
+            sheetNames = sheets.Select(s => s.Name).ToList();
+            sheetName = sheetNames.FirstOrDefault();
+
+            await ReadSheetAsync();
         }
         catch (Exception ex)
         {
@@ -334,34 +634,244 @@
         }
     }
 
+    private sealed record SheetInfo(string Name, int Rows);
+
+    /// <summary>Reads the chosen sheet, finds its header row, guesses the mapping and offers it.</summary>
+    private async Task ReadSheetAsync()
+    {
+        lastCsv = await JS.InvokeAsync<string>("rosterImport.sheetToCsv", InputId, sheetName);
+        grid = ImportParsing.ReadGrid(lastCsv, Columns);
+        mapping = ImportParsing.AutoMap(grid, Columns);
+        await RestoreRememberedMappingAsync();
+        RefreshMappingOptions();
+        preview = null;
+        existing = null;
+        stage = Stage.Map;
+    }
+
+    private async Task OnSheetChanged(string name)
+    {
+        sheetName = name;
+        try { await ReadSheetAsync(); }
+        catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not read that sheet", ex.Message); }
+    }
+
+    private void OnHeaderRowChanged(int rowIndex)
+    {
+        if (grid is null) return;
+        grid.HeaderRowIndex = rowIndex;
+        mapping = ImportParsing.AutoMap(grid, Columns);
+        RefreshMappingOptions();
+    }
+
+    /// <summary>
+    /// Rebuilds what the pickers offer and re-checks what is still missing. Called after anything
+    /// that changes the file's shape or the mapping, so the Continue button is never enabled against
+    /// a mapping that cannot produce rows.
+    /// </summary>
+    private void RefreshMappingOptions()
+    {
+        if (grid is null) return;
+        var headers = grid.Headers;
+        columnOptions = new List<ColumnOption> { new(-1, "— not matched —") };
+        for (var i = 0; i < headers.Count; i++)
+        {
+            var label = string.IsNullOrWhiteSpace(headers[i]) ? $"Column {i + 1}" : headers[i];
+            columnOptions.Add(new ColumnOption(i, label));
+        }
+
+        headerRowOptions = new List<ColumnOption> { new(-1, "No header row — read in the template's order") };
+        for (var i = 0; i < Math.Min(12, grid.AllRows.Count); i++)
+        {
+            var preview = string.Join(" · ", grid.AllRows[i].Take(4).Where(c => c.Trim().Length > 0));
+            headerRowOptions.Add(new ColumnOption(i, $"Row {i + 1}: {(preview.Length > 60 ? preview[..60] + "…" : preview)}"));
+        }
+
+        dataRowCount = grid.DataRows.Count();
+        mappingProblems = ImportParsing.MappingProblems(Columns, mapping);
+    }
+
+    private void SetSource(string column, int position, int fileColumn)
+    {
+        var binding = mapping.For(column);
+        if (fileColumn < 0)
+        {
+            if (position < binding.Sources.Count) binding.Sources.RemoveAt(position);
+        }
+        else if (position < binding.Sources.Count) binding.Sources[position] = fileColumn;
+        else binding.Sources.Add(fileColumn);
+        RefreshMappingOptions();
+    }
+
+    /// <summary>
+    /// Two columns into one field: "Class" + "Stream" is the case this exists for, and the joiner
+    /// defaults to nothing because S1 + A is S1A, not "S1 A".
+    /// </summary>
+    private void AddJoin(string column)
+    {
+        var binding = mapping.For(column);
+        if (binding.Sources.Count == 0 || binding.Sources.Count > 1) return;
+        var next = columnOptions.FirstOrDefault(o => o.Index >= 0 && o.Index != binding.Sources[0]);
+        if (next is null) return;
+        binding.Sources.Add(next.Index);
+        RefreshMappingOptions();
+    }
+
+    private void SetJoiner(string column, string joiner)
+    {
+        mapping.For(column).Joiner = joiner;
+        RefreshMappingOptions();
+    }
+
+    /// <summary>
+    /// The first real value the file holds for a declared field, with the mapping as it stands. It is
+    /// how a page's own Options can ask a question ABOUT the data — "which way round is this name
+    /// written?" — at the mapping step, before a single row has been built.
+    /// </summary>
+    public string? FirstValueOf(string column)
+    {
+        if (grid is null || !mapping.Bindings.TryGetValue(column, out var binding) || !binding.IsMapped) return null;
+        foreach (var row in grid.DataRows.Take(40))
+        {
+            var joined = string.Join(binding.Joiner, binding.Sources
+                .Select(i => i >= 0 && i < row.Count ? row[i].Trim() : string.Empty)
+                .Where(v => v.Length > 0));
+            if (joined.Length > 0) return joined;
+        }
+        return null;
+    }
+
+    private string SampleFor(ImportBinding binding)
+    {
+        if (grid is null || !binding.IsMapped) return string.Empty;
+        var samples = new List<string>();
+        foreach (var row in grid.DataRows.Take(40))
+        {
+            var joined = string.Join(binding.Joiner, binding.Sources
+                .Select(i => i >= 0 && i < row.Count ? row[i].Trim() : string.Empty)
+                .Where(v => v.Length > 0));
+            if (joined.Length == 0 || samples.Contains(joined)) continue;
+            samples.Add(joined);
+            if (samples.Count == 2) break;
+        }
+        return samples.Count == 0 ? "every row is empty here" : "e.g. " + string.Join(" · ", samples);
+    }
+
+    /// <summary>A required field with nothing to fill it, and no mapped stand-in.</summary>
+    private bool IsUnfilled(ImportColumn column)
+        => column.Required && !mapping.IsMapped(column.Name) && !CoveredByAlternative(column);
+
+    private bool CoveredByAlternative(ImportColumn column)
+        => column.SatisfiedBy is { Length: > 0 } alt && mapping.IsMapped(alt);
+
+    private List<string> UnusedHeaders
+    {
+        get
+        {
+            if (grid is null || !grid.HasHeader) return new();
+            var used = mapping.Bindings.Values.SelectMany(b => b.Sources).ToHashSet();
+            return grid.Headers.Select((h, i) => (h, i))
+                .Where(x => !used.Contains(x.i) && x.h.Trim().Length > 0)
+                .Select(x => x.h).ToList();
+        }
+    }
+
+    private string StepClass(Stage s) => s == stage ? "q-import__step q-import__step--now"
+        : (int)s < (int)stage ? "q-import__step q-import__step--done" : "q-import__step";
+
+    /// <summary>
+    /// Validates every row with the mapping the reader confirmed, then asks the server which of them
+    /// already exist. A failure to ask is not a failure to import: the question is a courtesy, the
+    /// server decides what happens to a duplicate either way.
+    /// </summary>
+    private async Task ContinueToReview()
+    {
+        if (lastCsv is null) return;
+        Build(lastCsv);
+        await RememberMappingAsync();
+        if (preview is null || preview.FileProblems.Count > 0) { stage = Stage.Map; return; }
+
+        existing = null;
+        if (CheckExistingAsync is not null && preview.Importable > 0)
+        {
+            checkingExisting = true;
+            try { existing = await CheckExistingAsync(preview.Rows.Where(r => r.Importable).Select(r => r.Row!).ToList()); }
+            catch { existing = null; }
+            finally { checkingExisting = false; }
+        }
+
+        stage = Stage.Review;
+    }
+
+    // ---- remembering a mapping ------------------------------------------------------------------
+    // Keyed by the import kind AND a fingerprint of the header row, so next term's export of the same
+    // shape maps itself while a different file gets the automatic guess instead of a stale answer.
+    private string? MappingStorageKey => MappingKey is { Length: > 0 } k && grid is not null
+        ? $"qmgr-import-map:{k}:{ImportParsing.Fingerprint(grid)}"
+        : null;
+
+    private async Task RememberMappingAsync()
+    {
+        if (MappingStorageKey is not { } key) return;
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(mapping.Bindings);
+            await JS.InvokeVoidAsync("localStorage.setItem", key, json);
+        }
+        catch { /* a browser with storage off still imports; it just does not remember */ }
+    }
+
+    private async Task RestoreRememberedMappingAsync()
+    {
+        if (MappingStorageKey is not { } key) return;
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("localStorage.getItem", key);
+            if (string.IsNullOrWhiteSpace(json)) return;
+            var saved = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, ImportBinding>>(json);
+            if (saved is null || saved.Count == 0) return;
+            mapping.Bindings = new Dictionary<string, ImportBinding>(saved, StringComparer.OrdinalIgnoreCase);
+        }
+        catch { /* a stored mapping that cannot be read is simply not used */ }
+    }
+
+    /// <summary>
+    /// Reads the sheet into a grid, works out WHICH ROW is the header (a real export puts a title in
+    /// row 1 and the headers in row 2, which used to leave every column unmapped and every row
+    /// refused), maps the columns, cleans the values and validates every row.
+    ///
+    /// The mapping is automatic here — alias matching, as it has always been. The reader's own
+    /// mapping step is Phase 3 of docs/plans/BULK_IMPORT_SYSTEM.md and slots in at exactly this
+    /// point: it replaces `AutoMap` with a mapping the person confirmed, and nothing below changes,
+    /// because Resolve already hands BuildRow the cells in the declared order whatever filled them.
+    /// </summary>
     private void Build(string csv)
     {
-        var (rows, map, headers, hasHeader) = ImportParsing.Split(csv, Columns);
-        var p = new ImportPreview<TRow> { Headers = hasHeader ? headers : new() };
+        var grid = ImportParsing.ReadGrid(csv, Columns);
+        mapping = ImportParsing.AutoMap(grid, Columns);
+        var p = new ImportPreview<TRow> { Headers = grid.HasHeader ? grid.Headers : new() };
+        headerLine = grid.HasHeader ? grid.HeaderRowIndex + 1 : 0;
 
-        if (rows.Count == 0)
+        var data = grid.DataRows.ToList();
+        if (data.Count == 0)
         {
             p.FileProblems.Add("The sheet has no rows.");
             preview = p;
             return;
         }
 
-        // A required column the file simply does not have is a FILE problem, reported once, rather
-        // than the same error repeated against every row.
-        foreach (var c in Columns.Where(c => c.Required))
-        {
-            if (!map.ContainsKey(c.Name))
-                p.FileProblems.Add($"The column \"{c.Name}\" is required and was not found. Expected a header called {c.Name}"
-                    + (c.Aliases.Count > 0 ? $" (or {string.Join(", ", c.Aliases)})" : "") + ".");
-        }
+        // A required field nothing fills is a FILE problem, reported once, rather than the same error
+        // repeated against every row. "This, or that" lives in ImportColumn.SatisfiedBy.
+        foreach (var problem in ImportParsing.MappingProblems(Columns, mapping)) p.FileProblems.Add(problem);
 
         if (p.FileProblems.Count == 0)
         {
-            for (var i = 0; i < rows.Count; i++)
+            for (var i = 0; i < data.Count; i++)
             {
-                var number = hasHeader ? i + 2 : i + 1; // the line number in the reader's own file
-                var (row, error, warnings) = BuildRow(rows[i], map, number);
-                var pr = new ImportPreviewRow<TRow> { RowNumber = number, Row = row, Error = error, Cells = rows[i] };
+                var number = grid.LineNumberOf(i);   // the line number in the reader's own file
+                var (cells, map) = ImportParsing.Resolve(data[i], Columns, mapping, p.Cleaned);
+                var (row, error, warnings) = BuildRow(cells, map, number);
+                var pr = new ImportPreviewRow<TRow> { RowNumber = number, Row = row, Error = error, Cells = cells };
                 foreach (var w in warnings) pr.Warnings.Add(w);
                 p.Rows.Add(pr);
             }
@@ -373,6 +883,18 @@
         preview = p;
     }
 
+    /// <summary>
+    /// Re-reads the sheet already chosen, with whatever the caller's options now say. Called by a page
+    /// whose Options change how a row is BUILT — the name order, today — so the preview on screen is
+    /// always the import that would actually run.
+    /// </summary>
+    public void RebuildPreview()
+    {
+        if (lastCsv is null || job is not null) return;
+        Build(lastCsv);
+        StateHasChanged();
+    }
+
     private async Task Start()
     {
         if (preview is null || !preview.CanImport || starting) return;
@@ -380,10 +902,11 @@
         try
         {
             var rows = preview.Rows.Where(r => r.Importable).Select(r => r.Row!).ToList();
-            var jobId = await StartAsync(rows);
+            var jobId = await StartAsync(rows, new ImportOptions { UpdateExisting = updateExisting });
             completedRaised = false;
             job = await LoadJobAsync(jobId) ?? new RosterImportJobDto { Id = jobId, BranchId = BranchId, TotalRows = rows.Count };
             preview = null;
+            stage = Stage.Running;
             StartReconciling(jobId);
         }
         catch (Exception ex)
@@ -466,6 +989,8 @@
         reconcileTimer = null;
         job = null; preview = null; entries = new();
         showEntries = false; FileName = null; liveSince = null; completedRaised = false;
+        stage = Stage.Pick; grid = null; lastCsv = null; existing = null; updateExisting = true;
+        sheetNames = new(); sheetName = null; mappingProblems = new(); mapping = new();
     }
 
     private static bool IsTerminal(RosterImportStatus s)

@@ -94,7 +94,7 @@
                                     <QAvatar Name="@user.FullName" Title="@user.FullName" />
                                     <div class="user-info">
                                         <span class="user-name">@user.FullName</span>
-                                        <span class="user-email">@user.Email</span>
+                                        <span class="user-email">@(string.IsNullOrWhiteSpace(user.Email) ? "No email address" : user.Email)</span>
                                     </div>
                                 </div>
                             </Template>
@@ -253,7 +253,8 @@
             </div>
         </div>
         <div class="form-group">
-            <QInput TValue="string" @bind-Value="@formData.Email" Type="email" Label="Email *" />
+            <QInput TValue="string" @bind-Value="@formData.Email" Type="email" Label="Email" />
+            <p class="form-hint">Optional. Somebody with no address signs in with their username.</p>
         </div>
         <div class="form-group">
             <QInput TValue="string" @bind-Value="@formData.Username" Label="Username *" />
@@ -1453,7 +1454,9 @@
 
     private async Task SaveUser()
     {
-        if (string.IsNullOrWhiteSpace(formData.Username) || string.IsNullOrWhiteSpace(formData.Email))
+        // The ADDRESS is optional (docs/plans/STAFF_WITHOUT_EMAIL.md); the username never is, because
+        // it is what somebody with no address signs in with.
+        if (string.IsNullOrWhiteSpace(formData.Username))
         {
             NotificationService.Notify(ToastSeverity.Warning, "Validation", "Username and email are required");
             return;
