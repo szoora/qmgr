@@ -2927,14 +2927,15 @@ SOFTWARE Branding a higher tier removal feature"*. The plan is the artifact link
   lookup at all and a NuGet resolver is a dependency this project does not take. Behind an interface
   so `StubDnsTxtLookup` can answer from memory — **Development only, and the environment is checked
   as well as the `Dns:Stub` key**.
-- **The certificate is issued by ONE root-owned helper, `/usr/local/bin/qmgr-tenant-domain`**, run
-  through a sudoers drop-in that permits that command and nothing else. The API stays `www-data`
-  under `ProtectSystem=strict`: handing a web application the ability to rewrite nginx is a far
-  larger grant than one argument-validated command. The helper **validates the domain itself** — it
-  is the privilege boundary, so the check lives on its side of it. `build-linux.ps1` generates it and
-  the sudoers file; `install.sh` installs both, creates `/etc/nginx/qmgr-tenants` and the ACME
-  webroot, and `visudo -c`s the drop-in (a malformed one locks sudo out of the box). **The nginx
-  include must exist before `nginx -t` runs**, which is why the directory is created first.
+- **The certificate is issued by ONE root-owned helper, `/usr/local/bin/qmgr-tenant-domain`**,
+  reached through the spool and the root worker (**not sudo — see "THE HELPER IS NOT REACHED BY
+  SUDO" below**, which is how every activation failed for a day). The API stays `www-data` under
+  `ProtectSystem=strict`: handing a web application the ability to rewrite nginx is a far larger
+  grant than one argument-validated command. The helper **validates the domain itself** — it is the
+  privilege boundary, so the check lives on its side of it. `build-linux.ps1` generates the helper
+  and the two worker units; `install.sh` installs them, creates the spool, `/etc/nginx/qmgr-tenants`
+  and the ACME webroot, and removes the old sudoers drop-in. **The nginx include must exist before
+  `nginx -t` runs**, which is why the directory is created first.
 - **Only the platform sets a domain** (decision 2). The tenant's Branding page shows it read-only with
   a line saying who to ask; the certificate step touches the host.
 
@@ -3199,10 +3200,48 @@ The morning's work therefore becomes the **fast path** of a hybrid rather than t
 per-domain issuance restored as the branch underneath the coverage check. **That build landed the same
 day; its rules are below.**
 
+### THE HELPER IS NOT REACHED BY SUDO, AND NEVER COULD BE (found in production, 2026-09-21 night)
+
+`dashboard.maryhillug.net` was reported as not working. DNS was right, the TXT record was published
+and correct, the build on the box was current, certbot was installed, and the API's own log carried
+the answer four times over:
+
+    [06:27:41 INF] Domain dashboard.maryhillug.net verified for organization 4d1ee83a…
+    [06:27:41 ERR] Domain helper issue failed (exit 1): sudo: The "no new privileges" flag is set,
+                   which prevents sudo from running as root.
+
+**The API unit sets `NoNewPrivileges=true` and the activator escalated with `sudo`. Those two cannot
+both be true.** That flag exists precisely to stop a setuid binary — sudo is one — from gaining
+privilege, so the sudoers drop-in the package installed could never be used. The design was
+self-contradicting from the day it was written, and **no suite could see it**: they run with
+`CustomDomains:SkipCertificate=true`, where the helper is never invoked at all.
+
+- **The fix is NOT to relax the flag.** Weakening an internet-facing process's hardening to reach a
+  setuid path, for one call a tenant makes once, is the wrong trade on a box that also runs ERP,
+  CashBook and the rest. **The web process no longer escalates at all.**
+- **`CustomDomains:SpoolPath` (`/var/lib/qmgr/domain-spool`, root:www-data 0770) is the channel.**
+  The API writes `<id>.req` holding `"<action> <domain>"` and polls for `<id>.res`;
+  `qmgr-domain-worker.path` notices the file and runs `qmgr-tenant-domain --drain` as root. The
+  answer's first line is `exit=<n>`, and **an answer that does not start that way is read as a
+  failure** — the one thing worse than a domain that will not go live is one reported live that is
+  not. The result is written under a temporary name and moved into place, because the API is polling.
+- **`--drain` re-enters the helper per request** rather than reimplementing anything, so the domain
+  validation stays where it belongs: on the far side of the privilege boundary. Proven locally —
+  `enable not-a-domain` answers `exit=2 refused: 'not-a-domain' is not a valid tenant domain`.
+- **The grant is strictly narrower than the sudoers entry it replaces**: a compromised API can cause
+  exactly this helper to run, and no other setuid binary on the box. `install.sh` REMOVES the old
+  `/etc/sudoers.d/qmgr-tenant-domain` — a grant nothing uses is a grant nobody reviews.
+- **Prove it on the server without the app**, which is the check that would have caught this:
+
+      echo "enable dashboard.maryhillug.net" > /var/lib/qmgr/domain-spool/test.req
+      sleep 5 && cat /var/lib/qmgr/domain-spool/test.res
+
+  The systemd half can only be exercised there; the drain itself is testable anywhere.
+
 ### The hybrid, and the order inside it
 
-`/usr/local/bin/qmgr-tenant-domain` (generated by `build-linux.ps1`, run through the narrow sudoers
-drop-in) decides per domain, and **the order is the whole design**:
+`/usr/local/bin/qmgr-tenant-domain` (generated by `build-linux.ps1`, reached through the spool and
+the root worker above — never sudo) decides per domain, and **the order is the whole design**:
 
 - **Covered by the installed certificate → the FAST PATH.** Nothing is issued, nothing renews and
   nothing can be rate-limited. A tenant on a subdomain of the platform's base domain goes live in one

@@ -170,15 +170,30 @@
         else
         {
             <QCard Title="Import a staff list" Icon="upload">
+                @* Standing explanation goes in QInfo, not on the page: this is a reference somebody
+                   reads once and then never again, and a wall of it sits above the one control that
+                   matters on every visit. What stays on the page is the sentence that tells you what
+                   to DO — the shape of the file, and that the template carries the columns. *@
                 <p class="ss-lede">
-                    One row per person, from Excel (.xlsx) or CSV. Download the template below — it carries every
-                    column, with the required ones marked. Department codes are separated by semicolons
-                    (<code>MATH;PHYS</code>); role codes are <code>teacher</code>, <code>support-staff</code>,
-                    <code>class-teacher</code>, <code>head-of-department</code>, <code>academic-assistant</code>,
-                    <code>director-of-studies</code>, or a custom role's code. <code>ClassTeacherOf</code> names classes
-                    (<code>S2A;S2B</code>) and <code>Teaches</code> names subjects with their classes
-                    (<code>MATH:S2A,S2B; PHY:S3A</code>). Dates are day-first, so <code>03/04/2026</code> is 3 April.
-                    An email already on file is left alone, not overwritten — the preview says so before you commit.
+                    One row per person, from Excel (.xlsx) or CSV — or download the template below, which carries
+                    every column with the required ones marked.
+                    <QInfo Label="the import columns" Heading="What each column takes">
+                        <ul class="ss-info-list">
+                            <li><strong>Name</strong> — first and last in their own columns, or one combined name
+                                column; you choose which way round it is written and the preview shows the result.</li>
+                            <li><strong>Email</strong> — optional. Somebody with no address signs in with the username
+                                the import gives them and a temporary password on their slip.</li>
+                            <li><strong>Departments</strong> — separated by semicolons: <code>MATH;PHYS</code>.</li>
+                            <li><strong>Role</strong> — <code>teacher</code>, <code>support-staff</code>,
+                                <code>class-teacher</code>, <code>head-of-department</code>,
+                                <code>academic-assistant</code>, <code>director-of-studies</code>, or a custom
+                                role's own code.</li>
+                            <li><strong>ClassTeacherOf</strong> — the classes they hold: <code>S2A;S2B</code>.</li>
+                            <li><strong>Teaches</strong> — subjects with their classes:
+                                <code>MATH:S2A,S2B; PHY:S3A</code>.</li>
+                            <li><strong>Dates</strong> — day first, so <code>03/04/2026</code> is 3 April.</li>
+                        </ul>
+                    </QInfo>
                 </p>
 
                 <QImportPanel TRow="StaffImportRow" @ref="importPanel" OnFileChosen="@(_ => firstFullName = null)"
@@ -330,6 +345,8 @@
     .ss-sub { font-size: var(--qm-text-sm); color: var(--qm-text-muted); }
     .ss-lede { color: var(--qm-text-secondary); font-size: var(--qm-text-base); line-height: 1.55; margin: 12px 0; max-width: 78ch; }
     .ss-lede code { font-family: var(--qm-font-mono); font-size: var(--qm-text-sm); }
+    .ss-info-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; }
+    .ss-info-list code { font-family: var(--qm-font-mono); font-size: var(--qm-text-xs); }
     .ss-retired { opacity: .65; }
     .ss-gap { margin-left: 6px; }
     .ss-row-error td { background: rgba(var(--qm-danger-rgb), .06); }

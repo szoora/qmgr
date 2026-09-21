@@ -35,14 +35,20 @@ public interface ITenantDomainActivator
 public sealed record DomainActivationResult(bool Ok, string? Error, DateTime? ActivatedAt, DateTime? CertificateExpiresAt = null);
 
 /// <summary>
-/// Shells out to a single root-owned helper, <c>/usr/local/bin/qmgr-tenant-domain</c>, which
-/// <c>install.sh</c> writes and a sudoers drop-in lets this process run — and nothing else.
+/// Asks a single root-owned helper, <c>/usr/local/bin/qmgr-tenant-domain</c>, to do the one thing
+/// this process must not do itself — and asks it through a spool directory, never by escalating.
 ///
 /// WHY A HELPER: nginx's configuration directory has to be written and nginx reloaded, both of
 /// which need root. The API runs as <c>www-data</c> under <c>ProtectSystem=strict</c> and must
 /// keep running that way — the alternative is a service that can rewrite the web server's
-/// configuration, which is a far larger thing to hand a web application. One narrow,
-/// argument-validated command with a no-password sudoers entry is the smallest grant that works.
+/// configuration, which is a far larger thing to hand a web application.
+///
+/// WHY NOT SUDO, WHICH IS WHAT THIS USED TO DO: the same unit sets <c>NoNewPrivileges=true</c>, the
+/// flag whose purpose is to stop setuid binaries escalating. sudo is one. So the call could never
+/// succeed and never did — every activation failed with "sudo: The 'no new privileges' flag is set",
+/// a second after the domain verified, and no suite could see it because they run with
+/// <c>CustomDomains:SkipCertificate</c> and never reach the helper. The fix was not to relax the
+/// flag for one call a tenant makes once: it was to stop escalating. See <see cref="SpoolPath"/>.
 ///
 /// EVERY FAILURE PATH RETURNS A SENTENCE NAMING THE STEP. Where this runs and the helper is not
 /// installed — a developer's machine — it says so plainly rather than pretending, because the one
@@ -63,6 +69,31 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
     }
 
     private string HelperPath => _configuration["CustomDomains:HelperPath"] ?? "/usr/local/bin/qmgr-tenant-domain";
+
+    /// <summary>
+    /// THE SPOOL, and why this process does not simply run the helper itself.
+    ///
+    /// <para>The API unit sets <c>NoNewPrivileges=true</c>, whose entire purpose is to stop a setuid
+    /// binary from gaining privilege. sudo is a setuid binary. So <c>sudo qmgr-tenant-domain</c>
+    /// could never run from here, and did not: every activation of a tenant domain failed with
+    /// <c>sudo: The "no new privileges" flag is set, which prevents sudo from running as root</c>,
+    /// one second after the domain had verified successfully. Switching the flag off for one call a
+    /// tenant makes once would weaken an internet-facing process to reach a setuid path; instead
+    /// this process stops escalating at all.</para>
+    ///
+    /// <para>It writes <c>&lt;id&gt;.req</c> holding "action domain" and waits for
+    /// <c>&lt;id&gt;.res</c>, which the root-owned <c>qmgr-domain-worker</c> writes after draining
+    /// the request through the same helper. The grant is strictly narrower than the sudoers entry it
+    /// replaces: a compromised API can cause that one helper to run and nothing else.</para>
+    /// </summary>
+    private string SpoolPath => _configuration["CustomDomains:SpoolPath"] ?? "/var/lib/qmgr/domain-spool";
+
+    /// <summary>
+    /// How long to wait for the worker. Writing a server block and reloading nginx takes a moment;
+    /// issuing a certificate for a domain the shared one cannot cover means a round trip to Let's
+    /// Encrypt, so the ceiling is generous. The request fails with a sentence rather than hanging.
+    /// </summary>
+    private static readonly TimeSpan WorkerTimeout = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// DEVELOPMENT ONLY, and guarded on the environment as well as the key. It marks the domain
@@ -118,41 +149,53 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
         if (!File.Exists(HelperPath))
             return new DomainActivationResult(false, $"The domain could not be brought live: the domain helper ({HelperPath}) is not installed on this server. It ships with the deploy package.", null);
 
+        if (!Directory.Exists(SpoolPath))
+            return new DomainActivationResult(false, $"The domain could not be brought live: the request directory ({SpoolPath}) is not on this server. It is created by install.sh — the deploy is older than the worker.", null);
+
+        var id = Guid.NewGuid().ToString("N");
+        var requestPath = Path.Combine(SpoolPath, id + ".req");
+        var resultPath = Path.Combine(SpoolPath, id + ".res");
+
         try
         {
-            var psi = new ProcessStartInfo("sudo")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            psi.ArgumentList.Add("-n");          // never prompt; a password prompt would hang the request
-            psi.ArgumentList.Add(HelperPath);
-            psi.ArgumentList.Add(verb);
-            psi.ArgumentList.Add(domain);
+            // The domain has already passed this service's own validation, and the helper validates
+            // it again on the other side of the privilege boundary. One line, two fields, no shell.
+            await File.WriteAllTextAsync(requestPath, $"{verb} {domain}\n", cancellationToken);
 
-            using var process = Process.Start(psi);
-            if (process == null)
-                return new DomainActivationResult(false, "The domain could not be brought live: the domain helper would not start.", null);
-
-            // Writing a file and reloading nginx is fast; the timeout is here so a reload that
-            // hangs on a bad configuration fails the request rather than holding it open.
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            timeout.CancelAfter(WorkerTimeout);
 
-            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-
-            var outText = await stdout;
-            var output = (outText + "\n" + (await stderr)).Trim();
-            if (process.ExitCode == 0)
+            string? answer = null;
+            while (!timeout.IsCancellationRequested)
             {
-                _logger.LogInformation("Domain helper {Verb} succeeded for {Domain}", verb, domain);
-                return new DomainActivationResult(true, null, DateTime.UtcNow, ReadExpiry(outText));
+                if (File.Exists(resultPath))
+                {
+                    answer = await File.ReadAllTextAsync(resultPath, timeout.Token);
+                    break;
+                }
+                await Task.Delay(250, timeout.Token);
             }
 
-            _logger.LogError("Domain helper {Verb} failed for {Domain} (exit {Exit}): {Output}", verb, domain, process.ExitCode, output);
+            if (answer is null)
+            {
+                // The request file is left behind on purpose: the worker may yet pick it up, and a
+                // half-finished activation is visible in the spool rather than invisible.
+                _logger.LogError("Domain worker did not answer for {Domain} within {Seconds}s — is qmgr-domain-worker.path enabled?",
+                    domain, WorkerTimeout.TotalSeconds);
+                return new DomainActivationResult(false,
+                    "The domain could not be brought live: the server's domain worker did not answer. Check that qmgr-domain-worker.path is enabled on this server.", null);
+            }
+
+            var (exitCode, output) = ReadAnswer(answer);
+            TryDelete(resultPath);
+
+            if (exitCode == 0)
+            {
+                _logger.LogInformation("Domain helper {Verb} succeeded for {Domain}", verb, domain);
+                return new DomainActivationResult(true, null, DateTime.UtcNow, ReadExpiry(output));
+            }
+
+            _logger.LogError("Domain helper {Verb} failed for {Domain} (exit {Exit}): {Output}", verb, domain, exitCode, output);
             return new DomainActivationResult(false, Explain(output), null);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -164,6 +207,29 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
             _logger.LogError(ex, "Domain helper {Verb} threw for {Domain}", verb, domain);
             return new DomainActivationResult(false, "The domain could not be brought live. The server log has the detail.", null);
         }
+    }
+
+    /// <summary>
+    /// The worker's answer: a first line of <c>exit=&lt;n&gt;</c>, then everything the helper wrote.
+    /// An answer that does not begin that way is treated as a failure rather than a success, because
+    /// the one thing worse than a domain that will not go live is one reported live that is not.
+    /// </summary>
+    private static (int ExitCode, string Output) ReadAnswer(string answer)
+    {
+        var newline = answer.IndexOf('\n');
+        var first = (newline < 0 ? answer : answer[..newline]).Trim();
+        var rest = newline < 0 ? string.Empty : answer[(newline + 1)..].Trim();
+
+        if (first.StartsWith("exit=", StringComparison.Ordinal) && int.TryParse(first[5..], out var code))
+            return (code, rest);
+
+        return (-1, answer.Trim());
+    }
+
+    private void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception ex) { _logger.LogWarning(ex, "Could not remove the domain worker's answer at {Path}", path); }
     }
 
     /// <summary>The helper prints <c>expires=&lt;ISO 8601&gt;</c> for the certificate it used.</summary>
@@ -213,8 +279,10 @@ public sealed class NginxTenantDomainActivator : ITenantDomainActivator
         if (output.Contains("nginx rejected", StringComparison.OrdinalIgnoreCase))
             return "The domain could not be brought live: nginx rejected the configuration and it was rolled back. The server log has nginx's own output.";
 
+        // Kept although nothing should produce it any more: an install still carrying the old
+        // sudoers path would otherwise report this as an unexplained failure.
         if (output.Contains("sudo:", StringComparison.OrdinalIgnoreCase))
-            return "The domain could not be brought live: this server is not allowing the domain helper to run. The sudoers drop-in ships with the deploy package.";
+            return "The domain could not be brought live: this server is still trying to run the domain helper through sudo, which its own hardening forbids. Re-deploy — the current package replaces that with a worker.";
 
         return "The domain could not be brought live. The server log has the helper's own output.";
     }
