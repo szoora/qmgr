@@ -17,7 +17,7 @@
         per-tenant subdomain logic.
       - Cert paths still follow the wildcard-under-cashbook.ug convention from
         build-saas-linux.ps1 exactly (ERP and Q-Mgr share the one wildcard cert on the box).
-      - Ports 8581 (Web) / 8582 (API), both proxied — nothing public binds directly to them.
+      - Ports 8586 (API) / 8587 (Web), both proxied — nothing public binds directly to them.
       - Q-Mgr has no catalog DB / per-tenant connection template (shared-schema tenancy) and no
         manual DB-creation step — QMgr.Infrastructure.Data.DatabaseInitializer creates the DB and
         runs migrations + RBAC/SuperAdmin/demo seeding automatically on first start. install.sh's
@@ -35,14 +35,18 @@ param(
 
     [string]$HostName        = 'qmgr.cashbook.ug',
     [string]$HostSuffix      = 'cashbook.ug',            # wildcard cert covers *.cashbook.ug — shared with ERP on the same box
-    # API first, Web = API+1 — kept in sequence on purpose so the pair reads as one unit at a
-    # glance instead of two arbitrary numbers. These are just fallback defaults, not a promise
-    # either is actually free on any given target server — this box alone already had 8580-8584
-    # AND 8590/8591 claimed by other unrelated apps (evolweb, CashBook, erp, evol-api, evol-ui,
-    # 'must') before Q-Mgr ever got here. Always confirm both are free on the actual target with
-    # `ss -tlnp` before deploying — see README.md — and pass explicit -ApiPort/-WebPort if not.
-    [int]$ApiPort            = 8581,
-    [int]$WebPort            = 8582,
+    # THE PORTS qmgr.cashbook.ug ACTUALLY RUNS ON. They were 8581/8582 until 2026-09-21, which was
+    # wrong in the worst way a default can be: 8581 belongs to CashBook's cbpro.service and 8582 to
+    # evolweb.service on this same box, so a build made without passing -ApiPort/-WebPort produced a
+    # package that would have taken over two other applications' ports. install.sh's port guard
+    # caught it once; the fix is for the defaults to be the truth rather than a trap.
+    #
+    # API first, Web = API+1 — kept in sequence on purpose so the pair reads as one unit at a glance
+    # instead of two arbitrary numbers. Still not a PROMISE either is free on any given target: this
+    # box's ports move independently of Q-Mgr, so confirm with `ss -tlnp` before every deploy (see
+    # README.md) and pass explicit -ApiPort/-WebPort for any other server.
+    [int]$ApiPort            = 8586,
+    [int]$WebPort            = 8587,
 
     [string]$InstallRoot     = '/var/www/sites/qmgr',
     # Persists across deploys; excluded from the package and from rsync --delete. Since 2026-09-15
@@ -1163,9 +1167,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ---- Guard: refuse to silently change ports that are already live ----
-# Found the hard way (2026-09-01): a build made with the script's bare default ports (8581/8582)
-# instead of this server's actual assigned ports (8586/8587 — chosen on an earlier deploy after
-# 8581/8582 turned out to already belong to other unrelated apps on this shared box) silently
+# Found the hard way (2026-09-01): a build made with the script's bare default ports of the time
+# (8581/8582, which belong to CashBook and evolweb on this shared box — the defaults are 8586/8587
+# as of 2026-09-21 for exactly this reason) instead of this server's actual assigned ports silently
 # overwrote a working install's systemd units and nginx config with the wrong ports, crash-looping
 # qmgr-web against a port something else already owned. Ports have to stay identical across nginx
 # + both systemd units + Web's baked-in ApiBaseUrl for the app to work at all, so unlike

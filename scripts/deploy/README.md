@@ -10,7 +10,7 @@ different for Q-Mgr.
 |---|---|---|
 | Deployable processes | one monolith | **two**: `Q-Mgr.API` + `Q-Mgr.Web` (Blazor Server) |
 | Hostname | wildcard `*.cashbook.ug` (SaaS, one tenant per subdomain) | single host `qmgr.cashbook.ug`, **path-based** routing |
-| Routing | subdomain -> tenant | `/` -> Web (8582 default), `/api/` + `/hubs/` + `/openapi/` -> API (8581 default) |
+| Routing | subdomain -> tenant | `/` -> Web (8587 default), `/api/` + `/hubs/` + `/openapi/` -> API (8586 default) |
 | TLS cert | same wildcard cert, `/etc/ssl/certs/cashbook.ug.crt` | **same cert, same paths** — shared box, shared cert |
 | Tenancy | Single-DB or database-per-tenant (`.lic`-gated Multi mode) | shared-schema, one DB, `OrganizationId` per row — no catalog DB |
 | DB creation | manual catalog-DB step before first start | **automatic** — `DatabaseInitializer` creates the DB and runs migrations + RBAC/SuperAdmin/demo seeding on first boot |
@@ -53,10 +53,13 @@ never actually installed. Fixed by flattening the layout to match.
 **Do this every time, not just on the first deploy.** `qmgr.cashbook.ug` shares its box with a
 growing list of unrelated apps (ERP, CashBook, evolweb, evol-api, evol-ui, docmgr, `must`,
 maryhill, ...), each independently claiming a port in the 8500s/8580s with no central registry.
-The default ports below (`-ApiPort 8581 -WebPort 8582`) are just fallback values baked into the
-script — they are **not** a promise either is free on any given server. The first real deploy to
-`74.208.201.32` hit exactly this twice in a row (8581 was already CashBook's, then 8582 was
-already evolweb's) before landing on `8586`/`8587`.
+The defaults (`-ApiPort 8586 -WebPort 8587`) are **this box's real ports**, changed from 8581/8582
+on 2026-09-21 so that a build made without thinking is right rather than dangerous — 8581 is
+CashBook's and 8582 is evolweb's, both on this same machine, and the first real deploy to
+`74.208.201.32` collided with each of them in turn before landing on 8586/8587.
+
+They are still **not** a promise either port is free on any OTHER server, or even on this one
+next month: the box's ports move independently of Q-Mgr.
 
 Check before every build/deploy, not just the first one — other apps on the box can claim new
 ports at any time:
@@ -73,9 +76,12 @@ them explicitly.
 ports baked into the build it's installing don't match whatever ports are already live in the
 server's existing `qmgr-api.service`/`qmgr-web.service` units (skipped automatically on a genuine
 first install, where nothing is live yet to compare against). This is exactly the mistake that bit
-the very first upgrade after this guard was added — a build made with the script's bare defaults
-(8581/8582) instead of this box's actual assigned ports (8586/8587) would otherwise have silently
-overwritten a working install with the wrong ones and crash-looped `qmgr-web`. If you ever see:
+the very first upgrade after this guard was added — a build made with the script's bare defaults of
+the time (8581/8582, two other applications' ports) instead of this box's actual assigned ports
+would otherwise have silently overwritten a working install with the wrong ones and crash-looped
+`qmgr-web`. The defaults are 8586/8587 now, so that particular mistake cannot be made by omission —
+but the guard stays, because the next wrong pair will be one somebody passes deliberately. If you
+ever see:
 
 ```
 ==> REFUSING to proceed: this build's ports don't match what's already live on this server.
@@ -198,9 +204,9 @@ only cover the on-box dump.
 
 ```
 /var/www/sites/qmgr/
-  api/            Q-Mgr.API self-contained publish (systemd: qmgr-api.service, :8582 loopback)
+  api/            Q-Mgr.API self-contained publish (systemd: qmgr-api.service, :8586 loopback)
     wwwroot/uploads -> symlink to /var/www/uploads/qmgr   (persists across upgrades)
-  web/            Q-Mgr.Web self-contained publish (systemd: qmgr-web.service, :8581 loopback)
+  web/            Q-Mgr.Web self-contained publish (systemd: qmgr-web.service, :8587 loopback)
 /var/www/uploads/qmgr/   media uploads — outside the deploy tree on purpose, survives every rsync --delete
 /etc/nginx/sites-available/qmgr.conf   path-based routing, wildcard cert shared with ERP
 /etc/systemd/system/qmgr-api.service
