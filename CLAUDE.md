@@ -2839,7 +2839,26 @@ out of scope, 0 outstanding.**
   the rooms are TWO calls and the rooms are the second, so a blank room — and "Add a room" creates one
   — was refused *after* the school day had saved. `TimetableSettings.PreSubmitProblem` now refuses it
   first, naming the row.
+- **A BULK ACTION NEEDS NO BULK ENDPOINT, and should not have one (2026-09-21).** The Staff Directory
+  moves a ticked group into a department and gives a ticked group the same line manager by calling
+  the ordinary per-person `PUT …/staff/structure/members/{id}` once per row. Everything that endpoint
+  already enforces therefore still holds — nobody is their own line manager, the person is told who
+  now supervises them — and a refusal is **about one person, so it can be named**. A new bulk
+  endpoint would have to re-implement all of it and would report one aggregate failure.
+  - **Send the OTHER field back unchanged.** That endpoint replaces departments AND line manager, so
+    assigning a manager without re-sending `DepartmentIds` would quietly clear everybody's
+    departments. This is the trap in reusing a PUT for a partial change.
+  - **Say which it is: "move" REPLACES.** The dialog states it, because "move them to a department"
+    could just as reasonably be read as adding one.
+  - **Skip the obvious self-case rather than reporting it.** Somebody ticked who IS the line manager
+    being assigned is passed over silently; the server would refuse them, and a refusal the reader
+    has to think about should be one they could not have predicted.
+  - Verified by `scripts/e2e/browser/staff-bulk.mjs` — **17 checks, 0 failed**, which ticks real
+    people, drives the QSelect with press-hold-release (never `element.click()`), and **puts every
+    person's department and line manager back as they were**.
+
 - **Verified in a browser, not by the build**: `scripts/e2e/browser/list-sweep.mjs` opens all sixteen
+
   changed pages (52 checks). It detects the **module redirect** and skips with that reason rather than
   passing on the Billing page it landed on — a vacuous pass is the trap this project keeps rediscovering
   — and it skips honestly where the dev tenant's list is genuinely empty.

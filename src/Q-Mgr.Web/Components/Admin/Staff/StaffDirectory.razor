@@ -62,18 +62,40 @@
     else
     {
     <QFilterBar Wrap="true">
-        <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, email or job title" IconLeft="search" Clearable="true" Class="sd-search" />
-        <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" Items="@DepartmentOptions" TextSelector="@(d => d)" ValueSelector="@(d => d)"
+        <QInput TValue="string" @bind-Value="@search" Placeholder="Search name, email or job title" @bind-Value:after="PruneSelection" IconLeft="search" Clearable="true" Class="sd-search" />
+        <QSelect TValue="string" TItem="string" @bind-Value="@departmentFilter" @bind-Value:after="PruneSelection" Items="@DepartmentOptions" TextSelector="@(d => d)" ValueSelector="@(d => d)"
                  Placeholder="All departments" AllowClear="true" Class="sd-filter" />
-        <QSelect TValue="string" TItem="(string Code, string Name)" @bind-Value="@roleFilter" Items="@RoleOptions" TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Code)"
+        <QSelect TValue="string" TItem="(string Code, string Name)" @bind-Value="@roleFilter" @bind-Value:after="PruneSelection" Items="@RoleOptions" TextSelector="@(r => r.Name)" ValueSelector="@(r => r.Code)"
                  Placeholder="All roles" AllowClear="true" Class="sd-filter" />
-        <QSelect TValue="int?" TItem="(int? Band, string Label)" @bind-Value="@bandFilter" Items="@BandOptions" TextSelector="@(b => b.Label)" ValueSelector="@(b => b.Band)"
+        <QSelect TValue="int?" TItem="(int? Band, string Label)" @bind-Value="@bandFilter" @bind-Value:after="PruneSelection" Items="@BandOptions" TextSelector="@(b => b.Label)" ValueSelector="@(b => b.Band)"
                  Placeholder="All bands" AllowClear="true" Class="sd-filter" />
         <QSelect TValue="string" TItem="StaffPeriods.Option" Value="@period" ValueChanged="@OnPeriodChanged" Items="@PeriodOptions" TextSelector="@(p => p.Label)" ValueSelector="@(p => p.Key)"
                  Placeholder="Period" Class="sd-filter" />
         @* Carried over from the Departments & Structure Staff tab, which this page replaced. *@
-        <QCheckbox @bind-Value="@onlyGaps" Label="Only people missing a department or line manager" />
+        <QCheckbox @bind-Value="@onlyGaps" @bind-Value:after="PruneSelection" Label="Only people missing a department or line manager" />
     </QFilterBar>
+
+    @* BULK, for the two things a school does to a whole group at once — a hundred and eighty people
+       arrive from an import with no department and nobody supervising them, and setting that one at
+       a time is not a task anybody finishes. Both actions run the ORDINARY per-person endpoint once
+       each, so every rule it already enforces still applies (nobody is their own line manager; the
+       person is told who supervises them), and whatever it refuses is named rather than swallowed.
+       A selection may only ever cover rows the reader can SEE: PruneSelection runs on every filter. *@
+    @if (canEditStructure && directory != null && directory.Items.Count > 0)
+    {
+        <QBulkBar ShowSearch="false" ShowSelection="true"
+                  VisibleCount="@Visible.Count" SelectedCount="@selected.Count"
+                  AllSelected="@AllVisibleSelected" AllSelectedChanged="@ToggleSelectAllVisible"
+                  ClearSelection="@(() => selected.Clear())"
+                  IdleHint="Tick people to put several in a department, or give them the same line manager, or">
+            <Actions>
+                <QButton Text="Move to a department" Icon="diagram-3" Size="sm" Variant="secondary"
+                         OnClick="@(() => OpenBulk(BulkAction.Department))" />
+                <QButton Text="Assign a line manager" Icon="person-up" Size="sm" Variant="secondary"
+                         OnClick="@(() => OpenBulk(BulkAction.LineManager))" />
+            </Actions>
+        </QBulkBar>
+    }
 
     @if (isLoading)
     {
@@ -95,6 +117,7 @@
                 <table class="data-table q-stack sd-table">
                     <thead>
                         <tr>
+                            @if (canEditStructure) { <th class="sd-tick"></th> }
                             <th>Name</th>
                             <th>Role</th>
                             <th>Departments</th>
@@ -107,7 +130,18 @@
                     <tbody>
                         @foreach (var m in Paged)
                         {
-                            <tr>
+                            <tr class="@(selected.Contains(m.UserId) ? "sd-row--picked" : "")">
+                                @if (canEditStructure)
+                                {
+                                    <td class="sd-tick">
+                                        @* No label: the name is in the next cell, and repeating it
+                                           would read out twice. The title carries it for a screen reader. *@
+                                        <span title="@($"Select {m.FullName}")">
+                                            <QCheckbox Value="@selected.Contains(m.UserId)"
+                                                       ValueChanged="@(v => Pick(m.UserId, v))" />
+                                        </span>
+                                    </td>
+                                }
                                 <td>
                                     <div class="sd-person">
                                         <QAvatar Name="@m.FullName" Size="sm" />
@@ -178,8 +212,52 @@
                     @bind-Visible="showAddDialog" OnCreated="@LoadAsync" />
 }
 
+@* The one dialog both bulk actions use: pick the target, read what it will do, apply. It names the
+   number of people and says what is NOT changed, because "move to a department" could reasonably be
+   read as adding one, and here it replaces. *@
+<QModal @bind-Visible="@showBulk" Title="@BulkTitle" Icon="@(bulkAction == BulkAction.Department ? "diagram-3" : "person-up")" Size="sm">
+    <p class="sd-bulk-lede">@BulkLede</p>
+
+    @if (bulkAction == BulkAction.Department)
+    {
+        <div class="form-group">
+            <label>Department <span class="required">*</span></label>
+            <QSelect TValue="Guid?" TItem="DepartmentDto" @bind-Value="@bulkDepartment" Items="@bulkDepartments"
+                     TextSelector="@(d => d.Name)" ValueSelector="@(d => (Guid?)d.Id)" Placeholder="Choose a department" />
+        </div>
+    }
+    else
+    {
+        <div class="form-group">
+            <label>Line manager <span class="required">*</span></label>
+            <QSelect TValue="Guid?" TItem="StaffMemberDto" @bind-Value="@bulkLineManager" Items="@ManagerOptions"
+                     TextSelector="@(m => m.FullName)" ValueSelector="@(m => (Guid?)m.UserId)" Placeholder="Choose a line manager" />
+            <p class="form-hint">Anybody already chosen who IS this line manager is skipped — nobody supervises themselves.</p>
+        </div>
+    }
+
+    @if (bulkFailures.Count > 0)
+    {
+        <div class="sd-bulk-failed">
+            <strong>Not changed:</strong>
+            <ul>@foreach (var f in bulkFailures) { <li>@f</li> }</ul>
+        </div>
+    }
+
+    <div class="modal-actions">
+        <QButton Text="Cancel" Variant="ghost" OnClick="@(() => showBulk = false)" Disabled="@bulkRunning" />
+        <QButton Text="@BulkConfirm" Icon="check-lg" Variant="primary" OnClick="@ApplyBulkAsync"
+                 Loading="@bulkRunning" Disabled="@(bulkRunning || !BulkReady)" />
+    </div>
+</QModal>
+
 <style>
     .loading-container { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--qm-text-muted); }
+    .sd-tick { width: 34px; }
+    .sd-row--picked td { background: rgba(var(--qm-primary-rgb), .06); }
+    .sd-bulk-lede { color: var(--qm-text-secondary); font-size: var(--qm-text-base); margin: 0 0 12px; }
+    .sd-bulk-failed { margin-top: 12px; font-size: var(--qm-text-sm); color: var(--qm-danger); }
+    .sd-bulk-failed ul { margin: 4px 0 0; padding-left: 18px; }
     .sd-search { flex: 1 1 240px; min-width: 0; }
     .sd-filter { flex: 0 1 200px; min-width: 150px; }
     .table-wrap { overflow-x: auto; }
@@ -194,6 +272,153 @@
 </style>
 
 @code {
+    // ---- Bulk: a department, or a line manager, for everybody ticked ----------------------------
+    // The two jobs a school actually does to a group. Neither gets its own API: each runs the
+    // ordinary per-person endpoint once per row, which keeps every rule that endpoint enforces and
+    // means a refusal is about ONE person and can be named. A bulk action that swallows failures is
+    // worse than one that does not exist (CLAUDE.md, the list-page sweep).
+
+    private enum BulkAction { Department, LineManager }
+
+    private readonly HashSet<Guid> selected = new();
+    private BulkAction bulkAction = BulkAction.Department;
+    private bool showBulk, bulkRunning;
+    private Guid? bulkDepartment, bulkLineManager;
+    private List<DepartmentDto> bulkDepartments = new();
+    private readonly List<string> bulkFailures = new();
+
+    private bool AllVisibleSelected => Visible.Count > 0 && Visible.All(m => selected.Contains(m.UserId));
+
+    private void Pick(Guid userId, bool on)
+    {
+        if (on) selected.Add(userId); else selected.Remove(userId);
+    }
+
+    private void ToggleSelectAllVisible(bool all)
+    {
+        if (all) foreach (var m in Visible) selected.Add(m.UserId);
+        else foreach (var m in Visible) selected.Remove(m.UserId);
+    }
+
+    /// <summary>
+    /// A SELECTION MAY ONLY EVER COVER ROWS THE READER CAN SEE. Without this, "apply to 20 selected"
+    /// silently reaches people the filter is hiding — the rule QBulkBar cannot enforce itself,
+    /// because only this page knows what a row is.
+    /// </summary>
+    private void PruneSelection()
+    {
+        var visible = Visible.Select(m => m.UserId).ToHashSet();
+        selected.RemoveWhere(id => !visible.Contains(id));
+    }
+
+    private IEnumerable<StaffMemberDto> ManagerOptions =>
+        directory?.Items.OrderBy(m => m.FullName, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<StaffMemberDto>();
+
+    private List<StaffMemberDto> SelectedPeople =>
+        Visible.Where(m => selected.Contains(m.UserId)).ToList();
+
+    private string BulkTitle => bulkAction == BulkAction.Department
+        ? $"Move {selected.Count} {(selected.Count == 1 ? "person" : "people")} to a department"
+        : $"Give {selected.Count} {(selected.Count == 1 ? "person" : "people")} a line manager";
+
+    private string BulkLede => bulkAction == BulkAction.Department
+        ? "Their departments are REPLACED with the one you choose. Roles, line managers and records are untouched."
+        : "Everybody ticked gets this line manager. Their departments, roles and records are untouched, and each person is told who now supervises them.";
+
+    private string BulkConfirm => bulkAction == BulkAction.Department ? "Move them" : "Assign";
+
+    private bool BulkReady => selected.Count > 0 &&
+        (bulkAction == BulkAction.Department ? bulkDepartment.HasValue : bulkLineManager.HasValue);
+
+    private async Task OpenBulk(BulkAction action)
+    {
+        if (selected.Count == 0)
+        {
+            Toast.Notify(ToastSeverity.Info, "Nobody is ticked", "Tick the people this should apply to first.");
+            return;
+        }
+
+        bulkAction = action;
+        bulkDepartment = null;
+        bulkLineManager = null;
+        bulkFailures.Clear();
+
+        if (action == BulkAction.Department && bulkDepartments.Count == 0)
+        {
+            try { bulkDepartments = (await StaffApi.GetDepartmentsAsync(branchId)).Where(d => d.IsActive).ToList(); }
+            catch (Exception ex) { Toast.Notify(ToastSeverity.Error, "Could not read the departments", ex.Message); return; }
+
+            if (bulkDepartments.Count == 0)
+            {
+                Toast.Notify(ToastSeverity.Warning, "There are no departments yet",
+                    "Create one on the Departments tab, then move people into it.");
+                return;
+            }
+        }
+
+        showBulk = true;
+    }
+
+    /// <summary>
+    /// One call per person, and the OTHER field is sent back unchanged — the endpoint replaces both,
+    /// so assigning a line manager without this would quietly clear everybody's departments.
+    /// </summary>
+    private async Task ApplyBulkAsync()
+    {
+        if (!BulkReady || bulkRunning) return;
+
+        bulkRunning = true;
+        bulkFailures.Clear();
+        var done = 0;
+
+        try
+        {
+            foreach (var m in SelectedPeople)
+            {
+                // Nobody is their own line manager. The server refuses it too; refusing here means
+                // one obvious case is not reported to the reader as a failure they must think about.
+                if (bulkAction == BulkAction.LineManager && m.UserId == bulkLineManager) continue;
+
+                try
+                {
+                    await StaffApi.UpdateMemberStructureAsync(branchId, m.UserId, new UpdateStaffStructureRequest
+                    {
+                        DepartmentIds = bulkAction == BulkAction.Department
+                            ? new List<Guid> { bulkDepartment!.Value }
+                            : m.DepartmentIds.ToList(),
+                        LineManagerUserId = bulkAction == BulkAction.LineManager ? bulkLineManager : m.LineManagerUserId
+                    });
+                    done++;
+                }
+                catch (Exception ex)
+                {
+                    bulkFailures.Add($"{m.FullName} — {ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            bulkRunning = false;
+        }
+
+        if (bulkFailures.Count == 0)
+        {
+            showBulk = false;
+            selected.Clear();
+            Toast.Notify(ToastSeverity.Success,
+                bulkAction == BulkAction.Department ? $"{done} moved" : $"{done} given a line manager",
+                "The directory below is up to date.");
+        }
+        else
+        {
+            Toast.Notify(ToastSeverity.Warning, $"{done} changed, {bulkFailures.Count} not",
+                "The ones that did not change are listed in the dialog.");
+        }
+
+        await LoadAsync();
+        PruneSelection();
+    }
+
     /// <summary>The activity log carries every export (plan §11); the file itself was built in the browser.</summary>
     private Task OnExported(ExportResult export) => export.Success
         ? StaffApi.RecordExportAsync(branchId, new RecordStaffExportRequest { Kind = StaffExportKinds.Directory, Format = export.Format?.ToString(), RowCount = export.RowCount })
@@ -377,6 +602,7 @@
     {
         period = value;
         await LoadAsync();
+        PruneSelection();
     }
 
     /// <summary>The branch changed under the page: reload against the new one.</summary>

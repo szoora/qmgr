@@ -133,7 +133,32 @@ missing path and any tarballs that were sitting there are already deleted. Pass 
 or just run the full build — it takes under two minutes with a warm obj/.
 
 ---
+## ▶ (2026-09-21, night) — the domain helper, and bulk actions on the staff directory
+
+**The tenant domain was never reachable.** `dashboard.maryhillug.net` was reported as not working;
+DNS, the TXT record, the deployed build and certbot were all fine, and the API's own log had said why
+since morning: `sudo: The "no new privileges" flag is set, which prevents sudo from running as root`.
+The API unit sets `NoNewPrivileges=true` and the activator escalated with sudo — the flag exists to
+stop exactly that. No suite could see it (they run with `CustomDomains:SkipCertificate=true`).
+
+The fix is not to relax the flag but to stop escalating: the API writes `<id>.req` into
+`/var/lib/qmgr/domain-spool` and polls for `<id>.res`; `qmgr-domain-worker.path` runs
+`qmgr-tenant-domain --drain` as root, which re-enters the helper per request so the validation stays
+on the far side of the privilege boundary. Narrower than the sudoers entry it replaces, which
+`install.sh` now removes. Drain proven locally; the systemd half is one line on the box.
+
+**Bulk actions on the Staff Directory**, asked for after 182 imported staff arrived with no
+department and nobody supervising them. Tick people → *Move to a department* or *Assign a line
+manager*. No new API: each runs the ordinary per-person endpoint once per row, the other field is
+sent back unchanged (or the PUT would clear it), and anything refused is named. `staff-bulk.mjs`,
+17 checks, 0 failed, restoring every row afterwards.
+
+**Also**: the staff import's instructions moved into `QInfo` — a screen of standing reference above
+the one control that matters on every visit.
+
+---
 ## ▶ (2026-09-21, night) — a staff member with no email address
+
 
 The bulk-import work found that **133 of the 184 staff in the school's own file have no email
 address**, and Q-Mgr treated an address as a staff member's identity — so they could not exist at

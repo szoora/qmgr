@@ -24,8 +24,7 @@ const CDP = 'http://127.0.0.1:9333';
 const SUITES = [
   'action-location', 'billing-hub', 'daterange-check', 'density-and-staff', 'empty-state-check',
   'hub-nav', 'import-wizard', 'list-sweep', 'minutes-ui', 'payments-ui', 'portal-tabs', 'register-and-duty-sheet',
-  'registration-doors', 'roles-and-branch-ui', 'rooms-ui', 'select-verify', 'staff-hub',
-  'staff-nav-hubs', 'timetable-print', 'timetable-views', 'type-audit', 'type-sweep-all', 'uniform-check',
+  'registration-doors', 'roles-and-branch-ui', 'rooms-ui', 'select-verify', 'staff-bulk', 'staff-hub',   'staff-nav-hubs', 'timetable-print', 'timetable-views', 'type-audit', 'type-sweep-all', 'uniform-check',
   'white-label-ui',
 ];
 
