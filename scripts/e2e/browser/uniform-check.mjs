@@ -63,3 +63,5 @@ for (const route of ['/admin/timetable', '/admin/staff/duties', '/content/librar
 check('no console errors', t.consoleErrors.length === 0, t.consoleErrors.slice(0, 3).join(' | '));
 const sum = `\n  Uniform scale: ${pass} passed, ${fail} failed`; console.log(sum); post(sum);
 t.close();
+// Without this the suite always exits 0 and a runner reports it green while it fails.
+process.exitCode = fail ? 1 : 0;

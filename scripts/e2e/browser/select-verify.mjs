@@ -152,3 +152,5 @@ check('no console errors during the run', t.consoleErrors.length === 0, t.consol
 const sum = `\n  Dropdowns: ${pass} passed, ${fail} failed`;
 console.log(sum); post(sum);
 t.close();
+// Without this the suite always exits 0 and a runner reports it green while it fails.
+process.exitCode = fail ? 1 : 0;

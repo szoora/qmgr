@@ -53,3 +53,5 @@ check('Student Roster lists no longer have a Rooms tab', tabs.length > 0 && !tab
 check('no console errors', t.consoleErrors.length === 0, t.consoleErrors.slice(0, 3).join(' | '));
 const sum = `\n  Rooms UI: ${pass} passed, ${fail} failed`; console.log(sum); post(sum);
 t.close();
+// Without this the suite always exits 0 and a runner reports it green while it fails.
+process.exitCode = fail ? 1 : 0;

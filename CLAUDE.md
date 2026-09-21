@@ -670,6 +670,27 @@ with a message naming what the tenant is missing.
 but `LoginRequest.Email` is the JSON property — posting `identifier` logs "Login failed for
 identifier: " with an empty name and returns 401.
 
+### A suite is wired into its runner in the SAME COMMIT that creates it (2026-09-21)
+
+There are three doors and every check lives behind one of them:
+
+    bash scripts/e2e/class-teacher-e2e.sh   # the API suite, 20 sections, 7 Node suites inside it
+    bash scripts/e2e/guards.sh              # the 8 static guards — no server, seconds, run by rebuild.sh
+    node scripts/e2e/browser/all.mjs        # the 23 browser suites, against a local headless Chrome
+
+**A suite nothing calls reports nothing.** Sections 15, 17 and 18 each existed, each passed
+standalone, and were never called by the shell runner — so for weeks a "full run" under-reported by
+about ninety assertions and a regression in any of the three would not have shown up. The static
+guards and the browser suites had the same problem on a larger scale: **thirty-one scripts, one
+runner, and it called seven of them.**
+
+**A SUITE THAT CANNOT FAIL REPORTS NOTHING EITHER**, which is the half that is easy to miss.
+`rooms-ui`, `select-verify` and `uniform-check` each counted their failures, printed the tally and
+then always exited 0 — a runner trusting exit codes calls them green while they fail. They set
+`process.exitCode` now. The genuine exceptions are declared in the runners and say why they are
+exempt: `refusal-audit` prints a shortlist for a human, and `density-check`/`furniture-check`
+MEASURE rather than assert. Failing a run on one of those would train everybody to ignore the run.
+
 **Verify by running the thing against the dev tenant, seeding whatever data the path needs.**
 Creating rows to test with is a normal setup step, not a blocker to report. If a code path has no
 data to exercise it, make the data — a queue ticket, a visitor check-in, a welfare record — run the
