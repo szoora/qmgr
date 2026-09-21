@@ -627,6 +627,9 @@ else
 }
 
 @code {
+
+    /// <summary>Which host the browser arrived on — see TenantHostContext.ApiOrigin.</summary>
+    [CascadingParameter] public TenantHostContext? TenantHost { get; set; }
     /// <summary>
     /// What this organization's shell should look like. Read from api/v1/branding/mine, which
     /// carries NO permission code (the ProfileController rule — a member of staff asking what their
@@ -1140,7 +1143,10 @@ else
     {
         try
         {
-            var publicUrl = Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
+            // On a tenant's own domain the browser-facing API origin is THAT domain — nginx
+            // proxies /api/ and /hubs/ there too — not the platform host baked into
+            // ApiPublicUrl. See TenantHostContext.ApiOrigin.
+            var publicUrl = TenantHost?.ApiOrigin ?? Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
             var token = await AuthService.GetAccessTokenAsync();
             // Trailing slash deliberate: Scalar 302-redirects "/api/docs" -> "/api/docs/", and
             // that redirect drops the ?access_token= query string entirely, so the browser's

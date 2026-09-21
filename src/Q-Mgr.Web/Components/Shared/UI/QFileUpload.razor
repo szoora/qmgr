@@ -62,6 +62,9 @@
 </div>
 
 @code {
+
+    /// <summary>Which host the browser arrived on — see TenantHostContext.ApiOrigin.</summary>
+    [CascadingParameter] public TenantHostContext? TenantHost { get; set; }
     private ElementReference inputRef;
     private DotNetObjectReference<QFileUpload>? selfRef;
     private readonly List<UploadItem> items = new();
@@ -123,7 +126,10 @@
     // that path's last segment.
     private Uri BrowserApiBaseUri()
     {
-        var baseUrl = Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
+        // A tenant on their own domain uploads to THEIR origin: nginx proxies /api/ there too, and
+        // posting to the platform host instead would be a cross-origin request the API's CORS
+        // refuses. See TenantHostContext.ApiOrigin.
+        var baseUrl = TenantHost?.ApiOrigin ?? Configuration["ApiPublicUrl"] ?? Http.BaseAddress!.ToString();
         return new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
     }
 

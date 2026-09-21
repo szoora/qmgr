@@ -351,7 +351,18 @@ $webAppSettingsProd = [ordered]@{
             'Microsoft.AspNetCore' = 'Warning'
         }
     }
-    AllowedHosts = $HostName
+    # NOT locked to $HostName, and this one cost a night. ASP.NET Core's HostFiltering middleware
+    # answers any Host it does not recognise with "Bad Request - Invalid Hostname", before the
+    # request reaches a single component — so EVERY TENANT CUSTOM DOMAIN was refused by the app the
+    # moment its certificate and nginx block were finally right. dashboard.maryhillug.net went from a
+    # certificate warning straight to a 400, which reads like a different fault and is the same one:
+    # a host list baked at build time cannot contain a domain a school adds next week.
+    #
+    # Nothing reaches this process except through nginx, which has an explicit server_name block per
+    # host and NO WILDCARD ANYWHERE (deliberately — see the tenant-domain notes in CLAUDE.md). nginx
+    # is the host filter; repeating it here only adds a list that goes stale. The API next to this
+    # already runs with '*' for the same class of reason.
+    AllowedHosts = '*'
 }
 $webSettingsPath = Join-Path $webPublishDir 'appsettings.Production.json'
 $webSettingsJson = $webAppSettingsProd | ConvertTo-Json -Depth 10

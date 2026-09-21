@@ -23,6 +23,20 @@ public sealed record TenantHostContext(string Host, TenantHostBrandingDto Brandi
 
     public bool IsTenantHost => Branding.Resolved;
 
+    /// <summary>
+    /// The origin the BROWSER should call the API on, for this host — or null when this is not a
+    /// tenant host, so the configured <c>ApiPublicUrl</c> still wins there and in development.
+    ///
+    /// <para>In production nginx serves both halves from one name: "/" to Web, "/api/" and "/hubs/"
+    /// to the API. On a tenant's own domain that origin is therefore the TENANT'S name, not the
+    /// platform's — and the baked <c>ApiPublicUrl</c> is the platform's. The difference is invisible
+    /// until a school is actually on their own domain, and then it is two things at once: an upload
+    /// posts cross-origin to a host the API's CORS does not allow, and the notification hub connects
+    /// to the wrong origin and sits on "Reconnecting…" — the same shape as the 2026-09-09 hub bug,
+    /// where a config value that was coincidentally right on one host was wrong on another.</para>
+    /// </summary>
+    public string? ApiOrigin => IsTenantHost && !string.IsNullOrWhiteSpace(Host) ? $"https://{Host}" : null;
+
     /// <summary>What to call the product on this host.</summary>
     public string AppName => IsTenantHost && !string.IsNullOrWhiteSpace(Branding.BrandName) ? Branding.BrandName! : "Q-Mgr";
 
